@@ -1,12 +1,16 @@
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { FileText, CheckCircle, AlertCircle, Clock, Settings, Database } from "lucide-react";
+import { FileText, CheckCircle, AlertCircle, Clock, Settings, Database, LogOut, Users } from "lucide-react";
 import { StatsCard } from "@/components/dashboard/StatsCard";
 import { RecentDocuments } from "@/components/dashboard/RecentDocuments";
 import { ProcessingFlow } from "@/components/dashboard/ProcessingFlow";
+import { useAuth } from "@/hooks/useAuth";
+import { Link } from "react-router-dom";
 
 const Dashboard = () => {
+  const { user, isAdmin, signOut } = useAuth();
+
   return (
     <div className="min-h-screen bg-background">
       <header className="border-b bg-card">
@@ -25,9 +29,25 @@ const Dashboard = () => {
               <div className="h-2 w-2 rounded-full bg-success animate-pulse" />
               Conectado
             </Badge>
-            <Button variant="outline" size="sm">
-              <Settings className="h-4 w-4 mr-2" />
-              Configuración
+            {isAdmin && (
+              <Button variant="outline" size="sm" asChild>
+                <Link to="/vendors">
+                  <Users className="h-4 w-4 mr-2" />
+                  Proveedores
+                </Link>
+              </Button>
+            )}
+            {isAdmin && (
+              <Button variant="outline" size="sm" asChild>
+                <Link to="/settings">
+                  <Settings className="h-4 w-4 mr-2" />
+                  Configuración
+                </Link>
+              </Button>
+            )}
+            <Button variant="outline" size="sm" onClick={signOut}>
+              <LogOut className="h-4 w-4 mr-2" />
+              Salir
             </Button>
           </div>
         </div>

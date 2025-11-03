@@ -24,13 +24,15 @@ const Index = () => {
             </p>
             <div className="flex flex-col sm:flex-row gap-4 justify-center">
               <Button size="lg" asChild className="text-lg h-12 px-8">
-                <Link to="/dashboard">
-                  Ver Dashboard
+                <Link to="/auth">
+                  Comenzar Ahora
                   <ArrowRight className="ml-2 h-5 w-5" />
                 </Link>
               </Button>
-              <Button size="lg" variant="outline" className="text-lg h-12 px-8">
-                Conocer Más
+              <Button size="lg" variant="outline" className="text-lg h-12 px-8" asChild>
+                <Link to="/dashboard">
+                  Ver Dashboard
+                </Link>
               </Button>
             </div>
           </div>
