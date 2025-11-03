@@ -1,12 +1,174 @@
-// Update this page (the content is just a fallback if you fail to update the page)
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { FileText, Zap, Shield, BarChart3, ArrowRight, CheckCircle } from "lucide-react";
+import { Link } from "react-router-dom";
 
 const Index = () => {
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background">
-      <div className="text-center">
-        <h1 className="mb-4 text-4xl font-bold">Welcome to Your Blank App</h1>
-        <p className="text-xl text-muted-foreground">Start building your amazing project here!</p>
+    <div className="min-h-screen bg-background">
+      {/* Hero Section */}
+      <section className="relative overflow-hidden bg-gradient-to-br from-primary/5 via-background to-accent/5">
+        <div className="container mx-auto px-6 py-20 lg:py-32">
+          <div className="max-w-4xl mx-auto text-center">
+            <Badge className="mb-6" variant="secondary">
+              Automatización Contable para Costa Rica
+            </Badge>
+            <h1 className="text-4xl md:text-5xl lg:text-6xl font-bold text-foreground mb-6 leading-tight">
+              De Correo a QuickBooks
+              <span className="block text-primary mt-2">en Segundos</span>
+            </h1>
+            <p className="text-lg md:text-xl text-muted-foreground mb-8 max-w-2xl mx-auto">
+              Procesa automáticamente facturas y notas de crédito desde Gmail/Outlook,
+              extrae XML según estándar Costa Rica, y registra en QuickBooks Online sin intervención manual.
+            </p>
+            <div className="flex flex-col sm:flex-row gap-4 justify-center">
+              <Button size="lg" asChild className="text-lg h-12 px-8">
+                <Link to="/dashboard">
+                  Ver Dashboard
+                  <ArrowRight className="ml-2 h-5 w-5" />
+                </Link>
+              </Button>
+              <Button size="lg" variant="outline" className="text-lg h-12 px-8">
+                Conocer Más
+              </Button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Features Section */}
+      <section className="py-20 bg-card/50">
+        <div className="container mx-auto px-6">
+          <div className="text-center mb-16">
+            <h2 className="text-3xl md:text-4xl font-bold text-foreground mb-4">
+              Todo lo que Necesitas
+            </h2>
+            <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
+              Solución completa para automatizar el procesamiento de facturas de proveedores
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+            <FeatureCard
+              icon={FileText}
+              title="Extracción Automática"
+              description="Lee correos, detecta XML/PDF, parsea según estándar Hacienda CR v4.x con validación completa."
+            />
+            <FeatureCard
+              icon={Zap}
+              title="Clasificación Inteligente"
+              description="Mapea automáticamente proveedores usando catálogo, cédula jurídica y reglas personalizadas."
+            />
+            <FeatureCard
+              icon={Shield}
+              title="Validación de IVA"
+              description="Calcula impuestos con tasas 0/1/2/4/13%, identifica exentos, y aplica descuentos correctamente."
+            />
+            <FeatureCard
+              icon={BarChart3}
+              title="Integración QuickBooks"
+              description="Crea Bills y VendorCredits automáticamente con adjuntos XML/PDF y anti-duplicados."
+            />
+            <FeatureCard
+              icon={CheckCircle}
+              title="Cola de Revisión"
+              description="Envía documentos no reconocidos a cola manual con interfaz de aprobación rápida."
+            />
+            <FeatureCard
+              icon={Shield}
+              title="Trazabilidad Total"
+              description="Registra cada paso del proceso con logs detallados y reportes de auditoría."
+            />
+          </div>
+        </div>
+      </section>
+
+      {/* How it Works */}
+      <section className="py-20">
+        <div className="container mx-auto px-6">
+          <div className="text-center mb-16">
+            <h2 className="text-3xl md:text-4xl font-bold text-foreground mb-4">
+              Cómo Funciona
+            </h2>
+            <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
+              Flujo automatizado de principio a fin
+            </p>
+          </div>
+
+          <div className="max-w-5xl mx-auto">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
+              <ProcessStep
+                number="1"
+                title="Recibir"
+                description="Conecta Gmail/Outlook y define filtros de bandejas"
+              />
+              <ProcessStep
+                number="2"
+                title="Extraer"
+                description="Parse XML CR v4.x con validación de campos"
+              />
+              <ProcessStep
+                number="3"
+                title="Clasificar"
+                description="Match automático con catálogo de proveedores"
+              />
+              <ProcessStep
+                number="4"
+                title="Registrar"
+                description="Publica en QBO como Bill o VendorCredit"
+              />
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* CTA Section */}
+      <section className="py-20 bg-gradient-to-br from-primary to-accent">
+        <div className="container mx-auto px-6 text-center">
+          <h2 className="text-3xl md:text-4xl font-bold text-primary-foreground mb-6">
+            Listo para Automatizar?
+          </h2>
+          <p className="text-lg text-primary-foreground/90 mb-8 max-w-2xl mx-auto">
+            Configura tus conexiones y comienza a procesar facturas en minutos
+          </p>
+          <Button size="lg" variant="secondary" className="text-lg h-12 px-8">
+            Comenzar Ahora
+          </Button>
+        </div>
+      </section>
+    </div>
+  );
+};
+
+const FeatureCard = ({ icon: Icon, title, description }: { 
+  icon: React.ElementType; 
+  title: string; 
+  description: string; 
+}) => {
+  return (
+    <Card className="p-6 hover:shadow-lg transition-shadow">
+      <div className="h-12 w-12 rounded-lg bg-primary/10 flex items-center justify-center mb-4">
+        <Icon className="h-6 w-6 text-primary" />
       </div>
+      <h3 className="text-xl font-semibold text-foreground mb-2">{title}</h3>
+      <p className="text-muted-foreground">{description}</p>
+    </Card>
+  );
+};
+
+const ProcessStep = ({ number, title, description }: { 
+  number: string; 
+  title: string; 
+  description: string; 
+}) => {
+  return (
+    <div className="text-center">
+      <div className="h-16 w-16 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-2xl font-bold mx-auto mb-4">
+        {number}
+      </div>
+      <h3 className="text-lg font-semibold text-foreground mb-2">{title}</h3>
+      <p className="text-sm text-muted-foreground">{description}</p>
     </div>
   );
 };
