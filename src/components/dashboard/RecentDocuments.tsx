@@ -30,6 +30,28 @@ export const RecentDocuments = () => {
 
   useEffect(() => {
     fetchDocuments();
+
+    // Configurar suscripción en tiempo real
+    const channel = supabase
+      .channel('recent-documents-realtime')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'processed_documents'
+        },
+        (payload) => {
+          console.log('Cambio detectado en documentos:', payload);
+          // Recargar documentos cuando hay cambios
+          fetchDocuments();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   const fetchDocuments = async () => {

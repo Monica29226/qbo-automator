@@ -23,6 +23,29 @@ const Dashboard = () => {
   useEffect(() => {
     if (activeOrganization) {
       fetchStats();
+      
+      // Configurar suscripción en tiempo real
+      const channel = supabase
+        .channel('processed-documents-changes')
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'processed_documents',
+            filter: `organization_id=eq.${activeOrganization}`
+          },
+          (payload) => {
+            console.log('Documento actualizado en tiempo real:', payload);
+            // Actualizar estadísticas cuando cambie algo
+            fetchStats();
+          }
+        )
+        .subscribe();
+
+      return () => {
+        supabase.removeChannel(channel);
+      };
     }
   }, [activeOrganization]);
 
