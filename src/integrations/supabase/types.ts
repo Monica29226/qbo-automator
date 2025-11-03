@@ -112,6 +112,8 @@ export type Database = {
           id: string
           is_active: boolean
           name: string
+          outlook_connected: boolean | null
+          outlook_email: string | null
           phone: string | null
           qbo_company_id: string | null
           qbo_realm_id: string | null
@@ -133,6 +135,8 @@ export type Database = {
           id?: string
           is_active?: boolean
           name: string
+          outlook_connected?: boolean | null
+          outlook_email?: string | null
           phone?: string | null
           qbo_company_id?: string | null
           qbo_realm_id?: string | null
@@ -154,6 +158,8 @@ export type Database = {
           id?: string
           is_active?: boolean
           name?: string
+          outlook_connected?: boolean | null
+          outlook_email?: string | null
           phone?: string | null
           qbo_company_id?: string | null
           qbo_realm_id?: string | null

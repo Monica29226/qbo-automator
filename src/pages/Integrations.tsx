@@ -29,6 +29,8 @@ interface IntegrationAccount {
 interface Organization {
   gmail_connected: boolean;
   gmail_email: string | null;
+  outlook_connected: boolean;
+  outlook_email: string | null;
   quickbooks_connected: boolean;
   quickbooks_realm_id: string | null;
   google_drive_connected: boolean;
@@ -59,7 +61,7 @@ const Integrations = () => {
     // Fetch organization data
     const { data: org, error: orgError } = await supabase
       .from("organizations")
-      .select("gmail_connected, gmail_email, quickbooks_connected, quickbooks_realm_id, google_drive_connected, google_drive_folder_id")
+      .select("gmail_connected, gmail_email, outlook_connected, outlook_email, quickbooks_connected, quickbooks_realm_id, google_drive_connected, google_drive_folder_id")
       .eq("id", activeOrganization)
       .single();
 
@@ -151,7 +153,15 @@ const Integrations = () => {
       icon: Mail,
       connected: orgData?.gmail_connected || false,
       accounts: accounts.filter((a) => a.service_type === "gmail"),
-      description: "Recibir facturas por correo electrónico",
+      description: "Recibir facturas por correo Gmail",
+    },
+    {
+      id: "outlook",
+      name: "Outlook",
+      icon: Mail,
+      connected: orgData?.outlook_connected || false,
+      accounts: accounts.filter((a) => a.service_type === "outlook"),
+      description: "Recibir facturas por correo Outlook",
     },
     {
       id: "quickbooks",
