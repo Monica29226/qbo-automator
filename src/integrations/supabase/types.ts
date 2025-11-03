@@ -14,6 +14,89 @@ export type Database = {
   }
   public: {
     Tables: {
+      organization_members: {
+        Row: {
+          created_at: string
+          id: string
+          is_active: boolean
+          organization_id: string
+          role: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          organization_id: string
+          role?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          organization_id?: string
+          role?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "organization_members_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      organizations: {
+        Row: {
+          address: string | null
+          created_at: string
+          email: string | null
+          id: string
+          is_active: boolean
+          name: string
+          phone: string | null
+          qbo_company_id: string | null
+          qbo_realm_id: string | null
+          settings: Json | null
+          tax_id: string | null
+          updated_at: string
+        }
+        Insert: {
+          address?: string | null
+          created_at?: string
+          email?: string | null
+          id?: string
+          is_active?: boolean
+          name: string
+          phone?: string | null
+          qbo_company_id?: string | null
+          qbo_realm_id?: string | null
+          settings?: Json | null
+          tax_id?: string | null
+          updated_at?: string
+        }
+        Update: {
+          address?: string | null
+          created_at?: string
+          email?: string | null
+          id?: string
+          is_active?: boolean
+          name?: string
+          phone?: string | null
+          qbo_company_id?: string | null
+          qbo_realm_id?: string | null
+          settings?: Json | null
+          tax_id?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
       processed_documents: {
         Row: {
           created_at: string
@@ -25,6 +108,7 @@ export type Database = {
           exchange_rate: number | null
           id: string
           issue_date: string
+          organization_id: string | null
           pdf_attachment_url: string | null
           processed_at: string | null
           processed_by: string | null
@@ -52,6 +136,7 @@ export type Database = {
           exchange_rate?: number | null
           id?: string
           issue_date: string
+          organization_id?: string | null
           pdf_attachment_url?: string | null
           processed_at?: string | null
           processed_by?: string | null
@@ -79,6 +164,7 @@ export type Database = {
           exchange_rate?: number | null
           id?: string
           issue_date?: string
+          organization_id?: string | null
           pdf_attachment_url?: string | null
           processed_at?: string | null
           processed_by?: string | null
@@ -97,6 +183,13 @@ export type Database = {
           xml_data?: Json | null
         }
         Relationships: [
+          {
+            foreignKeyName: "processed_documents_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "processed_documents_vendor_id_fkey"
             columns: ["vendor_id"]
@@ -137,6 +230,7 @@ export type Database = {
         Row: {
           description: string | null
           key: string
+          organization_id: string
           updated_at: string
           updated_by: string | null
           value: string
@@ -144,6 +238,7 @@ export type Database = {
         Insert: {
           description?: string | null
           key: string
+          organization_id: string
           updated_at?: string
           updated_by?: string | null
           value: string
@@ -151,11 +246,46 @@ export type Database = {
         Update: {
           description?: string | null
           key?: string
+          organization_id?: string
           updated_at?: string
           updated_by?: string | null
           value?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "system_settings_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      user_active_organization: {
+        Row: {
+          organization_id: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          organization_id?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          organization_id?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "user_active_organization_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       user_roles: {
         Row: {
@@ -189,6 +319,7 @@ export type Database = {
           id: string
           is_active: boolean
           mapping_hints: string | null
+          organization_id: string | null
           qbo_vendor_ref: string
           tax_rate: number
           tax_treatment: string
@@ -208,6 +339,7 @@ export type Database = {
           id?: string
           is_active?: boolean
           mapping_hints?: string | null
+          organization_id?: string | null
           qbo_vendor_ref: string
           tax_rate: number
           tax_treatment: string
@@ -227,6 +359,7 @@ export type Database = {
           id?: string
           is_active?: boolean
           mapping_hints?: string | null
+          organization_id?: string | null
           qbo_vendor_ref?: string
           tax_rate?: number
           tax_treatment?: string
@@ -236,18 +369,38 @@ export type Database = {
           vendor_name?: string
           vendor_tax_id?: string | null
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "vendors_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
       }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
+      get_user_active_organization: {
+        Args: { _user_id: string }
+        Returns: string
+      }
       has_role: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"]
           _user_id: string
         }
+        Returns: boolean
+      }
+      is_organization_admin: {
+        Args: { _org_id: string; _user_id: string }
+        Returns: boolean
+      }
+      is_organization_member: {
+        Args: { _org_id: string; _user_id: string }
         Returns: boolean
       }
     }

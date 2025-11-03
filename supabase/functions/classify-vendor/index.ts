@@ -11,6 +11,7 @@ interface ClassifyRequest {
   supplier_tax_id?: string;
   supplier_email?: string;
   xml_data: any;
+  organization_id: string;
 }
 
 serve(async (req) => {
@@ -19,7 +20,14 @@ serve(async (req) => {
   }
 
   try {
-    const { supplier_name, supplier_tax_id, supplier_email, xml_data }: ClassifyRequest = await req.json();
+    const { supplier_name, supplier_tax_id, supplier_email, xml_data, organization_id }: ClassifyRequest = await req.json();
+    
+    if (!organization_id) {
+      return new Response(
+        JSON.stringify({ error: "organization_id is required" }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
     
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
     if (!LOVABLE_API_KEY) {
@@ -30,10 +38,11 @@ serve(async (req) => {
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    // Obtener todos los proveedores activos
+    // Obtener todos los proveedores activos de la organización
     const { data: vendors, error: vendorsError } = await supabase
       .from("vendors")
       .select("*")
+      .eq("organization_id", organization_id)
       .eq("is_active", true);
 
     if (vendorsError) {

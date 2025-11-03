@@ -30,6 +30,7 @@ import { Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { Label } from "@/components/ui/label";
+import { useAuth } from "@/hooks/useAuth";
 
 interface Document {
   id: string;
@@ -52,6 +53,7 @@ interface Vendor {
 }
 
 const ReviewQueue = () => {
+  const { activeOrganization } = useAuth();
   const [documents, setDocuments] = useState<Document[]>([]);
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -61,16 +63,21 @@ const ReviewQueue = () => {
   const [isProcessing, setIsProcessing] = useState(false);
 
   useEffect(() => {
-    fetchData();
-  }, []);
+    if (activeOrganization) {
+      fetchData();
+    }
+  }, [activeOrganization]);
 
   const fetchData = async () => {
+    if (!activeOrganization) return;
+
     setIsLoading(true);
     
     // Obtener documentos en revisión
     const { data: docs, error: docsError } = await supabase
       .from("processed_documents")
       .select("*")
+      .eq("organization_id", activeOrganization)
       .eq("status", "review")
       .order("issue_date", { ascending: false });
 
@@ -85,6 +92,7 @@ const ReviewQueue = () => {
     const { data: vendorsData, error: vendorsError } = await supabase
       .from("vendors")
       .select("id, vendor_name, qbo_vendor_ref")
+      .eq("organization_id", activeOrganization)
       .eq("is_active", true)
       .order("vendor_name");
 

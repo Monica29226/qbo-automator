@@ -10,6 +10,7 @@ import Vendors from "./pages/Vendors";
 import Settings from "./pages/Settings";
 import ReviewQueue from "./pages/ReviewQueue";
 import UploadDocument from "./pages/UploadDocument";
+import Organizations from "./pages/Organizations";
 import NotFound from "./pages/NotFound";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 
@@ -61,6 +62,14 @@ const App = () => (
             element={
               <ProtectedRoute requireAdmin>
                 <Settings />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/organization"
+            element={
+              <ProtectedRoute requireAdmin>
+                <Organizations />
               </ProtectedRoute>
             }
           />

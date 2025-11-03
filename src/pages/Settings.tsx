@@ -15,6 +15,7 @@ import { FileText, ArrowLeft, Loader2, Save } from "lucide-react";
 import { Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { useAuth } from "@/hooks/useAuth";
 
 interface Settings {
   qbo_company_id: string;
@@ -27,6 +28,7 @@ interface Settings {
 }
 
 const Settings = () => {
+  const { activeOrganization } = useAuth();
   const [settings, setSettings] = useState<Settings>({
     qbo_company_id: "",
     mail_provider: "gmail",
@@ -40,12 +42,19 @@ const Settings = () => {
   const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
-    fetchSettings();
-  }, []);
+    if (activeOrganization) {
+      fetchSettings();
+    }
+  }, [activeOrganization]);
 
   const fetchSettings = async () => {
+    if (!activeOrganization) return;
+
     setIsLoading(true);
-    const { data, error } = await supabase.from("system_settings").select("*");
+    const { data, error } = await supabase
+      .from("system_settings")
+      .select("*")
+      .eq("organization_id", activeOrganization);
 
     if (error) {
       toast.error("Error al cargar configuración");
@@ -61,18 +70,25 @@ const Settings = () => {
   };
 
   const handleSave = async () => {
+    if (!activeOrganization) {
+      toast.error("No hay organización activa");
+      return;
+    }
+
     setIsSaving(true);
 
     const updates = Object.entries(settings).map(([key, value]) => ({
       key,
       value,
+      organization_id: activeOrganization,
     }));
 
     for (const update of updates) {
       const { error } = await supabase
         .from("system_settings")
         .update({ value: update.value })
-        .eq("key", update.key);
+        .eq("key", update.key)
+        .eq("organization_id", update.organization_id);
 
       if (error) {
         toast.error(`Error al actualizar ${update.key}`);

@@ -46,7 +46,7 @@ interface Vendor {
 }
 
 const Vendors = () => {
-  const { isAdmin } = useAuth();
+  const { isAdmin, activeOrganization } = useAuth();
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -62,16 +62,19 @@ const Vendors = () => {
   });
 
   useEffect(() => {
-    if (isAdmin) {
+    if (isAdmin && activeOrganization) {
       fetchVendors();
     }
-  }, [isAdmin]);
+  }, [isAdmin, activeOrganization]);
 
   const fetchVendors = async () => {
+    if (!activeOrganization) return;
+
     setIsLoading(true);
     const { data, error } = await supabase
       .from("vendors")
       .select("*")
+      .eq("organization_id", activeOrganization)
       .order("vendor_name");
 
     if (error) {
@@ -86,6 +89,11 @@ const Vendors = () => {
   const handleSave = async () => {
     if (!formData.vendor_name || !formData.qbo_vendor_ref || !formData.default_account_ref) {
       toast.error("Complete los campos requeridos");
+      return;
+    }
+
+    if (!activeOrganization) {
+      toast.error("No hay organización activa");
       return;
     }
 
@@ -106,7 +114,10 @@ const Vendors = () => {
         fetchVendors();
       }
     } else {
-      const { error } = await supabase.from("vendors").insert([formData]);
+      const { error } = await supabase.from("vendors").insert([{
+        ...formData,
+        organization_id: activeOrganization,
+      }]);
 
       if (error) {
         toast.error("Error al crear proveedor");

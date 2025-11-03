@@ -6,9 +6,11 @@ import { FileText, ArrowLeft, Loader2, Upload, FileCheck } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { useAuth } from "@/hooks/useAuth";
 
 const UploadDocument = () => {
   const navigate = useNavigate();
+  const { activeOrganization } = useAuth();
   const [xmlContent, setXmlContent] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
   const [result, setResult] = useState<any>(null);
@@ -31,12 +33,20 @@ const UploadDocument = () => {
       return;
     }
 
+    if (!activeOrganization) {
+      toast.error("No hay organización activa");
+      return;
+    }
+
     setIsProcessing(true);
     setResult(null);
 
     try {
       const { data, error } = await supabase.functions.invoke("process-document", {
-        body: { xml_content: xmlContent },
+        body: { 
+          xml_content: xmlContent,
+          organization_id: activeOrganization,
+        },
       });
 
       if (error) {

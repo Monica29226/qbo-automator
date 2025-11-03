@@ -15,6 +15,7 @@ const Auth = () => {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [fullName, setFullName] = useState("");
+  const [companyName, setCompanyName] = useState("");
 
   useEffect(() => {
     // Redirigir si ya está autenticado
@@ -56,7 +57,7 @@ const Auth = () => {
   const handleSignup = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (!email || !password || !fullName) {
+    if (!email || !password || !fullName || !companyName) {
       toast.error("Por favor completa todos los campos");
       return;
     }
@@ -75,6 +76,7 @@ const Auth = () => {
       options: {
         data: {
           full_name: fullName,
+          company_name: companyName,
         },
         emailRedirectTo: redirectUrl,
       },
@@ -157,6 +159,20 @@ const Auth = () => {
 
             <TabsContent value="signup">
               <form onSubmit={handleSignup} className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="signup-company">
+                    Nombre de la Empresa <span className="text-destructive">*</span>
+                  </Label>
+                  <Input
+                    id="signup-company"
+                    type="text"
+                    value={companyName}
+                    onChange={(e) => setCompanyName(e.target.value)}
+                    placeholder="Mi Empresa S.A."
+                    disabled={isLoading}
+                    required
+                  />
+                </div>
                 <div className="space-y-2">
                   <Label htmlFor="signup-name">Nombre Completo</Label>
                   <Input

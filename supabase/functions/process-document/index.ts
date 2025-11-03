@@ -9,6 +9,7 @@ const corsHeaders = {
 interface ProcessDocumentRequest {
   xml_content: string;
   doc_key?: string;
+  organization_id: string;
 }
 
 serve(async (req) => {
@@ -17,7 +18,17 @@ serve(async (req) => {
   }
 
   try {
-    const { xml_content, doc_key }: ProcessDocumentRequest = await req.json();
+    const { xml_content, doc_key, organization_id }: ProcessDocumentRequest = await req.json();
+
+    if (!organization_id) {
+      return new Response(
+        JSON.stringify({ success: false, error: "organization_id is required" }),
+        {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        }
+      );
+    }
 
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -64,6 +75,7 @@ serve(async (req) => {
       .from("processed_documents")
       .select("id, status")
       .eq("doc_key", extractedData.doc_key)
+      .eq("organization_id", organization_id)
       .gte("created_at", windowDate.toISOString())
       .maybeSingle();
 
@@ -104,6 +116,7 @@ serve(async (req) => {
             supplier_tax_id: extractedData.supplier_tax_id,
             supplier_email: extractedData.supplier_email,
             xml_data: extractedData,
+            organization_id: organization_id,
           }),
         }
       );
@@ -150,6 +163,7 @@ serve(async (req) => {
           status: status,
           xml_data: extractedData,
           error_message: !vendorId ? classificationReason : null,
+          organization_id: organization_id,
         },
       ])
       .select()

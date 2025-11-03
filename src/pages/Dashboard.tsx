@@ -5,13 +5,14 @@ import { FileText, CheckCircle, AlertCircle, Clock, Settings, Database, LogOut, 
 import { StatsCard } from "@/components/dashboard/StatsCard";
 import { RecentDocuments } from "@/components/dashboard/RecentDocuments";
 import { ProcessingFlow } from "@/components/dashboard/ProcessingFlow";
+import { OrganizationSwitcher } from "@/components/OrganizationSwitcher";
 import { useAuth } from "@/hooks/useAuth";
 import { Link } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 
 const Dashboard = () => {
-  const { user, isAdmin, signOut } = useAuth();
+  const { user, isAdmin, activeOrganization, signOut } = useAuth();
   const [stats, setStats] = useState({
     processed: 0,
     review: 0,
@@ -20,16 +21,21 @@ const Dashboard = () => {
   });
 
   useEffect(() => {
-    fetchStats();
-  }, []);
+    if (activeOrganization) {
+      fetchStats();
+    }
+  }, [activeOrganization]);
 
   const fetchStats = async () => {
+    if (!activeOrganization) return;
+
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
     const { data, error } = await supabase
       .from("processed_documents")
-      .select("status, created_at");
+      .select("status, created_at")
+      .eq("organization_id", activeOrganization);
 
     if (!error && data) {
       const todayDocs = data.filter(
@@ -49,6 +55,16 @@ const Dashboard = () => {
     }
   };
 
+  if (!activeOrganization) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <div className="text-center">
+          <p className="text-muted-foreground">Cargando organización...</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-background">
       <header className="border-b bg-card">
@@ -67,6 +83,7 @@ const Dashboard = () => {
               <div className="h-2 w-2 rounded-full bg-success animate-pulse" />
               Conectado
             </Badge>
+            <OrganizationSwitcher />
             <Button variant="outline" size="sm" asChild>
               <Link to="/upload">
                 <Upload className="h-4 w-4 mr-2" />
@@ -92,6 +109,14 @@ const Dashboard = () => {
                 <Link to="/settings">
                   <Settings className="h-4 w-4 mr-2" />
                   Configuración
+                </Link>
+              </Button>
+            )}
+            {isAdmin && (
+              <Button variant="outline" size="sm" asChild>
+                <Link to="/organization">
+                  <Database className="h-4 w-4 mr-2" />
+                  Empresa
                 </Link>
               </Button>
             )}
