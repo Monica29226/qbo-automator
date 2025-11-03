@@ -11,6 +11,7 @@ import Settings from "./pages/Settings";
 import ReviewQueue from "./pages/ReviewQueue";
 import UploadDocument from "./pages/UploadDocument";
 import Organizations from "./pages/Organizations";
+import Integrations from "./pages/Integrations";
 import NotFound from "./pages/NotFound";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 
@@ -70,6 +71,14 @@ const App = () => (
             element={
               <ProtectedRoute requireAdmin>
                 <Organizations />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/integrations"
+            element={
+              <ProtectedRoute requireAdmin>
+                <Integrations />
               </ProtectedRoute>
             }
           />

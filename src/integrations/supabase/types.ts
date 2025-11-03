@@ -14,6 +14,53 @@ export type Database = {
   }
   public: {
     Tables: {
+      integration_accounts: {
+        Row: {
+          account_email: string | null
+          account_name: string | null
+          created_at: string | null
+          created_by: string | null
+          credentials: Json | null
+          id: string
+          is_active: boolean | null
+          organization_id: string
+          service_type: string
+          updated_at: string | null
+        }
+        Insert: {
+          account_email?: string | null
+          account_name?: string | null
+          created_at?: string | null
+          created_by?: string | null
+          credentials?: Json | null
+          id?: string
+          is_active?: boolean | null
+          organization_id: string
+          service_type: string
+          updated_at?: string | null
+        }
+        Update: {
+          account_email?: string | null
+          account_name?: string | null
+          created_at?: string | null
+          created_by?: string | null
+          credentials?: Json | null
+          id?: string
+          is_active?: boolean | null
+          organization_id?: string
+          service_type?: string
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "integration_accounts_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       organization_members: {
         Row: {
           created_at: string
@@ -57,6 +104,9 @@ export type Database = {
           address: string | null
           created_at: string
           email: string | null
+          gmail_connected: boolean | null
+          gmail_email: string | null
+          google_drive_connected: boolean | null
           google_drive_enabled: boolean | null
           google_drive_folder_id: string | null
           id: string
@@ -65,6 +115,8 @@ export type Database = {
           phone: string | null
           qbo_company_id: string | null
           qbo_realm_id: string | null
+          quickbooks_connected: boolean | null
+          quickbooks_realm_id: string | null
           settings: Json | null
           tax_id: string | null
           updated_at: string
@@ -73,6 +125,9 @@ export type Database = {
           address?: string | null
           created_at?: string
           email?: string | null
+          gmail_connected?: boolean | null
+          gmail_email?: string | null
+          google_drive_connected?: boolean | null
           google_drive_enabled?: boolean | null
           google_drive_folder_id?: string | null
           id?: string
@@ -81,6 +136,8 @@ export type Database = {
           phone?: string | null
           qbo_company_id?: string | null
           qbo_realm_id?: string | null
+          quickbooks_connected?: boolean | null
+          quickbooks_realm_id?: string | null
           settings?: Json | null
           tax_id?: string | null
           updated_at?: string
@@ -89,6 +146,9 @@ export type Database = {
           address?: string | null
           created_at?: string
           email?: string | null
+          gmail_connected?: boolean | null
+          gmail_email?: string | null
+          google_drive_connected?: boolean | null
           google_drive_enabled?: boolean | null
           google_drive_folder_id?: string | null
           id?: string
@@ -97,6 +157,8 @@ export type Database = {
           phone?: string | null
           qbo_company_id?: string | null
           qbo_realm_id?: string | null
+          quickbooks_connected?: boolean | null
+          quickbooks_realm_id?: string | null
           settings?: Json | null
           tax_id?: string | null
           updated_at?: string
