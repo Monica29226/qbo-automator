@@ -10,6 +10,8 @@ interface ProcessDocumentRequest {
   xml_content: string;
   doc_key?: string;
   organization_id: string;
+  pdf_path?: string;
+  xml_path?: string;
 }
 
 serve(async (req) => {
@@ -18,7 +20,7 @@ serve(async (req) => {
   }
 
   try {
-    const { xml_content, doc_key, organization_id }: ProcessDocumentRequest = await req.json();
+    const { xml_content, doc_key, organization_id, pdf_path, xml_path }: ProcessDocumentRequest = await req.json();
 
     if (!organization_id) {
       return new Response(
@@ -164,6 +166,9 @@ serve(async (req) => {
           xml_data: extractedData,
           error_message: !vendorId ? classificationReason : null,
           organization_id: organization_id,
+          file_path: pdf_path || xml_path,
+          pdf_attachment_url: pdf_path,
+          xml_attachment_url: xml_path,
         },
       ])
       .select()

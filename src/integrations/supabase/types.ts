@@ -106,6 +106,7 @@ export type Database = {
           doc_type: string
           error_message: string | null
           exchange_rate: number | null
+          file_path: string | null
           id: string
           issue_date: string
           organization_id: string | null
@@ -134,6 +135,7 @@ export type Database = {
           doc_type: string
           error_message?: string | null
           exchange_rate?: number | null
+          file_path?: string | null
           id?: string
           issue_date: string
           organization_id?: string | null
@@ -162,6 +164,7 @@ export type Database = {
           doc_type?: string
           error_message?: string | null
           exchange_rate?: number | null
+          file_path?: string | null
           id?: string
           issue_date?: string
           organization_id?: string | null

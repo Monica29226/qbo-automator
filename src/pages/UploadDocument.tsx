@@ -12,19 +12,28 @@ const UploadDocument = () => {
   const navigate = useNavigate();
   const { activeOrganization } = useAuth();
   const [xmlContent, setXmlContent] = useState("");
+  const [pdfFile, setPdfFile] = useState<File | null>(null);
+  const [xmlFile, setXmlFile] = useState<File | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [result, setResult] = useState<any>(null);
 
-  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleXmlFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
 
+    setXmlFile(file);
     const reader = new FileReader();
     reader.onload = (e) => {
       const content = e.target?.result as string;
       setXmlContent(content);
     };
     reader.readAsText(file);
+  };
+
+  const handlePdfFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setPdfFile(file);
   };
 
   const handleProcess = async () => {
@@ -42,10 +51,64 @@ const UploadDocument = () => {
     setResult(null);
 
     try {
+      // Extraer clave del documento para nombrar archivos
+      const docKeyMatch = xmlContent.match(/<Clave>(.*?)<\/Clave>/);
+      const docKey = docKeyMatch ? docKeyMatch[1] : `doc_${Date.now()}`;
+
+      let pdfPath = null;
+      let xmlPath = null;
+
+      // Subir PDF si existe
+      if (pdfFile) {
+        const pdfFileName = `${activeOrganization}/${docKey}/${docKey}.pdf`;
+        const { error: pdfError } = await supabase.storage
+          .from("company-documents")
+          .upload(pdfFileName, pdfFile, { upsert: true });
+
+        if (pdfError) {
+          console.error("Error uploading PDF:", pdfError);
+          toast.error("Error al subir PDF");
+          return;
+        }
+        pdfPath = pdfFileName;
+      }
+
+      // Subir XML si existe como archivo
+      if (xmlFile) {
+        const xmlFileName = `${activeOrganization}/${docKey}/${docKey}.xml`;
+        const { error: xmlError } = await supabase.storage
+          .from("company-documents")
+          .upload(xmlFileName, xmlFile, { upsert: true });
+
+        if (xmlError) {
+          console.error("Error uploading XML:", xmlError);
+          toast.error("Error al subir XML");
+          return;
+        }
+        xmlPath = xmlFileName;
+      } else if (xmlContent.trim()) {
+        // Si no hay archivo XML pero hay contenido, crear un Blob y subirlo
+        const xmlBlob = new Blob([xmlContent], { type: "application/xml" });
+        const xmlFileName = `${activeOrganization}/${docKey}/${docKey}.xml`;
+        const { error: xmlError } = await supabase.storage
+          .from("company-documents")
+          .upload(xmlFileName, xmlBlob, { upsert: true });
+
+        if (xmlError) {
+          console.error("Error uploading XML:", xmlError);
+          toast.error("Error al subir XML");
+          return;
+        }
+        xmlPath = xmlFileName;
+      }
+
       const { data, error } = await supabase.functions.invoke("process-document", {
         body: { 
           xml_content: xmlContent,
           organization_id: activeOrganization,
+          pdf_path: pdfPath,
+          xml_path: xmlPath,
+          doc_key: docKey,
         },
       });
 
@@ -57,9 +120,9 @@ const UploadDocument = () => {
 
       if (data.success) {
         if (data.status === "processed") {
-          toast.success("Documento procesado exitosamente");
+          toast.success("Documento procesado y almacenado exitosamente");
         } else if (data.status === "review") {
-          toast.warning("Documento requiere revisión manual");
+          toast.warning("Documento almacenado y requiere revisión manual");
         }
       } else {
         toast.error(data.message || "Error al procesar documento");
@@ -97,27 +160,56 @@ const UploadDocument = () => {
       <main className="container mx-auto px-6 py-8 max-w-4xl">
         <div className="grid gap-6">
           <Card className="p-6">
-            <h2 className="text-lg font-semibold mb-4">Cargar XML de Factura</h2>
+            <h2 className="text-lg font-semibold mb-4">Cargar Documentos</h2>
             <div className="space-y-4">
-              <div>
-                <label htmlFor="file-upload" className="cursor-pointer">
-                  <div className="border-2 border-dashed border-border rounded-lg p-8 text-center hover:border-primary transition-colors">
-                    <FileText className="h-12 w-12 mx-auto mb-3 text-muted-foreground" />
-                    <p className="text-sm font-medium mb-1">
-                      Haga clic para cargar archivo XML
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      o arrastre y suelte aquí
-                    </p>
-                  </div>
-                  <input
-                    id="file-upload"
-                    type="file"
-                    accept=".xml"
-                    className="hidden"
-                    onChange={handleFileUpload}
-                  />
-                </label>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label htmlFor="xml-upload" className="cursor-pointer">
+                    <div className="border-2 border-dashed border-border rounded-lg p-6 text-center hover:border-primary transition-colors">
+                      <FileText className="h-10 w-10 mx-auto mb-2 text-muted-foreground" />
+                      <p className="text-sm font-medium mb-1">
+                        Cargar XML
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        Factura electrónica
+                      </p>
+                      {xmlFile && (
+                        <p className="text-xs text-success mt-2">✓ {xmlFile.name}</p>
+                      )}
+                    </div>
+                    <input
+                      id="xml-upload"
+                      type="file"
+                      accept=".xml"
+                      className="hidden"
+                      onChange={handleXmlFileUpload}
+                    />
+                  </label>
+                </div>
+
+                <div>
+                  <label htmlFor="pdf-upload" className="cursor-pointer">
+                    <div className="border-2 border-dashed border-border rounded-lg p-6 text-center hover:border-primary transition-colors">
+                      <FileText className="h-10 w-10 mx-auto mb-2 text-muted-foreground" />
+                      <p className="text-sm font-medium mb-1">
+                        Cargar PDF
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        Documento visual
+                      </p>
+                      {pdfFile && (
+                        <p className="text-xs text-success mt-2">✓ {pdfFile.name}</p>
+                      )}
+                    </div>
+                    <input
+                      id="pdf-upload"
+                      type="file"
+                      accept=".pdf"
+                      className="hidden"
+                      onChange={handlePdfFileUpload}
+                    />
+                  </label>
+                </div>
               </div>
 
               <div className="relative">
@@ -210,6 +302,8 @@ const UploadDocument = () => {
                     variant="outline"
                     onClick={() => {
                       setXmlContent("");
+                      setPdfFile(null);
+                      setXmlFile(null);
                       setResult(null);
                     }}
                     className="flex-1"
