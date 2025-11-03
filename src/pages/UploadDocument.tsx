@@ -51,16 +51,29 @@ const UploadDocument = () => {
     setResult(null);
 
     try {
-      // Extraer clave del documento para nombrar archivos
+      // Extraer datos del XML para renombrar archivos
       const docKeyMatch = xmlContent.match(/<Clave>(.*?)<\/Clave>/);
       const docKey = docKeyMatch ? docKeyMatch[1] : `doc_${Date.now()}`;
+      
+      // Extraer información adicional para renombrado descriptivo
+      const supplierNameMatch = xmlContent.match(/<Nombre>(.*?)<\/Nombre>/);
+      const supplierName = supplierNameMatch ? supplierNameMatch[1].replace(/[^a-zA-Z0-9\s]/g, '').trim() : 'Proveedor';
+      
+      const docNumberMatch = xmlContent.match(/<NumeroConsecutivo>(.*?)<\/NumeroConsecutivo>/);
+      const docNumber = docNumberMatch ? docNumberMatch[1] : docKey.substring(0, 10);
+      
+      const issueDateMatch = xmlContent.match(/<FechaEmision>(.*?)<\/FechaEmision>/);
+      const issueDate = issueDateMatch ? issueDateMatch[1].split('T')[0] : new Date().toISOString().split('T')[0];
 
       let pdfPath = null;
       let xmlPath = null;
 
-      // Subir PDF si existe
+      // Subir PDF con nombre descriptivo
       if (pdfFile) {
-        const pdfFileName = `${activeOrganization}/${docKey}/${docKey}.pdf`;
+        // Formato: {proveedor}_{consecutivo}_{fecha}.pdf
+        const descriptiveName = `${supplierName}_${docNumber}_${issueDate}.pdf`;
+        const pdfFileName = `${activeOrganization}/${docKey}/${descriptiveName}`;
+        
         const { error: pdfError } = await supabase.storage
           .from("company-documents")
           .upload(pdfFileName, pdfFile, { upsert: true });
@@ -73,9 +86,11 @@ const UploadDocument = () => {
         pdfPath = pdfFileName;
       }
 
-      // Subir XML si existe como archivo
+      // Subir XML con nombre descriptivo
       if (xmlFile) {
-        const xmlFileName = `${activeOrganization}/${docKey}/${docKey}.xml`;
+        const descriptiveName = `${supplierName}_${docNumber}_${issueDate}.xml`;
+        const xmlFileName = `${activeOrganization}/${docKey}/${descriptiveName}`;
+        
         const { error: xmlError } = await supabase.storage
           .from("company-documents")
           .upload(xmlFileName, xmlFile, { upsert: true });
@@ -88,8 +103,10 @@ const UploadDocument = () => {
         xmlPath = xmlFileName;
       } else if (xmlContent.trim()) {
         // Si no hay archivo XML pero hay contenido, crear un Blob y subirlo
+        const descriptiveName = `${supplierName}_${docNumber}_${issueDate}.xml`;
         const xmlBlob = new Blob([xmlContent], { type: "application/xml" });
-        const xmlFileName = `${activeOrganization}/${docKey}/${docKey}.xml`;
+        const xmlFileName = `${activeOrganization}/${docKey}/${descriptiveName}`;
+        
         const { error: xmlError } = await supabase.storage
           .from("company-documents")
           .upload(xmlFileName, xmlBlob, { upsert: true });
