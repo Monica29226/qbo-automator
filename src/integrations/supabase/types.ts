@@ -14,16 +14,245 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      processed_documents: {
+        Row: {
+          created_at: string
+          currency: string
+          doc_key: string
+          doc_number: string
+          doc_type: string
+          error_message: string | null
+          exchange_rate: number | null
+          id: string
+          issue_date: string
+          pdf_attachment_url: string | null
+          processed_at: string | null
+          processed_by: string | null
+          qbo_entity_id: string | null
+          qbo_entity_type: string | null
+          status: string
+          supplier_email: string | null
+          supplier_name: string
+          supplier_tax_id: string | null
+          total_amount: number
+          total_discount: number | null
+          total_tax: number | null
+          updated_at: string
+          vendor_id: string | null
+          xml_attachment_url: string | null
+          xml_data: Json | null
+        }
+        Insert: {
+          created_at?: string
+          currency?: string
+          doc_key: string
+          doc_number: string
+          doc_type: string
+          error_message?: string | null
+          exchange_rate?: number | null
+          id?: string
+          issue_date: string
+          pdf_attachment_url?: string | null
+          processed_at?: string | null
+          processed_by?: string | null
+          qbo_entity_id?: string | null
+          qbo_entity_type?: string | null
+          status?: string
+          supplier_email?: string | null
+          supplier_name: string
+          supplier_tax_id?: string | null
+          total_amount: number
+          total_discount?: number | null
+          total_tax?: number | null
+          updated_at?: string
+          vendor_id?: string | null
+          xml_attachment_url?: string | null
+          xml_data?: Json | null
+        }
+        Update: {
+          created_at?: string
+          currency?: string
+          doc_key?: string
+          doc_number?: string
+          doc_type?: string
+          error_message?: string | null
+          exchange_rate?: number | null
+          id?: string
+          issue_date?: string
+          pdf_attachment_url?: string | null
+          processed_at?: string | null
+          processed_by?: string | null
+          qbo_entity_id?: string | null
+          qbo_entity_type?: string | null
+          status?: string
+          supplier_email?: string | null
+          supplier_name?: string
+          supplier_tax_id?: string | null
+          total_amount?: number
+          total_discount?: number | null
+          total_tax?: number | null
+          updated_at?: string
+          vendor_id?: string | null
+          xml_attachment_url?: string | null
+          xml_data?: Json | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "processed_documents_vendor_id_fkey"
+            columns: ["vendor_id"]
+            isOneToOne: false
+            referencedRelation: "vendors"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      profiles: {
+        Row: {
+          avatar_url: string | null
+          created_at: string
+          email: string
+          full_name: string | null
+          id: string
+          updated_at: string
+        }
+        Insert: {
+          avatar_url?: string | null
+          created_at?: string
+          email: string
+          full_name?: string | null
+          id: string
+          updated_at?: string
+        }
+        Update: {
+          avatar_url?: string | null
+          created_at?: string
+          email?: string
+          full_name?: string | null
+          id?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      system_settings: {
+        Row: {
+          description: string | null
+          key: string
+          updated_at: string
+          updated_by: string | null
+          value: string
+        }
+        Insert: {
+          description?: string | null
+          key: string
+          updated_at?: string
+          updated_by?: string | null
+          value: string
+        }
+        Update: {
+          description?: string | null
+          key?: string
+          updated_at?: string
+          updated_by?: string | null
+          value?: string
+        }
+        Relationships: []
+      }
+      user_roles: {
+        Row: {
+          created_at: string
+          id: string
+          role: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          role?: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          role?: Database["public"]["Enums"]["app_role"]
+          user_id?: string
+        }
+        Relationships: []
+      }
+      vendors: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          default_account_ref: string
+          default_class_ref: string | null
+          default_location_ref: string | null
+          discount_account_ref: string | null
+          id: string
+          is_active: boolean
+          mapping_hints: string | null
+          qbo_vendor_ref: string
+          tax_rate: number
+          tax_treatment: string
+          terms_ref: string | null
+          updated_at: string
+          vendor_email: string | null
+          vendor_name: string
+          vendor_tax_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          default_account_ref: string
+          default_class_ref?: string | null
+          default_location_ref?: string | null
+          discount_account_ref?: string | null
+          id?: string
+          is_active?: boolean
+          mapping_hints?: string | null
+          qbo_vendor_ref: string
+          tax_rate: number
+          tax_treatment: string
+          terms_ref?: string | null
+          updated_at?: string
+          vendor_email?: string | null
+          vendor_name: string
+          vendor_tax_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          default_account_ref?: string
+          default_class_ref?: string | null
+          default_location_ref?: string | null
+          discount_account_ref?: string | null
+          id?: string
+          is_active?: boolean
+          mapping_hints?: string | null
+          qbo_vendor_ref?: string
+          tax_rate?: number
+          tax_treatment?: string
+          terms_ref?: string | null
+          updated_at?: string
+          vendor_email?: string | null
+          vendor_name?: string
+          vendor_tax_id?: string | null
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      has_role: {
+        Args: {
+          _role: Database["public"]["Enums"]["app_role"]
+          _user_id: string
+        }
+        Returns: boolean
+      }
     }
     Enums: {
-      [_ in never]: never
+      app_role: "admin" | "user"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -150,6 +379,8 @@ export type CompositeTypes<
 
 export const Constants = {
   public: {
-    Enums: {},
+    Enums: {
+      app_role: ["admin", "user"],
+    },
   },
 } as const
