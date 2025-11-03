@@ -8,6 +8,8 @@ import Dashboard from "./pages/Dashboard";
 import Auth from "./pages/Auth";
 import Vendors from "./pages/Vendors";
 import Settings from "./pages/Settings";
+import ReviewQueue from "./pages/ReviewQueue";
+import UploadDocument from "./pages/UploadDocument";
 import NotFound from "./pages/NotFound";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 
@@ -27,6 +29,22 @@ const App = () => (
             element={
               <ProtectedRoute>
                 <Dashboard />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/upload"
+            element={
+              <ProtectedRoute>
+                <UploadDocument />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/review-queue"
+            element={
+              <ProtectedRoute>
+                <ReviewQueue />
               </ProtectedRoute>
             }
           />

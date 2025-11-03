@@ -1,15 +1,53 @@
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { FileText, CheckCircle, AlertCircle, Clock, Settings, Database, LogOut, Users } from "lucide-react";
+import { FileText, CheckCircle, AlertCircle, Clock, Settings, Database, LogOut, Users, Upload, Eye } from "lucide-react";
 import { StatsCard } from "@/components/dashboard/StatsCard";
 import { RecentDocuments } from "@/components/dashboard/RecentDocuments";
 import { ProcessingFlow } from "@/components/dashboard/ProcessingFlow";
 import { useAuth } from "@/hooks/useAuth";
 import { Link } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { supabase } from "@/integrations/supabase/client";
 
 const Dashboard = () => {
   const { user, isAdmin, signOut } = useAuth();
+  const [stats, setStats] = useState({
+    processed: 0,
+    review: 0,
+    pending: 0,
+    total: 0,
+  });
+
+  useEffect(() => {
+    fetchStats();
+  }, []);
+
+  const fetchStats = async () => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const { data, error } = await supabase
+      .from("processed_documents")
+      .select("status, created_at");
+
+    if (!error && data) {
+      const todayDocs = data.filter(
+        (doc) => new Date(doc.created_at) >= today
+      );
+      const thisMonth = data.filter(
+        (doc) =>
+          new Date(doc.created_at).getMonth() === new Date().getMonth()
+      );
+
+      setStats({
+        processed: todayDocs.filter((d) => d.status === "processed").length,
+        review: data.filter((d) => d.status === "review").length,
+        pending: data.filter((d) => d.status === "pending").length,
+        total: thisMonth.length,
+      });
+    }
+  };
 
   return (
     <div className="min-h-screen bg-background">
@@ -29,6 +67,18 @@ const Dashboard = () => {
               <div className="h-2 w-2 rounded-full bg-success animate-pulse" />
               Conectado
             </Badge>
+            <Button variant="outline" size="sm" asChild>
+              <Link to="/upload">
+                <Upload className="h-4 w-4 mr-2" />
+                Cargar XML
+              </Link>
+            </Button>
+            <Button variant="outline" size="sm" asChild>
+              <Link to="/review-queue">
+                <Eye className="h-4 w-4 mr-2" />
+                Revisión ({stats.review})
+              </Link>
+            </Button>
             {isAdmin && (
               <Button variant="outline" size="sm" asChild>
                 <Link to="/vendors">
@@ -62,28 +112,28 @@ const Dashboard = () => {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
           <StatsCard
             title="Procesadas Hoy"
-            value="24"
+            value={stats.processed.toString()}
             change="+12%"
             icon={CheckCircle}
             variant="success"
           />
           <StatsCard
             title="En Revisión"
-            value="3"
+            value={stats.review.toString()}
             change="-2"
             icon={AlertCircle}
             variant="warning"
           />
           <StatsCard
             title="Pendientes"
-            value="7"
+            value={stats.pending.toString()}
             change="+5"
             icon={Clock}
             variant="default"
           />
           <StatsCard
             title="Total Mes"
-            value="847"
+            value={stats.total.toString()}
             change="+18%"
             icon={FileText}
             variant="primary"
