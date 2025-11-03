@@ -57,6 +57,8 @@ export type Database = {
           address: string | null
           created_at: string
           email: string | null
+          google_drive_enabled: boolean | null
+          google_drive_folder_id: string | null
           id: string
           is_active: boolean
           name: string
@@ -71,6 +73,8 @@ export type Database = {
           address?: string | null
           created_at?: string
           email?: string | null
+          google_drive_enabled?: boolean | null
+          google_drive_folder_id?: string | null
           id?: string
           is_active?: boolean
           name: string
@@ -85,6 +89,8 @@ export type Database = {
           address?: string | null
           created_at?: string
           email?: string | null
+          google_drive_enabled?: boolean | null
+          google_drive_folder_id?: string | null
           id?: string
           is_active?: boolean
           name?: string

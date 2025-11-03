@@ -33,6 +33,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Switch } from "@/components/ui/switch";
 
 interface Organization {
   id: string;
@@ -40,6 +41,8 @@ interface Organization {
   tax_id: string | null;
   email: string | null;
   qbo_company_id: string | null;
+  google_drive_folder_id: string | null;
+  google_drive_enabled: boolean;
   is_active: boolean;
 }
 
@@ -67,6 +70,8 @@ const Organizations = () => {
     tax_id: "",
     email: "",
     qbo_company_id: "",
+    google_drive_folder_id: "",
+    google_drive_enabled: false,
   });
 
   useEffect(() => {
@@ -97,6 +102,8 @@ const Organizations = () => {
         tax_id: org.tax_id || "",
         email: org.email || "",
         qbo_company_id: org.qbo_company_id || "",
+        google_drive_folder_id: org.google_drive_folder_id || "",
+        google_drive_enabled: org.google_drive_enabled || false,
       });
     }
 
@@ -135,6 +142,8 @@ const Organizations = () => {
         tax_id: orgFormData.tax_id || null,
         email: orgFormData.email || null,
         qbo_company_id: orgFormData.qbo_company_id || null,
+        google_drive_folder_id: orgFormData.google_drive_folder_id || null,
+        google_drive_enabled: orgFormData.google_drive_enabled,
       })
       .eq("id", activeOrganization);
 
@@ -293,6 +302,16 @@ const Organizations = () => {
                     <p className="text-sm text-muted-foreground mb-1">QuickBooks Company ID</p>
                     <p className="font-medium">{orgDetails?.qbo_company_id || "No configurado"}</p>
                   </div>
+                  <div>
+                    <p className="text-sm text-muted-foreground mb-1">Google Drive Folder ID</p>
+                    <p className="font-medium">{orgDetails?.google_drive_folder_id || "No configurado"}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-muted-foreground mb-1">Sincronización Google Drive</p>
+                    <Badge variant={orgDetails?.google_drive_enabled ? "default" : "secondary"}>
+                      {orgDetails?.google_drive_enabled ? "Activada" : "Desactivada"}
+                    </Badge>
+                  </div>
                 </div>
               </Card>
             </TabsContent>
@@ -409,6 +428,37 @@ const Organizations = () => {
                 value={orgFormData.qbo_company_id}
                 onChange={(e) =>
                   setOrgFormData({ ...orgFormData, qbo_company_id: e.target.value })
+                }
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="org-drive-folder">Google Drive Folder ID</Label>
+              <Input
+                id="org-drive-folder"
+                value={orgFormData.google_drive_folder_id}
+                onChange={(e) =>
+                  setOrgFormData({ ...orgFormData, google_drive_folder_id: e.target.value })
+                }
+                placeholder="1zXPJYdXOBwnpal6AgYO11K6RKSKPtlV0"
+              />
+              <p className="text-xs text-muted-foreground">
+                ID de la carpeta en Google Drive para sincronizar documentos
+              </p>
+            </div>
+
+            <div className="flex items-center justify-between">
+              <div className="space-y-0.5">
+                <Label htmlFor="org-drive-enabled">Sincronización Google Drive</Label>
+                <p className="text-xs text-muted-foreground">
+                  Activar sincronización automática de documentos
+                </p>
+              </div>
+              <Switch
+                id="org-drive-enabled"
+                checked={orgFormData.google_drive_enabled}
+                onCheckedChange={(checked) =>
+                  setOrgFormData({ ...orgFormData, google_drive_enabled: checked })
                 }
               />
             </div>
