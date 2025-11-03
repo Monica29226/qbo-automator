@@ -62,7 +62,7 @@ const Organizations = () => {
   const [members, setMembers] = useState<Member[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
-  const [dialogType, setDialogType] = useState<"edit-org" | "add-member">("edit-org");
+  const [dialogType, setDialogType] = useState<"edit-org" | "add-member" | "create-org">("edit-org");
   const [newMemberEmail, setNewMemberEmail] = useState("");
   const [newMemberRole, setNewMemberRole] = useState("member");
   const [orgFormData, setOrgFormData] = useState({
@@ -228,6 +228,71 @@ const Organizations = () => {
     }
   };
 
+  const handleCreateOrg = async () => {
+    if (!orgFormData.name) {
+      toast.error("El nombre es requerido");
+      return;
+    }
+
+    setIsLoading(true);
+
+    const { data: { user } } = await supabase.auth.getUser();
+    
+    if (!user) {
+      toast.error("Usuario no autenticado");
+      setIsLoading(false);
+      return;
+    }
+
+    // Crear nueva organización
+    const { data: newOrg, error: orgError } = await supabase
+      .from("organizations")
+      .insert([{
+        name: orgFormData.name,
+        tax_id: orgFormData.tax_id || null,
+        email: orgFormData.email || null,
+        qbo_company_id: orgFormData.qbo_company_id || null,
+        google_drive_folder_id: orgFormData.google_drive_folder_id || null,
+        google_drive_enabled: orgFormData.google_drive_enabled,
+      }])
+      .select()
+      .single();
+
+    if (orgError) {
+      toast.error("Error al crear organización");
+      console.error(orgError);
+      setIsLoading(false);
+      return;
+    }
+
+    // Agregar usuario actual como owner
+    const { error: memberError } = await supabase
+      .from("organization_members")
+      .insert([{
+        organization_id: newOrg.id,
+        user_id: user.id,
+        role: 'owner'
+      }]);
+
+    setIsLoading(false);
+
+    if (memberError) {
+      toast.error("Error al configurar permisos");
+      console.error(memberError);
+    } else {
+      toast.success("Organización creada exitosamente. Recarga la página para verla.");
+      setIsDialogOpen(false);
+      setOrgFormData({
+        name: "",
+        tax_id: "",
+        email: "",
+        qbo_company_id: "",
+        google_drive_folder_id: "",
+        google_drive_enabled: false,
+      });
+    }
+  };
+
   const roleLabels: Record<string, string> = {
     owner: "Propietario",
     admin: "Administrador",
@@ -268,6 +333,7 @@ const Organizations = () => {
             <TabsList>
               <TabsTrigger value="info">Información</TabsTrigger>
               <TabsTrigger value="members">Miembros</TabsTrigger>
+              <TabsTrigger value="all-orgs">Todas las Empresas</TabsTrigger>
             </TabsList>
 
             <TabsContent value="info">
@@ -377,6 +443,50 @@ const Organizations = () => {
                 </Table>
               </Card>
             </TabsContent>
+
+            <TabsContent value="all-orgs">
+              <Card className="p-6">
+                <div className="flex items-center justify-between mb-6">
+                  <h2 className="text-lg font-semibold">Todas las Empresas</h2>
+                  <Button
+                    onClick={() => {
+                      setDialogType("create-org");
+                      setOrgFormData({
+                        name: "",
+                        tax_id: "",
+                        email: "",
+                        qbo_company_id: "",
+                        google_drive_folder_id: "",
+                        google_drive_enabled: false,
+                      });
+                      setIsDialogOpen(true);
+                    }}
+                  >
+                    <Plus className="h-4 w-4 mr-2" />
+                    Crear Nueva Empresa
+                  </Button>
+                </div>
+
+                <div className="space-y-3">
+                  {userOrgs.map((org) => (
+                    <Card 
+                      key={org.id} 
+                      className={`p-4 ${org.id === activeOrganization ? 'border-primary' : ''}`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <h3 className="font-semibold">{org.name}</h3>
+                          <p className="text-sm text-muted-foreground capitalize">{org.role}</p>
+                        </div>
+                        {org.id === activeOrganization && (
+                          <Badge>Activa</Badge>
+                        )}
+                      </div>
+                    </Card>
+                  ))}
+                </div>
+              </Card>
+            </TabsContent>
           </Tabs>
         )}
       </main>
@@ -476,6 +586,57 @@ const Organizations = () => {
                 </>
               ) : (
                 "Guardar"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Dialog para crear organización */}
+      <Dialog open={isDialogOpen && dialogType === "create-org"} onOpenChange={setIsDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Crear Nueva Empresa</DialogTitle>
+            <DialogDescription>Cree una nueva organización para gestionar</DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="new-org-name">
+                Nombre <span className="text-destructive">*</span>
+              </Label>
+              <Input
+                id="new-org-name"
+                value={orgFormData.name}
+                onChange={(e) => setOrgFormData({ ...orgFormData, name: e.target.value })}
+                placeholder="Mi Nueva Empresa"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="new-org-email">Correo</Label>
+              <Input
+                id="new-org-email"
+                type="email"
+                value={orgFormData.email}
+                onChange={(e) => setOrgFormData({ ...orgFormData, email: e.target.value })}
+                placeholder="contacto@empresa.com"
+              />
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsDialogOpen(false)}>
+              Cancelar
+            </Button>
+            <Button onClick={handleCreateOrg} disabled={isLoading}>
+              {isLoading ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Creando...
+                </>
+              ) : (
+                "Crear Empresa"
               )}
             </Button>
           </DialogFooter>
