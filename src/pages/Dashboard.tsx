@@ -206,10 +206,17 @@ const Dashboard = () => {
           </Card>
 
           <Card className="p-6">
-            <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
-              <Database className="h-5 w-5 text-primary" />
-              Conexiones
-            </h3>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold flex items-center gap-2">
+                <Database className="h-5 w-5 text-primary" />
+                Conexiones
+              </h3>
+              <Button variant="ghost" size="sm" asChild>
+                <Link to="/integrations">
+                  <Settings className="h-4 w-4" />
+                </Link>
+              </Button>
+            </div>
             <div className="space-y-4">
               <ConnectionStatus service="Gmail" status="connected" />
               <ConnectionStatus service="QuickBooks Online" status="connected" />

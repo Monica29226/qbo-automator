@@ -267,16 +267,29 @@ const Integrations = () => {
                     </div>
                   </div>
 
-                  <Button
-                    onClick={() => {
-                      setSelectedService(service.id);
-                      setIsDialogOpen(true);
-                    }}
-                    size="sm"
-                  >
-                    <Plus className="h-4 w-4 mr-2" />
-                    Agregar cuenta
-                  </Button>
+                  {!service.connected ? (
+                    <Button
+                      onClick={() => {
+                        toast.info("Configuración de OAuth en desarrollo. Por favor, contacta al administrador.");
+                      }}
+                      size="sm"
+                      variant="default"
+                    >
+                      <Plug className="h-4 w-4 mr-2" />
+                      Conectar
+                    </Button>
+                  ) : (
+                    <Button
+                      onClick={() => {
+                        setSelectedService(service.id);
+                        setIsDialogOpen(true);
+                      }}
+                      size="sm"
+                    >
+                      <Plus className="h-4 w-4 mr-2" />
+                      Agregar cuenta
+                    </Button>
+                  )}
                 </div>
               </Card>
             ))}
