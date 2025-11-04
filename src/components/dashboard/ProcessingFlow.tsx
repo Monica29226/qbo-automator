@@ -1,5 +1,5 @@
 import { cn } from "@/lib/utils";
-import { Mail, FileSearch, Database, CheckCircle, ArrowRight } from "lucide-react";
+import { Mail, FileSearch, Database, CheckCircle, ArrowRight, Upload, Plug } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
@@ -150,12 +150,28 @@ export const ProcessingFlow = ({ organizationId, gmailConnected, quickbooksConne
   if (!gmailConnected && !quickbooksConnected) {
     return (
       <div className="text-center py-8 space-y-4">
-        <p className="text-muted-foreground">
-          Para comenzar a procesar facturas, primero conecta Gmail y QuickBooks
-        </p>
-        <Button asChild variant="default">
-          <Link to="/integrations">Ir a Integraciones</Link>
-        </Button>
+        <div className="bg-muted/50 rounded-lg p-6 space-y-3">
+          <p className="text-sm text-muted-foreground">
+            <strong>¿Quieres procesar facturas manualmente?</strong>
+          </p>
+          <p className="text-xs text-muted-foreground">
+            Este flujo es para importación automática desde Gmail. Para subir archivos XML manualmente, usa el botón de arriba.
+          </p>
+          <div className="flex flex-col sm:flex-row gap-3 justify-center pt-2">
+            <Button asChild variant="default">
+              <Link to="/upload">
+                <Upload className="h-4 w-4 mr-2" />
+                Subir XML Manualmente
+              </Link>
+            </Button>
+            <Button asChild variant="outline">
+              <Link to="/integrations">
+                <Plug className="h-4 w-4 mr-2" />
+                Configurar Gmail/QuickBooks
+              </Link>
+            </Button>
+          </div>
+        </div>
       </div>
     );
   }
