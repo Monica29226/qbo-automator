@@ -4,17 +4,29 @@ import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { useState } from "react";
+import { Link } from "react-router-dom";
 
 interface ProcessingFlowProps {
   organizationId: string;
+  gmailConnected: boolean;
+  quickbooksConnected: boolean;
   onRefresh?: () => void;
 }
 
-export const ProcessingFlow = ({ organizationId, onRefresh }: ProcessingFlowProps) => {
+export const ProcessingFlow = ({ organizationId, gmailConnected, quickbooksConnected, onRefresh }: ProcessingFlowProps) => {
   const { toast } = useToast();
   const [isProcessing, setIsProcessing] = useState(false);
 
   const handleFetchInvoices = async () => {
+    if (!gmailConnected) {
+      toast({
+        title: "Gmail no conectado",
+        description: "Primero debes conectar Gmail en la página de Integraciones",
+        variant: "destructive",
+      });
+      return;
+    }
+
     setIsProcessing(true);
     try {
       const { data, error } = await supabase.functions.invoke("fetch-gmail-invoices", {
@@ -41,6 +53,15 @@ export const ProcessingFlow = ({ organizationId, onRefresh }: ProcessingFlowProp
   };
 
   const handleSyncToQuickBooks = async () => {
+    if (!quickbooksConnected) {
+      toast({
+        title: "QuickBooks no conectado",
+        description: "Primero debes conectar QuickBooks en la página de Integraciones",
+        variant: "destructive",
+      });
+      return;
+    }
+
     setIsProcessing(true);
     try {
       const { data: docs, error: docsError } = await supabase
@@ -92,64 +113,96 @@ export const ProcessingFlow = ({ organizationId, onRefresh }: ProcessingFlowProp
       icon: Mail,
       label: "Recibir Correo",
       description: "Gmail/Outlook",
-      status: "active",
+      status: gmailConnected ? "active" : "inactive",
       onClick: handleFetchInvoices,
       actionLabel: "Importar",
+      disabled: !gmailConnected,
     },
     {
       icon: FileSearch,
       label: "Extraer XML",
       description: "Parser CR v4.x",
-      status: "active",
+      status: gmailConnected ? "active" : "inactive",
       onClick: handleFetchInvoices,
       actionLabel: "Procesar",
+      disabled: !gmailConnected,
     },
     {
       icon: Database,
       label: "Clasificar",
       description: "Catálogo proveedores",
-      status: "active",
+      status: gmailConnected ? "active" : "inactive",
       onClick: handleFetchInvoices,
       actionLabel: "Clasificar",
+      disabled: !gmailConnected,
     },
     {
       icon: CheckCircle,
       label: "Publicar QBO",
       description: "Bill/VendorCredit",
-      status: "active",
+      status: quickbooksConnected ? "active" : "inactive",
       onClick: handleSyncToQuickBooks,
       actionLabel: "Publicar",
+      disabled: !quickbooksConnected,
     },
   ];
 
+  if (!gmailConnected && !quickbooksConnected) {
+    return (
+      <div className="text-center py-8 space-y-4">
+        <p className="text-muted-foreground">
+          Para comenzar a procesar facturas, primero conecta Gmail y QuickBooks
+        </p>
+        <Button asChild variant="default">
+          <Link to="/integrations">Ir a Integraciones</Link>
+        </Button>
+      </div>
+    );
+  }
+
   return (
-    <div className="flex items-center justify-between gap-4 flex-wrap">
-      {steps.map((step, index) => (
-        <div key={step.label} className="flex items-center gap-4">
-          <div className="flex flex-col items-center gap-3">
-            <Button
-              variant="ghost"
-              disabled={isProcessing}
-              onClick={step.onClick}
-              className={cn(
-                "h-16 w-16 rounded-xl flex items-center justify-center transition-all p-0 hover:scale-105",
-                step.status === "active" 
-                  ? "bg-primary text-primary-foreground shadow-lg hover:bg-primary/90" 
-                  : "bg-muted text-muted-foreground hover:bg-muted/80"
-              )}
-            >
-              <step.icon className="h-8 w-8" />
-            </Button>
-            <div className="text-center">
-              <p className="font-semibold text-sm text-foreground">{step.label}</p>
-              <p className="text-xs text-muted-foreground">{step.description}</p>
+    <div className="space-y-4">
+      <div className="flex items-center justify-between gap-4 flex-wrap">
+        {steps.map((step, index) => (
+          <div key={step.label} className="flex items-center gap-4">
+            <div className="flex flex-col items-center gap-3">
+              <Button
+                variant="ghost"
+                disabled={isProcessing || step.disabled}
+                onClick={step.onClick}
+                className={cn(
+                  "h-16 w-16 rounded-xl flex items-center justify-center transition-all p-0",
+                  step.status === "active" 
+                    ? "bg-primary text-primary-foreground shadow-lg hover:bg-primary/90 hover:scale-105" 
+                    : "bg-muted text-muted-foreground cursor-not-allowed opacity-50"
+                )}
+              >
+                <step.icon className="h-8 w-8" />
+              </Button>
+              <div className="text-center">
+                <p className="font-semibold text-sm text-foreground">{step.label}</p>
+                <p className="text-xs text-muted-foreground">{step.description}</p>
+              </div>
             </div>
+            {index < steps.length - 1 && (
+              <ArrowRight className="h-6 w-6 text-muted-foreground flex-shrink-0 mt-[-30px]" />
+            )}
           </div>
-          {index < steps.length - 1 && (
-            <ArrowRight className="h-6 w-6 text-muted-foreground flex-shrink-0 mt-[-30px]" />
+        ))}
+      </div>
+      {(!gmailConnected || !quickbooksConnected) && (
+        <div className="text-center text-sm text-muted-foreground bg-muted/30 p-3 rounded-lg">
+          {!gmailConnected && !quickbooksConnected ? (
+            <>Conecta Gmail y QuickBooks para activar el flujo completo</>
+          ) : !gmailConnected ? (
+            <>Conecta Gmail para activar los pasos 1-3</>
+          ) : (
+            <>Conecta QuickBooks para activar el paso 4</>
           )}
+          {" · "}
+          <Link to="/integrations" className="text-primary underline">Ir a Integraciones</Link>
         </div>
-      ))}
+      )}
     </div>
   );
 };

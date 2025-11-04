@@ -264,7 +264,12 @@ const Dashboard = () => {
             <Clock className="h-5 w-5 text-primary" />
             Flujo de Procesamiento
           </h3>
-          <ProcessingFlow organizationId={activeOrganization} onRefresh={fetchStats} />
+          <ProcessingFlow 
+            organizationId={activeOrganization} 
+            gmailConnected={connections.gmail}
+            quickbooksConnected={connections.quickbooks}
+            onRefresh={fetchStats} 
+          />
         </Card>
       </main>
     </div>
