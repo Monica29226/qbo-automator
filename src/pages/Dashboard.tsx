@@ -19,10 +19,16 @@ const Dashboard = () => {
     pending: 0,
     total: 0,
   });
+  const [connections, setConnections] = useState({
+    gmail: false,
+    quickbooks: false,
+    sharepoint: false,
+  });
 
   useEffect(() => {
     if (activeOrganization) {
       fetchStats();
+      fetchConnections();
       
       // Configurar suscripción en tiempo real
       const channel = supabase
@@ -48,6 +54,24 @@ const Dashboard = () => {
       };
     }
   }, [activeOrganization]);
+
+  const fetchConnections = async () => {
+    if (!activeOrganization) return;
+
+    const { data, error } = await supabase
+      .from("organizations")
+      .select("gmail_connected, quickbooks_connected")
+      .eq("id", activeOrganization)
+      .single();
+
+    if (!error && data) {
+      setConnections({
+        gmail: data.gmail_connected || false,
+        quickbooks: data.quickbooks_connected || false,
+        sharepoint: false, // Not implemented yet
+      });
+    }
+  };
 
   const fetchStats = async () => {
     if (!activeOrganization) return;
@@ -218,9 +242,9 @@ const Dashboard = () => {
               </Button>
             </div>
             <div className="space-y-4">
-              <ConnectionStatus service="Gmail" status="connected" />
-              <ConnectionStatus service="QuickBooks Online" status="connected" />
-              <ConnectionStatus service="SharePoint" status="disconnected" />
+              <ConnectionStatus service="Gmail" status={connections.gmail ? "connected" : "disconnected"} />
+              <ConnectionStatus service="QuickBooks Online" status={connections.quickbooks ? "connected" : "disconnected"} />
+              <ConnectionStatus service="SharePoint" status={connections.sharepoint ? "connected" : "disconnected"} />
             </div>
           </Card>
         </div>

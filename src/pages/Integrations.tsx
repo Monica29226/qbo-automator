@@ -46,6 +46,7 @@ const Integrations = () => {
   const [selectedService, setSelectedService] = useState<string>("");
   const [accountEmail, setAccountEmail] = useState("");
   const [accountName, setAccountName] = useState("");
+  const [isConnecting, setIsConnecting] = useState(false);
 
   useEffect(() => {
     if (activeOrganization) {
@@ -146,6 +147,52 @@ const Integrations = () => {
     }
   };
 
+  const handleConnect = async (serviceId: string) => {
+    if (!activeOrganization) {
+      toast.error("No hay organización activa");
+      return;
+    }
+
+    setIsConnecting(true);
+
+    try {
+      let functionName = "";
+      
+      if (serviceId === "gmail") {
+        functionName = "oauth-google-init";
+      } else if (serviceId === "quickbooks") {
+        functionName = "oauth-quickbooks-init";
+      } else {
+        toast.info(`La conexión de ${serviceId} estará disponible próximamente`);
+        setIsConnecting(false);
+        return;
+      }
+
+      const { data, error } = await supabase.functions.invoke(functionName, {
+        body: { organization_id: activeOrganization }
+      });
+
+      if (error) {
+        console.error("Error initiating OAuth:", error);
+        toast.error("Error al iniciar conexión. Verifica que las credenciales OAuth estén configuradas.");
+        setIsConnecting(false);
+        return;
+      }
+
+      if (data?.auth_url) {
+        // Redirigir a la URL de autorización
+        window.location.href = data.auth_url;
+      } else {
+        toast.error("No se recibió URL de autorización");
+        setIsConnecting(false);
+      }
+    } catch (error) {
+      console.error("Error connecting service:", error);
+      toast.error("Error al conectar servicio");
+      setIsConnecting(false);
+    }
+  };
+
   const services = [
     {
       id: "gmail",
@@ -180,6 +227,27 @@ const Integrations = () => {
       description: "Almacenar documentos en la nube",
     },
   ];
+
+  // Mostrar mensajes de éxito/error de OAuth
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const success = urlParams.get("success");
+    const error = urlParams.get("error");
+
+    if (success === "gmail_connected") {
+      toast.success("Gmail conectado exitosamente");
+      // Limpiar URL
+      window.history.replaceState({}, "", "/integrations");
+      fetchData();
+    } else if (success === "quickbooks_connected") {
+      toast.success("QuickBooks conectado exitosamente");
+      window.history.replaceState({}, "", "/integrations");
+      fetchData();
+    } else if (error) {
+      toast.error(`Error en la conexión: ${error}`);
+      window.history.replaceState({}, "", "/integrations");
+    }
+  }, []);
 
   return (
     <div className="min-h-screen bg-background">
@@ -269,14 +337,22 @@ const Integrations = () => {
 
                   {!service.connected ? (
                     <Button
-                      onClick={() => {
-                        toast.info("Configuración de OAuth en desarrollo. Por favor, contacta al administrador.");
-                      }}
+                      onClick={() => handleConnect(service.id)}
                       size="sm"
                       variant="default"
+                      disabled={isConnecting}
                     >
-                      <Plug className="h-4 w-4 mr-2" />
-                      Conectar
+                      {isConnecting ? (
+                        <>
+                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                          Conectando...
+                        </>
+                      ) : (
+                        <>
+                          <Plug className="h-4 w-4 mr-2" />
+                          Conectar
+                        </>
+                      )}
                     </Button>
                   ) : (
                     <Button
