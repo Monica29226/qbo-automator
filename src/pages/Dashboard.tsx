@@ -7,13 +7,16 @@ import { RecentDocuments } from "@/components/dashboard/RecentDocuments";
 import { ProcessingFlow } from "@/components/dashboard/ProcessingFlow";
 import { OrganizationSwitcher } from "@/components/OrganizationSwitcher";
 import { useAuth } from "@/hooks/useAuth";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { useQueryClient } from "@tanstack/react-query";
 
 const Dashboard = () => {
   const { user, isAdmin, activeOrganization, signOut } = useAuth();
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [stats, setStats] = useState({
     processed: 0,
     review: 0,
@@ -60,6 +63,25 @@ const Dashboard = () => {
   const handleFetchGmailInvoices = async () => {
     if (!activeOrganization) return;
 
+    // Check if Gmail is connected first
+    const { data: accounts } = await supabase
+      .from("integration_accounts")
+      .select("id")
+      .eq("organization_id", activeOrganization)
+      .eq("service_type", "gmail")
+      .eq("is_active", true)
+      .limit(1);
+
+    if (!accounts || accounts.length === 0) {
+      toast.error("Primero debes conectar Gmail desde Integraciones", {
+        action: {
+          label: "Ir a Integraciones",
+          onClick: () => navigate("/integrations"),
+        },
+      });
+      return;
+    }
+
     setIsFetchingEmails(true);
     toast.info("Buscando facturas en Gmail...");
 
@@ -74,8 +96,9 @@ const Dashboard = () => {
         `Se encontraron ${data.invoices_extracted} facturas de ${data.messages_found} correos`
       );
 
-      // Refrescar stats después de procesar
-      setTimeout(() => fetchStats(), 1000);
+      // Refrescar stats y documentos
+      fetchStats();
+      queryClient.invalidateQueries({ queryKey: ["recent-documents"] });
     } catch (error) {
       console.error("Error fetching Gmail invoices:", error);
       toast.error("Error al obtener facturas de Gmail");
