@@ -547,41 +547,50 @@ const Integrations = () => {
                   </div>
 
                   {!service.connected ? (
-                    <div className="flex gap-2">
+                    <div className="flex flex-col gap-2">
                       {((service.id === "gmail" && !hasGoogleCreds) || 
                         (service.id === "quickbooks" && !hasQuickBooksCreds)) && (
+                        <div className="bg-warning/10 border border-warning/30 rounded-lg p-3 text-sm">
+                          <p className="font-medium text-warning mb-1">⚙️ Configuración requerida</p>
+                          <p className="text-xs text-muted-foreground mb-2">
+                            Primero debes configurar las credenciales OAuth
+                          </p>
+                          <Button
+                            onClick={() => {
+                              setSelectedProvider(service.id === "gmail" ? "google" : "quickbooks");
+                              setIsCredentialsDialogOpen(true);
+                            }}
+                            size="sm"
+                            variant="default"
+                            className="w-full"
+                          >
+                            <Plus className="h-4 w-4 mr-2" />
+                            Configurar Credenciales
+                          </Button>
+                        </div>
+                      )}
+                      {((service.id === "gmail" && hasGoogleCreds) || 
+                        (service.id === "quickbooks" && hasQuickBooksCreds)) && (
                         <Button
-                          onClick={() => {
-                            setSelectedProvider(service.id === "gmail" ? "google" : "quickbooks");
-                            setIsCredentialsDialogOpen(true);
-                          }}
+                          onClick={() => handleConnect(service.id)}
                           size="sm"
-                          variant="outline"
+                          variant="default"
+                          disabled={isConnecting}
+                          className="w-full"
                         >
-                          <Plus className="h-4 w-4 mr-2" />
-                          Configurar
+                          {isConnecting ? (
+                            <>
+                              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                              Conectando...
+                            </>
+                          ) : (
+                            <>
+                              <Plug className="h-4 w-4 mr-2" />
+                              Conectar con {service.name}
+                            </>
+                          )}
                         </Button>
                       )}
-                      <Button
-                        onClick={() => handleConnect(service.id)}
-                        size="sm"
-                        variant="default"
-                        disabled={isConnecting || 
-                          ((service.id === "gmail" && !hasGoogleCreds) || 
-                           (service.id === "quickbooks" && !hasQuickBooksCreds))}
-                      >
-                        {isConnecting ? (
-                          <>
-                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                            Conectando...
-                          </>
-                        ) : (
-                          <>
-                            <Plug className="h-4 w-4 mr-2" />
-                            Conectar
-                          </>
-                        )}
-                      </Button>
                     </div>
                   ) : (
                     <Button
