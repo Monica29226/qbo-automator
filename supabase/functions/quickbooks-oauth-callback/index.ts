@@ -97,21 +97,30 @@ serve(async (req) => {
     console.log("QuickBooks connected successfully");
 
     return new Response(
-      `<html>
+      `<!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="UTF-8">
+          <title>QuickBooks Connected</title>
+        </head>
         <body>
           <h1>¡Conexión Exitosa!</h1>
           <p>QuickBooks conectado correctamente</p>
           <p>Realm ID: ${realmId}</p>
           <p>Puedes cerrar esta ventana.</p>
           <script>
-            setTimeout(() => {
-              window.opener?.postMessage({ type: 'quickbooks-connected', realmId: '${realmId}' }, '*');
-              window.close();
-            }, 2000);
+            console.log('Sending postMessage to opener');
+            if (window.opener) {
+              window.opener.postMessage({ type: 'quickbooks-connected', realmId: '${realmId}' }, '*');
+              console.log('Message sent');
+            } else {
+              console.error('No window.opener found');
+            }
+            setTimeout(() => window.close(), 2000);
           </script>
         </body>
       </html>`,
-      { headers: { "Content-Type": "text/html" }, status: 200 }
+      { headers: { "Content-Type": "text/html; charset=UTF-8" }, status: 200 }
     );
   } catch (error) {
     console.error("Error in quickbooks-oauth-callback:", error);

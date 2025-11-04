@@ -310,9 +310,10 @@ const Integrations = () => {
 
       // Listen for OAuth completion
       const messageHandler = (event: MessageEvent) => {
-        console.log("Message received:", event.data);
+        console.log("🟢 Message received from popup:", event.data);
         if (event.data.type === "quickbooks-connected") {
-          toast.success(`QuickBooks conectado: ${event.data.realmId}`);
+          console.log("✅ QuickBooks connection confirmed!");
+          toast.success(`QuickBooks conectado: Realm ${event.data.realmId}`);
           setIsDialogOpen(false);
           fetchData();
           window.removeEventListener("message", messageHandler);
@@ -324,9 +325,14 @@ const Integrations = () => {
       // Check if popup was closed
       const checkPopup = setInterval(() => {
         if (popup?.closed) {
-          console.log("Popup closed");
+          console.log("Popup closed - refreshing data");
           clearInterval(checkPopup);
           window.removeEventListener("message", messageHandler);
+          // Refresh data when popup closes as fallback
+          setTimeout(() => {
+            fetchData();
+            setIsDialogOpen(false);
+          }, 500);
         }
       }, 500);
     } catch (error) {
