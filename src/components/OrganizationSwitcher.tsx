@@ -49,60 +49,29 @@ export const OrganizationSwitcher = () => {
         return;
       }
 
-      // Crear nueva organización
-      const { data: newOrg, error: orgError } = await supabase
-        .from("organizations")
-        .insert([{
+      // Llamar al edge function para crear la organización (bypasa RLS)
+      const { data, error } = await supabase.functions.invoke('create-organization', {
+        body: {
           name: newOrgName,
           email: newOrgEmail || null,
-        }])
-        .select()
-        .single();
-
-      if (orgError) {
-        console.error("Error al crear organización:", orgError);
-        toast.error(`Error al crear empresa: ${orgError.message}`);
-        setIsLoading(false);
-        return;
-      }
-
-      console.log("Organización creada:", newOrg);
-
-      // Agregar usuario actual como owner
-      const { error: memberError } = await supabase
-        .from("organization_members")
-        .insert([{
-          organization_id: newOrg.id,
-          user_id: user.id,
-          role: 'owner'
-        }]);
-
-      if (memberError) {
-        console.error("Error al agregar miembro:", memberError);
-        toast.error(`Error al configurar permisos: ${memberError.message}`);
-        setIsLoading(false);
-        return;
-      }
-
-      console.log("Miembro agregado exitosamente");
-
-      // Establecer como organización activa
-      const { error: activeOrgError } = await supabase
-        .from("user_active_organization")
-        .upsert({
-          user_id: user.id,
-          organization_id: newOrg.id
-        }, {
-          onConflict: 'user_id'
-        });
-
-      if (activeOrgError) {
-        console.error("Error al establecer organización activa:", activeOrgError);
-      }
-
-      console.log("Organización establecida como activa");
+          user_id: user.id
+        }
+      });
 
       setIsLoading(false);
+
+      if (error) {
+        console.error("Error calling edge function:", error);
+        toast.error(`Error al crear empresa: ${error.message}`);
+        return;
+      }
+
+      if (data?.error) {
+        console.error("Error from edge function:", data);
+        toast.error(`Error al crear empresa: ${data.error}`);
+        return;
+      }
+
       toast.success("Empresa creada exitosamente");
       setIsDialogOpen(false);
       setNewOrgName("");

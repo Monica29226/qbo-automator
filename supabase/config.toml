@@ -1,1 +1,10 @@
 project_id = "lqirqvvkjpunhtsvebot"
+
+[functions.classify-vendor]
+verify_jwt = false
+
+[functions.create-organization]
+verify_jwt = false
+
+[functions.process-document]
+verify_jwt = false
