@@ -3,19 +3,24 @@ import { AppHeader } from "@/components/acl/AppHeader";
 import { HelpPanel } from "@/components/acl/HelpPanel";
 import { ExcelUploader } from "@/components/acl/ExcelUploader";
 import { ProcessingLogs } from "@/components/acl/ProcessingLogs";
+import { InboxViewer } from "@/components/acl/InboxViewer";
+import { PreviewTable } from "@/components/acl/PreviewTable";
 import { useAppStore } from "@/store/appStore";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Mail, Database, FileSearch, Send } from "lucide-react";
 
 const DashboardACL = () => {
   const { user, activeOrganization } = useAuth();
-  const { setGmailStatus, setQboStatus, setCompanyId, settings, setSettings, addToLog } = useAppStore();
+  const { 
+    setGmailStatus, 
+    setQboStatus, 
+    setCompanyId, 
+    providerMap,
+    inboxItems, 
+    previewItems 
+  } = useAppStore();
 
   useEffect(() => {
     if (activeOrganization) {
@@ -96,101 +101,34 @@ const DashboardACL = () => {
       <main className="container mx-auto px-6 py-8">
         <HelpPanel />
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
-          <div className="lg:col-span-2 space-y-6">
-            <ExcelUploader />
+        <div className="space-y-6 mb-6">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div className="lg:col-span-2">
+              <ExcelUploader />
+            </div>
 
-            <Card className="p-6">
-              <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
-                <Mail className="h-5 w-5" />
-                📧 Filtros de Correo (Gmail)
-              </h2>
-              <div className="space-y-4">
-                <div>
-                  <Label htmlFor="query-gmail">Query de búsqueda Gmail</Label>
-                  <Input
-                    id="query-gmail"
-                    value={settings.queryGmail}
-                    onChange={(e) => setSettings({ queryGmail: e.target.value })}
-                    placeholder="has:attachment (filename:xml OR filename:pdf) newer_than:30d"
-                    className="font-mono text-sm"
-                  />
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Filtro para buscar correos con facturas electrónicas
-                  </p>
-                </div>
-
-                <div>
-                  <Label htmlFor="label-to-apply">Etiqueta a aplicar (opcional)</Label>
-                  <Input
-                    id="label-to-apply"
-                    value={settings.labelToApply}
-                    onChange={(e) => setSettings({ labelToApply: e.target.value })}
-                    placeholder="Procesado"
-                  />
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Si concediste gmail.modify, se aplicará esta etiqueta
-                  </p>
-                </div>
-              </div>
-            </Card>
-
-            <Card className="p-6">
-              <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
-                <FileSearch className="h-5 w-5" />
-                📨 Lectura de Comprobantes desde Gmail
-              </h2>
-              <div className="space-y-4">
-                <div className="bg-muted/50 p-4 rounded-lg">
-                  <p className="text-sm mb-2">
-                    Esta sección permite buscar correos en Gmail que coincidan con el filtro definido,
-                    leer los adjuntos XML/PDF y extraer la información de facturas electrónicas de Hacienda CR.
-                  </p>
-                  <Badge variant="secondary" className="text-xs">
-                    Requiere Gmail conectado
-                  </Badge>
-                </div>
-
-                <Button className="w-full" size="lg">
-                  <Mail className="h-5 w-5 mr-2" />
-                  Buscar correos con XML/PDF
-                </Button>
-
-                <p className="text-xs text-muted-foreground text-center">
-                  Los resultados se mostrarán en la sección de Previsualización
-                </p>
-              </div>
-            </Card>
-          </div>
-
-          <div className="space-y-6">
             <Card className="p-6">
               <h2 className="text-lg font-semibold mb-4">📊 Estadísticas</h2>
               <div className="space-y-3">
-                <StatItem label="Proveedores mapeados" value="0" />
-                <StatItem label="Items en previsualización" value="0" />
-                <StatItem label="Documentos creados hoy" value="0" />
-              </div>
-            </Card>
-
-            <Card className="p-6">
-              <h2 className="text-lg font-semibold mb-4">🚀 Acciones Rápidas</h2>
-              <div className="space-y-2">
-                <Button variant="outline" className="w-full justify-start" disabled>
-                  <FileSearch className="h-4 w-4 mr-2" />
-                  Aplicar mapeo a seleccionados
-                </Button>
-                <Button variant="outline" className="w-full justify-start" disabled>
-                  <Send className="h-4 w-4 mr-2" />
-                  Crear en QBO (Bills/NC)
-                </Button>
-                <Button variant="outline" className="w-full justify-start">
-                  <Database className="h-4 w-4 mr-2" />
-                  Ver registro completo
-                </Button>
+                <StatItem 
+                  label="Proveedores mapeados" 
+                  value={providerMap.length.toString()} 
+                />
+                <StatItem 
+                  label="Correos en bandeja" 
+                  value={inboxItems.length.toString()} 
+                />
+                <StatItem 
+                  label="En previsualización" 
+                  value={previewItems.length.toString()} 
+                />
               </div>
             </Card>
           </div>
+
+          <InboxViewer />
+
+          <PreviewTable />
         </div>
 
         <ProcessingLogs />

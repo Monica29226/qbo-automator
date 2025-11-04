@@ -1,5 +1,5 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
+import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -12,229 +12,209 @@ serve(async (req) => {
   }
 
   try {
-    const { organization_id, document_id } = await req.json();
+    const { organization_id, realm_id, bill_preview } = await req.json();
 
-    if (!organization_id || !document_id) {
-      return new Response(
-        JSON.stringify({ error: "organization_id y document_id son requeridos" }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+    if (!organization_id || !realm_id || !bill_preview) {
+      throw new Error("Faltan parámetros requeridos");
     }
 
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-    const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+    const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    const supabase = createClient(supabaseUrl, supabaseKey);
 
-    // Obtener cuenta de QuickBooks activa
-    const { data: qbAccount, error: accountError } = await supabase
+    console.log(`Syncing to QuickBooks: ${bill_preview.consecutivo}`);
+
+    // Obtener tokens de QuickBooks
+    const { data: account } = await supabase
       .from("integration_accounts")
-      .select("*")
+      .select("credentials")
       .eq("organization_id", organization_id)
       .eq("service_type", "quickbooks")
       .eq("is_active", true)
       .single();
 
-    if (accountError || !qbAccount) {
-      return new Response(
-        JSON.stringify({ error: "No hay cuenta de QuickBooks conectada" }),
-        { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+    if (!account) {
+      throw new Error("No se encontró cuenta de QuickBooks activa");
     }
 
-    const credentials = qbAccount.credentials as any;
-    let accessToken = credentials.access_token;
-    const realmId = credentials.realm_id;
+    const credentials = account.credentials as any;
+    const accessToken = credentials.access_token;
 
-    // Verificar si el token expiró y renovarlo
-    if (credentials.expires_at && Date.now() > credentials.expires_at) {
-      console.log("QuickBooks access token expired, refreshing...");
-      
-      const { data: oauthCreds } = await supabase
-        .from("oauth_credentials")
-        .select("client_id, client_secret")
-        .eq("organization_id", organization_id)
-        .eq("provider", "quickbooks")
-        .single();
-
-      if (oauthCreds && credentials.refresh_token) {
-        const authString = btoa(`${oauthCreds.client_id}:${oauthCreds.client_secret}`);
-        
-        const refreshResponse = await fetch("https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer", {
-          method: "POST",
-          headers: {
-            "Accept": "application/json",
-            "Content-Type": "application/x-www-form-urlencoded",
-            "Authorization": `Basic ${authString}`,
-          },
-          body: new URLSearchParams({
-            grant_type: "refresh_token",
-            refresh_token: credentials.refresh_token,
-          }),
-        });
-
-        if (refreshResponse.ok) {
-          const tokens = await refreshResponse.json();
-          accessToken = tokens.access_token;
-          
-          // Actualizar tokens
-          await supabase
-            .from("integration_accounts")
-            .update({
-              credentials: {
-                ...credentials,
-                access_token: tokens.access_token,
-                refresh_token: tokens.refresh_token,
-                expires_at: Date.now() + (tokens.expires_in * 1000),
-              },
-            })
-            .eq("id", qbAccount.id);
-        }
-      }
-    }
-
-    // Obtener el documento a procesar
-    const { data: document, error: docError } = await supabase
-      .from("processed_documents")
-      .select("*")
-      .eq("id", document_id)
-      .single();
-
-    if (docError || !document) {
-      return new Response(
-        JSON.stringify({ error: "Documento no encontrado" }),
-        { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
-    // Buscar o crear el vendor en QuickBooks
-    let vendorId = document.qbo_entity_id;
-
-    if (!vendorId) {
-      // Buscar vendor por nombre o tax ID
-      const queryResponse = await fetch(
-        `https://quickbooks.api.intuit.com/v3/company/${realmId}/query?query=${encodeURIComponent(
-          `SELECT * FROM Vendor WHERE DisplayName = '${document.supplier_name}'`
-        )}`,
-        {
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-            Accept: "application/json",
-          },
-        }
-      );
-
-      if (queryResponse.ok) {
-        const queryData = await queryResponse.json();
-        const vendors = queryData.QueryResponse?.Vendor || [];
-        
-        if (vendors.length > 0) {
-          vendorId = vendors[0].Id;
-        } else {
-          // Crear nuevo vendor
-          const createVendorResponse = await fetch(
-            `https://quickbooks.api.intuit.com/v3/company/${realmId}/vendor`,
-            {
-              method: "POST",
-              headers: {
-                Authorization: `Bearer ${accessToken}`,
-                "Content-Type": "application/json",
-                Accept: "application/json",
-              },
-              body: JSON.stringify({
-                DisplayName: document.supplier_name,
-                CompanyName: document.supplier_name,
-                PrimaryEmailAddr: document.supplier_email ? { Address: document.supplier_email } : undefined,
-              }),
-            }
-          );
-
-          if (createVendorResponse.ok) {
-            const vendorData = await createVendorResponse.json();
-            vendorId = vendorData.Vendor.Id;
-          }
-        }
-      }
-    }
-
-    // Crear la factura (Bill) en QuickBooks
-    const billData = {
-      VendorRef: {
-        value: vendorId,
+    // 1. Verificar duplicados
+    const docNumber = bill_preview.consecutivo;
+    const entityType = bill_preview.tipo === "NOTA_CREDITO" ? "VendorCredit" : "Bill";
+    
+    console.log(`Checking for duplicates: ${entityType} ${docNumber}`);
+    
+    const duplicateQuery = `SELECT * FROM ${entityType} WHERE DocNumber = '${docNumber}'`;
+    const duplicateCheckUrl = `https://quickbooks.api.intuit.com/v3/company/${realm_id}/query?query=${encodeURIComponent(duplicateQuery)}`;
+    
+    const duplicateResponse = await fetch(duplicateCheckUrl, {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        Accept: "application/json",
       },
-      TxnDate: document.issue_date,
-      DocNumber: document.doc_number,
-      TotalAmt: document.total_amount,
-      Line: [
-        {
-          DetailType: "AccountBasedExpenseLineDetail",
-          Amount: document.total_amount,
-          AccountBasedExpenseLineDetail: {
-            AccountRef: {
-              value: "1", // Default expense account
-            },
-          },
-        },
-      ],
-    };
+    });
 
-    const createBillResponse = await fetch(
-      `https://quickbooks.api.intuit.com/v3/company/${realmId}/bill`,
-      {
+    if (!duplicateResponse.ok) {
+      console.error("Error checking duplicates:", await duplicateResponse.text());
+    } else {
+      const duplicateData = await duplicateResponse.json();
+      if (duplicateData.QueryResponse?.[entityType]?.length > 0) {
+        const existing = duplicateData.QueryResponse[entityType][0];
+        return new Response(
+          JSON.stringify({
+            error: "Duplicado encontrado",
+            isDuplicate: true,
+            existingId: existing.Id,
+            message: `Ya existe ${entityType} con número ${docNumber}`,
+          }),
+          {
+            status: 409,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          }
+        );
+      }
+    }
+
+    // 2. Buscar/Crear Vendor
+    console.log(`Looking for vendor: ${bill_preview.cedula}`);
+    
+    const vendorQuery = `SELECT * FROM Vendor WHERE AcctNum = '${bill_preview.cedula}'`;
+    const vendorSearchUrl = `https://quickbooks.api.intuit.com/v3/company/${realm_id}/query?query=${encodeURIComponent(vendorQuery)}`;
+    
+    const vendorSearchResponse = await fetch(vendorSearchUrl, {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        Accept: "application/json",
+      },
+    });
+
+    let vendorId;
+    
+    if (vendorSearchResponse.ok) {
+      const vendorData = await vendorSearchResponse.json();
+      const vendors = vendorData.QueryResponse?.Vendor || [];
+      
+      if (vendors.length > 0) {
+        vendorId = vendors[0].Id;
+        console.log(`Vendor found: ${vendorId}`);
+      }
+    }
+
+    // Crear vendor si no existe
+    if (!vendorId) {
+      console.log("Creating new vendor");
+      
+      const vendorCreateUrl = `https://quickbooks.api.intuit.com/v3/company/${realm_id}/vendor`;
+      const vendorBody = {
+        DisplayName: bill_preview.proveedor,
+        AcctNum: bill_preview.cedula,
+        CompanyName: bill_preview.proveedor,
+        PrimaryEmailAddr: {
+          Address: bill_preview.mapping?.cuentaGasto || "",
+        },
+        CurrencyRef: {
+          value: bill_preview.moneda,
+        },
+      };
+
+      const vendorCreateResponse = await fetch(vendorCreateUrl, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${accessToken}`,
           "Content-Type": "application/json",
           Accept: "application/json",
         },
-        body: JSON.stringify(billData),
+        body: JSON.stringify(vendorBody),
+      });
+
+      if (!vendorCreateResponse.ok) {
+        const errorText = await vendorCreateResponse.text();
+        throw new Error(`Error creating vendor: ${errorText}`);
       }
-    );
 
-    if (!createBillResponse.ok) {
-      const errorText = await createBillResponse.text();
-      console.error("QuickBooks API error:", errorText);
-      
-      // Actualizar estado del documento
-      await supabase
-        .from("processed_documents")
-        .update({
-          status: "error",
-          error_message: `Error al crear factura en QuickBooks: ${errorText}`,
-        })
-        .eq("id", document_id);
-
-      return new Response(
-        JSON.stringify({ error: "Error al crear factura en QuickBooks" }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+      const vendorResult = await vendorCreateResponse.json();
+      vendorId = vendorResult.Vendor.Id;
+      console.log(`Vendor created: ${vendorId}`);
     }
 
-    const billResult = await createBillResponse.json();
+    // 3. Crear Bill o Vendor Credit
+    console.log(`Creating ${entityType}`);
+    
+    const lines = bill_preview.lineas.map((linea: any) => ({
+      DetailType: "AccountBasedExpenseLineDetail",
+      Amount: linea.cantidad * linea.precioUnitario - (linea.descuentoLinea || 0),
+      AccountBasedExpenseLineDetail: {
+        AccountRef: {
+          value: bill_preview.mapping?.cuentaGasto || "1", // Default expense account
+        },
+        TaxCodeRef: {
+          value: linea.gravado ? `TAX_${linea.tasaIVA}` : "NON", // Simplificado
+        },
+      },
+      Description: linea.descripcion,
+    }));
 
-    // Actualizar documento con ID de QuickBooks
-    await supabase
-      .from("processed_documents")
-      .update({
-        status: "processed",
-        qbo_entity_id: billResult.Bill.Id,
-        qbo_entity_type: "Bill",
-        processed_at: new Date().toISOString(),
-      })
-      .eq("id", document_id);
+    const billBody = {
+      VendorRef: {
+        value: vendorId,
+      },
+      DocNumber: docNumber,
+      TxnDate: bill_preview.fecha,
+      Line: lines,
+      CurrencyRef: {
+        value: bill_preview.moneda,
+      },
+      ...(bill_preview.moneda !== "CRC" && {
+        ExchangeRate: 1, // TODO: Obtener tipo de cambio real
+      }),
+    };
+
+    const createUrl = `https://quickbooks.api.intuit.com/v3/company/${realm_id}/${entityType.toLowerCase()}`;
+    const createResponse = await fetch(createUrl, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify(billBody),
+    });
+
+    if (!createResponse.ok) {
+      const errorText = await createResponse.text();
+      console.error("Error creating bill/credit:", errorText);
+      throw new Error(`Error creating ${entityType}: ${errorText}`);
+    }
+
+    const createResult = await createResponse.json();
+    const entityId = createResult[entityType].Id;
+
+    console.log(`${entityType} created successfully: ${entityId}`);
+
+    // TODO: 4. Adjuntar PDF (requiere upload del PDF primero)
 
     return new Response(
       JSON.stringify({
         success: true,
-        bill_id: billResult.Bill.Id,
-        vendor_id: vendorId,
+        entityType,
+        entityId,
+        docNumber,
+        vendorId,
       }),
-      { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      }
     );
-  } catch (error) {
+  } catch (error: any) {
     console.error("Error in sync-to-quickbooks:", error);
     return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : "Unknown error" }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      JSON.stringify({ error: error.message }),
+      {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      }
     );
   }
 });

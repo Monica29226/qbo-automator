@@ -1,5 +1,5 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
+import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -12,192 +12,135 @@ serve(async (req) => {
   }
 
   try {
-    const { organization_id } = await req.json();
+    const { organization_id, query } = await req.json();
 
     if (!organization_id) {
-      return new Response(
-        JSON.stringify({ error: "organization_id es requerido" }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+      throw new Error("organization_id es requerido");
     }
 
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-    const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+    const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    const supabase = createClient(supabaseUrl, supabaseKey);
 
-    // Obtener cuenta de Gmail activa
-    const { data: gmailAccount, error: accountError } = await supabase
+    // Obtener tokens de Gmail
+    const { data: account, error: accountError } = await supabase
       .from("integration_accounts")
-      .select("*")
+      .select("credentials, account_email")
       .eq("organization_id", organization_id)
       .eq("service_type", "gmail")
       .eq("is_active", true)
       .single();
 
-    if (accountError || !gmailAccount) {
-      return new Response(
-        JSON.stringify({ error: "No hay cuenta de Gmail conectada" }),
-        { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+    if (accountError || !account) {
+      throw new Error("No se encontró cuenta de Gmail activa");
     }
 
-    const credentials = gmailAccount.credentials as any;
-    let accessToken = credentials.access_token;
+    const credentials = account.credentials as any;
+    const accessToken = credentials.access_token;
 
-    // Verificar si el token expiró y renovarlo si es necesario
-    if (credentials.expires_at && Date.now() > credentials.expires_at) {
-      console.log("Access token expired, refreshing...");
-      
-      const { data: oauthCreds } = await supabase
-        .from("oauth_credentials")
-        .select("client_id, client_secret")
-        .eq("organization_id", organization_id)
-        .eq("provider", "google")
-        .single();
+    // Buscar correos en Gmail
+    const searchQuery = query || 'has:attachment (filename:xml OR filename:pdf OR filename:zip) newer_than:30d';
+    const gmailSearchUrl = `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(searchQuery)}&maxResults=50`;
 
-      if (oauthCreds && credentials.refresh_token) {
-        const refreshResponse = await fetch("https://oauth2.googleapis.com/token", {
-          method: "POST",
-          headers: { "Content-Type": "application/x-www-form-urlencoded" },
-          body: new URLSearchParams({
-            client_id: oauthCreds.client_id,
-            client_secret: oauthCreds.client_secret,
-            refresh_token: credentials.refresh_token,
-            grant_type: "refresh_token",
-          }),
+    const searchResponse = await fetch(gmailSearchUrl, {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    });
+
+    if (!searchResponse.ok) {
+      const errorText = await searchResponse.text();
+      console.error("Gmail search error:", errorText);
+      throw new Error(`Error al buscar correos: ${searchResponse.status}`);
+    }
+
+    const searchData = await searchResponse.json();
+    const messages = searchData.messages || [];
+
+    console.log(`Found ${messages.length} messages`);
+
+    // Obtener detalles de cada mensaje
+    const messageDetails = await Promise.all(
+      messages.slice(0, 20).map(async (msg: any) => {
+        const detailUrl = `https://gmail.googleapis.com/gmail/v1/users/me/messages/${msg.id}?format=full`;
+        const detailResponse = await fetch(detailUrl, {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+          },
         });
 
-        if (refreshResponse.ok) {
-          const tokens = await refreshResponse.json();
-          accessToken = tokens.access_token;
-          
-          // Actualizar tokens en la base de datos
-          await supabase
-            .from("integration_accounts")
-            .update({
-              credentials: {
-                ...credentials,
-                access_token: tokens.access_token,
-                expires_at: Date.now() + (tokens.expires_in * 1000),
-              },
-            })
-            .eq("id", gmailAccount.id);
+        if (!detailResponse.ok) {
+          console.error(`Error fetching message ${msg.id}`);
+          return null;
         }
-      }
-    }
 
-    // Buscar correos con adjuntos XML o PDF
-    const query = "has:attachment (filename:xml OR filename:pdf) is:unread";
-    const gmailResponse = await fetch(
-      `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(query)}`,
-      {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-        },
-      }
-    );
-
-    if (!gmailResponse.ok) {
-      const errorText = await gmailResponse.text();
-      console.error("Gmail API error:", errorText);
-      return new Response(
-        JSON.stringify({ error: "Error al buscar correos en Gmail" }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
-    const gmailData = await gmailResponse.json();
-    const messages = gmailData.messages || [];
-
-    console.log(`Found ${messages.length} messages with attachments`);
-
-    const processedCount = 0;
-    const errors: string[] = [];
-
-    // Procesar cada mensaje
-    for (const message of messages.slice(0, 10)) { // Limitar a 10 por ejecución
-      try {
-        // Obtener detalles del mensaje
-        const messageResponse = await fetch(
-          `https://gmail.googleapis.com/gmail/v1/users/me/messages/${message.id}`,
-          {
-            headers: {
-              Authorization: `Bearer ${accessToken}`,
-            },
-          }
-        );
-
-        if (!messageResponse.ok) continue;
-
-        const messageData = await messageResponse.json();
+        const detail = await detailResponse.json();
+        const headers = detail.payload.headers;
         
-        // Buscar adjuntos XML
-        const parts = messageData.payload.parts || [];
-        for (const part of parts) {
-          if (part.filename && (part.filename.endsWith(".xml") || part.filename.endsWith(".pdf"))) {
-            // Obtener el adjunto
-            if (part.body.attachmentId) {
-              const attachmentResponse = await fetch(
-                `https://gmail.googleapis.com/gmail/v1/users/me/messages/${message.id}/attachments/${part.body.attachmentId}`,
-                {
-                  headers: {
-                    Authorization: `Bearer ${accessToken}`,
-                  },
-                }
-              );
+        const getHeader = (name: string) => {
+          const header = headers.find((h: any) => h.name.toLowerCase() === name.toLowerCase());
+          return header ? header.value : '';
+        };
 
-              if (attachmentResponse.ok) {
-                const attachmentData = await attachmentResponse.json();
-                
-                // Llamar a process-document para procesar el archivo
-                await supabase.functions.invoke("process-document", {
-                  body: {
-                    organization_id,
-                    file_data: attachmentData.data,
-                    file_name: part.filename,
-                    source: "gmail",
-                    message_id: message.id,
-                  },
+        const attachments = [];
+        
+        // Procesar adjuntos
+        const processParts = (parts: any[]) => {
+          if (!parts) return;
+          
+          for (const part of parts) {
+            if (part.filename && part.body?.attachmentId) {
+              const filename = part.filename.toLowerCase();
+              if (filename.endsWith('.xml') || filename.endsWith('.pdf') || filename.endsWith('.zip')) {
+                attachments.push({
+                  filename: part.filename,
+                  mimeType: part.mimeType,
+                  size: part.body.size || 0,
+                  attachmentId: part.body.attachmentId,
                 });
               }
             }
+            
+            if (part.parts) {
+              processParts(part.parts);
+            }
           }
-        }
+        };
 
-        // Marcar mensaje como leído
-        await fetch(
-          `https://gmail.googleapis.com/gmail/v1/users/me/messages/${message.id}/modify`,
-          {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${accessToken}`,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              removeLabelIds: ["UNREAD"],
-            }),
-          }
-        );
-      } catch (error) {
-        console.error("Error processing message:", error);
-        errors.push(message.id);
-      }
-    }
+        processParts([detail.payload]);
+
+        return {
+          id: msg.id,
+          threadId: msg.threadId,
+          subject: getHeader('Subject'),
+          from: getHeader('From'),
+          date: getHeader('Date'),
+          attachments,
+        };
+      })
+    );
+
+    const validMessages = messageDetails.filter((m) => m !== null);
+
+    console.log(`Returning ${validMessages.length} valid messages`);
 
     return new Response(
       JSON.stringify({
-        success: true,
-        messages_found: messages.length,
-        processed: processedCount,
-        errors: errors.length,
+        messages: validMessages,
+        total: messages.length,
       }),
-      { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      }
     );
-  } catch (error) {
+  } catch (error: any) {
     console.error("Error in fetch-gmail-invoices:", error);
     return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : "Unknown error" }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      JSON.stringify({ error: error.message }),
+      {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      }
     );
   }
 });

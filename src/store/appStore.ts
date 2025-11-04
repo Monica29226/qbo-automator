@@ -9,6 +9,20 @@ export interface BillLine {
   descuentoLinea?: number;
 }
 
+export interface MailItem {
+  id: string;
+  subject: string;
+  from: string;
+  date: string;
+  attachments: Array<{
+    filename: string;
+    mimeType: string;
+    size: number;
+    attachmentId: string;
+  }>;
+  threadId: string;
+}
+
 export interface BillPreview {
   tipo: 'FACTURA' | 'NOTA_CREDITO';
   proveedor: string;
@@ -31,6 +45,13 @@ export interface BillPreview {
   creadoEnQBO?: { id: string; fecha: Date };
   docKey?: string;
   consecutivo?: string;
+  xmlData?: string;
+  pdfAttachmentId?: string;
+  mailId?: string;
+  duplicateCheck?: {
+    isDuplicate: boolean;
+    existingId?: string;
+  };
 }
 
 export interface ProviderMapping {
@@ -59,6 +80,9 @@ interface AppState {
   excelMapping: { uploaded: boolean; fileName: string; lastUpdated: Date | null };
   providerMap: ProviderMapping[];
   
+  // Bandeja de correos
+  inboxItems: MailItem[];
+  
   // Logs y preview
   processingLog: ProcessingLogEntry[];
   previewItems: BillPreview[];
@@ -69,6 +93,8 @@ interface AppState {
     showHelp: boolean;
     queryGmail: string;
     labelToApply: string;
+    saveAttachments: boolean;
+    acceptarFlowEnabled: boolean;
   };
   
   // Actions
@@ -77,6 +103,7 @@ interface AppState {
   setCompanyId: (id: string) => void;
   setExcelMapping: (mapping: { uploaded: boolean; fileName: string; lastUpdated: Date | null }) => void;
   setProviderMap: (map: ProviderMapping[]) => void;
+  setInboxItems: (items: MailItem[]) => void;
   addToLog: (entry: Omit<ProcessingLogEntry, 'ts'>) => void;
   clearLog: () => void;
   setPreviewItems: (items: BillPreview[]) => void;
@@ -94,13 +121,16 @@ export const useAppStore = create<AppState>((set) => ({
   companyId: '',
   excelMapping: { uploaded: false, fileName: '', lastUpdated: null },
   providerMap: [],
+  inboxItems: [],
   processingLog: [],
   previewItems: [],
   selectedItems: [],
   settings: {
     showHelp: false,
-    queryGmail: 'has:attachment (filename:xml OR filename:pdf) newer_than:30d',
+    queryGmail: 'has:attachment (filename:xml OR filename:pdf OR filename:zip) newer_than:30d',
     labelToApply: 'Procesado',
+    saveAttachments: true,
+    acceptarFlowEnabled: false,
   },
 
   // Actions
@@ -109,6 +139,7 @@ export const useAppStore = create<AppState>((set) => ({
   setCompanyId: (id) => set({ companyId: id }),
   setExcelMapping: (mapping) => set({ excelMapping: mapping }),
   setProviderMap: (map) => set({ providerMap: map }),
+  setInboxItems: (items) => set({ inboxItems: items }),
   
   addToLog: (entry) =>
     set((state) => ({
