@@ -58,18 +58,28 @@ const Dashboard = () => {
   const fetchConnections = async () => {
     if (!activeOrganization) return;
 
-    const { data, error } = await supabase
-      .from("organizations")
-      .select("gmail_connected, quickbooks_connected")
-      .eq("id", activeOrganization)
-      .single();
+    try {
+      const { data, error } = await supabase
+        .from("organizations")
+        .select("gmail_connected, quickbooks_connected")
+        .eq("id", activeOrganization)
+        .single();
 
-    if (!error && data) {
-      setConnections({
-        gmail: data.gmail_connected || false,
-        quickbooks: data.quickbooks_connected || false,
-        sharepoint: false, // Not implemented yet
-      });
+      if (error) {
+        console.error("Error fetching connections:", error);
+        return;
+      }
+
+      if (data) {
+        console.log("Connections data:", data);
+        setConnections({
+          gmail: data.gmail_connected || false,
+          quickbooks: data.quickbooks_connected || false,
+          sharepoint: false,
+        });
+      }
+    } catch (error) {
+      console.error("Error in fetchConnections:", error);
     }
   };
 
