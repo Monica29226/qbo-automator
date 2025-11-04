@@ -38,6 +38,17 @@ serve(async (req) => {
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
+    // Obtener reglas de clasificación activas
+    const { data: classificationRules, error: rulesError } = await supabase
+      .from("vendor_classification_rules")
+      .select("*")
+      .eq("organization_id", organization_id)
+      .eq("is_active", true);
+
+    if (rulesError) {
+      console.error("Error fetching classification rules:", rulesError);
+    }
+
     // Obtener todos los proveedores activos de la organización
     const { data: vendors, error: vendorsError } = await supabase
       .from("vendors")
@@ -50,7 +61,40 @@ serve(async (req) => {
       throw new Error("Failed to fetch vendors");
     }
 
+    // Buscar primero en las reglas de clasificación por nombre exacto
+    let accountClassification = null;
+    if (classificationRules && classificationRules.length > 0) {
+      const rule = classificationRules.find(
+        (r) => r.vendor_name.toLowerCase() === supplier_name.toLowerCase()
+      );
+      
+      if (rule) {
+        console.log(`Found classification rule for ${supplier_name}: ${rule.account_code}`);
+        accountClassification = {
+          account_code: rule.account_code,
+          account_description: rule.account_description,
+          matched_by: "exact_name",
+        };
+      }
+    }
+
     if (!vendors || vendors.length === 0) {
+      // Si no hay proveedores pero sí reglas de clasificación, devolver la clasificación
+      if (accountClassification) {
+        return new Response(
+          JSON.stringify({ 
+            vendor_id: null,
+            confidence: 90,
+            reason: "Vendor not in catalog but account classification found by name",
+            account_classification: accountClassification
+          }),
+          {
+            status: 200,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          }
+        );
+      }
+
       return new Response(
         JSON.stringify({ 
           error: "No active vendors found",
@@ -175,6 +219,11 @@ ${JSON.stringify(vendorsList, null, 2)}
     }
 
     const classification = JSON.parse(toolCall.function.arguments);
+
+    // Agregar clasificación de cuenta si se encontró
+    if (accountClassification) {
+      classification.account_classification = accountClassification;
+    }
 
     return new Response(JSON.stringify(classification), {
       status: 200,

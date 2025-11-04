@@ -5,3 +5,6 @@ verify_jwt = true
 
 [functions.gmail-oauth-callback]
 verify_jwt = false
+
+[functions.import-vendor-rules]
+verify_jwt = true
