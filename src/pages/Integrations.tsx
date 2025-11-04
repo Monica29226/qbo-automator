@@ -146,17 +146,20 @@ const Integrations = () => {
   };
 
   const handleGmailOAuth = async () => {
-    if (!activeOrganization) return;
+    if (!activeOrganization) {
+      toast.error("No hay organización activa");
+      return;
+    }
 
     try {
-      setIsLoading(true);
-
       // Get current user
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) {
         toast.error("Usuario no autenticado");
         return;
       }
+
+      toast.info("Iniciando conexión con Gmail...");
 
       // Create state with organization and user info
       const state = btoa(JSON.stringify({
@@ -169,7 +172,14 @@ const Integrations = () => {
         body: { state },
       });
 
-      if (error) throw error;
+      if (error) {
+        console.error("Error from gmail-oauth-init:", error);
+        throw error;
+      }
+
+      if (!data?.authUrl) {
+        throw new Error("No se recibió URL de autenticación");
+      }
 
       // Open OAuth window
       const width = 500;
@@ -182,6 +192,11 @@ const Integrations = () => {
         "Gmail OAuth",
         `width=${width},height=${height},left=${left},top=${top}`
       );
+
+      if (!popup) {
+        toast.error("Bloqueador de ventanas emergentes detectado. Por favor permite ventanas emergentes.");
+        return;
+      }
 
       // Listen for OAuth completion
       const messageHandler = (event: MessageEvent) => {
@@ -199,29 +214,30 @@ const Integrations = () => {
       const checkPopup = setInterval(() => {
         if (popup?.closed) {
           clearInterval(checkPopup);
-          setIsLoading(false);
           window.removeEventListener("message", messageHandler);
         }
       }, 500);
     } catch (error) {
       console.error("Error starting OAuth:", error);
-      toast.error("Error al iniciar conexión con Gmail");
-      setIsLoading(false);
+      toast.error("Error al iniciar conexión con Gmail: " + (error instanceof Error ? error.message : "Error desconocido"));
     }
   };
 
   const handleQuickBooksOAuth = async () => {
-    if (!activeOrganization) return;
+    if (!activeOrganization) {
+      toast.error("No hay organización activa");
+      return;
+    }
 
     try {
-      setIsLoading(true);
-
       // Get current user
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) {
         toast.error("Usuario no autenticado");
         return;
       }
+
+      toast.info("Iniciando conexión con QuickBooks...");
 
       // Create state with organization and user info
       const state = btoa(JSON.stringify({
@@ -234,7 +250,14 @@ const Integrations = () => {
         body: { state },
       });
 
-      if (error) throw error;
+      if (error) {
+        console.error("Error from quickbooks-oauth-init:", error);
+        throw error;
+      }
+
+      if (!data?.authUrl) {
+        throw new Error("No se recibió URL de autenticación");
+      }
 
       // Open OAuth window
       const width = 800;
@@ -247,6 +270,11 @@ const Integrations = () => {
         "QuickBooks OAuth",
         `width=${width},height=${height},left=${left},top=${top}`
       );
+
+      if (!popup) {
+        toast.error("Bloqueador de ventanas emergentes detectado. Por favor permite ventanas emergentes.");
+        return;
+      }
 
       // Listen for OAuth completion
       const messageHandler = (event: MessageEvent) => {
@@ -264,14 +292,12 @@ const Integrations = () => {
       const checkPopup = setInterval(() => {
         if (popup?.closed) {
           clearInterval(checkPopup);
-          setIsLoading(false);
           window.removeEventListener("message", messageHandler);
         }
       }, 500);
     } catch (error) {
       console.error("Error starting QuickBooks OAuth:", error);
-      toast.error("Error al iniciar conexión con QuickBooks");
-      setIsLoading(false);
+      toast.error("Error al iniciar conexión con QuickBooks: " + (error instanceof Error ? error.message : "Error desconocido"));
     }
   };
 
@@ -494,11 +520,14 @@ const Integrations = () => {
             <Button variant="outline" onClick={() => setIsDialogOpen(false)}>
               Cancelar
             </Button>
-            <Button onClick={handleAddAccount} disabled={isLoading}>
-              {isLoading ? (
+            <Button 
+              onClick={handleAddAccount} 
+              disabled={selectedService !== "gmail" && selectedService !== "quickbooks" && isLoading}
+            >
+              {isLoading && selectedService !== "gmail" && selectedService !== "quickbooks" ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  {selectedService === "gmail" || selectedService === "quickbooks" ? "Iniciando..." : "Agregando..."}
+                  Agregando...
                 </>
               ) : (
                 selectedService === "gmail" || selectedService === "quickbooks" 
