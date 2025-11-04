@@ -323,15 +323,16 @@ const ConnectionStatus = ({
   onClick?: () => void;
 }) => {
   return (
-    <div 
-      className="flex items-center justify-between p-3 rounded-lg border bg-muted/30 hover:bg-muted/50 cursor-pointer transition-colors"
+    <button 
+      className="w-full flex items-center justify-between p-3 rounded-lg border bg-muted/30 hover:bg-muted/50 hover:border-primary cursor-pointer transition-all"
       onClick={onClick}
+      type="button"
     >
       <span className="text-sm font-medium">{service}</span>
       <Badge variant={status === "connected" ? "default" : "secondary"} className="text-xs">
         {status === "connected" ? "Conectado" : "Desconectado"}
       </Badge>
-    </div>
+    </button>
   );
 };
 
