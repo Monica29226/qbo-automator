@@ -20,3 +20,9 @@ verify_jwt = false
 
 [functions.oauth-quickbooks-callback]
 verify_jwt = false
+
+[functions.fetch-gmail-invoices]
+verify_jwt = false
+
+[functions.sync-to-quickbooks]
+verify_jwt = false

@@ -12,6 +12,7 @@ import ReviewQueue from "./pages/ReviewQueue";
 import UploadDocument from "./pages/UploadDocument";
 import Organizations from "./pages/Organizations";
 import Integrations from "./pages/Integrations";
+import ConnectionSetup from "./pages/ConnectionSetup";
 import NotFound from "./pages/NotFound";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 
@@ -79,6 +80,14 @@ const App = () => (
             element={
               <ProtectedRoute requireAdmin>
                 <Integrations />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/connection-setup"
+            element={
+              <ProtectedRoute>
+                <ConnectionSetup />
               </ProtectedRoute>
             }
           />

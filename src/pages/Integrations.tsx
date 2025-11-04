@@ -12,7 +12,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { ArrowLeft, Plus, Plug, Check, X, Mail, Building2, HardDrive, Loader2 } from "lucide-react";
+import { ArrowLeft, Plus, Plug, Check, X, Mail, Building2, HardDrive, Loader2, HelpCircle } from "lucide-react";
 import { Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -47,6 +47,8 @@ const Integrations = () => {
   const [accountEmail, setAccountEmail] = useState("");
   const [accountName, setAccountName] = useState("");
   const [isConnecting, setIsConnecting] = useState(false);
+  const [isFetchingGmail, setIsFetchingGmail] = useState(false);
+  const [isSyncingQB, setIsSyncingQB] = useState(false);
 
   useEffect(() => {
     if (activeOrganization) {
@@ -193,6 +195,83 @@ const Integrations = () => {
     }
   };
 
+  const handleFetchGmailInvoices = async () => {
+    if (!activeOrganization) return;
+
+    setIsFetchingGmail(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("fetch-gmail-invoices", {
+        body: { organization_id: activeOrganization },
+      });
+
+      if (error) {
+        toast.error("Error al buscar facturas en Gmail");
+        console.error(error);
+      } else {
+        toast.success(
+          `Se encontraron ${data.messages_found} correos. Procesados: ${data.processed}`
+        );
+        fetchData();
+      }
+    } catch (error) {
+      console.error("Error fetching Gmail invoices:", error);
+      toast.error("Error al buscar facturas");
+    } finally {
+      setIsFetchingGmail(false);
+    }
+  };
+
+  const handleSyncToQuickBooks = async () => {
+    if (!activeOrganization) return;
+
+    // Obtener documentos pendientes de sincronizar
+    const { data: pendingDocs, error: docsError } = await supabase
+      .from("processed_documents")
+      .select("id")
+      .eq("organization_id", activeOrganization)
+      .eq("status", "review")
+      .limit(5);
+
+    if (docsError || !pendingDocs || pendingDocs.length === 0) {
+      toast.info("No hay documentos pendientes de sincronizar");
+      return;
+    }
+
+    setIsSyncingQB(true);
+    let successCount = 0;
+    let errorCount = 0;
+
+    for (const doc of pendingDocs) {
+      try {
+        const { error } = await supabase.functions.invoke("sync-to-quickbooks", {
+          body: {
+            organization_id: activeOrganization,
+            document_id: doc.id,
+          },
+        });
+
+        if (error) {
+          errorCount++;
+        } else {
+          successCount++;
+        }
+      } catch (error) {
+        errorCount++;
+      }
+    }
+
+    setIsSyncingQB(false);
+    
+    if (successCount > 0) {
+      toast.success(`${successCount} facturas sincronizadas a QuickBooks`);
+    }
+    if (errorCount > 0) {
+      toast.error(`${errorCount} facturas con errores`);
+    }
+    
+    fetchData();
+  };
+
   const services = [
     {
       id: "gmail",
@@ -253,20 +332,28 @@ const Integrations = () => {
     <div className="min-h-screen bg-background">
       <header className="border-b bg-card">
         <div className="container mx-auto px-6 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <Button variant="ghost" size="sm" asChild>
-              <Link to="/dashboard">
-                <ArrowLeft className="h-4 w-4 mr-2" />
-                Volver
+          <div className="flex items-center justify-between w-full">
+            <div className="flex items-center gap-3">
+              <Button variant="ghost" size="sm" asChild>
+                <Link to="/dashboard">
+                  <ArrowLeft className="h-4 w-4 mr-2" />
+                  Volver
+                </Link>
+              </Button>
+              <div className="h-10 w-10 rounded-lg bg-primary flex items-center justify-center">
+                <Plug className="h-6 w-6 text-primary-foreground" />
+              </div>
+              <div>
+                <h1 className="text-xl font-bold text-foreground">Conexiones</h1>
+                <p className="text-xs text-muted-foreground">Gestiona tus integraciones</p>
+              </div>
+            </div>
+            <Button variant="outline" size="sm" asChild>
+              <Link to="/connection-setup">
+                <HelpCircle className="h-4 w-4 mr-2" />
+                Guía de Configuración
               </Link>
             </Button>
-            <div className="h-10 w-10 rounded-lg bg-primary flex items-center justify-center">
-              <Plug className="h-6 w-6 text-primary-foreground" />
-            </div>
-            <div>
-              <h1 className="text-xl font-bold text-foreground">Conexiones</h1>
-              <p className="text-xs text-muted-foreground">Gestiona tus integraciones</p>
-            </div>
           </div>
         </div>
       </header>
@@ -277,7 +364,56 @@ const Integrations = () => {
             <Loader2 className="h-8 w-8 animate-spin text-primary" />
           </div>
         ) : (
-          <div className="space-y-4">
+          <div className="space-y-6">
+            {/* Acciones rápidas */}
+            {(orgData?.gmail_connected || orgData?.quickbooks_connected) && (
+              <Card className="p-6 bg-primary/5 border-primary/20">
+                <h3 className="font-semibold mb-3">Acciones Rápidas</h3>
+                <div className="flex flex-wrap gap-3">
+                  {orgData?.gmail_connected && (
+                    <Button
+                      onClick={handleFetchGmailInvoices}
+                      disabled={isFetchingGmail}
+                      variant="default"
+                    >
+                      {isFetchingGmail ? (
+                        <>
+                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                          Buscando...
+                        </>
+                      ) : (
+                        <>
+                          <Mail className="h-4 w-4 mr-2" />
+                          Importar desde Gmail
+                        </>
+                      )}
+                    </Button>
+                  )}
+                  {orgData?.quickbooks_connected && (
+                    <Button
+                      onClick={handleSyncToQuickBooks}
+                      disabled={isSyncingQB}
+                      variant="default"
+                    >
+                      {isSyncingQB ? (
+                        <>
+                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                          Sincronizando...
+                        </>
+                      ) : (
+                        <>
+                          <Building2 className="h-4 w-4 mr-2" />
+                          Sincronizar a QuickBooks
+                        </>
+                      )}
+                    </Button>
+                  )}
+                </div>
+              </Card>
+            )}
+
+            {/* Servicios disponibles */}
+            <div className="space-y-4">
             {services.map((service) => (
               <Card key={service.id} className="p-6">
                 <div className="flex items-start justify-between">
@@ -370,6 +506,7 @@ const Integrations = () => {
               </Card>
             ))}
           </div>
+        </div>
         )}
       </main>
 
