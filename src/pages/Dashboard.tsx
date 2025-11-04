@@ -302,10 +302,18 @@ const Dashboard = () => {
         </div>
 
         <Card className="p-6">
-          <h3 className="text-lg font-semibold mb-6 flex items-center gap-2">
-            <Clock className="h-5 w-5 text-primary" />
-            Flujo de Procesamiento
-          </h3>
+          <div className="flex items-center justify-between mb-6">
+            <h3 className="text-lg font-semibold flex items-center gap-2">
+              <Clock className="h-5 w-5 text-primary" />
+              Flujo de Procesamiento
+            </h3>
+            <Button variant="outline" size="sm" asChild>
+              <Link to="/vendor-rules">
+                <FileSpreadsheet className="h-4 w-4 mr-2" />
+                Gestionar Reglas
+              </Link>
+            </Button>
+          </div>
           <ProcessingFlow />
         </Card>
       </main>

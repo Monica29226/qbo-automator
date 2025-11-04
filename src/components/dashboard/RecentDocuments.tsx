@@ -1,8 +1,9 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { FileText, ExternalLink, Loader2 } from "lucide-react";
+import { FileText, ExternalLink, Loader2, AlertCircle } from "lucide-react";
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 interface Document {
   id: string;
@@ -14,6 +15,7 @@ interface Document {
   status: string;
   qbo_entity_id: string | null;
   doc_type: string;
+  error_message: string | null;
 }
 
 const statusConfig: Record<string, { label: string; variant: "default" | "secondary" | "outline"; color: string }> = {
@@ -76,19 +78,40 @@ export const RecentDocuments = () => {
           className="flex items-center justify-between p-4 rounded-lg border bg-card hover:bg-muted/30 transition-colors"
         >
           <div className="flex items-center gap-4 flex-1">
-            <div className="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center">
-              <FileText className="h-5 w-5 text-primary" />
+            <div className={`h-10 w-10 rounded-lg flex items-center justify-center ${
+              doc.error_message ? "bg-destructive/10" : "bg-primary/10"
+            }`}>
+              {doc.error_message ? (
+                <AlertCircle className="h-5 w-5 text-destructive" />
+              ) : (
+                <FileText className="h-5 w-5 text-primary" />
+              )}
             </div>
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 mb-1">
                 <p className="font-semibold text-sm text-foreground">{doc.doc_number}</p>
                 {doc.qbo_entity_id && (
                   <Badge variant="outline" className="text-xs">
-                    {doc.qbo_entity_id}
+                    QBO: {doc.qbo_entity_id}
                   </Badge>
                 )}
               </div>
               <p className="text-sm text-muted-foreground truncate">{doc.supplier_name}</p>
+              {doc.error_message && (
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <p className="text-xs text-destructive mt-1 cursor-help flex items-center gap-1">
+                        <AlertCircle className="h-3 w-3" />
+                        Error: {doc.error_message.substring(0, 50)}...
+                      </p>
+                    </TooltipTrigger>
+                    <TooltipContent className="max-w-md">
+                      <p className="text-xs">{doc.error_message}</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              )}
             </div>
           </div>
           <div className="flex items-center gap-4">
