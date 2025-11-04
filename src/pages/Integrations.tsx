@@ -17,6 +17,7 @@ import { Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
+import { OrganizationSwitcher } from "@/components/OrganizationSwitcher";
 
 interface IntegrationAccount {
   id: string;
@@ -396,21 +397,29 @@ const Integrations = () => {
   return (
     <div className="min-h-screen bg-background">
       <header className="border-b bg-card">
-        <div className="container mx-auto px-6 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <Button variant="ghost" size="sm" asChild>
-              <Link to="/dashboard">
-                <ArrowLeft className="h-4 w-4 mr-2" />
-                Volver
-              </Link>
-            </Button>
-            <div className="h-10 w-10 rounded-lg bg-primary flex items-center justify-center">
-              <Plug className="h-6 w-6 text-primary-foreground" />
+        <div className="container mx-auto px-6 py-4">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-3">
+              <Button variant="ghost" size="sm" asChild>
+                <Link to="/dashboard">
+                  <ArrowLeft className="h-4 w-4 mr-2" />
+                  Volver
+                </Link>
+              </Button>
+              <div className="h-10 w-10 rounded-lg bg-primary flex items-center justify-center">
+                <Plug className="h-6 w-6 text-primary-foreground" />
+              </div>
+              <div>
+                <h1 className="text-xl font-bold text-foreground">Conexiones</h1>
+                <p className="text-xs text-muted-foreground">Gestiona tus integraciones</p>
+              </div>
             </div>
-            <div>
-              <h1 className="text-xl font-bold text-foreground">Conexiones</h1>
-              <p className="text-xs text-muted-foreground">Gestiona tus integraciones</p>
-            </div>
+            <OrganizationSwitcher />
+          </div>
+          <div className="mt-3 p-3 bg-muted rounded-lg">
+            <p className="text-sm text-muted-foreground">
+              ℹ️ Las conexiones son específicas para cada empresa. Cambia de empresa arriba para gestionar diferentes conexiones.
+            </p>
           </div>
         </div>
       </header>
@@ -502,22 +511,25 @@ const Integrations = () => {
           <DialogHeader>
             <DialogTitle>Agregar Cuenta</DialogTitle>
             <DialogDescription>
-              Conecta una nueva cuenta de {services.find((s) => s.id === selectedService)?.name}
+              Conecta una nueva cuenta de {services.find((s) => s.id === selectedService)?.name} para esta empresa
             </DialogDescription>
           </DialogHeader>
 
           {selectedService === "gmail" || selectedService === "quickbooks" ? (
             <div className="space-y-4">
-              <div className="bg-muted p-4 rounded-lg">
+              <div className="bg-muted p-4 rounded-lg border border-border">
                 <p className="text-sm text-foreground mb-2">
                   <strong>Conexión segura con {services.find((s) => s.id === selectedService)?.name}</strong>
                 </p>
-                <p className="text-xs text-muted-foreground">
+                <p className="text-xs text-muted-foreground mb-2">
                   {selectedService === "gmail" 
                     ? "Se abrirá una ventana de Google para que autorices el acceso de forma segura."
                     : "Se abrirá una ventana de QuickBooks para que autorices el acceso de forma segura."
                   }
                   {" "}No necesitas ingresar tu contraseña aquí.
+                </p>
+                <p className="text-xs text-primary font-medium mt-2">
+                  ✓ Esta conexión será exclusiva para la empresa actual
                 </p>
               </div>
             </div>
