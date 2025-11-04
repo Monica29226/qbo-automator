@@ -2,22 +2,65 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { HelpCircle, Link as LinkIcon, CheckCircle2, XCircle, Loader2 } from "lucide-react";
+import { HelpCircle, Link as LinkIcon, CheckCircle2, XCircle, Loader2, Settings } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useAuth } from "@/hooks/useAuth";
+import { OAuthCredentialsDialog } from "./OAuthCredentialsDialog";
 
 export const AppHeader = () => {
   const { activeOrganization } = useAuth();
   const { settings, setSettings, companyId, setCompanyId, gmailStatus, qboStatus, setGmailStatus, setQboStatus, addToLog } = useAppStore();
   const [isTesting, setIsTesting] = useState(false);
   const [isConnecting, setIsConnecting] = useState<'gmail' | 'qbo' | null>(null);
+  const [hasGoogleCreds, setHasGoogleCreds] = useState(false);
+  const [hasQBCreds, setHasQBCreds] = useState(false);
+  const [credentialsDialogOpen, setCredentialsDialogOpen] = useState(false);
+  const [selectedProvider, setSelectedProvider] = useState<'google' | 'quickbooks'>('google');
+
+  useEffect(() => {
+    if (activeOrganization) {
+      checkCredentials();
+    }
+  }, [activeOrganization]);
+
+  const checkCredentials = async () => {
+    if (!activeOrganization) return;
+
+    try {
+      const { data: googleCreds } = await supabase
+        .from('oauth_credentials')
+        .select('id')
+        .eq('organization_id', activeOrganization)
+        .eq('provider', 'google')
+        .maybeSingle();
+
+      const { data: qbCreds } = await supabase
+        .from('oauth_credentials')
+        .select('id')
+        .eq('organization_id', activeOrganization)
+        .eq('provider', 'quickbooks')
+        .maybeSingle();
+
+      setHasGoogleCreds(!!googleCreds);
+      setHasQBCreds(!!qbCreds);
+    } catch (error) {
+      console.error('Error checking credentials:', error);
+    }
+  };
 
   const handleConnectGmail = async () => {
     if (!activeOrganization) {
       toast.error("No hay organización activa");
+      return;
+    }
+
+    if (!hasGoogleCreds) {
+      toast.error("Primero debes configurar las credenciales OAuth de Google");
+      setSelectedProvider('google');
+      setCredentialsDialogOpen(true);
       return;
     }
 
@@ -51,6 +94,13 @@ export const AppHeader = () => {
 
     if (!companyId.trim()) {
       toast.error("Debe ingresar el Company ID primero");
+      return;
+    }
+
+    if (!hasQBCreds) {
+      toast.error("Primero debes configurar las credenciales OAuth de QuickBooks");
+      setSelectedProvider('quickbooks');
+      setCredentialsDialogOpen(true);
       return;
     }
 
@@ -185,37 +235,63 @@ export const AppHeader = () => {
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-          <Button
-            onClick={handleConnectGmail}
-            disabled={isConnecting !== null}
-            variant={gmailStatus.connected ? "secondary" : "default"}
-            className="justify-start"
-          >
-            {isConnecting === 'gmail' ? (
-              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-            ) : gmailStatus.connected ? (
-              <CheckCircle2 className="h-4 w-4 mr-2 text-success" />
-            ) : (
-              <LinkIcon className="h-4 w-4 mr-2" />
-            )}
-            {gmailStatus.connected ? `Gmail: ${gmailStatus.accountEmail}` : 'Conectar Gmail (OAuth2)'}
-          </Button>
+          <div className="flex gap-2">
+            <Button
+              onClick={handleConnectGmail}
+              disabled={isConnecting !== null}
+              variant={gmailStatus.connected ? "secondary" : "default"}
+              className="flex-1 justify-start"
+            >
+              {isConnecting === 'gmail' ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : gmailStatus.connected ? (
+                <CheckCircle2 className="h-4 w-4 mr-2 text-success" />
+              ) : (
+                <LinkIcon className="h-4 w-4 mr-2" />
+              )}
+              {gmailStatus.connected ? `Gmail: ${gmailStatus.accountEmail}` : 'Conectar Gmail'}
+            </Button>
+            <Button
+              variant="outline"
+              size="icon"
+              onClick={() => {
+                setSelectedProvider('google');
+                setCredentialsDialogOpen(true);
+              }}
+              title="Configurar credenciales OAuth"
+            >
+              <Settings className="h-4 w-4" />
+            </Button>
+          </div>
 
-          <Button
-            onClick={handleConnectQuickBooks}
-            disabled={isConnecting !== null || !companyId.trim()}
-            variant={qboStatus.connected ? "secondary" : "default"}
-            className="justify-start"
-          >
-            {isConnecting === 'qbo' ? (
-              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-            ) : qboStatus.connected ? (
-              <CheckCircle2 className="h-4 w-4 mr-2 text-success" />
-            ) : (
-              <LinkIcon className="h-4 w-4 mr-2" />
-            )}
-            {qboStatus.connected ? `QBO: ${qboStatus.realmId}` : 'Conectar QuickBooks (OAuth2)'}
-          </Button>
+          <div className="flex gap-2">
+            <Button
+              onClick={handleConnectQuickBooks}
+              disabled={isConnecting !== null || !companyId.trim()}
+              variant={qboStatus.connected ? "secondary" : "default"}
+              className="flex-1 justify-start"
+            >
+              {isConnecting === 'qbo' ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : qboStatus.connected ? (
+                <CheckCircle2 className="h-4 w-4 mr-2 text-success" />
+              ) : (
+                <LinkIcon className="h-4 w-4 mr-2" />
+              )}
+              {qboStatus.connected ? `QBO: ${qboStatus.realmId}` : 'Conectar QuickBooks'}
+            </Button>
+            <Button
+              variant="outline"
+              size="icon"
+              onClick={() => {
+                setSelectedProvider('quickbooks');
+                setCredentialsDialogOpen(true);
+              }}
+              title="Configurar credenciales OAuth"
+            >
+              <Settings className="h-4 w-4" />
+            </Button>
+          </div>
 
           <div className="flex gap-2">
             <div className="flex-1">
@@ -248,7 +324,28 @@ export const AppHeader = () => {
             </p>
           </div>
         )}
+
+        {(!hasGoogleCreds || !hasQBCreds) && (
+          <div className="mt-3 p-3 bg-warning/10 border border-warning/30 rounded-lg">
+            <p className="text-sm font-medium mb-1">
+              ⚙️ Configuración OAuth pendiente
+            </p>
+            <p className="text-xs text-muted-foreground">
+              {!hasGoogleCreds && !hasQBCreds && 'Configura las credenciales OAuth de Gmail y QuickBooks usando los botones ⚙️'}
+              {!hasGoogleCreds && hasQBCreds && 'Configura las credenciales OAuth de Gmail usando el botón ⚙️'}
+              {hasGoogleCreds && !hasQBCreds && 'Configura las credenciales OAuth de QuickBooks usando el botón ⚙️'}
+            </p>
+          </div>
+        )}
       </div>
+
+      <OAuthCredentialsDialog
+        open={credentialsDialogOpen}
+        onOpenChange={setCredentialsDialogOpen}
+        provider={selectedProvider}
+        organizationId={activeOrganization || ''}
+        onSuccess={checkCredentials}
+      />
     </header>
   );
 };
