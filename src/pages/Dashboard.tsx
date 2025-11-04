@@ -150,11 +150,7 @@ const Dashboard = () => {
               <p className="text-xs text-muted-foreground">Automatización de Facturas → QuickBooks</p>
             </div>
           </div>
-          <div className="flex items-center gap-3">
-            <Badge variant="outline" className="gap-1">
-              <div className="h-2 w-2 rounded-full bg-success animate-pulse" />
-              Conectado
-            </Badge>
+          <div className="flex items-center gap-2 flex-wrap">
             <OrganizationSwitcher />
             <Button variant="outline" size="sm" asChild>
               <Link to="/upload">
@@ -188,17 +184,17 @@ const Dashboard = () => {
             </Button>
             {isAdmin && (
               <Button variant="outline" size="sm" asChild>
-                <Link to="/vendors">
-                  <Users className="h-4 w-4 mr-2" />
-                  Proveedores
+                <Link to="/integrations">
+                  <Plug className="h-4 w-4 mr-2" />
+                  Integraciones
                 </Link>
               </Button>
             )}
             {isAdmin && (
               <Button variant="outline" size="sm" asChild>
-                <Link to="/integrations">
-                  <Plug className="h-4 w-4 mr-2" />
-                  Integraciones
+                <Link to="/vendors">
+                  <Users className="h-4 w-4 mr-2" />
+                  Proveedores
                 </Link>
               </Button>
             )}
