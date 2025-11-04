@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { FileText, ArrowLeft, Loader2, Upload, FileCheck } from "lucide-react";
+import { FileText, ArrowLeft, Loader2, Upload, FileCheck, AlertCircle } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -176,6 +176,38 @@ const UploadDocument = () => {
 
       <main className="container mx-auto px-6 py-8 max-w-4xl">
         <div className="grid gap-6">
+          {/* Info Card - Explicación de clasificación automática */}
+          <Card className="p-4 bg-primary/5 border-primary/20">
+            <div className="flex gap-3">
+              <FileCheck className="h-5 w-5 text-primary flex-shrink-0 mt-0.5" />
+              <div className="space-y-2">
+                <h3 className="font-semibold text-sm">Clasificación Automática de Proveedores</h3>
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  El sistema clasifica automáticamente cada factura según las <strong>Reglas de Proveedores</strong> configuradas:
+                </p>
+                <ul className="text-xs text-muted-foreground space-y-1 ml-4">
+                  <li>• Identifica el proveedor por nombre o ID fiscal</li>
+                  <li>• Aplica la cuenta contable correcta de QuickBooks</li>
+                  <li>• Si no encuentra regla, envía a <strong>Cola de Revisión</strong></li>
+                </ul>
+                <div className="pt-2 flex gap-2">
+                  <Button variant="outline" size="sm" asChild>
+                    <Link to="/vendor-rules" className="text-xs">
+                      <FileText className="h-3 w-3 mr-1" />
+                      Ver Reglas
+                    </Link>
+                  </Button>
+                  <Button variant="outline" size="sm" asChild>
+                    <Link to="/review-queue" className="text-xs">
+                      <AlertCircle className="h-3 w-3 mr-1" />
+                      Cola de Revisión
+                    </Link>
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </Card>
+
           <Card className="p-6">
             <h2 className="text-lg font-semibold mb-4">Cargar Documentos</h2>
             <div className="space-y-4">

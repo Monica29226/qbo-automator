@@ -64,6 +64,39 @@ serve(async (req) => {
     // Initialize Supabase client
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
+    // Check if this QuickBooks realm is already connected to another organization
+    const { data: existingConnections } = await supabase
+      .from("integration_accounts")
+      .select("organization_id, credentials")
+      .eq("service_type", "quickbooks")
+      .eq("is_active", true);
+
+    // Check if this realm is already connected to a DIFFERENT organization
+    if (existingConnections && existingConnections.length > 0) {
+      for (const conn of existingConnections) {
+        const credentials = conn.credentials as any;
+        if (credentials?.realm_id === realmId && conn.organization_id !== organization_id) {
+          console.error("QuickBooks realm already connected to another organization");
+          return new Response(
+            `<!DOCTYPE html>
+            <html>
+              <head>
+                <meta charset="UTF-8">
+                <title>Error</title>
+              </head>
+              <body>
+                <h1>Error de Conexión</h1>
+                <p>Esta cuenta de QuickBooks (Realm ${realmId}) ya está conectada a otra empresa.</p>
+                <p style="font-size: 12px; color: #666;">Cada empresa debe tener su propia conexión de QuickBooks independiente.</p>
+                <script>setTimeout(() => window.close(), 5000);</script>
+              </body>
+            </html>`,
+            { headers: { "Content-Type": "text/html; charset=UTF-8" }, status: 400 }
+          );
+        }
+      }
+    }
+
     // Store tokens in integration_accounts
     const { error: insertError } = await supabase
       .from("integration_accounts")

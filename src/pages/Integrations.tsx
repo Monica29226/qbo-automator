@@ -418,7 +418,7 @@ const Integrations = () => {
           </div>
           <div className="mt-3 p-3 bg-muted rounded-lg">
             <p className="text-sm text-muted-foreground">
-              ℹ️ Las conexiones son específicas para cada empresa. Cambia de empresa arriba para gestionar diferentes conexiones.
+              ℹ️ Las conexiones son específicas para cada empresa. Cada empresa debe conectar su propia cuenta de Gmail y QuickBooks independiente.
             </p>
           </div>
         </div>
