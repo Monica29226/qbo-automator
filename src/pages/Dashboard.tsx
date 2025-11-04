@@ -24,10 +24,15 @@ const Dashboard = () => {
     total: 0,
   });
   const [isFetchingEmails, setIsFetchingEmails] = useState(false);
+  const [connections, setConnections] = useState({
+    gmail: false,
+    quickbooks: false,
+  });
 
   useEffect(() => {
     if (activeOrganization) {
       fetchStats();
+      fetchConnections();
     }
   }, [activeOrganization]);
 
@@ -58,6 +63,21 @@ const Dashboard = () => {
         total: thisMonth.length,
       });
     }
+  };
+
+  const fetchConnections = async () => {
+    if (!activeOrganization) return;
+
+    const { data: accounts } = await supabase
+      .from("integration_accounts")
+      .select("service_type, is_active")
+      .eq("organization_id", activeOrganization)
+      .eq("is_active", true);
+
+    setConnections({
+      gmail: accounts?.some(a => a.service_type === "gmail") || false,
+      quickbooks: accounts?.some(a => a.service_type === "quickbooks") || false,
+    });
   };
 
   const handleFetchGmailInvoices = async () => {
@@ -266,9 +286,21 @@ const Dashboard = () => {
               Conexiones
             </h3>
             <div className="space-y-4">
-              <ConnectionStatus service="Gmail" status="connected" />
-              <ConnectionStatus service="QuickBooks Online" status="connected" />
-              <ConnectionStatus service="SharePoint" status="disconnected" />
+              <ConnectionStatus 
+                service="Gmail" 
+                status={connections.gmail ? "connected" : "disconnected"} 
+                onClick={() => navigate("/integrations")}
+              />
+              <ConnectionStatus 
+                service="QuickBooks Online" 
+                status={connections.quickbooks ? "connected" : "disconnected"}
+                onClick={() => navigate("/integrations")}
+              />
+              <ConnectionStatus 
+                service="SharePoint" 
+                status="disconnected"
+                onClick={() => navigate("/integrations")}
+              />
             </div>
           </Card>
         </div>
@@ -285,9 +317,20 @@ const Dashboard = () => {
   );
 };
 
-const ConnectionStatus = ({ service, status }: { service: string; status: "connected" | "disconnected" }) => {
+const ConnectionStatus = ({ 
+  service, 
+  status, 
+  onClick 
+}: { 
+  service: string; 
+  status: "connected" | "disconnected";
+  onClick?: () => void;
+}) => {
   return (
-    <div className="flex items-center justify-between p-3 rounded-lg border bg-muted/30">
+    <div 
+      className="flex items-center justify-between p-3 rounded-lg border bg-muted/30 hover:bg-muted/50 cursor-pointer transition-colors"
+      onClick={onClick}
+    >
       <span className="text-sm font-medium">{service}</span>
       <Badge variant={status === "connected" ? "default" : "secondary"} className="text-xs">
         {status === "connected" ? "Conectado" : "Desconectado"}
