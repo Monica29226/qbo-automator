@@ -40,65 +40,83 @@ export const OrganizationSwitcher = () => {
 
     setIsLoading(true);
 
-    const { data: { user } } = await supabase.auth.getUser();
-    
-    if (!user) {
-      toast.error("Usuario no autenticado");
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      
+      if (!user) {
+        toast.error("Usuario no autenticado");
+        setIsLoading(false);
+        return;
+      }
+
+      // Crear nueva organización
+      const { data: newOrg, error: orgError } = await supabase
+        .from("organizations")
+        .insert([{
+          name: newOrgName,
+          email: newOrgEmail || null,
+        }])
+        .select()
+        .single();
+
+      if (orgError) {
+        console.error("Error al crear organización:", orgError);
+        toast.error(`Error al crear empresa: ${orgError.message}`);
+        setIsLoading(false);
+        return;
+      }
+
+      console.log("Organización creada:", newOrg);
+
+      // Agregar usuario actual como owner
+      const { error: memberError } = await supabase
+        .from("organization_members")
+        .insert([{
+          organization_id: newOrg.id,
+          user_id: user.id,
+          role: 'owner'
+        }]);
+
+      if (memberError) {
+        console.error("Error al agregar miembro:", memberError);
+        toast.error(`Error al configurar permisos: ${memberError.message}`);
+        setIsLoading(false);
+        return;
+      }
+
+      console.log("Miembro agregado exitosamente");
+
+      // Establecer como organización activa
+      const { error: activeOrgError } = await supabase
+        .from("user_active_organization")
+        .upsert({
+          user_id: user.id,
+          organization_id: newOrg.id
+        }, {
+          onConflict: 'user_id'
+        });
+
+      if (activeOrgError) {
+        console.error("Error al establecer organización activa:", activeOrgError);
+      }
+
+      console.log("Organización establecida como activa");
+
       setIsLoading(false);
-      return;
-    }
-
-    // Crear nueva organización
-    const { data: newOrg, error: orgError } = await supabase
-      .from("organizations")
-      .insert([{
-        name: newOrgName,
-        email: newOrgEmail || null,
-      }])
-      .select()
-      .single();
-
-    if (orgError) {
-      toast.error("Error al crear empresa");
-      console.error(orgError);
+      toast.success("Empresa creada exitosamente");
+      setIsDialogOpen(false);
+      setNewOrgName("");
+      setNewOrgEmail("");
+      
+      // Recargar la página para actualizar el estado
+      setTimeout(() => {
+        window.location.reload();
+      }, 1000);
+    } catch (error) {
+      console.error("Error inesperado:", error);
+      toast.error("Error inesperado al crear empresa");
       setIsLoading(false);
-      return;
     }
-
-    // Agregar usuario actual como owner
-    const { error: memberError } = await supabase
-      .from("organization_members")
-      .insert([{
-        organization_id: newOrg.id,
-        user_id: user.id,
-        role: 'owner'
-      }]);
-
-    if (memberError) {
-      toast.error("Error al configurar permisos");
-      console.error(memberError);
-      setIsLoading(false);
-      return;
-    }
-
-    // Establecer como organización activa
-    await supabase
-      .from("user_active_organization")
-      .upsert({
-        user_id: user.id,
-        organization_id: newOrg.id
-      }, {
-        onConflict: 'user_id'
-      });
-
-    setIsLoading(false);
-    toast.success("Empresa creada exitosamente");
-    setIsDialogOpen(false);
-    setNewOrgName("");
-    setNewOrgEmail("");
-    
-    // Recargar la página para actualizar el estado
-    window.location.reload();
   };
 
   if (organizations.length === 0) {
