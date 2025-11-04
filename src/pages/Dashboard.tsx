@@ -1,7 +1,7 @@
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { FileText, CheckCircle, AlertCircle, Clock, Settings, Database, LogOut, Users, Upload, Eye, Plug, FileSpreadsheet } from "lucide-react";
+import { FileText, CheckCircle, AlertCircle, Clock, Settings, Database, LogOut, Users, Upload, Eye, Plug, FileSpreadsheet, Mail, RefreshCw } from "lucide-react";
 import { StatsCard } from "@/components/dashboard/StatsCard";
 import { RecentDocuments } from "@/components/dashboard/RecentDocuments";
 import { ProcessingFlow } from "@/components/dashboard/ProcessingFlow";
@@ -10,6 +10,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { Link } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { toast } from "sonner";
 
 const Dashboard = () => {
   const { user, isAdmin, activeOrganization, signOut } = useAuth();
@@ -19,6 +20,7 @@ const Dashboard = () => {
     pending: 0,
     total: 0,
   });
+  const [isFetchingEmails, setIsFetchingEmails] = useState(false);
 
   useEffect(() => {
     if (activeOrganization) {
@@ -52,6 +54,33 @@ const Dashboard = () => {
         pending: data.filter((d) => d.status === "pending").length,
         total: thisMonth.length,
       });
+    }
+  };
+
+  const handleFetchGmailInvoices = async () => {
+    if (!activeOrganization) return;
+
+    setIsFetchingEmails(true);
+    toast.info("Buscando facturas en Gmail...");
+
+    try {
+      const { data, error } = await supabase.functions.invoke("gmail-fetch-invoices", {
+        body: { organization_id: activeOrganization },
+      });
+
+      if (error) throw error;
+
+      toast.success(
+        `Se encontraron ${data.invoices_extracted} facturas de ${data.messages_found} correos`
+      );
+
+      // Refrescar stats después de procesar
+      setTimeout(() => fetchStats(), 1000);
+    } catch (error) {
+      console.error("Error fetching Gmail invoices:", error);
+      toast.error("Error al obtener facturas de Gmail");
+    } finally {
+      setIsFetchingEmails(false);
     }
   };
 
@@ -89,6 +118,24 @@ const Dashboard = () => {
                 <Upload className="h-4 w-4 mr-2" />
                 Cargar XML
               </Link>
+            </Button>
+            <Button 
+              variant="outline" 
+              size="sm" 
+              onClick={handleFetchGmailInvoices}
+              disabled={isFetchingEmails}
+            >
+              {isFetchingEmails ? (
+                <>
+                  <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                  Obteniendo...
+                </>
+              ) : (
+                <>
+                  <Mail className="h-4 w-4 mr-2" />
+                  Obtener de Gmail
+                </>
+              )}
             </Button>
             <Button variant="outline" size="sm" asChild>
               <Link to="/review-queue">

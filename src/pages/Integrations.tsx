@@ -101,6 +101,12 @@ const Integrations = () => {
       return;
     }
 
+    // QuickBooks requires OAuth flow
+    if (selectedService === "quickbooks") {
+      handleQuickBooksOAuth();
+      return;
+    }
+
     // For other services, keep the manual flow
     if (!accountEmail) {
       toast.error("Complete todos los campos");
@@ -200,6 +206,71 @@ const Integrations = () => {
     } catch (error) {
       console.error("Error starting OAuth:", error);
       toast.error("Error al iniciar conexión con Gmail");
+      setIsLoading(false);
+    }
+  };
+
+  const handleQuickBooksOAuth = async () => {
+    if (!activeOrganization) return;
+
+    try {
+      setIsLoading(true);
+
+      // Get current user
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        toast.error("Usuario no autenticado");
+        return;
+      }
+
+      // Create state with organization and user info
+      const state = btoa(JSON.stringify({
+        organization_id: activeOrganization,
+        user_id: user.id,
+      }));
+
+      // Call init function to get OAuth URL
+      const { data, error } = await supabase.functions.invoke("quickbooks-oauth-init", {
+        body: { state },
+      });
+
+      if (error) throw error;
+
+      // Open OAuth window
+      const width = 800;
+      const height = 700;
+      const left = window.screen.width / 2 - width / 2;
+      const top = window.screen.height / 2 - height / 2;
+
+      const popup = window.open(
+        data.authUrl,
+        "QuickBooks OAuth",
+        `width=${width},height=${height},left=${left},top=${top}`
+      );
+
+      // Listen for OAuth completion
+      const messageHandler = (event: MessageEvent) => {
+        if (event.data.type === "quickbooks-connected") {
+          toast.success(`QuickBooks conectado: ${event.data.realmId}`);
+          setIsDialogOpen(false);
+          fetchData();
+          window.removeEventListener("message", messageHandler);
+        }
+      };
+
+      window.addEventListener("message", messageHandler);
+
+      // Check if popup was closed
+      const checkPopup = setInterval(() => {
+        if (popup?.closed) {
+          clearInterval(checkPopup);
+          setIsLoading(false);
+          window.removeEventListener("message", messageHandler);
+        }
+      }, 500);
+    } catch (error) {
+      console.error("Error starting QuickBooks OAuth:", error);
+      toast.error("Error al iniciar conexión con QuickBooks");
       setIsLoading(false);
     }
   };
@@ -369,15 +440,18 @@ const Integrations = () => {
             </DialogDescription>
           </DialogHeader>
 
-          {selectedService === "gmail" ? (
+          {selectedService === "gmail" || selectedService === "quickbooks" ? (
             <div className="space-y-4">
               <div className="bg-muted p-4 rounded-lg">
                 <p className="text-sm text-foreground mb-2">
-                  <strong>Conexión segura con Gmail</strong>
+                  <strong>Conexión segura con {services.find((s) => s.id === selectedService)?.name}</strong>
                 </p>
                 <p className="text-xs text-muted-foreground">
-                  Se abrirá una ventana de Google para que autorices el acceso de forma segura.
-                  No necesitas ingresar tu contraseña aquí.
+                  {selectedService === "gmail" 
+                    ? "Se abrirá una ventana de Google para que autorices el acceso de forma segura."
+                    : "Se abrirá una ventana de QuickBooks para que autorices el acceso de forma segura."
+                  }
+                  {" "}No necesitas ingresar tu contraseña aquí.
                 </p>
               </div>
             </div>
@@ -424,10 +498,12 @@ const Integrations = () => {
               {isLoading ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  {selectedService === "gmail" ? "Iniciando..." : "Agregando..."}
+                  {selectedService === "gmail" || selectedService === "quickbooks" ? "Iniciando..." : "Agregando..."}
                 </>
               ) : (
-                selectedService === "gmail" ? "Conectar con Google" : "Agregar Cuenta"
+                selectedService === "gmail" || selectedService === "quickbooks" 
+                  ? `Conectar con ${services.find((s) => s.id === selectedService)?.name}` 
+                  : "Agregar Cuenta"
               )}
             </Button>
           </DialogFooter>
