@@ -49,6 +49,12 @@ const Integrations = () => {
   const [isConnecting, setIsConnecting] = useState(false);
   const [isFetchingGmail, setIsFetchingGmail] = useState(false);
   const [isSyncingQB, setIsSyncingQB] = useState(false);
+  const [isCredentialsDialogOpen, setIsCredentialsDialogOpen] = useState(false);
+  const [selectedProvider, setSelectedProvider] = useState<"google" | "quickbooks" | "">("");
+  const [clientId, setClientId] = useState("");
+  const [clientSecret, setClientSecret] = useState("");
+  const [hasGoogleCreds, setHasGoogleCreds] = useState(false);
+  const [hasQuickBooksCreds, setHasQuickBooksCreds] = useState(false);
 
   useEffect(() => {
     if (activeOrganization) {
@@ -88,6 +94,25 @@ const Integrations = () => {
     } else {
       setAccounts(accountsData || []);
     }
+
+    // Check for OAuth credentials
+    const { data: googleCreds } = await supabase
+      .from("oauth_credentials")
+      .select("id")
+      .eq("organization_id", activeOrganization)
+      .eq("provider", "google")
+      .single();
+    
+    setHasGoogleCreds(!!googleCreds);
+
+    const { data: qbCreds } = await supabase
+      .from("oauth_credentials")
+      .select("id")
+      .eq("organization_id", activeOrganization)
+      .eq("provider", "quickbooks")
+      .single();
+    
+    setHasQuickBooksCreds(!!qbCreds);
 
     setIsLoading(false);
   };
@@ -155,6 +180,18 @@ const Integrations = () => {
       return;
     }
 
+    // Verificar si hay credenciales OAuth configuradas
+    const needsGoogleCreds = serviceId === "gmail" && !hasGoogleCreds;
+    const needsQBCreds = serviceId === "quickbooks" && !hasQuickBooksCreds;
+
+    if (needsGoogleCreds || needsQBCreds) {
+      // Abrir diálogo para configurar credenciales
+      setSelectedProvider(serviceId === "gmail" ? "google" : "quickbooks");
+      setIsCredentialsDialogOpen(true);
+      toast.info("Primero debes configurar las credenciales OAuth");
+      return;
+    }
+
     setIsConnecting(true);
 
     try {
@@ -176,7 +213,7 @@ const Integrations = () => {
 
       if (error) {
         console.error("Error initiating OAuth:", error);
-        toast.error("Error al iniciar conexión. Verifica que las credenciales OAuth estén configuradas.");
+        toast.error("Error al iniciar conexión. Verifica las credenciales OAuth.");
         setIsConnecting(false);
         return;
       }
@@ -192,6 +229,44 @@ const Integrations = () => {
       console.error("Error connecting service:", error);
       toast.error("Error al conectar servicio");
       setIsConnecting(false);
+    }
+  };
+
+  const handleSaveCredentials = async () => {
+    if (!clientId || !clientSecret || !selectedProvider) {
+      toast.error("Complete todos los campos");
+      return;
+    }
+
+    if (!activeOrganization) return;
+
+    setIsLoading(true);
+
+    const { error } = await supabase
+      .from("oauth_credentials")
+      .insert({
+        organization_id: activeOrganization,
+        provider: selectedProvider,
+        client_id: clientId,
+        client_secret: clientSecret,
+      });
+
+    setIsLoading(false);
+
+    if (error) {
+      if (error.message.includes("duplicate")) {
+        toast.error("Ya existen credenciales para este proveedor");
+      } else {
+        toast.error("Error al guardar credenciales");
+        console.error(error);
+      }
+    } else {
+      toast.success("Credenciales guardadas exitosamente");
+      setIsCredentialsDialogOpen(false);
+      setClientId("");
+      setClientSecret("");
+      setSelectedProvider("");
+      fetchData();
     }
   };
 
@@ -472,24 +547,42 @@ const Integrations = () => {
                   </div>
 
                   {!service.connected ? (
-                    <Button
-                      onClick={() => handleConnect(service.id)}
-                      size="sm"
-                      variant="default"
-                      disabled={isConnecting}
-                    >
-                      {isConnecting ? (
-                        <>
-                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                          Conectando...
-                        </>
-                      ) : (
-                        <>
-                          <Plug className="h-4 w-4 mr-2" />
-                          Conectar
-                        </>
+                    <div className="flex gap-2">
+                      {((service.id === "gmail" && !hasGoogleCreds) || 
+                        (service.id === "quickbooks" && !hasQuickBooksCreds)) && (
+                        <Button
+                          onClick={() => {
+                            setSelectedProvider(service.id === "gmail" ? "google" : "quickbooks");
+                            setIsCredentialsDialogOpen(true);
+                          }}
+                          size="sm"
+                          variant="outline"
+                        >
+                          <Plus className="h-4 w-4 mr-2" />
+                          Configurar
+                        </Button>
                       )}
-                    </Button>
+                      <Button
+                        onClick={() => handleConnect(service.id)}
+                        size="sm"
+                        variant="default"
+                        disabled={isConnecting || 
+                          ((service.id === "gmail" && !hasGoogleCreds) || 
+                           (service.id === "quickbooks" && !hasQuickBooksCreds))}
+                      >
+                        {isConnecting ? (
+                          <>
+                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                            Conectando...
+                          </>
+                        ) : (
+                          <>
+                            <Plug className="h-4 w-4 mr-2" />
+                            Conectar
+                          </>
+                        )}
+                      </Button>
+                    </div>
                   ) : (
                     <Button
                       onClick={() => {
@@ -569,7 +662,75 @@ const Integrations = () => {
             </Button>
           </DialogFooter>
         </DialogContent>
-      </Dialog>
+        </Dialog>
+
+        {/* Diálogo para credenciales OAuth */}
+        <Dialog open={isCredentialsDialogOpen} onOpenChange={setIsCredentialsDialogOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>
+                Configurar Credenciales OAuth - {selectedProvider === "google" ? "Google" : "QuickBooks"}
+              </DialogTitle>
+              <DialogDescription>
+                Para conectar {selectedProvider === "google" ? "Gmail" : "QuickBooks"}, necesitas crear una aplicación OAuth y obtener las credenciales.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-4">
+              <div className="space-y-2">
+                <Label htmlFor="client_id">Client ID</Label>
+                <Input
+                  id="client_id"
+                  value={clientId}
+                  onChange={(e) => setClientId(e.target.value)}
+                  placeholder={selectedProvider === "google" ? "123456789.apps.googleusercontent.com" : "ABxxxxxxxxxxxxxx"}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="client_secret">Client Secret</Label>
+                <Input
+                  id="client_secret"
+                  type="password"
+                  value={clientSecret}
+                  onChange={(e) => setClientSecret(e.target.value)}
+                  placeholder="GOCSPX-xxxxx o abcdefghijklmnop"
+                />
+              </div>
+              <div className="text-sm text-muted-foreground bg-muted p-3 rounded-lg">
+                <p className="font-semibold mb-2">📌 Instrucciones:</p>
+                {selectedProvider === "google" ? (
+                  <ol className="list-decimal list-inside space-y-1">
+                    <li>Ve a <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener noreferrer" className="text-primary underline">Google Cloud Console</a></li>
+                    <li>Crea un proyecto OAuth</li>
+                    <li>Agrega URI de redirección: <code className="bg-background px-1 text-xs break-all">{import.meta.env.VITE_SUPABASE_URL}/functions/v1/oauth-google-callback</code></li>
+                    <li>Copia Client ID y Client Secret aquí</li>
+                  </ol>
+                ) : (
+                  <ol className="list-decimal list-inside space-y-1">
+                    <li>Ve a <a href="https://developer.intuit.com/app/developer/myapps" target="_blank" rel="noopener noreferrer" className="text-primary underline">Intuit Developer</a></li>
+                    <li>Crea una app QuickBooks Online</li>
+                    <li>Agrega URI de redirección: <code className="bg-background px-1 text-xs break-all">{import.meta.env.VITE_SUPABASE_URL}/functions/v1/oauth-quickbooks-callback</code></li>
+                    <li>Copia Client ID y Client Secret aquí</li>
+                  </ol>
+                )}
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setIsCredentialsDialogOpen(false)}>
+                Cancelar
+              </Button>
+              <Button onClick={handleSaveCredentials} disabled={isLoading || !clientId || !clientSecret}>
+                {isLoading ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Guardando...
+                  </>
+                ) : (
+                  "Guardar Credenciales"
+                )}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
     </div>
   );
 };
