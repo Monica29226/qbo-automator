@@ -244,43 +244,53 @@ const Organizations = () => {
       return;
     }
 
-    // Llamar al edge function para crear la organización (bypasa RLS)
-    const { data, error } = await supabase.functions.invoke('create-organization', {
-      body: {
+    // Crear nueva organización
+    const { data: newOrg, error: orgError } = await supabase
+      .from("organizations")
+      .insert([{
         name: orgFormData.name,
+        tax_id: orgFormData.tax_id || null,
         email: orgFormData.email || null,
-        user_id: user.id
-      }
-    });
+        qbo_company_id: orgFormData.qbo_company_id || null,
+        google_drive_folder_id: orgFormData.google_drive_folder_id || null,
+        google_drive_enabled: orgFormData.google_drive_enabled,
+      }])
+      .select()
+      .single();
+
+    if (orgError) {
+      toast.error("Error al crear organización");
+      console.error(orgError);
+      setIsLoading(false);
+      return;
+    }
+
+    // Agregar usuario actual como owner
+    const { error: memberError } = await supabase
+      .from("organization_members")
+      .insert([{
+        organization_id: newOrg.id,
+        user_id: user.id,
+        role: 'owner'
+      }]);
 
     setIsLoading(false);
 
-    if (error) {
-      toast.error(`Error al crear organización: ${error.message}`);
-      console.error(error);
-      return;
+    if (memberError) {
+      toast.error("Error al configurar permisos");
+      console.error(memberError);
+    } else {
+      toast.success("Organización creada exitosamente. Recarga la página para verla.");
+      setIsDialogOpen(false);
+      setOrgFormData({
+        name: "",
+        tax_id: "",
+        email: "",
+        qbo_company_id: "",
+        google_drive_folder_id: "",
+        google_drive_enabled: false,
+      });
     }
-
-    if (data?.error) {
-      toast.error(`Error al crear organización: ${data.error}`);
-      console.error(data);
-      return;
-    }
-
-    toast.success("Organización creada exitosamente. Recargando...");
-    setIsDialogOpen(false);
-    setOrgFormData({
-      name: "",
-      tax_id: "",
-      email: "",
-      qbo_company_id: "",
-      google_drive_folder_id: "",
-      google_drive_enabled: false,
-    });
-    
-    setTimeout(() => {
-      window.location.reload();
-    }, 1000);
   };
 
   const roleLabels: Record<string, string> = {

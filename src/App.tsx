@@ -5,7 +5,6 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import Index from "./pages/Index";
 import Dashboard from "./pages/Dashboard";
-import DashboardACL from "./pages/DashboardACL";
 import Auth from "./pages/Auth";
 import Vendors from "./pages/Vendors";
 import Settings from "./pages/Settings";
@@ -13,7 +12,6 @@ import ReviewQueue from "./pages/ReviewQueue";
 import UploadDocument from "./pages/UploadDocument";
 import Organizations from "./pages/Organizations";
 import Integrations from "./pages/Integrations";
-import ConnectionSetup from "./pages/ConnectionSetup";
 import NotFound from "./pages/NotFound";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 
@@ -30,14 +28,6 @@ const App = () => (
           <Route path="/auth" element={<Auth />} />
           <Route
             path="/dashboard"
-            element={
-              <ProtectedRoute>
-                <DashboardACL />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/dashboard-old"
             element={
               <ProtectedRoute>
                 <Dashboard />
@@ -89,14 +79,6 @@ const App = () => (
             element={
               <ProtectedRoute requireAdmin>
                 <Integrations />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/connection-setup"
-            element={
-              <ProtectedRoute>
-                <ConnectionSetup />
               </ProtectedRoute>
             }
           />

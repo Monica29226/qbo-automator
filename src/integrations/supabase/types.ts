@@ -61,44 +61,6 @@ export type Database = {
           },
         ]
       }
-      oauth_credentials: {
-        Row: {
-          client_id: string
-          client_secret: string
-          created_at: string
-          id: string
-          organization_id: string
-          provider: string
-          updated_at: string
-        }
-        Insert: {
-          client_id: string
-          client_secret: string
-          created_at?: string
-          id?: string
-          organization_id: string
-          provider: string
-          updated_at?: string
-        }
-        Update: {
-          client_id?: string
-          client_secret?: string
-          created_at?: string
-          id?: string
-          organization_id?: string
-          provider?: string
-          updated_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "oauth_credentials_organization_id_fkey"
-            columns: ["organization_id"]
-            isOneToOne: false
-            referencedRelation: "organizations"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       organization_members: {
         Row: {
           created_at: string

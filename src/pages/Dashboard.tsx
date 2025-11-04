@@ -19,69 +19,12 @@ const Dashboard = () => {
     pending: 0,
     total: 0,
   });
-  const [connections, setConnections] = useState({
-    gmail: false,
-    quickbooks: false,
-    sharepoint: false,
-  });
 
   useEffect(() => {
     if (activeOrganization) {
       fetchStats();
-      fetchConnections();
-      
-      // Configurar suscripción en tiempo real
-      const channel = supabase
-        .channel('processed-documents-changes')
-        .on(
-          'postgres_changes',
-          {
-            event: '*',
-            schema: 'public',
-            table: 'processed_documents',
-            filter: `organization_id=eq.${activeOrganization}`
-          },
-          (payload) => {
-            console.log('Documento actualizado en tiempo real:', payload);
-            // Actualizar estadísticas cuando cambie algo
-            fetchStats();
-          }
-        )
-        .subscribe();
-
-      return () => {
-        supabase.removeChannel(channel);
-      };
     }
   }, [activeOrganization]);
-
-  const fetchConnections = async () => {
-    if (!activeOrganization) return;
-
-    try {
-      const { data, error } = await supabase
-        .from("organizations")
-        .select("gmail_connected, quickbooks_connected")
-        .eq("id", activeOrganization)
-        .single();
-
-      if (error) {
-        console.error("Error fetching connections:", error);
-        return;
-      }
-
-      if (data) {
-        console.log("Connections data:", data);
-        setConnections({
-          gmail: data.gmail_connected || false,
-          quickbooks: data.quickbooks_connected || false,
-          sharepoint: false,
-        });
-      }
-    } catch (error) {
-      console.error("Error in fetchConnections:", error);
-    }
-  };
 
   const fetchStats = async () => {
     if (!activeOrganization) return;
@@ -240,21 +183,14 @@ const Dashboard = () => {
           </Card>
 
           <Card className="p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold flex items-center gap-2">
-                <Database className="h-5 w-5 text-primary" />
-                Conexiones
-              </h3>
-              <Button variant="ghost" size="sm" asChild>
-                <Link to="/integrations">
-                  <Settings className="h-4 w-4" />
-                </Link>
-              </Button>
-            </div>
+            <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+              <Database className="h-5 w-5 text-primary" />
+              Conexiones
+            </h3>
             <div className="space-y-4">
-              <ConnectionStatus service="Gmail" status={connections.gmail ? "connected" : "disconnected"} />
-              <ConnectionStatus service="QuickBooks Online" status={connections.quickbooks ? "connected" : "disconnected"} />
-              <ConnectionStatus service="SharePoint" status={connections.sharepoint ? "connected" : "disconnected"} />
+              <ConnectionStatus service="Gmail" status="connected" />
+              <ConnectionStatus service="QuickBooks Online" status="connected" />
+              <ConnectionStatus service="SharePoint" status="disconnected" />
             </div>
           </Card>
         </div>
@@ -264,12 +200,7 @@ const Dashboard = () => {
             <Clock className="h-5 w-5 text-primary" />
             Flujo de Procesamiento
           </h3>
-          <ProcessingFlow 
-            organizationId={activeOrganization} 
-            gmailConnected={connections.gmail}
-            quickbooksConnected={connections.quickbooks}
-            onRefresh={fetchStats} 
-          />
+          <ProcessingFlow />
         </Card>
       </main>
     </div>
