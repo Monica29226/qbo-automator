@@ -555,8 +555,13 @@ const Integrations = () => {
               Cancelar
             </Button>
             <Button 
-              onClick={handleAddAccount} 
-              disabled={selectedService !== "gmail" && selectedService !== "quickbooks" && isLoading}
+              onClick={(e) => {
+                console.log("🔴 BUTTON CLICKED - selectedService:", selectedService);
+                e.preventDefault();
+                e.stopPropagation();
+                handleAddAccount();
+              }}
+              type="button"
             >
               {isLoading && selectedService !== "gmail" && selectedService !== "quickbooks" ? (
                 <>
