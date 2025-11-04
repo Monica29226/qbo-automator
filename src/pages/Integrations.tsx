@@ -90,12 +90,22 @@ const Integrations = () => {
   };
 
   const handleAddAccount = async () => {
-    if (!accountEmail || !selectedService) {
-      toast.error("Complete todos los campos");
+    if (!selectedService || !activeOrganization) {
+      toast.error("Seleccione un servicio");
       return;
     }
 
-    if (!activeOrganization) return;
+    // Gmail requires OAuth flow
+    if (selectedService === "gmail") {
+      handleGmailOAuth();
+      return;
+    }
+
+    // For other services, keep the manual flow
+    if (!accountEmail) {
+      toast.error("Complete todos los campos");
+      return;
+    }
 
     setIsLoading(true);
 
@@ -126,6 +136,71 @@ const Integrations = () => {
       setAccountName("");
       setSelectedService("");
       fetchData();
+    }
+  };
+
+  const handleGmailOAuth = async () => {
+    if (!activeOrganization) return;
+
+    try {
+      setIsLoading(true);
+
+      // Get current user
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        toast.error("Usuario no autenticado");
+        return;
+      }
+
+      // Create state with organization and user info
+      const state = btoa(JSON.stringify({
+        organization_id: activeOrganization,
+        user_id: user.id,
+      }));
+
+      // Call init function to get OAuth URL
+      const { data, error } = await supabase.functions.invoke("gmail-oauth-init", {
+        body: { state },
+      });
+
+      if (error) throw error;
+
+      // Open OAuth window
+      const width = 500;
+      const height = 600;
+      const left = window.screen.width / 2 - width / 2;
+      const top = window.screen.height / 2 - height / 2;
+
+      const popup = window.open(
+        data.authUrl,
+        "Gmail OAuth",
+        `width=${width},height=${height},left=${left},top=${top}`
+      );
+
+      // Listen for OAuth completion
+      const messageHandler = (event: MessageEvent) => {
+        if (event.data.type === "gmail-connected") {
+          toast.success(`Gmail conectado: ${event.data.email}`);
+          setIsDialogOpen(false);
+          fetchData();
+          window.removeEventListener("message", messageHandler);
+        }
+      };
+
+      window.addEventListener("message", messageHandler);
+
+      // Check if popup was closed
+      const checkPopup = setInterval(() => {
+        if (popup?.closed) {
+          clearInterval(checkPopup);
+          setIsLoading(false);
+          window.removeEventListener("message", messageHandler);
+        }
+      }, 500);
+    } catch (error) {
+      console.error("Error starting OAuth:", error);
+      toast.error("Error al iniciar conexión con Gmail");
+      setIsLoading(false);
     }
   };
 
@@ -294,38 +369,52 @@ const Integrations = () => {
             </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="account-email">
-                Correo electrónico <span className="text-destructive">*</span>
-              </Label>
-              <Input
-                id="account-email"
-                type="email"
-                value={accountEmail}
-                onChange={(e) => setAccountEmail(e.target.value)}
-                placeholder="ejemplo@gmail.com"
-              />
+          {selectedService === "gmail" ? (
+            <div className="space-y-4">
+              <div className="bg-muted p-4 rounded-lg">
+                <p className="text-sm text-foreground mb-2">
+                  <strong>Conexión segura con Gmail</strong>
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  Se abrirá una ventana de Google para que autorices el acceso de forma segura.
+                  No necesitas ingresar tu contraseña aquí.
+                </p>
+              </div>
             </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="account-email">
+                  Correo electrónico <span className="text-destructive">*</span>
+                </Label>
+                <Input
+                  id="account-email"
+                  type="email"
+                  value={accountEmail}
+                  onChange={(e) => setAccountEmail(e.target.value)}
+                  placeholder="ejemplo@gmail.com"
+                />
+              </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="account-name">Nombre de la cuenta (opcional)</Label>
-              <Input
-                id="account-name"
-                value={accountName}
-                onChange={(e) => setAccountName(e.target.value)}
-                placeholder="Mi cuenta principal"
-              />
-            </div>
+              <div className="space-y-2">
+                <Label htmlFor="account-name">Nombre de la cuenta (opcional)</Label>
+                <Input
+                  id="account-name"
+                  value={accountName}
+                  onChange={(e) => setAccountName(e.target.value)}
+                  placeholder="Mi cuenta principal"
+                />
+              </div>
 
-            <div className="bg-muted p-3 rounded-lg">
-              <p className="text-xs text-muted-foreground">
-                <strong>Nota:</strong> Para conectar esta cuenta necesitarás autorizar el acceso
-                en {services.find((s) => s.id === selectedService)?.name}. Actualmente esto debe
-                configurarse manualmente mediante OAuth.
-              </p>
+              <div className="bg-muted p-3 rounded-lg">
+                <p className="text-xs text-muted-foreground">
+                  <strong>Nota:</strong> Para conectar esta cuenta necesitarás autorizar el acceso
+                  en {services.find((s) => s.id === selectedService)?.name}. Actualmente esto debe
+                  configurarse manualmente mediante OAuth.
+                </p>
+              </div>
             </div>
-          </div>
+          )}
 
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsDialogOpen(false)}>
@@ -335,10 +424,10 @@ const Integrations = () => {
               {isLoading ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Agregando...
+                  {selectedService === "gmail" ? "Iniciando..." : "Agregando..."}
                 </>
               ) : (
-                "Agregar Cuenta"
+                selectedService === "gmail" ? "Conectar con Google" : "Agregar Cuenta"
               )}
             </Button>
           </DialogFooter>
