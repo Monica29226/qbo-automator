@@ -196,6 +196,14 @@ const Dashboard = () => {
             )}
             {isAdmin && (
               <Button variant="outline" size="sm" asChild>
+                <Link to="/integrations">
+                  <Plug className="h-4 w-4 mr-2" />
+                  Integraciones
+                </Link>
+              </Button>
+            )}
+            {isAdmin && (
+              <Button variant="outline" size="sm" asChild>
                 <Link to="/settings">
                   <Settings className="h-4 w-4 mr-2" />
                   Configuración
