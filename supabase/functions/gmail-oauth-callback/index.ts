@@ -47,7 +47,9 @@ serve(async (req) => {
     if (!tokenResponse.ok) {
       const errorText = await tokenResponse.text();
       console.error("Token exchange failed:", errorText);
-      throw new Error("Failed to exchange code for tokens");
+      console.error("Using Client ID:", GOOGLE_CLIENT_ID?.substring(0, 20) + "...");
+      console.error("Using redirect_uri:", redirectUri);
+      throw new Error(`Failed to exchange code for tokens: ${errorText}`);
     }
 
     const tokens = await tokenResponse.json();
@@ -105,27 +107,48 @@ serve(async (req) => {
     console.log("Gmail account connected successfully");
 
     return new Response(
-      `<html>
+      `<!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="UTF-8">
+          <title>Gmail Connected</title>
+        </head>
         <body>
           <h1>¡Conexión Exitosa!</h1>
           <p>Gmail conectado: ${userInfo.email}</p>
           <p>Puedes cerrar esta ventana.</p>
           <script>
-            setTimeout(() => {
-              window.opener?.postMessage({ type: 'gmail-connected', email: '${userInfo.email}' }, '*');
-              window.close();
-            }, 2000);
+            console.log('Sending Gmail postMessage to opener');
+            if (window.opener) {
+              window.opener.postMessage({ type: 'gmail-connected', email: '${userInfo.email}' }, '*');
+              console.log('Gmail message sent');
+            } else {
+              console.error('No window.opener found');
+            }
+            setTimeout(() => window.close(), 2000);
           </script>
         </body>
       </html>`,
-      { headers: { "Content-Type": "text/html" }, status: 200 }
+      { headers: { "Content-Type": "text/html; charset=UTF-8" }, status: 200 }
     );
   } catch (error) {
     console.error("Error in gmail-oauth-callback:", error);
     const errorMessage = error instanceof Error ? error.message : "Unknown error";
     return new Response(
-      `<html><body><h1>Error</h1><p>${errorMessage}</p><script>setTimeout(() => window.close(), 3000);</script></body></html>`,
-      { headers: { "Content-Type": "text/html" }, status: 500 }
+      `<!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="UTF-8">
+          <title>Error</title>
+        </head>
+        <body>
+          <h1>Error de Conexión</h1>
+          <p>${errorMessage}</p>
+          <p style="font-size: 12px; color: #666;">Verifica que las credenciales de Google estén correctas y que la URL de redirección esté autorizada en Google Cloud Console.</p>
+          <script>setTimeout(() => window.close(), 5000);</script>
+        </body>
+      </html>`,
+      { headers: { "Content-Type": "text/html; charset=UTF-8" }, status: 500 }
     );
   }
 });
