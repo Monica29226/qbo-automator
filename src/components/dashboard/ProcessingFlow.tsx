@@ -7,6 +7,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
+import { EmailListModal } from "./EmailListModal";
 
 interface StepStats {
   total: number;
@@ -29,6 +30,7 @@ export const ProcessingFlow = () => {
   });
   const [rulesCount, setRulesCount] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
+  const [showEmailModal, setShowEmailModal] = useState(false);
 
   useEffect(() => {
     if (activeOrganization) {
@@ -161,8 +163,14 @@ export const ProcessingFlow = () => {
                       ? "bg-primary text-primary-foreground shadow-lg" 
                       : step.status === "needs-setup"
                       ? "bg-warning/20 text-warning border-2 border-warning"
-                      : "bg-muted text-muted-foreground border-2 border-dashed border-border"
+                      : "bg-muted text-muted-foreground border-2 border-dashed border-border",
+                    step.label === "Recibir Correo" && "cursor-pointer hover:scale-105"
                   )}
+                  onClick={() => {
+                    if (step.label === "Recibir Correo") {
+                      setShowEmailModal(true);
+                    }
+                  }}
                 >
                   <step.icon className="h-8 w-8" />
                 </div>
@@ -222,6 +230,9 @@ export const ProcessingFlow = () => {
           </div>
         </div>
       )}
+
+      {/* Email List Modal */}
+      <EmailListModal open={showEmailModal} onOpenChange={setShowEmailModal} />
     </div>
   );
 };
