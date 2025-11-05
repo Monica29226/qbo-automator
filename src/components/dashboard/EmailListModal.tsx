@@ -128,10 +128,15 @@ export const EmailListModal = ({ open, onOpenChange }: EmailListModalProps) => {
                           {format(new Date(email.issue_date), "d MMM yyyy", { locale: es })}
                         </div>
                         <div className="font-medium">
-                          {new Intl.NumberFormat("es-CR", {
-                            style: "currency",
-                            currency: email.currency || "CRC",
-                          }).format(email.total_amount)}
+                          {(() => {
+                            const validCurrency = email.currency && ['CRC', 'USD', 'EUR'].includes(email.currency) 
+                              ? email.currency 
+                              : 'CRC';
+                            return new Intl.NumberFormat("es-CR", {
+                              style: "currency",
+                              currency: validCurrency,
+                            }).format(email.total_amount);
+                          })()}
                         </div>
                       </div>
 
