@@ -385,8 +385,16 @@ const Dashboard = () => {
 
       <main className="container mx-auto px-6 py-8">
         <div className="mb-8">
-          <h2 className="text-2xl font-bold text-foreground mb-2">Panel de Control</h2>
-          <p className="text-muted-foreground">Monitoreo en tiempo real del procesamiento de facturas</p>
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-2xl font-bold text-foreground mb-2">Panel de Control</h2>
+              <p className="text-muted-foreground">Monitoreo en tiempo real del procesamiento de facturas</p>
+            </div>
+            <Badge variant="default" className="h-fit">
+              <Clock className="h-3 w-3 mr-1" />
+              Sincronización Automática Activa (cada 30 min)
+            </Badge>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
