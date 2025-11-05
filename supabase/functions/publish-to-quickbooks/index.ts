@@ -219,6 +219,15 @@ Deno.serve(async (req) => {
         // Obtener o crear vendor
         const vendorId = await findOrCreateVendor(doc.supplier_name, doc.supplier_tax_id);
 
+        // Buscar cuenta contable del vendor
+        const { data: vendorData } = await supabase
+          .from("vendors")
+          .select("default_account_ref")
+          .eq("id", doc.vendor_id)
+          .maybeSingle();
+
+        const accountRef = vendorData?.default_account_ref || "1"; // Default a "Gastos sin clasificar" con ID 1
+
         // Preparar líneas del bill
         const lines = [];
         const xmlData = doc.xml_data as any;
@@ -231,7 +240,7 @@ Deno.serve(async (req) => {
               Description: item.descripcion?.substring(0, 4000) || "",
               AccountBasedExpenseLineDetail: {
                 AccountRef: {
-                  value: xmlData.cuentaContable || "1", // Cuenta por defecto
+                  value: accountRef, // Usar cuenta del vendor o gastos sin clasificar
                 },
               },
             });
@@ -244,7 +253,7 @@ Deno.serve(async (req) => {
             Description: `Invoice ${doc.doc_number}`,
             AccountBasedExpenseLineDetail: {
               AccountRef: {
-                value: "1", // Cuenta por defecto
+                value: accountRef, // Usar cuenta del vendor o gastos sin clasificar
               },
             },
           });
@@ -301,6 +310,82 @@ Deno.serve(async (req) => {
         const billId = billData.Bill.Id;
 
         console.log(`Successfully created bill ${doc.doc_number} with ID: ${billId}`);
+
+        // Adjuntar PDF si existe
+        if (doc.pdf_attachment_url) {
+          try {
+            console.log(`Attaching PDF for bill ${doc.doc_number}`);
+            
+            // Descargar el PDF del storage
+            const { data: pdfData } = await supabase.storage
+              .from("company-documents")
+              .download(doc.pdf_attachment_url.replace(/^.*\/company-documents\//, ""));
+
+            if (pdfData) {
+              // Convertir blob a base64
+              const arrayBuffer = await pdfData.arrayBuffer();
+              const base64Pdf = btoa(
+                new Uint8Array(arrayBuffer).reduce(
+                  (data, byte) => data + String.fromCharCode(byte),
+                  ""
+                )
+              );
+
+              // Crear attachment en QuickBooks
+              const boundary = "----WebKitFormBoundary" + Math.random().toString(36).substring(2);
+              const attachmentMetadata = {
+                AttachableRef: [
+                  {
+                    EntityRef: {
+                      type: "Bill",
+                      value: billId,
+                    },
+                  },
+                ],
+                FileName: `factura_${doc.doc_number}.pdf`,
+                ContentType: "application/pdf",
+              };
+
+              const attachmentBody = [
+                `--${boundary}`,
+                'Content-Disposition: form-data; name="file_metadata_0"',
+                "Content-Type: application/json",
+                "",
+                JSON.stringify(attachmentMetadata),
+                `--${boundary}`,
+                `Content-Disposition: form-data; name="file_content_0"; filename="factura_${doc.doc_number}.pdf"`,
+                "Content-Type: application/pdf",
+                "Content-Transfer-Encoding: base64",
+                "",
+                base64Pdf,
+                `--${boundary}--`,
+              ].join("\r\n");
+
+              const attachResponse = await fetch(
+                `https://quickbooks.api.intuit.com/v3/company/${realmId}/upload`,
+                {
+                  method: "POST",
+                  headers: {
+                    Authorization: `Bearer ${accessToken}`,
+                    Accept: "application/json",
+                    "Content-Type": `multipart/form-data; boundary=${boundary}`,
+                  },
+                  body: attachmentBody,
+                }
+              );
+
+              if (attachResponse.ok) {
+                console.log(`PDF attached successfully to bill ${doc.doc_number}`);
+              } else {
+                const errorText = await attachResponse.text();
+                console.error(`Failed to attach PDF: ${errorText}`);
+              }
+            }
+          } catch (pdfError) {
+            console.error(`Error attaching PDF for ${doc.doc_number}:`, pdfError);
+            // No fallar la publicación si falla el adjunto
+          }
+        }
 
         // Actualizar documento con QBO ID
         await supabase
