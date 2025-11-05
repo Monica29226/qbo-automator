@@ -80,7 +80,7 @@ const Dashboard = () => {
     });
   };
 
-  const handleFetchGmailInvoices = async () => {
+  const handleFetchGmailInvoices = async (month?: number, year?: number) => {
     if (!activeOrganization) return;
 
     // Check if Gmail is connected first
@@ -103,11 +103,18 @@ const Dashboard = () => {
     }
 
     setIsFetchingEmails(true);
-    toast.info("Buscando facturas en Gmail...");
+    const dateInfo = month && year ? ` de ${getMonthName(month)} ${year}` : '';
+    toast.info(`Buscando facturas${dateInfo} en Gmail...`);
 
     try {
+      const body: any = { organization_id: activeOrganization };
+      if (month && year) {
+        body.month = month;
+        body.year = year;
+      }
+
       const { data, error } = await supabase.functions.invoke("gmail-fetch-invoices", {
-        body: { organization_id: activeOrganization },
+        body,
       });
 
       if (error) throw error;
@@ -135,6 +142,22 @@ const Dashboard = () => {
     } finally {
       setIsFetchingEmails(false);
     }
+  };
+
+  const getMonthName = (month: number) => {
+    const months = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 
+                    'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+    return months[month - 1];
+  };
+
+  const handleSyncOctober = async () => {
+    await handleFetchGmailInvoices(10, 2024);
+    
+    // Esperar un momento y luego publicar automáticamente a QuickBooks
+    setTimeout(async () => {
+      toast.info("Publicando facturas de octubre a QuickBooks...");
+      await handlePublishToQuickBooks();
+    }, 2000);
   };
 
   const handlePublishToQuickBooks = async () => {
@@ -227,7 +250,7 @@ const Dashboard = () => {
             <Button 
               variant="outline" 
               size="sm" 
-              onClick={handleFetchGmailInvoices}
+              onClick={() => handleFetchGmailInvoices()}
               disabled={isFetchingEmails}
             >
               {isFetchingEmails ? (
@@ -257,6 +280,24 @@ const Dashboard = () => {
                 <>
                   <Send className="h-4 w-4 mr-2" />
                   Publicar a QuickBooks
+                </>
+              )}
+            </Button>
+            <Button 
+              variant="secondary" 
+              size="sm" 
+              onClick={handleSyncOctober}
+              disabled={isFetchingEmails}
+            >
+              {isFetchingEmails ? (
+                <>
+                  <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                  Procesando...
+                </>
+              ) : (
+                <>
+                  <Clock className="h-4 w-4 mr-2" />
+                  Sincronizar Octubre
                 </>
               )}
             </Button>

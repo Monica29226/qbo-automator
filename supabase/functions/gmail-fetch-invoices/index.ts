@@ -24,10 +24,10 @@ serve(async (req) => {
     
     if (authError || !user) throw new Error("Invalid authorization");
 
-    const { organization_id } = await req.json();
+    const { organization_id, month, year } = await req.json();
     if (!organization_id) throw new Error("organization_id required");
 
-    console.log(`Fetching Gmail invoices for organization ${organization_id}`);
+    console.log(`Fetching Gmail invoices for organization ${organization_id}${month && year ? ` (${year}-${month.toString().padStart(2, '0')})` : ''}`);
 
     // Obtener cuenta de Gmail activa
     const { data: gmailAccount, error: accountError } = await supabase
@@ -95,10 +95,28 @@ serve(async (req) => {
       .eq("organization_id", organization_id)
       .in("key", ["mail_query"]);
 
-    const mailQuery = settings?.find(s => s.key === "mail_query")?.value || 
-      "has:attachment (filename:xml OR filename:pdf) newer_than:3d";
-
-    console.log(`Using Gmail query: ${mailQuery}`);
+    // Construir query de Gmail con filtro de fecha personalizado si se proporciona
+    let mailQuery: string;
+    
+    if (month && year) {
+      // Calcular el primer y último día del mes
+      const startDate = new Date(year, month - 1, 1);
+      const endDate = new Date(year, month, 0); // Último día del mes
+      
+      const formatDate = (date: Date) => {
+        const yyyy = date.getFullYear();
+        const mm = String(date.getMonth() + 1).padStart(2, '0');
+        const dd = String(date.getDate()).padStart(2, '0');
+        return `${yyyy}/${mm}/${dd}`;
+      };
+      
+      mailQuery = `has:attachment (filename:xml OR filename:pdf) after:${formatDate(startDate)} before:${formatDate(endDate)}`;
+      console.log(`Using custom date range query for ${year}-${month}: ${mailQuery}`);
+    } else {
+      mailQuery = settings?.find(s => s.key === "mail_query")?.value || 
+        "has:attachment (filename:xml OR filename:pdf) newer_than:3d";
+      console.log(`Using default Gmail query: ${mailQuery}`);
+    }
 
     // Buscar mensajes en Gmail
     const searchResponse = await fetch(
