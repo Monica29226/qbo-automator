@@ -151,7 +151,7 @@ const Dashboard = () => {
   };
 
   const handleSyncOctober = async () => {
-    await handleFetchGmailInvoices(10, 2024);
+    await handleFetchGmailInvoices(10, 2025);
     
     // Esperar un momento y luego publicar automáticamente a QuickBooks
     setTimeout(async () => {
