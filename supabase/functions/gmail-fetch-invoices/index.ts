@@ -115,7 +115,19 @@ serve(async (req) => {
     
     console.log(`Found ${messages.length} messages matching query`);
 
-    const processedMessages = [];
+    // Obtener reglas de clasificación
+    const { data: rules } = await supabase
+      .from("vendor_classification_rules")
+      .select("vendor_name, account_code, account_description")
+      .eq("organization_id", organization_id)
+      .eq("is_active", true);
+
+    const categories = rules?.map(r => 
+      `${r.vendor_name}: ${r.account_code} - ${r.account_description}`
+    ).join(", ") || "";
+
+    const processedInvoices = [];
+    const errors = [];
 
     // Procesar cada mensaje
     for (const message of messages.slice(0, 20)) { // Limitar a 20 por ejecución
@@ -138,25 +150,113 @@ serve(async (req) => {
             const attachmentId = part.body?.attachmentId;
             if (!attachmentId) continue;
 
-            // Descargar archivo adjunto
-            const attachmentResponse = await fetch(
-              `https://gmail.googleapis.com/gmail/v1/users/me/messages/${message.id}/attachments/${attachmentId}`,
-              {
-                headers: { Authorization: `Bearer ${accessToken}` },
+            try {
+              // Descargar archivo adjunto
+              const attachmentResponse = await fetch(
+                `https://gmail.googleapis.com/gmail/v1/users/me/messages/${message.id}/attachments/${attachmentId}`,
+                {
+                  headers: { Authorization: `Bearer ${accessToken}` },
+                }
+              );
+
+              if (!attachmentResponse.ok) continue;
+
+              const attachmentData = await attachmentResponse.json();
+              const xmlContent = atob(attachmentData.data.replace(/-/g, "+").replace(/_/g, "/"));
+
+              console.log(`Processing invoice: ${part.filename}`);
+
+              // Extraer datos con IA
+              const extractResponse = await fetch(
+                `${supabaseUrl}/functions/v1/extract-invoice-data`,
+                {
+                  method: "POST",
+                  headers: {
+                    Authorization: `Bearer ${supabaseKey}`,
+                    "Content-Type": "application/json",
+                  },
+                  body: JSON.stringify({
+                    xmlContent,
+                    categories,
+                  }),
+                }
+              );
+
+              if (!extractResponse.ok) {
+                const errorText = await extractResponse.text();
+                console.error(`AI extraction failed for ${part.filename}:`, errorText);
+                errors.push({ filename: part.filename, error: "AI extraction failed" });
+                continue;
               }
-            );
 
-            if (!attachmentResponse.ok) continue;
+              const extractResult = await extractResponse.json();
+              
+              if (!extractResult.success || !extractResult.data) {
+                console.error(`Invalid AI response for ${part.filename}`);
+                errors.push({ filename: part.filename, error: "Invalid AI response" });
+                continue;
+              }
 
-            const attachmentData = await attachmentResponse.json();
-            const xmlContent = atob(attachmentData.data.replace(/-/g, "+").replace(/_/g, "/"));
+              const invoiceData = extractResult.data;
 
-            processedMessages.push({
-              message_id: message.id,
-              filename: part.filename,
-              xml_content: xmlContent,
-              size: part.body?.size || 0,
-            });
+              // Verificar duplicados
+              const docKey = invoiceData.numeroConsecutivo;
+              const { data: existingDoc } = await supabase
+                .from("processed_documents")
+                .select("id")
+                .eq("doc_key", docKey)
+                .eq("organization_id", organization_id)
+                .maybeSingle();
+
+              if (existingDoc) {
+                console.log(`Duplicate invoice: ${part.filename}`);
+                errors.push({ filename: part.filename, error: "Duplicate" });
+                continue;
+              }
+
+              // Guardar en base de datos
+              const { data: savedDoc, error: saveError } = await supabase
+                .from("processed_documents")
+                .insert({
+                  doc_key: docKey,
+                  doc_type: invoiceData.esNotaCredito ? "NotaCreditoElectronica" : "FacturaElectronica",
+                  doc_number: invoiceData.numeroConsecutivo,
+                  issue_date: invoiceData.fechaEmision.split("T")[0],
+                  supplier_name: invoiceData.emisor.nombre,
+                  supplier_tax_id: invoiceData.emisor.identificacion,
+                  supplier_email: invoiceData.emisor.correo || null,
+                  currency: invoiceData.moneda,
+                  total_amount: invoiceData.totalComprobante,
+                  total_tax: invoiceData.detalle.reduce((sum: number, d: any) => 
+                    sum + (d.montoTotalLinea * d.tarifa / 100), 0),
+                  total_discount: invoiceData.detalle.reduce((sum: number, d: any) => 
+                    sum + d.montoDescuento, 0),
+                  status: invoiceData.aceptada ? "processed" : "rejected",
+                  xml_data: invoiceData,
+                  organization_id,
+                })
+                .select()
+                .single();
+
+              if (saveError) {
+                console.error(`Error saving ${part.filename}:`, saveError);
+                errors.push({ filename: part.filename, error: saveError.message });
+              } else {
+                console.log(`Successfully processed: ${part.filename}`);
+                processedInvoices.push({
+                  filename: part.filename,
+                  doc_id: savedDoc.id,
+                  supplier: invoiceData.emisor.nombre,
+                  amount: invoiceData.totalComprobante,
+                });
+              }
+            } catch (xmlError) {
+              console.error(`Error processing XML ${part.filename}:`, xmlError);
+              errors.push({ 
+                filename: part.filename, 
+                error: xmlError instanceof Error ? xmlError.message : "Unknown error" 
+              });
+            }
           }
         }
       } catch (error) {
@@ -168,8 +268,10 @@ serve(async (req) => {
       JSON.stringify({
         success: true,
         messages_found: messages.length,
-        invoices_extracted: processedMessages.length,
-        invoices: processedMessages,
+        invoices_processed: processedInvoices.length,
+        invoices_failed: errors.length,
+        invoices: processedInvoices,
+        errors: errors.length > 0 ? errors : undefined,
       }),
       {
         headers: { ...corsHeaders, "Content-Type": "application/json" },

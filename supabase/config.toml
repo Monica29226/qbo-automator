@@ -17,3 +17,6 @@ verify_jwt = false
 
 [functions.import-vendor-rules]
 verify_jwt = true
+
+[functions.extract-invoice-data]
+verify_jwt = false

@@ -112,9 +112,19 @@ const Dashboard = () => {
 
       if (error) throw error;
 
-      toast.success(
-        `Se encontraron ${data.invoices_extracted} facturas de ${data.messages_found} correos`
-      );
+      const processed = data.invoices_processed || 0;
+      const failed = data.invoices_failed || 0;
+      const total = data.messages_found || 0;
+
+      if (processed > 0) {
+        toast.success(
+          `✓ ${processed} factura${processed !== 1 ? 's' : ''} procesada${processed !== 1 ? 's' : ''} de ${total} correos${failed > 0 ? ` (${failed} fallidas)` : ''}`
+        );
+      } else if (total > 0) {
+        toast.warning(`No se encontraron facturas nuevas en ${total} correos`);
+      } else {
+        toast.info("No se encontraron correos con facturas");
+      }
 
       // Refrescar stats y documentos
       fetchStats();
