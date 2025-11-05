@@ -23,6 +23,7 @@ const Dashboard = () => {
     pending: 0,
     total: 0,
     errors: 0,
+    published: 0,
   });
   const [isFetchingEmails, setIsFetchingEmails] = useState(false);
   const [connections, setConnections] = useState({
@@ -63,6 +64,7 @@ const Dashboard = () => {
         pending: data.filter((d) => d.status === "pending").length,
         total: thisMonth.length,
         errors: data.filter((d) => d.status === "error").length,
+        published: data.filter((d) => d.status === "published").length,
       });
     }
   };
@@ -474,6 +476,15 @@ const Dashboard = () => {
               change="+3"
               icon={AlertCircle}
               variant="warning"
+            />
+          </Link>
+          <Link to="/published-documents" className="block">
+            <StatsCard
+              title="Publicadas"
+              value={stats.published.toString()}
+              change="+QB"
+              icon={CheckCircle}
+              variant="default"
             />
           </Link>
           <StatsCard

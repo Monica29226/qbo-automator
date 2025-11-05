@@ -14,6 +14,7 @@ import Organizations from "./pages/Organizations";
 import Integrations from "./pages/Integrations";
 import VendorRules from "./pages/VendorRules";
 import ErrorDocuments from "./pages/ErrorDocuments";
+import PublishedDocuments from "./pages/PublishedDocuments";
 import NotFound from "./pages/NotFound";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 
@@ -97,6 +98,14 @@ const App = () => (
             element={
               <ProtectedRoute>
                 <ErrorDocuments />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/published-documents"
+            element={
+              <ProtectedRoute>
+                <PublishedDocuments />
               </ProtectedRoute>
             }
           />
