@@ -6,6 +6,7 @@ import { StatsCard } from "@/components/dashboard/StatsCard";
 import { RecentDocuments } from "@/components/dashboard/RecentDocuments";
 import { ProcessingFlow } from "@/components/dashboard/ProcessingFlow";
 import { CronMonitor } from "@/components/dashboard/CronMonitor";
+import { MonthSync } from "@/components/dashboard/MonthSync";
 import { OrganizationSwitcher } from "@/components/OrganizationSwitcher";
 import { useAuth } from "@/hooks/useAuth";
 import { Link, useNavigate } from "react-router-dom";
@@ -547,6 +548,10 @@ const Dashboard = () => {
         </div>
 
         <CronMonitor />
+
+        <div className="mb-8">
+          <MonthSync />
+        </div>
 
         <Card className="p-6">
           <div className="flex items-center justify-between mb-6">
