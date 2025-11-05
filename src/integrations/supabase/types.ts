@@ -341,6 +341,65 @@ export type Database = {
         }
         Relationships: []
       }
+      sync_logs: {
+        Row: {
+          completed_at: string | null
+          created_at: string
+          error_message: string | null
+          execution_time_ms: number | null
+          gmail_failed: number | null
+          gmail_fetched: number | null
+          gmail_processed: number | null
+          id: string
+          organization_id: string
+          qbo_failed: number | null
+          qbo_published: number | null
+          started_at: string
+          status: string
+          trigger_type: string
+        }
+        Insert: {
+          completed_at?: string | null
+          created_at?: string
+          error_message?: string | null
+          execution_time_ms?: number | null
+          gmail_failed?: number | null
+          gmail_fetched?: number | null
+          gmail_processed?: number | null
+          id?: string
+          organization_id: string
+          qbo_failed?: number | null
+          qbo_published?: number | null
+          started_at?: string
+          status?: string
+          trigger_type: string
+        }
+        Update: {
+          completed_at?: string | null
+          created_at?: string
+          error_message?: string | null
+          execution_time_ms?: number | null
+          gmail_failed?: number | null
+          gmail_fetched?: number | null
+          gmail_processed?: number | null
+          id?: string
+          organization_id?: string
+          qbo_failed?: number | null
+          qbo_published?: number | null
+          started_at?: string
+          status?: string
+          trigger_type?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sync_logs_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       system_settings: {
         Row: {
           description: string | null

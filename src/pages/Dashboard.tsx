@@ -5,6 +5,7 @@ import { FileText, CheckCircle, AlertCircle, Clock, Settings, Database, LogOut, 
 import { StatsCard } from "@/components/dashboard/StatsCard";
 import { RecentDocuments } from "@/components/dashboard/RecentDocuments";
 import { ProcessingFlow } from "@/components/dashboard/ProcessingFlow";
+import { CronMonitor } from "@/components/dashboard/CronMonitor";
 import { OrganizationSwitcher } from "@/components/OrganizationSwitcher";
 import { useAuth } from "@/hooks/useAuth";
 import { Link, useNavigate } from "react-router-dom";
@@ -544,6 +545,8 @@ const Dashboard = () => {
             </div>
           </Card>
         </div>
+
+        <CronMonitor />
 
         <Card className="p-6">
           <div className="flex items-center justify-between mb-6">

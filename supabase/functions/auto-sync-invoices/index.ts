@@ -12,6 +12,7 @@ serve(async (req) => {
   }
 
   try {
+    const startTime = Date.now();
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseKey);
@@ -35,9 +36,23 @@ serve(async (req) => {
     }
 
     const results = [];
+    const { trigger = "cron" } = await req.json().catch(() => ({ trigger: "cron" }));
 
     for (const org of orgs) {
       console.log(`Processing organization: ${org.name} (${org.id})`);
+
+      // Crear log de sincronización
+      const { data: syncLog } = await supabase
+        .from("sync_logs")
+        .insert({
+          organization_id: org.id,
+          trigger_type: trigger,
+          status: "running",
+        })
+        .select()
+        .single();
+
+      const syncStartTime = Date.now();
 
       try {
         // 1. Fetch invoices from Gmail
@@ -87,6 +102,23 @@ serve(async (req) => {
           const qboData = await qboResponse.json();
           console.log(`QuickBooks sync for ${org.name}: ${qboData.published} published, ${qboData.failed} failed`);
 
+          // Actualizar log de sincronización
+          if (syncLog) {
+            await supabase
+              .from("sync_logs")
+              .update({
+                status: "success",
+                gmail_fetched: gmailData.messages_found || 0,
+                gmail_processed: gmailData.invoices_processed,
+                gmail_failed: gmailData.invoices_failed,
+                qbo_published: qboData.published,
+                qbo_failed: qboData.failed,
+                completed_at: new Date().toISOString(),
+                execution_time_ms: Date.now() - syncStartTime,
+              })
+              .eq("id", syncLog.id);
+          }
+
           results.push({
             organization_id: org.id,
             organization_name: org.name,
@@ -97,6 +129,21 @@ serve(async (req) => {
             status: "success",
           });
         } else {
+          // Actualizar log con 0 facturas procesadas
+          if (syncLog) {
+            await supabase
+              .from("sync_logs")
+              .update({
+                status: "success",
+                gmail_fetched: 0,
+                gmail_processed: 0,
+                gmail_failed: 0,
+                completed_at: new Date().toISOString(),
+                execution_time_ms: Date.now() - syncStartTime,
+              })
+              .eq("id", syncLog.id);
+          }
+
           results.push({
             organization_id: org.id,
             organization_name: org.name,
@@ -106,6 +153,20 @@ serve(async (req) => {
         }
       } catch (error) {
         console.error(`Error processing organization ${org.name}:`, error);
+        
+        // Actualizar log con error
+        if (syncLog) {
+          await supabase
+            .from("sync_logs")
+            .update({
+              status: "error",
+              error_message: error instanceof Error ? error.message : "Unknown error",
+              completed_at: new Date().toISOString(),
+              execution_time_ms: Date.now() - syncStartTime,
+            })
+            .eq("id", syncLog.id);
+        }
+
         results.push({
           organization_id: org.id,
           organization_name: org.name,
