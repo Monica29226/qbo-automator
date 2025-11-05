@@ -83,6 +83,24 @@ serve(async (req) => {
 
     console.log("Extracted data:", extractedData);
 
+    // Validar que la factura sea de octubre o noviembre 2025
+    const issueDate = new Date(extractedData.issue_date);
+    const year = issueDate.getFullYear();
+    const month = issueDate.getMonth() + 1; // getMonth() retorna 0-11
+
+    if (year !== 2025 || (month !== 10 && month !== 11)) {
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: `Solo se aceptan facturas de octubre y noviembre 2025. Esta factura es del ${extractedData.issue_date}`,
+        }),
+        {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        }
+      );
+    }
+
     // Verificar duplicados
     const duplicateWindowDays = 120;
     const windowDate = new Date();
