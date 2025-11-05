@@ -168,7 +168,7 @@ const UploadDocument = () => {
             </div>
             <div>
               <h1 className="text-xl font-bold text-foreground">Cargar Documento</h1>
-              <p className="text-xs text-muted-foreground">Solo facturas de octubre y noviembre 2025</p>
+              <p className="text-xs text-muted-foreground">Solo facturas desde noviembre 2025 en adelante</p>
             </div>
           </div>
         </div>
@@ -220,7 +220,7 @@ const UploadDocument = () => {
                         Cargar XML
                       </p>
                       <p className="text-xs text-muted-foreground">
-                        Oct-Nov 2025 únicamente
+                        Desde nov 2025 en adelante
                       </p>
                       {xmlFile && (
                         <p className="text-xs text-success mt-2">✓ {xmlFile.name}</p>
@@ -271,7 +271,7 @@ const UploadDocument = () => {
               </div>
 
               <Textarea
-                placeholder="Pegue el XML de factura electrónica (solo octubre y noviembre 2025)..."
+                placeholder="Pegue el XML de factura electrónica (desde noviembre 2025 en adelante)..."
                 value={xmlContent}
                 onChange={(e) => setXmlContent(e.target.value)}
                 className="min-h-[300px] font-mono text-sm"
