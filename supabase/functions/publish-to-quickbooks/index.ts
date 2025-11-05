@@ -259,16 +259,22 @@ Deno.serve(async (req) => {
           });
         }
 
+        // Preparar DocNumber - QuickBooks acepta máx 21 caracteres
+        // Pero guardamos el número completo en PrivateNote
+        const qboDocNumber = doc.doc_number.length > 21 
+          ? doc.doc_number.substring(doc.doc_number.length - 21) // Últimos 21 caracteres
+          : doc.doc_number;
+
         // Crear Bill en QuickBooks
         const billPayload = {
           VendorRef: {
             value: vendorId,
           },
           TxnDate: doc.issue_date,
-          DocNumber: doc.doc_number,
+          DocNumber: qboDocNumber,
           Line: lines,
-          DueDate: doc.issue_date, // Puede ajustarse según términos
-          PrivateNote: `Imported from XML - ${doc.supplier_name}`,
+          DueDate: doc.issue_date,
+          PrivateNote: `Factura XML: ${doc.doc_number}\nProveedor: ${doc.supplier_name}\nImportado automáticamente`,
         };
 
         console.log(`Creating bill in QuickBooks for ${doc.doc_number}`);

@@ -82,21 +82,16 @@ Deno.serve(async (req) => {
         
         let needsUpdate = false;
         let newStatus = doc.status;
-        let newDocNumber = doc.doc_number;
         const xmlData = doc.xml_data as any;
 
-        // FIX 1: Acortar número de factura si es muy largo
-        if (doc.doc_number.length > 21) {
-          newDocNumber = doc.doc_number.substring(0, 21);
-          needsUpdate = true;
-          console.log(`Shortened doc number from ${doc.doc_number.length} to 21 chars`);
-        }
+        // El número de factura NO se modifica - se respeta el del XML
+        // QuickBooks manejará el número largo usando los últimos 21 caracteres
 
         // FIX 2: Crear línea por defecto si no hay detalle
         if (!xmlData?.detalle || xmlData.detalle.length === 0) {
           if (doc.total_amount > 0) {
             xmlData.detalle = [{
-              descripcion: `Factura ${newDocNumber}`,
+              descripcion: `Factura ${doc.doc_number}`,
               cantidad: 1,
               precioUnitario: doc.total_amount,
               montoTotalLinea: doc.total_amount,
@@ -104,7 +99,7 @@ Deno.serve(async (req) => {
               montoDescuento: 0,
             }];
             needsUpdate = true;
-            console.log(`Created default line item for ${newDocNumber}`);
+            console.log(`Created default line item for ${doc.doc_number}`);
           }
         }
 
@@ -133,7 +128,6 @@ Deno.serve(async (req) => {
           await supabase
             .from("processed_documents")
             .update({
-              doc_number: newDocNumber,
               supplier_name: cleanSupplierName,
               xml_data: xmlData,
               status: newStatus,
