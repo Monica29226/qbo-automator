@@ -96,7 +96,9 @@ serve(async (req) => {
       .in("key", ["mail_query"]);
 
     const mailQuery = settings?.find(s => s.key === "mail_query")?.value || 
-      "has:attachment (filename:xml OR filename:pdf) newer_than:7d";
+      "has:attachment (filename:xml OR filename:pdf) newer_than:3d";
+
+    console.log(`Using Gmail query: ${mailQuery}`);
 
     // Buscar mensajes en Gmail
     const searchResponse = await fetch(
@@ -129,8 +131,24 @@ serve(async (req) => {
     const processedInvoices = [];
     const errors = [];
 
-    // Procesar cada mensaje
-    for (const message of messages.slice(0, 20)) { // Limitar a 20 por ejecución
+    // Helper para validar y limpiar fechas
+    const parseIssueDate = (dateString: string): string | null => {
+      if (!dateString || dateString.trim() === "") return null;
+      
+      const invalidDates = ["no procede", "n/a", "no aplica", "na", "null", "undefined"];
+      if (invalidDates.includes(dateString.toLowerCase().trim())) return null;
+      
+      try {
+        const date = new Date(dateString);
+        if (isNaN(date.getTime())) return null;
+        return date.toISOString().split("T")[0];
+      } catch {
+        return null;
+      }
+    };
+
+    // Procesar cada mensaje - Reducir a 10 para evitar timeout
+    for (const message of messages.slice(0, 10)) {
       try {
         const messageResponse = await fetch(
           `https://gmail.googleapis.com/gmail/v1/users/me/messages/${message.id}`,
@@ -214,6 +232,14 @@ serve(async (req) => {
                 continue;
               }
 
+              // Validar y limpiar fecha
+              const issueDate = parseIssueDate(invoiceData.fechaEmision);
+              if (!issueDate) {
+                console.error(`Invalid date for ${part.filename}: ${invoiceData.fechaEmision}`);
+                errors.push({ filename: part.filename, error: `Invalid date: ${invoiceData.fechaEmision}` });
+                continue;
+              }
+
               // Guardar en base de datos
               const { data: savedDoc, error: saveError } = await supabase
                 .from("processed_documents")
@@ -221,7 +247,7 @@ serve(async (req) => {
                   doc_key: docKey,
                   doc_type: invoiceData.esNotaCredito ? "NotaCreditoElectronica" : "FacturaElectronica",
                   doc_number: invoiceData.numeroConsecutivo,
-                  issue_date: invoiceData.fechaEmision.split("T")[0],
+                  issue_date: issueDate,
                   supplier_name: invoiceData.emisor.nombre,
                   supplier_tax_id: invoiceData.emisor.identificacion,
                   supplier_email: invoiceData.emisor.correo || null,
