@@ -13,6 +13,7 @@ import UploadDocument from "./pages/UploadDocument";
 import Organizations from "./pages/Organizations";
 import Integrations from "./pages/Integrations";
 import VendorRules from "./pages/VendorRules";
+import ValidationRules from "./pages/ValidationRules";
 import ErrorDocuments from "./pages/ErrorDocuments";
 import PublishedDocuments from "./pages/PublishedDocuments";
 import NotFound from "./pages/NotFound";
@@ -90,6 +91,14 @@ const App = () => (
             element={
               <ProtectedRoute requireAdmin>
                 <VendorRules />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/validation-rules"
+            element={
+              <ProtectedRoute requireAdmin>
+                <ValidationRules />
               </ProtectedRoute>
             }
           />

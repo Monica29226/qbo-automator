@@ -36,6 +36,57 @@ serve(async (req) => {
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
+    // Obtener reglas de validación configuradas
+    const { data: validationSettings } = await supabase
+      .from("system_settings")
+      .select("key, value")
+      .eq("organization_id", organization_id)
+      .in("key", [
+        "validation_min_date",
+        "validation_accept_invoices",
+        "validation_accept_credit_notes",
+        "validation_accept_debit_notes",
+        "validation_reject_tickets",
+        "validation_duplicate_window_days",
+      ]);
+
+    // Convertir a objeto para fácil acceso con valores por defecto
+    const validationRules = {
+      minDate: "2025-11-01",
+      acceptInvoices: true,
+      acceptCreditNotes: true,
+      acceptDebitNotes: true,
+      rejectTickets: true,
+      duplicateWindowDays: 30,
+    };
+
+    if (validationSettings) {
+      validationSettings.forEach((setting) => {
+        switch (setting.key) {
+          case "validation_min_date":
+            validationRules.minDate = setting.value;
+            break;
+          case "validation_accept_invoices":
+            validationRules.acceptInvoices = setting.value === "true";
+            break;
+          case "validation_accept_credit_notes":
+            validationRules.acceptCreditNotes = setting.value === "true";
+            break;
+          case "validation_accept_debit_notes":
+            validationRules.acceptDebitNotes = setting.value === "true";
+            break;
+          case "validation_reject_tickets":
+            validationRules.rejectTickets = setting.value === "true";
+            break;
+          case "validation_duplicate_window_days":
+            validationRules.duplicateWindowDays = parseInt(setting.value) || 30;
+            break;
+        }
+      });
+    }
+
+    console.log("Validation rules loaded:", validationRules);
+
     // Parsear XML (simplificado - en producción usar un parser XML real)
     const parseXMLValue = (xml: string, tag: string): string => {
       const regex = new RegExp(`<${tag}>(.*?)<\/${tag}>`, "s");
@@ -43,27 +94,63 @@ serve(async (req) => {
       return match ? match[1].trim() : "";
     };
 
-    // Determinar tipo de documento y validar que no sea tiquete
+    // Determinar tipo de documento y validar según reglas
     let docType = "FacturaElectronica";
     
-    // Rechazar tiquetes electrónicos
+    // Rechazar tiquetes electrónicos si está configurado
     if (xml_content.includes("<TiqueteElectronico")) {
+      if (validationRules.rejectTickets) {
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error: "Los tiquetes electrónicos no son aceptados según las reglas de validación configuradas.",
+          }),
+          {
+            status: 400,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          }
+        );
+      }
+      docType = "TiqueteElectronico";
+    } else if (xml_content.includes("<NotaCreditoElectronica")) {
+      docType = "NotaCreditoElectronica";
+      if (!validationRules.acceptCreditNotes) {
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error: "Las notas de crédito no están habilitadas según las reglas de validación configuradas.",
+          }),
+          {
+            status: 400,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          }
+        );
+      }
+    } else if (xml_content.includes("<NotaDebitoElectronica")) {
+      docType = "NotaDebitoElectronica";
+      if (!validationRules.acceptDebitNotes) {
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error: "Las notas de débito no están habilitadas según las reglas de validación configuradas.",
+          }),
+          {
+            status: 400,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          }
+        );
+      }
+    } else if (!validationRules.acceptInvoices) {
       return new Response(
         JSON.stringify({
           success: false,
-          error: "Los tiquetes electrónicos no son aceptados. Solo se permiten facturas electrónicas, notas de crédito y notas de débito.",
+          error: "Las facturas electrónicas no están habilitadas según las reglas de validación configuradas.",
         }),
         {
           status: 400,
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         }
       );
-    }
-    
-    if (xml_content.includes("<NotaCreditoElectronica")) {
-      docType = "NotaCreditoElectronica";
-    } else if (xml_content.includes("<NotaDebitoElectronica")) {
-      docType = "NotaDebitoElectronica";
     }
 
     // Extraer datos clave
@@ -83,16 +170,17 @@ serve(async (req) => {
 
     console.log("Extracted data:", extractedData);
 
-    // Validar que la factura sea de noviembre 2025 en adelante
+    // Validar fecha según configuración
     const issueDate = new Date(extractedData.issue_date);
-    const cutoffDate = new Date("2025-11-01"); // 1 de noviembre 2025
+    const cutoffDate = new Date(validationRules.minDate);
 
     if (issueDate < cutoffDate) {
       const dateStr = issueDate.toLocaleDateString('es-ES', { year: 'numeric', month: 'long', day: 'numeric' });
+      const cutoffStr = cutoffDate.toLocaleDateString('es-ES', { year: 'numeric', month: 'long', day: 'numeric' });
       return new Response(
         JSON.stringify({
           success: false,
-          error: `Solo se aceptan facturas desde noviembre 2025 en adelante. Esta factura es del ${dateStr}`,
+          error: `Solo se aceptan documentos desde el ${cutoffStr} en adelante. Este documento es del ${dateStr}`,
         }),
         {
           status: 400,
@@ -101,8 +189,8 @@ serve(async (req) => {
       );
     }
 
-    // Verificar duplicados
-    const duplicateWindowDays = 120;
+    // Verificar duplicados según configuración
+    const duplicateWindowDays = validationRules.duplicateWindowDays;
     const windowDate = new Date();
     windowDate.setDate(windowDate.getDate() - duplicateWindowDays);
 
