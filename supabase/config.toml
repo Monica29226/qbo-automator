@@ -29,3 +29,6 @@ verify_jwt = false
 
 [functions.retry-error-documents]
 verify_jwt = true
+
+[functions.batch-publish-all]
+verify_jwt = true
