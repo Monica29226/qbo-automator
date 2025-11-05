@@ -19,13 +19,18 @@ serve(async (req) => {
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    const token = authHeader.replace("Bearer ", "");
-    const { data: { user }, error: authError } = await supabase.auth.getUser(token);
-    
-    if (authError || !user) throw new Error("Invalid authorization");
-
     const { organization_id, month, year } = await req.json();
     if (!organization_id) throw new Error("organization_id required");
+
+    // Verificar autorización: o service role key o usuario autenticado
+    const token = authHeader.replace("Bearer ", "");
+    const isServiceRole = token === supabaseKey;
+    
+    if (!isServiceRole) {
+      // Si no es service role, validar que sea un usuario autenticado
+      const { data: { user }, error: authError } = await supabase.auth.getUser(token);
+      if (authError || !user) throw new Error("Invalid authorization");
+    }
 
     console.log(`Fetching Gmail invoices for organization ${organization_id}${month && year ? ` (${year}-${month.toString().padStart(2, '0')})` : ''}`);
 
