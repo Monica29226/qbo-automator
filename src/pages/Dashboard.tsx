@@ -170,6 +170,40 @@ const Dashboard = () => {
     }, 2000);
   };
 
+  const handleAutoSync = async () => {
+    if (!activeOrganization) return;
+
+    setIsFetchingEmails(true);
+    toast.info("Ejecutando sincronización automática...");
+
+    try {
+      const { data, error } = await supabase.functions.invoke("auto-sync-invoices");
+
+      if (error) throw error;
+
+      const result = data.results?.[0];
+      if (result) {
+        if (result.status === "success") {
+          toast.success(
+            `✓ Sincronización completa: ${result.gmail_processed} facturas procesadas, ${result.qbo_published} publicadas a QuickBooks`
+          );
+        } else if (result.status === "no_new_invoices") {
+          toast.info("No hay facturas nuevas para procesar");
+        } else {
+          toast.error(`Error en sincronización: ${result.error}`);
+        }
+      }
+
+      fetchStats();
+      queryClient.invalidateQueries({ queryKey: ["recent-documents"] });
+    } catch (error) {
+      console.error("Error in auto-sync:", error);
+      toast.error("Error al ejecutar sincronización automática");
+    } finally {
+      setIsFetchingEmails(false);
+    }
+  };
+
   const handlePublishToQuickBooks = async () => {
     if (!activeOrganization) return;
 
@@ -290,6 +324,25 @@ const Dashboard = () => {
                 <>
                   <Send className="h-4 w-4 mr-2" />
                   Publicar a QuickBooks
+                </>
+              )}
+            </Button>
+            <Button 
+              variant="secondary" 
+              size="sm" 
+              onClick={handleAutoSync}
+              disabled={isFetchingEmails}
+              className="bg-green-600 hover:bg-green-700 text-white"
+            >
+              {isFetchingEmails ? (
+                <>
+                  <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                  Sincronizando...
+                </>
+              ) : (
+                <>
+                  <RefreshCw className="h-4 w-4 mr-2" />
+                  Sincronizar Ahora
                 </>
               )}
             </Button>
