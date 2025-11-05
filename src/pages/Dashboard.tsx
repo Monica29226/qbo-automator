@@ -1,7 +1,7 @@
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { FileText, CheckCircle, AlertCircle, Clock, Settings, Database, LogOut, Users, Upload, Eye, Plug, FileSpreadsheet, Mail, RefreshCw } from "lucide-react";
+import { FileText, CheckCircle, AlertCircle, Clock, Settings, Database, LogOut, Users, Upload, Eye, Plug, FileSpreadsheet, Mail, RefreshCw, Send } from "lucide-react";
 import { StatsCard } from "@/components/dashboard/StatsCard";
 import { RecentDocuments } from "@/components/dashboard/RecentDocuments";
 import { ProcessingFlow } from "@/components/dashboard/ProcessingFlow";
@@ -137,6 +137,62 @@ const Dashboard = () => {
     }
   };
 
+  const handlePublishToQuickBooks = async () => {
+    if (!activeOrganization) return;
+
+    // Check if QuickBooks is connected first
+    const { data: accounts } = await supabase
+      .from("integration_accounts")
+      .select("id")
+      .eq("organization_id", activeOrganization)
+      .eq("service_type", "quickbooks")
+      .eq("is_active", true)
+      .limit(1);
+
+    if (!accounts || accounts.length === 0) {
+      toast.error("Primero debes conectar QuickBooks desde Integraciones", {
+        action: {
+          label: "Ir a Integraciones",
+          onClick: () => navigate("/integrations"),
+        },
+      });
+      return;
+    }
+
+    setIsFetchingEmails(true);
+    toast.info("Publicando facturas a QuickBooks...");
+
+    try {
+      const { data, error } = await supabase.functions.invoke("publish-to-quickbooks", {
+        body: { organization_id: activeOrganization },
+      });
+
+      if (error) throw error;
+
+      const published = data.published || 0;
+      const failed = data.failed || 0;
+
+      if (published > 0) {
+        toast.success(
+          `✓ ${published} factura${published !== 1 ? 's' : ''} publicada${published !== 1 ? 's' : ''} en QuickBooks${failed > 0 ? ` (${failed} fallidas)` : ''}`
+        );
+      } else if (failed > 0) {
+        toast.error(`No se pudo publicar ninguna factura (${failed} errores)`);
+      } else {
+        toast.info("No hay facturas pendientes para publicar");
+      }
+
+      // Refrescar stats y documentos
+      fetchStats();
+      queryClient.invalidateQueries({ queryKey: ["recent-documents"] });
+    } catch (error) {
+      console.error("Error publishing to QuickBooks:", error);
+      toast.error("Error al publicar en QuickBooks");
+    } finally {
+      setIsFetchingEmails(false);
+    }
+  };
+
   if (!activeOrganization) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
@@ -183,6 +239,24 @@ const Dashboard = () => {
                 <>
                   <Mail className="h-4 w-4 mr-2" />
                   Obtener de Gmail
+                </>
+              )}
+            </Button>
+            <Button 
+              variant="default" 
+              size="sm" 
+              onClick={handlePublishToQuickBooks}
+              disabled={isFetchingEmails}
+            >
+              {isFetchingEmails ? (
+                <>
+                  <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                  Publicando...
+                </>
+              ) : (
+                <>
+                  <Send className="h-4 w-4 mr-2" />
+                  Publicar a QuickBooks
                 </>
               )}
             </Button>
