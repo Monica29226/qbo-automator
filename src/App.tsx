@@ -13,6 +13,7 @@ import UploadDocument from "./pages/UploadDocument";
 import Organizations from "./pages/Organizations";
 import Integrations from "./pages/Integrations";
 import VendorRules from "./pages/VendorRules";
+import ErrorDocuments from "./pages/ErrorDocuments";
 import NotFound from "./pages/NotFound";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 
@@ -88,6 +89,14 @@ const App = () => (
             element={
               <ProtectedRoute requireAdmin>
                 <VendorRules />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/error-documents"
+            element={
+              <ProtectedRoute>
+                <ErrorDocuments />
               </ProtectedRoute>
             }
           />

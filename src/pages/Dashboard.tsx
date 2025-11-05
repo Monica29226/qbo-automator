@@ -22,6 +22,7 @@ const Dashboard = () => {
     review: 0,
     pending: 0,
     total: 0,
+    errors: 0,
   });
   const [isFetchingEmails, setIsFetchingEmails] = useState(false);
   const [connections, setConnections] = useState({
@@ -61,6 +62,7 @@ const Dashboard = () => {
         review: data.filter((d) => d.status === "review").length,
         pending: data.filter((d) => d.status === "pending").length,
         total: thisMonth.length,
+        errors: data.filter((d) => d.status === "error").length,
       });
     }
   };
@@ -465,6 +467,15 @@ const Dashboard = () => {
             icon={AlertCircle}
             variant="warning"
           />
+          <Link to="/error-documents" className="block">
+            <StatsCard
+              title="Con Error"
+              value={stats.errors.toString()}
+              change="+3"
+              icon={AlertCircle}
+              variant="warning"
+            />
+          </Link>
           <StatsCard
             title="Pendientes"
             value={stats.pending.toString()}

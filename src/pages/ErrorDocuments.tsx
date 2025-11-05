@@ -1,0 +1,220 @@
+import { Card } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { AlertCircle, ArrowLeft, RefreshCw } from "lucide-react";
+import { Link } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/hooks/useAuth";
+import { toast } from "sonner";
+
+interface ErrorDocument {
+  doc_number: string;
+  supplier_name: string;
+  issue_date: string;
+  total_amount: number;
+  error_message: string;
+  created_at: string;
+}
+
+const ErrorDocuments = () => {
+  const { activeOrganization } = useAuth();
+  const [documents, setDocuments] = useState<ErrorDocument[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    if (activeOrganization) {
+      fetchErrorDocuments();
+    }
+  }, [activeOrganization]);
+
+  const fetchErrorDocuments = async () => {
+    if (!activeOrganization) return;
+
+    setIsLoading(true);
+    const { data, error } = await supabase
+      .from("processed_documents")
+      .select("doc_number, supplier_name, issue_date, total_amount, error_message, created_at")
+      .eq("organization_id", activeOrganization)
+      .eq("status", "error")
+      .order("created_at", { ascending: false });
+
+    if (!error && data) {
+      setDocuments(data);
+    }
+    setIsLoading(false);
+  };
+
+  const getErrorSummary = (errorMessage: string) => {
+    if (errorMessage.includes("Falta el parámetro Line requerido")) {
+      return {
+        type: "Sin líneas de detalle",
+        description: "El XML no contiene líneas de detalle válidas",
+        solution: "Revisar el XML original - puede estar incompleto"
+      };
+    }
+    if (errorMessage.includes("Número no válido") && errorMessage.includes("Gastos por clasificar")) {
+      return {
+        type: "Cuenta contable inválida",
+        description: 'La cuenta "Gastos por clasificar" no existe en QuickBooks',
+        solution: "Configurar regla de vendor con cuenta válida"
+      };
+    }
+    if (errorMessage.includes("La longitud de la cadena") && errorMessage.includes("DocNumber")) {
+      return {
+        type: "Número de factura muy largo",
+        description: "QuickBooks acepta máximo 21 caracteres",
+        solution: "El número debe acortarse manualmente"
+      };
+    }
+    if (errorMessage.includes("Failed to create vendor")) {
+      return {
+        type: "Error al crear proveedor",
+        description: "No se pudo crear el vendor en QuickBooks",
+        solution: "Verificar permisos y conectividad con QuickBooks"
+      };
+    }
+    return {
+      type: "Error desconocido",
+      description: errorMessage.substring(0, 100) + "...",
+      solution: "Revisar logs completos"
+    };
+  };
+
+  const formatCurrency = (amount: number) => {
+    return new Intl.NumberFormat('es-CR', {
+      style: 'currency',
+      currency: 'CRC',
+      minimumFractionDigits: 2
+    }).format(amount);
+  };
+
+  const handleRetry = async (docNumber: string) => {
+    toast.info(`Reintentando procesar factura ${docNumber}...`);
+    // Aquí se puede implementar lógica de reintento
+  };
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="text-center">
+          <RefreshCw className="h-8 w-8 animate-spin mx-auto mb-4 text-muted-foreground" />
+          <p className="text-muted-foreground">Cargando facturas con error...</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-background">
+      <header className="border-b bg-card">
+        <div className="container mx-auto px-6 py-4">
+          <div className="flex items-center gap-4">
+            <Button variant="ghost" size="sm" asChild>
+              <Link to="/dashboard">
+                <ArrowLeft className="h-4 w-4 mr-2" />
+                Volver
+              </Link>
+            </Button>
+            <div>
+              <h1 className="text-2xl font-bold text-foreground">Facturas con Error</h1>
+              <p className="text-sm text-muted-foreground">
+                {documents.length} factura{documents.length !== 1 ? 's' : ''} requieren atención
+              </p>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <main className="container mx-auto px-6 py-8">
+        {documents.length === 0 ? (
+          <Card className="p-12 text-center">
+            <div className="text-muted-foreground">
+              <p className="text-lg mb-2">¡No hay facturas con error! 🎉</p>
+              <p className="text-sm">Todas las facturas se han procesado correctamente.</p>
+            </div>
+          </Card>
+        ) : (
+          <div className="space-y-4">
+            {documents.map((doc) => {
+              const errorInfo = getErrorSummary(doc.error_message);
+              return (
+                <Card key={doc.doc_number} className="p-6 hover:shadow-lg transition-shadow">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex-1">
+                      <div className="flex items-start gap-3 mb-3">
+                        <AlertCircle className="h-5 w-5 text-destructive mt-1 flex-shrink-0" />
+                        <div className="flex-1">
+                          <div className="flex items-center gap-3 mb-2">
+                            <h3 className="font-semibold text-lg">
+                              Factura #{doc.doc_number}
+                            </h3>
+                            <Badge variant="destructive" className="text-xs">
+                              {errorInfo.type}
+                            </Badge>
+                          </div>
+                          <p className="text-sm text-muted-foreground mb-1">
+                            <span className="font-medium">Proveedor:</span> {doc.supplier_name}
+                          </p>
+                          <p className="text-sm text-muted-foreground mb-1">
+                            <span className="font-medium">Fecha:</span> {new Date(doc.issue_date).toLocaleDateString('es-CR')}
+                          </p>
+                          <p className="text-sm text-muted-foreground mb-3">
+                            <span className="font-medium">Monto:</span> {formatCurrency(doc.total_amount)}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="bg-muted/30 border border-muted rounded-lg p-4 space-y-2">
+                        <div>
+                          <p className="text-sm font-medium text-foreground mb-1">
+                            📋 Descripción del error:
+                          </p>
+                          <p className="text-sm text-muted-foreground">
+                            {errorInfo.description}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-sm font-medium text-foreground mb-1">
+                            💡 Solución sugerida:
+                          </p>
+                          <p className="text-sm text-muted-foreground">
+                            {errorInfo.solution}
+                          </p>
+                        </div>
+                      </div>
+
+                      {doc.doc_number.length > 21 && (
+                        <div className="mt-3 p-3 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg">
+                          <p className="text-sm font-medium text-yellow-800 dark:text-yellow-200">
+                            ⚠️ Número muy largo: {doc.doc_number.length} caracteres (máx: 21)
+                          </p>
+                          <p className="text-xs text-yellow-700 dark:text-yellow-300 mt-1">
+                            Sugerencia: {doc.doc_number.substring(0, 21)}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="flex flex-col gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleRetry(doc.doc_number)}
+                      >
+                        <RefreshCw className="h-4 w-4 mr-2" />
+                        Reintentar
+                      </Button>
+                    </div>
+                  </div>
+                </Card>
+              );
+            })}
+          </div>
+        )}
+      </main>
+    </div>
+  );
+};
+
+export default ErrorDocuments;
