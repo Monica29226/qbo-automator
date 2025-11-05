@@ -43,8 +43,23 @@ serve(async (req) => {
       return match ? match[1].trim() : "";
     };
 
-    // Determinar tipo de documento
+    // Determinar tipo de documento y validar que no sea tiquete
     let docType = "FacturaElectronica";
+    
+    // Rechazar tiquetes electrónicos
+    if (xml_content.includes("<TiqueteElectronico")) {
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: "Los tiquetes electrónicos no son aceptados. Solo se permiten facturas electrónicas, notas de crédito y notas de débito.",
+        }),
+        {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        }
+      );
+    }
+    
     if (xml_content.includes("<NotaCreditoElectronica")) {
       docType = "NotaCreditoElectronica";
     } else if (xml_content.includes("<NotaDebitoElectronica")) {

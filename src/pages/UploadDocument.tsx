@@ -168,7 +168,7 @@ const UploadDocument = () => {
             </div>
             <div>
               <h1 className="text-xl font-bold text-foreground">Cargar Documento</h1>
-              <p className="text-xs text-muted-foreground">Procesar factura o nota de crédito XML</p>
+              <p className="text-xs text-muted-foreground">Solo facturas electrónicas (no tiquetes)</p>
             </div>
           </div>
         </div>
@@ -220,7 +220,7 @@ const UploadDocument = () => {
                         Cargar XML
                       </p>
                       <p className="text-xs text-muted-foreground">
-                        Factura electrónica
+                        Solo facturas (no tiquetes)
                       </p>
                       {xmlFile && (
                         <p className="text-xs text-success mt-2">✓ {xmlFile.name}</p>
@@ -271,7 +271,7 @@ const UploadDocument = () => {
               </div>
 
               <Textarea
-                placeholder="Pegue aquí el contenido del XML de factura electrónica..."
+                placeholder="Pegue aquí el contenido del XML de factura electrónica (no tiquetes)..."
                 value={xmlContent}
                 onChange={(e) => setXmlContent(e.target.value)}
                 className="min-h-[300px] font-mono text-sm"
