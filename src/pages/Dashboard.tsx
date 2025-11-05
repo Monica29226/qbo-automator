@@ -160,6 +160,16 @@ const Dashboard = () => {
     }, 2000);
   };
 
+  const handleSyncNovember = async () => {
+    await handleFetchGmailInvoices(11, 2025);
+    
+    // Esperar un momento y luego publicar automáticamente a QuickBooks
+    setTimeout(async () => {
+      toast.info("Publicando facturas de noviembre a QuickBooks...");
+      await handlePublishToQuickBooks();
+    }, 2000);
+  };
+
   const handlePublishToQuickBooks = async () => {
     if (!activeOrganization) return;
 
@@ -298,6 +308,24 @@ const Dashboard = () => {
                 <>
                   <Clock className="h-4 w-4 mr-2" />
                   Sincronizar Octubre
+                </>
+              )}
+            </Button>
+            <Button 
+              variant="secondary" 
+              size="sm" 
+              onClick={handleSyncNovember}
+              disabled={isFetchingEmails}
+            >
+              {isFetchingEmails ? (
+                <>
+                  <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                  Procesando...
+                </>
+              ) : (
+                <>
+                  <Clock className="h-4 w-4 mr-2" />
+                  Sincronizar Noviembre
                 </>
               )}
             </Button>
