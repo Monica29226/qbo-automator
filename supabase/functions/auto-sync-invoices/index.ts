@@ -19,6 +19,29 @@ serve(async (req) => {
 
     console.log("Starting automatic invoice sync...");
 
+    // Verificar si el cron está pausado (solo para triggers automáticos)
+    const { trigger = "cron" } = await req.json().catch(() => ({ trigger: "cron" }));
+    
+    if (trigger === "cron") {
+      const { data: cronSettings } = await supabase
+        .from("system_settings")
+        .select("value")
+        .eq("key", "cron_auto_sync_enabled")
+        .maybeSingle();
+
+      if (cronSettings && cronSettings.value === "false") {
+        console.log("Auto-sync is paused");
+        return new Response(
+          JSON.stringify({ 
+            success: true,
+            message: "Auto-sync is paused",
+            paused: true 
+          }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+    }
+
     // Obtener todas las organizaciones activas con Gmail y QuickBooks conectados
     const { data: orgs } = await supabase
       .from("organizations")
@@ -36,7 +59,6 @@ serve(async (req) => {
     }
 
     const results = [];
-    const { trigger = "cron" } = await req.json().catch(() => ({ trigger: "cron" }));
 
     for (const org of orgs) {
       console.log(`Processing organization: ${org.name} (${org.id})`);

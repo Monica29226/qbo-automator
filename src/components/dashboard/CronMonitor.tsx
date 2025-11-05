@@ -1,11 +1,23 @@
 import { useEffect, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Clock, CheckCircle, AlertCircle, Activity, RefreshCw } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Clock, CheckCircle, AlertCircle, Activity, RefreshCw, Pause, Play } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { formatDistanceToNow } from "date-fns";
 import { es } from "date-fns/locale";
+import { toast } from "sonner";
 
 interface SyncLog {
   id: string;
@@ -27,10 +39,14 @@ export const CronMonitor = () => {
   const [lastSync, setLastSync] = useState<SyncLog | null>(null);
   const [recentLogs, setRecentLogs] = useState<SyncLog[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [cronEnabled, setCronEnabled] = useState(true);
+  const [showConfirmDialog, setShowConfirmDialog] = useState(false);
+  const [isUpdating, setIsUpdating] = useState(false);
 
   useEffect(() => {
     if (activeOrganization) {
       fetchSyncLogs();
+      fetchCronStatus();
       
       // Suscribirse a cambios en tiempo real
       const channel = supabase
@@ -86,6 +102,59 @@ export const CronMonitor = () => {
     }
 
     setIsLoading(false);
+  };
+
+  const fetchCronStatus = async () => {
+    if (!activeOrganization) return;
+
+    const { data } = await supabase
+      .from("system_settings")
+      .select("value")
+      .eq("organization_id", activeOrganization)
+      .eq("key", "cron_auto_sync_enabled")
+      .maybeSingle();
+
+    if (data) {
+      setCronEnabled(data.value === "true");
+    } else {
+      // Si no existe, está habilitado por defecto
+      setCronEnabled(true);
+    }
+  };
+
+  const handleToggleCron = async () => {
+    if (!activeOrganization) return;
+
+    setIsUpdating(true);
+
+    try {
+      const newStatus = !cronEnabled;
+      const { error } = await supabase
+        .from("system_settings")
+        .upsert({
+          organization_id: activeOrganization,
+          key: "cron_auto_sync_enabled",
+          value: newStatus.toString(),
+          description: "Control de sincronización automática",
+        }, {
+          onConflict: "organization_id,key"
+        });
+
+      if (error) throw error;
+
+      setCronEnabled(newStatus);
+      toast.success(
+        newStatus 
+          ? "Sincronización automática reanudada" 
+          : "Sincronización automática pausada"
+      );
+    } catch (error) {
+      console.error("Error toggling cron:", error);
+      toast.error("Error al cambiar el estado de la sincronización");
+    } finally {
+      setIsUpdating(false);
+      setShowConfirmDialog(false);
+    }
   };
 
   const getNextSyncTime = () => {
@@ -156,11 +225,37 @@ export const CronMonitor = () => {
   }
 
   return (
-    <Card className="p-6">
-      <div className="flex items-center gap-2 mb-6">
-        <Activity className="h-5 w-5 text-primary" />
-        <h3 className="text-lg font-semibold">Monitor de Sincronización Automática</h3>
-      </div>
+    <>
+      <Card className="p-6">
+        <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center gap-2">
+            <Activity className="h-5 w-5 text-primary" />
+            <h3 className="text-lg font-semibold">Monitor de Sincronización Automática</h3>
+            {!cronEnabled && (
+              <Badge variant="secondary" className="ml-2">
+                Pausado
+              </Badge>
+            )}
+          </div>
+          <Button
+            variant={cronEnabled ? "outline" : "default"}
+            size="sm"
+            onClick={() => setShowConfirmDialog(true)}
+            disabled={isUpdating}
+          >
+            {cronEnabled ? (
+              <>
+                <Pause className="h-4 w-4 mr-2" />
+                Pausar
+              </>
+            ) : (
+              <>
+                <Play className="h-4 w-4 mr-2" />
+                Reanudar
+              </>
+            )}
+          </Button>
+        </div>
 
       {/* Estadísticas principales */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
@@ -273,6 +368,36 @@ export const CronMonitor = () => {
           )}
         </div>
       </div>
-    </Card>
+      </Card>
+
+      <AlertDialog open={showConfirmDialog} onOpenChange={setShowConfirmDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {cronEnabled ? "¿Pausar sincronización automática?" : "¿Reanudar sincronización automática?"}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {cronEnabled ? (
+                <>
+                  La sincronización automática dejará de ejecutarse cada 30 minutos.
+                  Las facturas no se procesarán automáticamente hasta que la reanudes.
+                </>
+              ) : (
+                <>
+                  La sincronización automática se ejecutará cada 30 minutos nuevamente.
+                  Las facturas comenzarán a procesarse automáticamente desde Gmail a QuickBooks.
+                </>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction onClick={handleToggleCron} disabled={isUpdating}>
+              {isUpdating ? "Procesando..." : "Confirmar"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   );
 };
