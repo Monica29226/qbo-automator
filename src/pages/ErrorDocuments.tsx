@@ -9,6 +9,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { toast } from "sonner";
 
 interface ErrorDocument {
+  id: string;
   doc_number: string;
   supplier_name: string;
   issue_date: string;
@@ -34,7 +35,7 @@ const ErrorDocuments = () => {
     setIsLoading(true);
     const { data, error } = await supabase
       .from("processed_documents")
-      .select("doc_number, supplier_name, issue_date, total_amount, error_message, created_at")
+      .select("id, doc_number, supplier_name, issue_date, total_amount, error_message, created_at")
       .eq("organization_id", activeOrganization)
       .eq("status", "error")
       .order("created_at", { ascending: false });
@@ -89,9 +90,44 @@ const ErrorDocuments = () => {
     }).format(amount);
   };
 
-  const handleRetry = async (docNumber: string) => {
-    toast.info(`Reintentando procesar factura ${docNumber}...`);
-    // Aquí se puede implementar lógica de reintento
+  const handleRetry = async (docId: string, docNumber: string) => {
+    if (!activeOrganization) return;
+
+    toast.info(`Intentando corregir factura ${docNumber}...`);
+    
+    try {
+      const { data, error } = await supabase.functions.invoke("retry-error-documents", {
+        body: { 
+          organization_id: activeOrganization,
+          document_ids: [docId]
+        },
+      });
+
+      if (error) throw error;
+
+      if (data.fixed > 0) {
+        toast.success(`✓ Factura ${docNumber} corregida. Publicando a QuickBooks...`);
+        
+        // Publicar a QuickBooks
+        setTimeout(async () => {
+          const { error: pubError } = await supabase.functions.invoke("publish-to-quickbooks", {
+            body: { organization_id: activeOrganization },
+          });
+
+          if (!pubError) {
+            toast.success(`✓ Factura ${docNumber} publicada exitosamente`);
+            fetchErrorDocuments();
+          } else {
+            toast.error("Error al publicar a QuickBooks");
+          }
+        }, 1000);
+      } else {
+        toast.warning(`No se pudo corregir automáticamente. ${data.errors?.[0]?.error || ''}`);
+      }
+    } catch (error) {
+      console.error("Error retrying document:", error);
+      toast.error("Error al reintentar factura");
+    }
   };
 
   if (isLoading) {
@@ -200,7 +236,7 @@ const ErrorDocuments = () => {
                       <Button
                         variant="outline"
                         size="sm"
-                        onClick={() => handleRetry(doc.doc_number)}
+                        onClick={() => handleRetry(doc.id, doc.doc_number)}
                       >
                         <RefreshCw className="h-4 w-4 mr-2" />
                         Reintentar
