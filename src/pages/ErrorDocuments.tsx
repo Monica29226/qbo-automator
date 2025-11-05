@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { toast } from "sonner";
+import { PublishAllButton } from "@/components/PublishAllButton";
 
 interface ErrorDocument {
   id: string;
@@ -165,9 +166,12 @@ const ErrorDocuments = () => {
       <main className="container mx-auto px-6 py-8">
         {documents.length === 0 ? (
           <Card className="p-12 text-center">
-            <div className="text-muted-foreground">
+            <div className="text-muted-foreground space-y-4">
               <p className="text-lg mb-2">¡No hay facturas con error! 🎉</p>
               <p className="text-sm">Todas las facturas se han procesado correctamente.</p>
+              <div className="mt-6">
+                <PublishAllButton />
+              </div>
             </div>
           </Card>
         ) : (
