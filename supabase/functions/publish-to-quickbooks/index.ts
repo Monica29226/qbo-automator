@@ -228,36 +228,50 @@ Deno.serve(async (req) => {
 
         const accountRef = vendorData?.default_account_ref || "1"; // Default a "Gastos sin clasificar" con ID 1
 
-        // Preparar líneas del bill
+        // Preparar líneas del bill con validación robusta
         const lines = [];
         const xmlData = doc.xml_data as any;
         
-        if (xmlData?.detalle && Array.isArray(xmlData.detalle)) {
+        if (xmlData?.detalle && Array.isArray(xmlData.detalle) && xmlData.detalle.length > 0) {
           for (const item of xmlData.detalle) {
-            lines.push({
-              DetailType: "AccountBasedExpenseLineDetail",
-              Amount: item.montoTotalLinea || 0,
-              Description: item.descripcion?.substring(0, 4000) || "",
-              AccountBasedExpenseLineDetail: {
-                AccountRef: {
-                  value: accountRef, // Usar cuenta del vendor o gastos sin clasificar
+            const amount = parseFloat(item.montoTotalLinea) || 0;
+            if (amount > 0) {
+              lines.push({
+                DetailType: "AccountBasedExpenseLineDetail",
+                Amount: amount,
+                Description: (item.descripcion || item.detalle || "")?.substring(0, 4000) || `Línea ${lines.length + 1}`,
+                AccountBasedExpenseLineDetail: {
+                  AccountRef: {
+                    value: accountRef,
+                  },
                 },
-              },
-            });
+              });
+            }
           }
-        } else {
-          // Si no hay detalle, crear una línea con el total
+        }
+        
+        // Validación crítica: asegurar al menos una línea válida
+        if (lines.length === 0) {
+          console.log(`No valid lines found for ${doc.doc_number}, creating default line`);
+          const amount = parseFloat(doc.total_amount as any) || 0;
+          
+          if (amount <= 0) {
+            throw new Error(`Invalid total amount: ${doc.total_amount}`);
+          }
+          
           lines.push({
             DetailType: "AccountBasedExpenseLineDetail",
-            Amount: doc.total_amount,
-            Description: `Invoice ${doc.doc_number}`,
+            Amount: amount,
+            Description: `Factura ${doc.doc_number} - ${doc.supplier_name}`,
             AccountBasedExpenseLineDetail: {
               AccountRef: {
-                value: accountRef, // Usar cuenta del vendor o gastos sin clasificar
+                value: accountRef,
               },
             },
           });
         }
+        
+        console.log(`Prepared ${lines.length} line(s) for bill ${doc.doc_number}, total: ${lines.reduce((sum, l) => sum + l.Amount, 0)}`);
 
         // Preparar DocNumber - QuickBooks acepta máx 21 caracteres
         // Pero guardamos el número completo en PrivateNote

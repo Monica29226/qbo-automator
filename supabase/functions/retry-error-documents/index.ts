@@ -47,9 +47,9 @@ Deno.serve(async (req) => {
       query = query.in("id", document_ids);
     }
 
-    const { data: errorDocs, error: docError } = await query;
+    const { data: errorDocs, error: fetchError } = await query;
 
-    if (docError) throw docError;
+    if (fetchError) throw fetchError;
 
     if (!errorDocs || errorDocs.length === 0) {
       return new Response(
@@ -58,115 +58,122 @@ Deno.serve(async (req) => {
       );
     }
 
-    console.log(`Found ${errorDocs.length} error documents`);
+    console.log(`Found ${errorDocs.length} error documents to retry`);
 
     const results = {
       fixed: 0,
-      stillFailed: 0,
+      failed: 0,
       errors: [] as any[],
     };
 
-    // Obtener configuración de cuenta por defecto
-    const { data: settings } = await supabase
-      .from("system_settings")
-      .select("value")
-      .eq("organization_id", organization_id)
-      .eq("key", "default_expense_account")
-      .maybeSingle();
-
-    const defaultAccountId = settings?.value || "1"; // Cuenta por defecto
-
+    // Intentar corregir cada documento
     for (const doc of errorDocs) {
       try {
-        console.log(`Processing error document: ${doc.doc_number}`);
-        
-        let needsUpdate = false;
-        let newStatus = doc.status;
         const xmlData = doc.xml_data as any;
+        let needsUpdate = false;
+        const updates: any = { status: "processed", error_message: null };
 
-        // El número de factura NO se modifica - se respeta el del XML
-        // QuickBooks manejará el número largo usando los últimos 21 caracteres
-
-        // FIX 2: Crear línea por defecto si no hay detalle
-        if (!xmlData?.detalle || xmlData.detalle.length === 0) {
-          if (doc.total_amount > 0) {
-            xmlData.detalle = [{
+        // Corrección 1: Validar que tenga líneas en XML
+        if (!xmlData?.detalle || !Array.isArray(xmlData.detalle) || xmlData.detalle.length === 0) {
+          console.log(`Adding default line item for ${doc.doc_number}`);
+          updates.xml_data = {
+            ...xmlData,
+            detalle: [{
               descripcion: `Factura ${doc.doc_number}`,
-              cantidad: 1,
-              precioUnitario: doc.total_amount,
               montoTotalLinea: doc.total_amount,
-              tarifa: 0,
-              montoDescuento: 0,
-            }];
-            needsUpdate = true;
-            console.log(`Created default line item for ${doc.doc_number}`);
-          }
-        }
-
-        // FIX 3: Reemplazar cuenta "Gastos por clasificar" con ID numérico
-        if (xmlData?.cuentaContable === "Gastos por clasificar") {
-          xmlData.cuentaContable = defaultAccountId;
+              cantidad: 1,
+            }],
+          };
           needsUpdate = true;
-          console.log(`Updated account from 'Gastos por clasificar' to ${defaultAccountId}`);
         }
 
-        // FIX 4: Limpiar nombre de vendor problemático
-        let cleanSupplierName = doc.supplier_name;
-        if (doc.supplier_name.match(/^\d-\d+-\d+/)) {
-          // Si el nombre empieza con formato de cédula, usar identificacion del XML
-          if (xmlData?.emisor?.nombre) {
-            cleanSupplierName = xmlData.emisor.nombre;
+        // Corrección 2: Reemplazar "Gastos por clasificar" con cuenta válida
+        if (doc.error_message?.includes("Gastos por clasificar")) {
+          console.log(`Fixing account for ${doc.doc_number}`);
+          // Buscar vendor y su cuenta
+          const { data: vendorData } = await supabase
+            .from("vendors")
+            .select("default_account_ref")
+            .eq("id", doc.vendor_id)
+            .maybeSingle();
+
+          if (vendorData?.default_account_ref) {
+            updates.xml_data = {
+              ...updates.xml_data || xmlData,
+              accountRef: vendorData.default_account_ref,
+            };
             needsUpdate = true;
-            console.log(`Updated supplier name from ${doc.supplier_name} to ${cleanSupplierName}`);
+          } else {
+            updates.xml_data = {
+              ...updates.xml_data || xmlData,
+              accountRef: "1",
+            };
+            needsUpdate = true;
           }
+        }
+
+        // Corrección 3: Limpiar nombres problemáticos
+        if (doc.supplier_name && (
+          doc.supplier_name.includes("@") ||
+          doc.supplier_name.includes("<?xml") ||
+          doc.supplier_name.length > 100
+        )) {
+          console.log(`Cleaning supplier name for ${doc.doc_number}`);
+          updates.supplier_name = doc.supplier_name
+            .replace(/<?xml.*?>/g, "")
+            .replace(/@.*$/g, "")
+            .substring(0, 100)
+            .trim();
+          needsUpdate = true;
         }
 
         // Si se hicieron correcciones, actualizar el documento
         if (needsUpdate) {
-          newStatus = "processed"; // Cambiar a processed para que se reintente la publicación
-          
-          await supabase
+          const { error: updateError } = await supabase
             .from("processed_documents")
-            .update({
-              supplier_name: cleanSupplierName,
-              xml_data: xmlData,
-              status: newStatus,
-              error_message: null,
-            })
+            .update(updates)
             .eq("id", doc.id);
 
-          results.fixed++;
-          console.log(`Fixed document ${doc.doc_number} -> ready for republishing`);
-        } else {
-          results.stillFailed++;
-          results.errors.push({
-            doc_number: doc.doc_number,
-            error: "Could not automatically fix this error",
-            original_error: doc.error_message?.substring(0, 200),
-          });
-        }
+          if (updateError) {
+            throw updateError;
+          }
 
+          console.log(`Fixed document ${doc.doc_number}`);
+          results.fixed++;
+        } else {
+          // Si no se pudo corregir automáticamente, cambiar status para reintento
+          const { error: updateError } = await supabase
+            .from("processed_documents")
+            .update({ status: "processed", error_message: null })
+            .eq("id", doc.id);
+
+          if (!updateError) {
+            console.log(`Reset status for ${doc.doc_number}`);
+            results.fixed++;
+          } else {
+            throw updateError;
+          }
+        }
       } catch (error) {
-        console.error(`Error processing document ${doc.doc_number}:`, error);
-        results.stillFailed++;
+        console.error(`Failed to fix document ${doc.doc_number}:`, error);
+        const errorMessage = error instanceof Error ? error.message : "Unknown error";
+        
+        results.failed++;
         results.errors.push({
           doc_number: doc.doc_number,
-          error: error instanceof Error ? error.message : "Unknown error",
+          error: errorMessage,
         });
       }
     }
 
-    console.log(`Retry complete: ${results.fixed} fixed, ${results.stillFailed} still failed`);
+    console.log(`Retry complete: ${results.fixed} fixed, ${results.failed} failed`);
 
     return new Response(
       JSON.stringify({
         success: true,
         fixed: results.fixed,
-        stillFailed: results.stillFailed,
+        failed: results.failed,
         errors: results.errors.length > 0 ? results.errors : undefined,
-        message: results.fixed > 0 
-          ? `${results.fixed} documento(s) corregido(s) y listo(s) para republicar` 
-          : "No se pudieron corregir automáticamente los documentos",
       }),
       {
         headers: { ...corsHeaders, "Content-Type": "application/json" },

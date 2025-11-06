@@ -19,8 +19,10 @@ serve(async (req) => {
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    const { organization_id, month, year } = await req.json();
+    const { organization_id, month, year, force_resync } = await req.json();
     if (!organization_id) throw new Error("organization_id required");
+    
+    console.log(`Force resync mode: ${force_resync ? 'ENABLED' : 'disabled'}`);
 
     // Verificar autorización: o service role key o usuario autenticado
     const token = authHeader.replace("Bearer ", "");
@@ -170,8 +172,11 @@ serve(async (req) => {
       }
     };
 
-    // Procesar cada mensaje - Reducir a 10 para evitar timeout
-    for (const message of messages.slice(0, 10)) {
+    // Procesar mensajes - aumentar límite en force_resync
+    const messageLimit = force_resync ? 50 : 10;
+    console.log(`Processing up to ${messageLimit} messages`);
+    
+    for (const message of messages.slice(0, messageLimit)) {
       try {
         const messageResponse = await fetch(
           `https://gmail.googleapis.com/gmail/v1/users/me/messages/${message.id}`,
@@ -244,14 +249,57 @@ serve(async (req) => {
               const docKey = invoiceData.numeroConsecutivo;
               const { data: existingDoc } = await supabase
                 .from("processed_documents")
-                .select("id")
+                .select("id, status")
                 .eq("doc_key", docKey)
                 .eq("organization_id", organization_id)
                 .maybeSingle();
 
-              if (existingDoc) {
-                console.log(`Duplicate invoice: ${part.filename}`);
+              if (existingDoc && !force_resync) {
+                console.log(`Duplicate invoice (skipping): ${part.filename}`);
                 errors.push({ filename: part.filename, error: "Duplicate" });
+                continue;
+              }
+              
+              // Si force_resync y existe, actualizar en lugar de insertar nuevo
+              if (existingDoc && force_resync) {
+                console.log(`Force resyncing existing invoice: ${part.filename}`);
+                
+                const issueDate = parseIssueDate(invoiceData.fechaEmision);
+                if (!issueDate) {
+                  console.error(`Invalid date for ${part.filename}: ${invoiceData.fechaEmision}`);
+                  errors.push({ filename: part.filename, error: `Invalid date: ${invoiceData.fechaEmision}` });
+                  continue;
+                }
+                
+                const { error: updateError } = await supabase
+                  .from("processed_documents")
+                  .update({
+                    status: "processed",
+                    error_message: null,
+                    xml_data: invoiceData,
+                    doc_type: invoiceData.esNotaCredito ? "NotaCreditoElectronica" : "FacturaElectronica",
+                    doc_number: invoiceData.numeroConsecutivo,
+                    issue_date: issueDate,
+                    supplier_name: invoiceData.emisor.nombre,
+                    supplier_tax_id: invoiceData.emisor.identificacion,
+                    supplier_email: invoiceData.emisor.correo || null,
+                    currency: invoiceData.moneda,
+                    total_amount: invoiceData.totalComprobante,
+                  })
+                  .eq("id", existingDoc.id);
+                  
+                if (!updateError) {
+                  console.log(`Successfully re-processed: ${part.filename}`);
+                  processedInvoices.push({
+                    filename: part.filename,
+                    doc_id: existingDoc.id,
+                    supplier: invoiceData.emisor.nombre,
+                    amount: invoiceData.totalComprobante,
+                  });
+                } else {
+                  console.error(`Error updating ${part.filename}:`, updateError);
+                  errors.push({ filename: part.filename, error: updateError.message });
+                }
                 continue;
               }
 

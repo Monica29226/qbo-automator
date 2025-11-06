@@ -28,6 +28,7 @@ const Dashboard = () => {
     published: 0,
   });
   const [isFetchingEmails, setIsFetchingEmails] = useState(false);
+  const [isAutoSyncing, setIsAutoSyncing] = useState(false);
   const [connections, setConnections] = useState({
     gmail: false,
     quickbooks: false,
@@ -179,7 +180,7 @@ const Dashboard = () => {
   const handleAutoSync = async () => {
     if (!activeOrganization) return;
 
-    setIsFetchingEmails(true);
+    setIsAutoSyncing(true);
     toast.info("Ejecutando sincronización automática...");
 
     try {
@@ -205,6 +206,40 @@ const Dashboard = () => {
     } catch (error) {
       console.error("Error in auto-sync:", error);
       toast.error("Error al ejecutar sincronización automática");
+    } finally {
+      setIsAutoSyncing(false);
+    }
+  };
+
+  const handleForceResync = async () => {
+    if (!activeOrganization) return;
+    
+    setIsFetchingEmails(true);
+    toast.info("Forzando resincronización de facturas de hoy...");
+    
+    try {
+      const today = new Date();
+      const { data, error } = await supabase.functions.invoke("gmail-fetch-invoices", {
+        body: { 
+          organization_id: activeOrganization,
+          month: today.getMonth() + 1,
+          year: today.getFullYear(),
+          force_resync: true,
+        },
+      });
+      
+      if (error) throw error;
+      
+      const processed = data.invoices_processed || 0;
+      const failed = data.invoices_failed || 0;
+      
+      toast.success(`✓ ${processed} facturas reprocesadas${failed > 0 ? ` (${failed} fallidas)` : ''}`);
+      
+      fetchStats();
+      queryClient.invalidateQueries({ queryKey: ["recent-documents"] });
+    } catch (error: any) {
+      console.error("Error in force resync:", error);
+      toast.error(`Error al forzar sincronización: ${error.message}`);
     } finally {
       setIsFetchingEmails(false);
     }
@@ -337,10 +372,10 @@ const Dashboard = () => {
               variant="secondary" 
               size="sm" 
               onClick={handleAutoSync}
-              disabled={isFetchingEmails}
+              disabled={isAutoSyncing}
               className="bg-green-600 hover:bg-green-700 text-white"
             >
-              {isFetchingEmails ? (
+              {isAutoSyncing ? (
                 <>
                   <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
                   Sincronizando...
@@ -349,6 +384,25 @@ const Dashboard = () => {
                 <>
                   <RefreshCw className="h-4 w-4 mr-2" />
                   Sincronizar Ahora
+                </>
+              )}
+            </Button>
+            <Button 
+              variant="outline" 
+              size="sm" 
+              onClick={handleForceResync}
+              disabled={isFetchingEmails}
+              className="border-orange-500 text-orange-600 hover:bg-orange-50 dark:hover:bg-orange-950"
+            >
+              {isFetchingEmails ? (
+                <>
+                  <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                  Reprocesando...
+                </>
+              ) : (
+                <>
+                  <RefreshCw className="h-4 w-4 mr-2" />
+                  Forzar Resincronización Hoy
                 </>
               )}
             </Button>
