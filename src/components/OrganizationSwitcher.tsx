@@ -47,42 +47,57 @@ export const OrganizationSwitcher = () => {
         return;
       }
 
+      // Step 1: Create organization
       const { data: orgData, error: orgError } = await supabase
         .from("organizations")
         .insert([{
           name: newOrgName,
           is_active: true
         }])
-        .select();
+        .select()
+        .single();
 
       if (orgError) {
-        console.error("Organization insert error:", orgError);
         toast.error(`Error al crear organización: ${orgError.message}`);
+        console.error("Organization insert error:", orgError);
         setIsLoading(false);
         return;
       }
 
-      if (!orgData || orgData.length === 0) {
+      if (!orgData) {
         toast.error("No se pudo crear la organización");
         setIsLoading(false);
         return;
       }
 
-      const newOrg = orgData[0];
-
+      // Step 2: Add user as owner
       const { error: memberError } = await supabase
         .from("organization_members")
         .insert([{
-          organization_id: newOrg.id,
+          organization_id: orgData.id,
           user_id: user.id,
-          role: "owner"
+          role: "owner",
+          is_active: true
         }]);
 
       if (memberError) {
+        toast.error(`Error al asignar rol: ${memberError.message}`);
         console.error("Member insert error:", memberError);
-        toast.error(`Error al asignar propietario: ${memberError.message}`);
         setIsLoading(false);
         return;
+      }
+
+      // Step 3: Set as active organization
+      const { error: activeOrgError } = await supabase
+        .from("user_active_organization")
+        .upsert({
+          user_id: user.id,
+          organization_id: orgData.id
+        });
+
+      if (activeOrgError) {
+        console.warn("Warning setting active org:", activeOrgError);
+        // No mostramos error porque la org se creó exitosamente
       }
 
       toast.success("Organización creada exitosamente");
@@ -90,10 +105,11 @@ export const OrganizationSwitcher = () => {
       setNewOrgName("");
       setIsLoading(false);
       
-      switchOrganization(newOrg.id);
+      // Reload to update organizations list
+      window.location.reload();
     } catch (error) {
       console.error("Unexpected error creating organization:", error);
-      toast.error("Error inesperado al crear organización");
+      toast.error(`Error inesperado: ${error instanceof Error ? error.message : 'Error desconocido'}`);
       setIsLoading(false);
     }
   };
