@@ -297,6 +297,14 @@ const Organizations = () => {
     owner: "Propietario",
     admin: "Administrador",
     member: "Miembro",
+    viewer: "Observador",
+  };
+
+  const roleDescriptions: Record<string, string> = {
+    owner: "Control total: puede eliminar la empresa y gestionar todos los aspectos",
+    admin: "Gestión completa: puede editar configuración y gestionar miembros",
+    member: "Edición de contenido: puede crear y editar documentos y proveedores",
+    viewer: "Solo lectura: puede ver toda la información sin editar",
   };
 
   return (
@@ -420,10 +428,15 @@ const Organizations = () => {
                             {member.profiles.full_name || "Sin nombre"}
                           </TableCell>
                           <TableCell>{member.profiles.email}</TableCell>
-                          <TableCell>
-                            <Badge variant={member.role === "owner" ? "default" : "secondary"}>
-                              {roleLabels[member.role]}
-                            </Badge>
+                           <TableCell>
+                            <div className="flex flex-col gap-1">
+                              <Badge variant={member.role === "owner" ? "default" : "secondary"}>
+                                {roleLabels[member.role]}
+                              </Badge>
+                              <span className="text-xs text-muted-foreground">
+                                {roleDescriptions[member.role]}
+                              </span>
+                            </div>
                           </TableCell>
                           <TableCell className="text-right">
                             {member.role !== "owner" && (
@@ -677,10 +690,29 @@ const Organizations = () => {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="member">Miembro</SelectItem>
-                  <SelectItem value="admin">Administrador</SelectItem>
+                  <SelectItem value="viewer">
+                    <div className="flex flex-col">
+                      <span className="font-medium">Observador</span>
+                      <span className="text-xs text-muted-foreground">Solo lectura</span>
+                    </div>
+                  </SelectItem>
+                  <SelectItem value="member">
+                    <div className="flex flex-col">
+                      <span className="font-medium">Miembro</span>
+                      <span className="text-xs text-muted-foreground">Puede crear y editar contenido</span>
+                    </div>
+                  </SelectItem>
+                  <SelectItem value="admin">
+                    <div className="flex flex-col">
+                      <span className="font-medium">Administrador</span>
+                      <span className="text-xs text-muted-foreground">Gestión completa excepto eliminar empresa</span>
+                    </div>
+                  </SelectItem>
                 </SelectContent>
               </Select>
+              <p className="text-xs text-muted-foreground">
+                {roleDescriptions[newMemberRole]}
+              </p>
             </div>
           </div>
 
