@@ -77,8 +77,7 @@ serve(async (req) => {
         const credentials = conn.credentials as any;
         if (credentials?.realm_id === realmId && conn.organization_id !== organization_id) {
           console.error("QuickBooks realm already connected to another organization");
-          return new Response(
-            `<!DOCTYPE html>
+          const errorHtml = `<!DOCTYPE html>
             <html>
               <head>
                 <meta charset="UTF-8">
@@ -90,8 +89,11 @@ serve(async (req) => {
                 <p style="font-size: 12px; color: #666;">Cada empresa debe tener su propia conexión de QuickBooks independiente.</p>
                 <script>setTimeout(() => window.close(), 5000);</script>
               </body>
-            </html>`,
-            { headers: { "Content-Type": "text/html; charset=UTF-8" }, status: 400 }
+            </html>`;
+          
+          return new Response(
+            new TextEncoder().encode(errorHtml),
+            { headers: { "Content-Type": "text/html; charset=utf-8" }, status: 400 }
           );
         }
       }
@@ -129,8 +131,7 @@ serve(async (req) => {
 
     console.log("QuickBooks connected successfully");
 
-    return new Response(
-      `<!DOCTYPE html>
+    const html = `<!DOCTYPE html>
       <html>
         <head>
           <meta charset="UTF-8">
@@ -152,8 +153,11 @@ serve(async (req) => {
             setTimeout(() => window.close(), 2000);
           </script>
         </body>
-      </html>`,
-      { headers: { "Content-Type": "text/html; charset=UTF-8" }, status: 200 }
+      </html>`;
+    
+    return new Response(
+      new TextEncoder().encode(html),
+      { headers: { "Content-Type": "text/html; charset=utf-8" }, status: 200 }
     );
   } catch (error) {
     console.error("Error in quickbooks-oauth-callback:", error);
