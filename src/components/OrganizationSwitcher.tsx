@@ -38,51 +38,58 @@ export const OrganizationSwitcher = () => {
 
     setIsLoading(true);
 
-    const { data: { user } } = await supabase.auth.getUser();
-    
-    if (!user) {
-      toast.error("Usuario no autenticado");
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      
+      if (!user) {
+        toast.error("Usuario no autenticado");
+        setIsLoading(false);
+        return;
+      }
+
+      const { data: orgData, error: orgError } = await supabase
+        .from("organizations")
+        .insert([{
+          name: newOrgName,
+          is_active: true
+        }])
+        .select();
+
+      if (orgError || !orgData || orgData.length === 0) {
+        toast.error("Error al crear organización");
+        console.error("Organization insert error:", orgError);
+        setIsLoading(false);
+        return;
+      }
+
+      const newOrg = orgData[0];
+
+      const { error: memberError } = await supabase
+        .from("organization_members")
+        .insert([{
+          organization_id: newOrg.id,
+          user_id: user.id,
+          role: "owner"
+        }]);
+
+      if (memberError) {
+        toast.error("Error al asignar miembro");
+        console.error("Member insert error:", memberError);
+        setIsLoading(false);
+        return;
+      }
+
+      toast.success("Organización creada exitosamente");
+      setIsDialogOpen(false);
+      setNewOrgName("");
       setIsLoading(false);
-      return;
-    }
-
-    const { data: newOrg, error: orgError } = await supabase
-      .from("organizations")
-      .insert([{
-        name: newOrgName,
-        is_active: true
-      }])
-      .select()
-      .single();
-
-    if (orgError) {
-      toast.error("Error al crear organización");
-      console.error(orgError);
+      
+      switchOrganization(newOrg.id);
+    } catch (error) {
+      console.error("Unexpected error creating organization:", error);
+      toast.error("Error inesperado al crear organización");
       setIsLoading(false);
-      return;
     }
-
-    const { error: memberError } = await supabase
-      .from("organization_members")
-      .insert([{
-        organization_id: newOrg.id,
-        user_id: user.id,
-        role: "owner"
-      }]);
-
-    if (memberError) {
-      toast.error("Error al asignar miembro");
-      console.error(memberError);
-      setIsLoading(false);
-      return;
-    }
-
-    toast.success("Organización creada exitosamente");
-    setIsDialogOpen(false);
-    setNewOrgName("");
-    setIsLoading(false);
-    
-    switchOrganization(newOrg.id);
   };
 
   if (organizations.length === 0) {
