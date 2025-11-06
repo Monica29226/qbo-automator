@@ -14,6 +14,56 @@ export type Database = {
   }
   public: {
     Tables: {
+      alert_history: {
+        Row: {
+          acknowledged: boolean | null
+          acknowledged_at: string | null
+          acknowledged_by: string | null
+          alert_type: string
+          created_at: string | null
+          email_id: string | null
+          id: string
+          issues_count: number
+          issues_data: Json | null
+          organization_id: string
+          sent_at: string | null
+        }
+        Insert: {
+          acknowledged?: boolean | null
+          acknowledged_at?: string | null
+          acknowledged_by?: string | null
+          alert_type: string
+          created_at?: string | null
+          email_id?: string | null
+          id?: string
+          issues_count?: number
+          issues_data?: Json | null
+          organization_id: string
+          sent_at?: string | null
+        }
+        Update: {
+          acknowledged?: boolean | null
+          acknowledged_at?: string | null
+          acknowledged_by?: string | null
+          alert_type?: string
+          created_at?: string | null
+          email_id?: string | null
+          id?: string
+          issues_count?: number
+          issues_data?: Json | null
+          organization_id?: string
+          sent_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "alert_history_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       integration_accounts: {
         Row: {
           account_email: string | null

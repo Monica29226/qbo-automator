@@ -1,5 +1,8 @@
 project_id = "lqirqvvkjpunhtsvebot"
 
+[functions.check-sync-health]
+verify_jwt = false
+
 [functions.gmail-oauth-init]
 verify_jwt = true
 
