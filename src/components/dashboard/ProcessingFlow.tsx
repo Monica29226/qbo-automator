@@ -8,6 +8,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import { EmailListModal } from "./EmailListModal";
+import { PublishQBOModal } from "./PublishQBOModal";
 
 interface StepStats {
   total: number;
@@ -31,6 +32,7 @@ export const ProcessingFlow = () => {
   const [rulesCount, setRulesCount] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [showEmailModal, setShowEmailModal] = useState(false);
+  const [showPublishModal, setShowPublishModal] = useState(false);
 
   useEffect(() => {
     if (activeOrganization) {
@@ -164,11 +166,13 @@ export const ProcessingFlow = () => {
                       : step.status === "needs-setup"
                       ? "bg-warning/20 text-warning border-2 border-warning"
                       : "bg-muted text-muted-foreground border-2 border-dashed border-border",
-                    step.label === "Recibir Correo" && "cursor-pointer hover:scale-105"
+                    (step.label === "Recibir Correo" || step.label === "Publicar QBO") && "cursor-pointer hover:scale-105"
                   )}
                   onClick={() => {
                     if (step.label === "Recibir Correo") {
                       setShowEmailModal(true);
+                    } else if (step.label === "Publicar QBO") {
+                      setShowPublishModal(true);
                     }
                   }}
                 >
@@ -233,6 +237,9 @@ export const ProcessingFlow = () => {
 
       {/* Email List Modal */}
       <EmailListModal open={showEmailModal} onOpenChange={setShowEmailModal} />
+      
+      {/* Publish QBO Modal */}
+      <PublishQBOModal open={showPublishModal} onOpenChange={setShowPublishModal} />
     </div>
   );
 };
