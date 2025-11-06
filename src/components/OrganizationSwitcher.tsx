@@ -55,9 +55,15 @@ export const OrganizationSwitcher = () => {
         }])
         .select();
 
-      if (orgError || !orgData || orgData.length === 0) {
-        toast.error("Error al crear organización");
+      if (orgError) {
         console.error("Organization insert error:", orgError);
+        toast.error(`Error al crear organización: ${orgError.message}`);
+        setIsLoading(false);
+        return;
+      }
+
+      if (!orgData || orgData.length === 0) {
+        toast.error("No se pudo crear la organización");
         setIsLoading(false);
         return;
       }
@@ -73,8 +79,8 @@ export const OrganizationSwitcher = () => {
         }]);
 
       if (memberError) {
-        toast.error("Error al asignar miembro");
         console.error("Member insert error:", memberError);
+        toast.error(`Error al asignar propietario: ${memberError.message}`);
         setIsLoading(false);
         return;
       }
