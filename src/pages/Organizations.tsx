@@ -56,10 +56,19 @@ interface Member {
   };
 }
 
+interface PendingInvitation {
+  id: string;
+  email: string;
+  role: string;
+  created_at: string;
+  expires_at: string;
+}
+
 const Organizations = () => {
   const { activeOrganization, organizations: userOrgs } = useAuth();
   const [orgDetails, setOrgDetails] = useState<Organization | null>(null);
   const [members, setMembers] = useState<Member[]>([]);
+  const [pendingInvitations, setPendingInvitations] = useState<PendingInvitation[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [dialogType, setDialogType] = useState<"edit-org" | "add-member" | "create-org">("edit-org");
@@ -122,6 +131,21 @@ const Organizations = () => {
       setMembers(membersData as any || []);
     }
 
+    // Obtener invitaciones pendientes
+    const { data: invitationsData, error: invitationsError } = await supabase
+      .from("organization_invitations")
+      .select("id, email, role, created_at, expires_at")
+      .eq("organization_id", activeOrganization)
+      .is("accepted_at", null)
+      .gt("expires_at", new Date().toISOString())
+      .order("created_at", { ascending: false });
+
+    if (invitationsError) {
+      console.error("Error loading invitations:", invitationsError);
+    } else {
+      setPendingInvitations(invitationsData || []);
+    }
+
     setIsLoading(false);
   };
 
@@ -167,47 +191,40 @@ const Organizations = () => {
 
     if (!activeOrganization) return;
 
-    setIsLoading(true);
-
-    // Buscar usuario por email
-    const { data: profile, error: profileError } = await supabase
-      .from("profiles")
-      .select("id")
-      .eq("email", newMemberEmail)
-      .maybeSingle();
-
-    if (profileError || !profile) {
-      toast.error("Usuario no encontrado");
-      setIsLoading(false);
+    // Validar email
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(newMemberEmail)) {
+      toast.error("Ingrese un correo válido");
       return;
     }
 
-    // Agregar como miembro
-    const { error: insertError } = await supabase
-      .from("organization_members")
-      .insert([
-        {
-          organization_id: activeOrganization,
-          user_id: profile.id,
+    setIsLoading(true);
+
+    try {
+      const { data, error } = await supabase.functions.invoke("send-invitation", {
+        body: {
+          email: newMemberEmail,
           role: newMemberRole,
+          organizationId: activeOrganization,
         },
-      ]);
+      });
 
-    setIsLoading(false);
+      if (error) throw error;
 
-    if (insertError) {
-      if (insertError.message.includes("duplicate")) {
-        toast.error("Este usuario ya es miembro");
+      if (data.error) {
+        toast.error(data.error);
       } else {
-        toast.error("Error al agregar miembro");
-        console.error(insertError);
+        toast.success("Invitación enviada por correo");
+        setIsDialogOpen(false);
+        setNewMemberEmail("");
+        setNewMemberRole("member");
+        fetchOrgData();
       }
-    } else {
-      toast.success("Miembro agregado exitosamente");
-      setIsDialogOpen(false);
-      setNewMemberEmail("");
-      setNewMemberRole("member");
-      fetchOrgData();
+    } catch (error: any) {
+      console.error("Error sending invitation:", error);
+      toast.error("Error al enviar invitación");
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -401,10 +418,34 @@ const Organizations = () => {
                     }}
                   >
                     <Plus className="h-4 w-4 mr-2" />
-                    Agregar Miembro
+                    Invitar Miembro
                   </Button>
                 </div>
 
+                {/* Invitaciones Pendientes */}
+                {pendingInvitations.length > 0 && (
+                  <div className="mb-6">
+                    <h3 className="text-sm font-semibold mb-3 text-muted-foreground">Invitaciones Pendientes</h3>
+                    <div className="space-y-2">
+                      {pendingInvitations.map((invitation) => (
+                        <div 
+                          key={invitation.id}
+                          className="flex items-center justify-between p-3 border rounded-lg bg-muted/30"
+                        >
+                          <div>
+                            <p className="font-medium">{invitation.email}</p>
+                            <p className="text-xs text-muted-foreground">
+                              Rol: {roleLabels[invitation.role]} • Expira: {new Date(invitation.expires_at).toLocaleDateString()}
+                            </p>
+                          </div>
+                          <Badge variant="secondary">Pendiente</Badge>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Miembros Activos */}
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -656,13 +697,13 @@ const Organizations = () => {
         </DialogContent>
       </Dialog>
 
-      {/* Dialog para agregar miembro */}
+      {/* Dialog para invitar miembro */}
       <Dialog open={isDialogOpen && dialogType === "add-member"} onOpenChange={setIsDialogOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Agregar Miembro</DialogTitle>
+            <DialogTitle>Invitar Miembro</DialogTitle>
             <DialogDescription>
-              Invite un usuario existente a su organización
+              Enviaremos una invitación por correo electrónico
             </DialogDescription>
           </DialogHeader>
 
@@ -679,7 +720,7 @@ const Organizations = () => {
                 placeholder="usuario@ejemplo.cr"
               />
               <p className="text-xs text-muted-foreground">
-                El usuario debe estar registrado en el sistema
+                Se enviará una invitación por email que expirará en 7 días
               </p>
             </div>
 
@@ -724,10 +765,10 @@ const Organizations = () => {
               {isLoading ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Agregando...
+                  Enviando...
                 </>
               ) : (
-                "Agregar"
+                "Enviar Invitación"
               )}
             </Button>
           </DialogFooter>

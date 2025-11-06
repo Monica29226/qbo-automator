@@ -17,6 +17,7 @@ import VendorRules from "./pages/VendorRules";
 import ValidationRules from "./pages/ValidationRules";
 import ErrorDocuments from "./pages/ErrorDocuments";
 import PublishedDocuments from "./pages/PublishedDocuments";
+import AcceptInvitation from "./pages/AcceptInvitation";
 import NotFound from "./pages/NotFound";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 
@@ -116,6 +117,14 @@ const App = () => (
             element={
               <ProtectedRoute>
                 <PublishedDocuments />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/accept-invitation"
+            element={
+              <ProtectedRoute>
+                <AcceptInvitation />
               </ProtectedRoute>
             }
           />

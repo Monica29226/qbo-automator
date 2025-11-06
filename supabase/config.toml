@@ -32,3 +32,9 @@ verify_jwt = true
 
 [functions.batch-publish-all]
 verify_jwt = true
+
+[functions.send-invitation]
+verify_jwt = true
+
+[functions.accept-invitation]
+verify_jwt = true
