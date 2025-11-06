@@ -9,6 +9,8 @@ import { es } from "date-fns/locale";
 import { Loader2, CheckCircle, AlertCircle, Clock } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Button } from "@/components/ui/button";
+import { toast } from "sonner";
 
 interface ProcessedDocument {
   id: string;
@@ -97,6 +99,39 @@ export const PublishQBOModal = ({ open, onOpenChange }: PublishQBOModalProps) =>
     return <Badge variant={docType.variant}>{docType.label}</Badge>;
   };
 
+  const handlePublishAll = async () => {
+    if (!activeOrganization) return;
+
+    toast.info("Publicando facturas procesadas a QuickBooks...");
+
+    try {
+      const { data, error } = await supabase.functions.invoke("publish-to-quickbooks", {
+        body: { organization_id: activeOrganization },
+      });
+
+      if (error) throw error;
+
+      const published = data.published || 0;
+      const failed = data.failed || 0;
+
+      if (published > 0) {
+        toast.success(
+          `✓ ${published} factura${published !== 1 ? 's' : ''} publicada${published !== 1 ? 's' : ''} en QuickBooks${failed > 0 ? ` (${failed} fallidas)` : ''}`
+        );
+        // Refrescar la lista de documentos
+        await fetchDocuments();
+      } else if (failed > 0) {
+        toast.error(`No se pudo publicar ninguna factura (${failed} errores)`);
+      } else {
+        toast.info("No hay facturas pendientes para publicar");
+      }
+
+    } catch (error) {
+      console.error("Error publishing to QuickBooks:", error);
+      toast.error("Error al publicar en QuickBooks");
+    }
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-4xl max-h-[80vh]">
@@ -122,6 +157,13 @@ export const PublishQBOModal = ({ open, onOpenChange }: PublishQBOModalProps) =>
             </TabsList>
 
             <TabsContent value="ready" className="mt-4">
+              {readyDocs.length > 0 && (
+                <div className="mb-4">
+                  <Button onClick={handlePublishAll} className="w-full">
+                    Publicar Todos a QuickBooks ({readyDocs.length})
+                  </Button>
+                </div>
+              )}
               <ScrollArea className="h-[500px] pr-4">
                 {readyDocs.length === 0 ? (
                   <div className="text-center py-8 text-muted-foreground">
