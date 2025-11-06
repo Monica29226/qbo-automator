@@ -17,9 +17,9 @@ serve(async (req) => {
       throw new Error("XML content is required");
     }
 
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-    if (!LOVABLE_API_KEY) {
-      throw new Error("LOVABLE_API_KEY is not configured");
+    const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
+    if (!OPENAI_API_KEY) {
+      throw new Error("OPENAI_API_KEY is not configured");
     }
 
     console.log("Extracting invoice data from XML...");
@@ -34,14 +34,14 @@ Special considerations:
 - Set "aceptada": false only if the XML explicitly indicates rejection; search for a field named "EstadoMensaje" or similar and see its state to determine if it is accepted or not. If this field does not exist then search for keywords "Aceptado" or "Rechazado".
 - Only accept invoices, not receipts. If it is a receipt, then set "aceptada" as false.`;
 
-    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${LOVABLE_API_KEY}`,
+        "Authorization": `Bearer ${OPENAI_API_KEY}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "google/gemini-2.5-flash",
+        model: "gpt-4o-mini",
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user", content: `Extract invoice data from this XML:\n\n${xmlContent}` }
