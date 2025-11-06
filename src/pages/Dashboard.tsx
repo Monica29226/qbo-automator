@@ -7,6 +7,7 @@ import { RecentDocuments } from "@/components/dashboard/RecentDocuments";
 import { ProcessingFlow } from "@/components/dashboard/ProcessingFlow";
 import { CronMonitor } from "@/components/dashboard/CronMonitor";
 import { MonthSync } from "@/components/dashboard/MonthSync";
+import { AICreditsMonitor } from "@/components/dashboard/AICreditsMonitor";
 import { OrganizationSwitcher } from "@/components/OrganizationSwitcher";
 import { useAuth } from "@/hooks/useAuth";
 import { Link, useNavigate } from "react-router-dom";
@@ -505,6 +506,8 @@ const Dashboard = () => {
       </header>
 
       <main className="container mx-auto px-6 py-8">
+        <AICreditsMonitor organizationId={activeOrganization} />
+        
         <div className="mb-8">
           <div className="flex items-center justify-between">
             <div>
