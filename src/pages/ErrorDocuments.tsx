@@ -121,6 +121,56 @@ const ErrorDocuments = () => {
     }
   };
 
+  const handleRetryAll = async () => {
+    if (!activeOrganization || documents.length === 0) return;
+
+    const toastId = toast.loading(`Reintentando ${documents.length} facturas con error...`);
+    
+    let successful = 0;
+    let failed = 0;
+
+    try {
+      // Process all documents sequentially to avoid overwhelming the system
+      for (const doc of documents) {
+        try {
+          const { data, error } = await supabase.functions.invoke("retry-failed-bills", {
+            body: { 
+              documentId: doc.id,
+              organizationId: activeOrganization
+            },
+          });
+
+          if (error) throw error;
+
+          if (data.success) {
+            successful++;
+          } else {
+            failed++;
+          }
+        } catch (error) {
+          console.error(`Error retrying ${doc.doc_number}:`, error);
+          failed++;
+        }
+      }
+
+      // Show results
+      if (successful > 0 && failed === 0) {
+        toast.success(`✓ ${successful} factura${successful !== 1 ? 's' : ''} procesada${successful !== 1 ? 's' : ''} exitosamente`, { id: toastId });
+      } else if (successful > 0 && failed > 0) {
+        toast.info(`${successful} exitosa${successful !== 1 ? 's' : ''}, ${failed} fallida${failed !== 1 ? 's' : ''}`, { id: toastId });
+      } else {
+        toast.error(`No se pudieron procesar las facturas (${failed} errores)`, { id: toastId });
+      }
+
+      // Refresh the list
+      setTimeout(() => fetchErrorDocuments(), 1500);
+
+    } catch (error: any) {
+      console.error("Error in retry all:", error);
+      toast.error(`Error al reintentar: ${error.message}`, { id: toastId });
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
@@ -136,19 +186,31 @@ const ErrorDocuments = () => {
     <div className="min-h-screen bg-background">
       <header className="border-b bg-card">
         <div className="container mx-auto px-6 py-4">
-          <div className="flex items-center gap-4">
-            <Button variant="ghost" size="sm" asChild>
-              <Link to="/dashboard">
-                <ArrowLeft className="h-4 w-4 mr-2" />
-                Volver
-              </Link>
-            </Button>
-            <div>
-              <h1 className="text-2xl font-bold text-foreground">Facturas con Error</h1>
-              <p className="text-sm text-muted-foreground">
-                {documents.length} factura{documents.length !== 1 ? 's' : ''} requieren atención
-              </p>
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex items-center gap-4">
+              <Button variant="ghost" size="sm" asChild>
+                <Link to="/dashboard">
+                  <ArrowLeft className="h-4 w-4 mr-2" />
+                  Volver
+                </Link>
+              </Button>
+              <div>
+                <h1 className="text-2xl font-bold text-foreground">Facturas con Error</h1>
+                <p className="text-sm text-muted-foreground">
+                  {documents.length} factura{documents.length !== 1 ? 's' : ''} requieren atención
+                </p>
+              </div>
             </div>
+            {documents.length > 0 && (
+              <Button 
+                onClick={handleRetryAll}
+                variant="default"
+                className="gap-2"
+              >
+                <RefreshCw className="h-4 w-4" />
+                Reintentar Todas ({documents.length})
+              </Button>
+            )}
           </div>
         </div>
       </header>
