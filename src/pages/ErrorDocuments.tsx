@@ -124,42 +124,37 @@ const ErrorDocuments = () => {
   const handleRetryAll = async () => {
     if (!activeOrganization || documents.length === 0) return;
 
-    const toastId = toast.loading(`Reintentando ${documents.length} facturas con error...`);
+    const toastId = toast.loading(`Procesando ${documents.length} facturas con error...`);
     
-    let successful = 0;
-    let failed = 0;
-
     try {
-      // Process all documents sequentially to avoid overwhelming the system
-      for (const doc of documents) {
-        try {
-          const { data, error } = await supabase.functions.invoke("retry-failed-bills", {
-            body: { 
-              documentId: doc.id,
-              organizationId: activeOrganization
-            },
-          });
+      const { data, error } = await supabase.functions.invoke("retry-error-documents", {
+        body: { 
+          organization_id: activeOrganization
+        },
+      });
 
-          if (error) throw error;
+      if (error) throw error;
 
-          if (data.success) {
-            successful++;
-          } else {
-            failed++;
-          }
-        } catch (error) {
-          console.error(`Error retrying ${doc.doc_number}:`, error);
-          failed++;
-        }
-      }
-
-      // Show results
-      if (successful > 0 && failed === 0) {
-        toast.success(`✓ ${successful} factura${successful !== 1 ? 's' : ''} procesada${successful !== 1 ? 's' : ''} exitosamente`, { id: toastId });
-      } else if (successful > 0 && failed > 0) {
-        toast.info(`${successful} exitosa${successful !== 1 ? 's' : ''}, ${failed} fallida${failed !== 1 ? 's' : ''}`, { id: toastId });
+      // Show detailed results
+      const { fixed, published, skipped_duplicates, failed, errors } = data;
+      
+      if (published > 0 && failed === 0) {
+        toast.success(
+          `✓ ${published} factura${published !== 1 ? 's' : ''} publicada${published !== 1 ? 's' : ''} exitosamente` +
+          (skipped_duplicates > 0 ? ` (${skipped_duplicates} duplicada${skipped_duplicates !== 1 ? 's' : ''})` : ''),
+          { id: toastId, duration: 5000 }
+        );
+      } else if (published > 0 && failed > 0) {
+        toast.warning(
+          `${published} publicada${published !== 1 ? 's' : ''}, ${failed} fallida${failed !== 1 ? 's' : ''}` +
+          (skipped_duplicates > 0 ? `, ${skipped_duplicates} duplicada${skipped_duplicates !== 1 ? 's' : ''}` : ''),
+          { id: toastId, duration: 6000 }
+        );
       } else {
-        toast.error(`No se pudieron procesar las facturas (${failed} errores)`, { id: toastId });
+        toast.error(
+          `No se pudieron procesar las facturas (${failed} error${failed !== 1 ? 'es' : ''})`,
+          { id: toastId, duration: 6000 }
+        );
       }
 
       // Refresh the list

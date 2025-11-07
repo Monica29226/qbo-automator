@@ -53,7 +53,7 @@ Deno.serve(async (req) => {
 
     if (!errorDocs || errorDocs.length === 0) {
       return new Response(
-        JSON.stringify({ success: true, message: "No error documents to retry", fixed: 0 }),
+        JSON.stringify({ success: true, message: "No error documents to retry", fixed: 0, published: 0, skipped: 0 }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
@@ -62,20 +62,40 @@ Deno.serve(async (req) => {
 
     const results = {
       fixed: 0,
+      published: 0,
+      skipped_duplicates: 0,
       failed: 0,
       errors: [] as any[],
     };
 
-    // Intentar corregir cada documento
+    // Intentar corregir y publicar cada documento
     for (const doc of errorDocs) {
+      console.log(`\n=== Processing document ${doc.doc_number} ===`);
+      
       try {
         const xmlData = doc.xml_data as any;
         let needsUpdate = false;
-        const updates: any = { status: "processed", error_message: null };
+        const updates: any = {};
+
+        // Detectar duplicados - skip y marcar como publicado
+        if (doc.error_message?.includes("duplicate") || doc.error_message?.includes("duplicado")) {
+          console.log(`✓ Duplicate detected: ${doc.doc_number} - marking as published (skip)`);
+          
+          await supabase
+            .from("processed_documents")
+            .update({ 
+              status: "published",
+              error_message: "Documento duplicado - ya existe en QuickBooks"
+            })
+            .eq("id", doc.id);
+          
+          results.skipped_duplicates++;
+          continue;
+        }
 
         // Corrección 1: Validar que tenga líneas en XML
         if (!xmlData?.detalle || !Array.isArray(xmlData.detalle) || xmlData.detalle.length === 0) {
-          console.log(`Adding default line item for ${doc.doc_number}`);
+          console.log(`→ Adding default line item for ${doc.doc_number}`);
           updates.xml_data = {
             ...xmlData,
             detalle: [{
@@ -85,40 +105,77 @@ Deno.serve(async (req) => {
             }],
           };
           needsUpdate = true;
+        } else {
+          updates.xml_data = xmlData;
         }
 
-        // Corrección 2: Reemplazar "Gastos por clasificar" con cuenta válida
-        if (doc.error_message?.includes("Gastos por clasificar")) {
-          console.log(`Fixing account for ${doc.doc_number}`);
-          // Buscar vendor y su cuenta
-          const { data: vendorData } = await supabase
-            .from("vendors")
-            .select("default_account_ref")
-            .eq("id", doc.vendor_id)
-            .maybeSingle();
+        // Corrección 2: Clasificar proveedor si es null
+        if (!doc.vendor_id && doc.supplier_name) {
+          console.log(`→ Classifying vendor for ${doc.doc_number}: ${doc.supplier_name}`);
+          
+          try {
+            const { data: classifyData } = await supabase.functions.invoke("classify-vendor", {
+              body: {
+                organization_id: organization_id,
+                supplier: {
+                  nombre: doc.supplier_name,
+                  identificacion: doc.supplier_tax_id || "",
+                  email: doc.supplier_email || "",
+                },
+                xmlData: updates.xml_data || xmlData,
+              },
+            });
 
-          if (vendorData?.default_account_ref) {
+            if (classifyData?.vendorId) {
+              console.log(`✓ Vendor classified: ${classifyData.vendorId}`);
+              updates.vendor_id = classifyData.vendorId;
+              needsUpdate = true;
+            } else {
+              console.log(`⚠ Could not classify vendor, will use default account`);
+            }
+          } catch (classifyError) {
+            console.error(`⚠ Vendor classification failed:`, classifyError);
+          }
+        }
+
+        // Corrección 3: Asegurar cuenta contable
+        const currentXmlData = updates.xml_data || xmlData;
+        if (!currentXmlData?.accountRef || currentXmlData.accountRef === "Gastos por clasificar") {
+          console.log(`→ Setting default account for ${doc.doc_number}`);
+          
+          if (updates.vendor_id || doc.vendor_id) {
+            const { data: vendorData } = await supabase
+              .from("vendors")
+              .select("default_account_ref")
+              .eq("id", updates.vendor_id || doc.vendor_id)
+              .maybeSingle();
+
+            if (vendorData?.default_account_ref) {
+              updates.xml_data = {
+                ...currentXmlData,
+                accountRef: vendorData.default_account_ref,
+              };
+              needsUpdate = true;
+            }
+          }
+          
+          // Fallback a cuenta por defecto
+          if (!updates.xml_data?.accountRef || updates.xml_data.accountRef === "Gastos por clasificar") {
             updates.xml_data = {
-              ...updates.xml_data || xmlData,
-              accountRef: vendorData.default_account_ref,
-            };
-            needsUpdate = true;
-          } else {
-            updates.xml_data = {
-              ...updates.xml_data || xmlData,
-              accountRef: "1",
+              ...currentXmlData,
+              accountRef: "1", // Cuenta por defecto
             };
             needsUpdate = true;
           }
         }
 
-        // Corrección 3: Limpiar nombres problemáticos
+        // Corrección 4: Limpiar nombres problemáticos
         if (doc.supplier_name && (
           doc.supplier_name.includes("@") ||
           doc.supplier_name.includes("<?xml") ||
           doc.supplier_name.length > 100
         )) {
-          console.log(`Cleaning supplier name for ${doc.doc_number}`);
+          console.log(`→ Cleaning supplier name for ${doc.doc_number}`);
           updates.supplier_name = doc.supplier_name
             .replace(/<?xml.*?>/g, "")
             .replace(/@.*$/g, "")
@@ -127,8 +184,11 @@ Deno.serve(async (req) => {
           needsUpdate = true;
         }
 
-        // Si se hicieron correcciones, actualizar el documento
+        // Actualizar documento con correcciones
         if (needsUpdate) {
+          updates.status = "processed";
+          updates.error_message = null;
+          
           const { error: updateError } = await supabase
             .from("processed_documents")
             .update(updates)
@@ -138,24 +198,69 @@ Deno.serve(async (req) => {
             throw updateError;
           }
 
-          console.log(`Fixed document ${doc.doc_number}`);
+          console.log(`✓ Document corrected: ${doc.doc_number}`);
           results.fixed++;
-        } else {
-          // Si no se pudo corregir automáticamente, cambiar status para reintento
-          const { error: updateError } = await supabase
-            .from("processed_documents")
-            .update({ status: "processed", error_message: null })
-            .eq("id", doc.id);
-
-          if (!updateError) {
-            console.log(`Reset status for ${doc.doc_number}`);
-            results.fixed++;
-          } else {
-            throw updateError;
-          }
         }
+
+        // Intentar publicar a QuickBooks
+        console.log(`→ Publishing to QuickBooks: ${doc.doc_number}`);
+        
+        try {
+          const { data: publishData, error: publishError } = await supabase.functions.invoke(
+            "publish-to-quickbooks",
+            {
+              body: {
+                organization_id: organization_id,
+                document_ids: [doc.id],
+              },
+            }
+          );
+
+          if (publishError) throw publishError;
+
+          if (publishData?.published > 0) {
+            console.log(`✓ Successfully published: ${doc.doc_number}`);
+            results.published++;
+          } else if (publishData?.failed > 0) {
+            console.log(`✗ Publication failed: ${doc.doc_number}`);
+            const errorMsg = publishData.errors?.[0]?.error || "Unknown publication error";
+            
+            await supabase
+              .from("processed_documents")
+              .update({
+                status: "error",
+                error_message: errorMsg,
+              })
+              .eq("id", doc.id);
+            
+            results.failed++;
+            results.errors.push({
+              doc_number: doc.doc_number,
+              error: errorMsg,
+            });
+          }
+        } catch (publishError: any) {
+          console.error(`✗ Error publishing ${doc.doc_number}:`, publishError);
+          
+          const errorMsg = publishError.message || "Error al publicar en QuickBooks";
+          
+          await supabase
+            .from("processed_documents")
+            .update({
+              status: "error",
+              error_message: errorMsg,
+            })
+            .eq("id", doc.id);
+          
+          results.failed++;
+          results.errors.push({
+            doc_number: doc.doc_number,
+            error: errorMsg,
+          });
+        }
+
       } catch (error) {
-        console.error(`Failed to fix document ${doc.doc_number}:`, error);
+        console.error(`✗ Failed to process document ${doc.doc_number}:`, error);
         const errorMessage = error instanceof Error ? error.message : "Unknown error";
         
         results.failed++;
@@ -166,12 +271,18 @@ Deno.serve(async (req) => {
       }
     }
 
-    console.log(`Retry complete: ${results.fixed} fixed, ${results.failed} failed`);
+    console.log(`\n=== Retry Summary ===`);
+    console.log(`Fixed: ${results.fixed}`);
+    console.log(`Published: ${results.published}`);
+    console.log(`Skipped (duplicates): ${results.skipped_duplicates}`);
+    console.log(`Failed: ${results.failed}`);
 
     return new Response(
       JSON.stringify({
         success: true,
         fixed: results.fixed,
+        published: results.published,
+        skipped_duplicates: results.skipped_duplicates,
         failed: results.failed,
         errors: results.errors.length > 0 ? results.errors : undefined,
       }),
