@@ -33,6 +33,9 @@ verify_jwt = false
 [functions.retry-error-documents]
 verify_jwt = true
 
+[functions.retry-failed-bills]
+verify_jwt = false
+
 [functions.batch-publish-all]
 verify_jwt = true
 
@@ -41,3 +44,9 @@ verify_jwt = true
 
 [functions.accept-invitation]
 verify_jwt = true
+
+[functions.classify-vendor]
+verify_jwt = false
+
+[functions.process-document]
+verify_jwt = false

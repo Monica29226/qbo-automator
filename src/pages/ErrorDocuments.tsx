@@ -94,40 +94,30 @@ const ErrorDocuments = () => {
   const handleRetry = async (docId: string, docNumber: string) => {
     if (!activeOrganization) return;
 
-    toast.info(`Intentando corregir factura ${docNumber}...`);
+    const toastId = toast.loading(`Reintentando procesar ${docNumber}...`);
     
     try {
-      const { data, error } = await supabase.functions.invoke("retry-error-documents", {
+      // Use the new enhanced retry function that re-extracts and republishes
+      const { data, error } = await supabase.functions.invoke("retry-failed-bills", {
         body: { 
-          organization_id: activeOrganization,
-          document_ids: [docId]
+          documentId: docId,
+          organizationId: activeOrganization
         },
       });
 
       if (error) throw error;
 
-      if (data.fixed > 0) {
-        toast.success(`✓ Factura ${docNumber} corregida. Publicando a QuickBooks...`);
-        
-        // Publicar a QuickBooks
-        setTimeout(async () => {
-          const { error: pubError } = await supabase.functions.invoke("publish-to-quickbooks", {
-            body: { organization_id: activeOrganization },
-          });
-
-          if (!pubError) {
-            toast.success(`✓ Factura ${docNumber} publicada exitosamente`);
-            fetchErrorDocuments();
-          } else {
-            toast.error("Error al publicar a QuickBooks");
-          }
-        }, 1000);
+      if (data.success) {
+        toast.success(`✓ ${docNumber} procesado y publicado exitosamente`, { id: toastId });
+        // Refresh the list after short delay
+        setTimeout(() => fetchErrorDocuments(), 1000);
       } else {
-        toast.warning(`No se pudo corregir automáticamente. ${data.errors?.[0]?.error || ''}`);
+        toast.error(data.message || `Error: ${data.error}`, { id: toastId });
       }
-    } catch (error) {
+
+    } catch (error: any) {
       console.error("Error retrying document:", error);
-      toast.error("Error al reintentar factura");
+      toast.error(`Error al reintentar: ${error.message}`, { id: toastId });
     }
   };
 

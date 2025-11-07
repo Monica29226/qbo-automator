@@ -32,7 +32,20 @@ Special considerations:
 - You should consider the extra charges too, and add them as a new item of detalle.
 - If no tarifa is provided, put 0. An exception is the Impuesto IEBL, that always has a tarifa of 13, even if it is not mentioned.
 - Set "aceptada": false only if the XML explicitly indicates rejection; search for a field named "EstadoMensaje" or similar and see its state to determine if it is accepted or not. If this field does not exist then search for keywords "Aceptado" or "Rechazado".
-- Only accept invoices, not receipts. If it is a receipt, then set "aceptada" as false.`;
+- Only accept invoices, not receipts. If it is a receipt, then set "aceptada" as false.
+
+CRITICAL: You MUST extract line items (detalle array). Look for:
+1. DetalleServicio/LineaDetalle nodes
+2. If not found, look for any alternative line item structure in the XML
+3. If absolutely no line items exist, create ONE line with:
+   - descripcion: "Servicio/Producto según factura [NumeroConsecutivo]"
+   - cantidad: 1
+   - precioUnitario: [total amount from MontoTotalComprobante or TotalComprobante]
+   - montoTotalLinea: [same total amount]
+   - tarifa: 0
+   - montoDescuento: 0
+
+The detalle array MUST NEVER be empty.`;
 
     const response = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
@@ -157,6 +170,23 @@ Special considerations:
     }
 
     const extractedData = JSON.parse(toolCall.function.arguments);
+    
+    // VALIDATION: Ensure detalle array has at least one item
+    if (!extractedData.detalle || extractedData.detalle.length === 0) {
+      console.warn("No line items extracted, creating default line");
+      const totalAmount = extractedData.totalComprobante || extractedData.subTotal || 0;
+      extractedData.detalle = [{
+        descripcion: `Servicio/Producto según factura ${extractedData.numeroConsecutivo || 'N/A'}`,
+        cantidad: 1,
+        precioUnitario: totalAmount,
+        montoTotalLinea: totalAmount,
+        tarifa: 0,
+        montoDescuento: 0
+      }];
+      console.log("Default line created:", extractedData.detalle[0]);
+    }
+    
+    console.log(`Extracted ${extractedData.detalle.length} line items`);
     console.log("Invoice data extracted successfully");
 
     return new Response(

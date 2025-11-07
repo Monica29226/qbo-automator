@@ -228,11 +228,20 @@ Deno.serve(async (req) => {
 
         const accountRef = vendorData?.default_account_ref || "1"; // Default a "Gastos sin clasificar" con ID 1
 
+        // CRITICAL: Log document details for debugging
+        console.log(`Processing document ${doc.doc_number}:`, {
+          doc_id: doc.id,
+          has_xml_data: !!doc.xml_data,
+          detalle_length: doc.xml_data?.detalle?.length || 0,
+          total_amount: doc.total_amount
+        });
+
         // Preparar líneas del bill con validación robusta
         const lines = [];
         const xmlData = doc.xml_data as any;
         
         if (xmlData?.detalle && Array.isArray(xmlData.detalle) && xmlData.detalle.length > 0) {
+          console.log(`Found ${xmlData.detalle.length} line items in xml_data`);
           for (const item of xmlData.detalle) {
             const amount = parseFloat(item.montoTotalLinea) || 0;
             if (amount > 0) {
@@ -250,13 +259,14 @@ Deno.serve(async (req) => {
           }
         }
         
-        // Validación crítica: asegurar al menos una línea válida
+        // DOUBLE VALIDATION: Si aún no hay líneas, crear una línea por defecto con el total
         if (lines.length === 0) {
-          console.log(`No valid lines found for ${doc.doc_number}, creating default line`);
+          console.warn(`⚠️ No valid lines found for ${doc.doc_number}, creating fallback line`);
           const amount = parseFloat(doc.total_amount as any) || 0;
           
           if (amount <= 0) {
-            throw new Error(`Invalid total amount: ${doc.total_amount}`);
+            console.error(`Invalid total amount for ${doc.doc_number}: ${doc.total_amount}`);
+            throw new Error(`Invalid total amount: ${doc.total_amount}. Cannot create bill without valid amount.`);
           }
           
           lines.push({
@@ -269,15 +279,22 @@ Deno.serve(async (req) => {
               },
             },
           });
+          console.log(`✓ Created fallback line with amount: ${amount}`);
         }
         
-        console.log(`Prepared ${lines.length} line(s) for bill ${doc.doc_number}, total: ${lines.reduce((sum, l) => sum + l.Amount, 0)}`);
+        console.log(`✓ Final line count for ${doc.doc_number}: ${lines.length} line(s), total: ${lines.reduce((sum, l) => sum + l.Amount, 0)}`);
 
         // Preparar DocNumber - QuickBooks acepta máx 21 caracteres
         // Pero guardamos el número completo en PrivateNote
         const qboDocNumber = doc.doc_number.length > 21 
           ? doc.doc_number.substring(doc.doc_number.length - 21) // Últimos 21 caracteres
           : doc.doc_number;
+
+        // FINAL VALIDATION before sending to QuickBooks
+        if (!lines || lines.length === 0) {
+          console.error(`❌ Cannot create bill without line items for doc ${doc.doc_number}`);
+          throw new Error(`Cannot create bill without line items for doc ${doc.doc_number}`);
+        }
 
         // Crear Bill en QuickBooks
         const billPayload = {
@@ -291,7 +308,7 @@ Deno.serve(async (req) => {
           PrivateNote: `Factura XML: ${doc.doc_number}\nProveedor: ${doc.supplier_name}\nImportado automáticamente`,
         };
 
-        console.log(`Creating bill in QuickBooks for ${doc.doc_number}`);
+        console.log(`Creating bill in QuickBooks for ${doc.doc_number} with ${lines.length} line(s)`);
 
         const billResponse = await fetch(
           `https://quickbooks.api.intuit.com/v3/company/${realmId}/bill`,
@@ -420,22 +437,35 @@ Deno.serve(async (req) => {
 
         results.published++;
       } catch (error) {
-        console.error(`Error processing document ${doc.doc_number}:`, error);
+        console.error(`❌ Error processing document ${doc.doc_number}:`, error);
         
         const errorMessage = error instanceof Error ? error.message : "Unknown error";
+        
+        // Enhanced error message for missing line parameter
+        let enhancedMessage = errorMessage;
+        if (errorMessage.toLowerCase().includes("line") && errorMessage.toLowerCase().includes("required")) {
+          const xmlData = doc.xml_data as any;
+          enhancedMessage = `Falta el parámetro Line requerido. Detalle: ${xmlData?.detalle?.length || 0} líneas en XML, totalComprobante: ${doc.total_amount || 0}`;
+          console.error(`Line parameter error details for ${doc.doc_number}:`, {
+            docNumber: doc.doc_number,
+            xmlDataDetalle: xmlData?.detalle?.length || 0,
+            totalComprobante: doc.total_amount,
+            xmlDataStructure: xmlData ? Object.keys(xmlData) : []
+          });
+        }
         
         await supabase
           .from("processed_documents")
           .update({
             status: "error",
-            error_message: errorMessage.substring(0, 500),
+            error_message: enhancedMessage.substring(0, 500),
           })
           .eq("id", doc.id);
 
         results.failed++;
         results.errors.push({
           doc_number: doc.doc_number,
-          error: errorMessage,
+          error: enhancedMessage,
         });
       }
     }
