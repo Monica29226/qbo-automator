@@ -138,11 +138,14 @@ Deno.serve(async (req) => {
           }
         }
 
-        // Corrección 3: Asegurar cuenta contable
+        // Corrección 3: Asegurar cuenta contable usando las reglas de clasificación
         const currentXmlData = updates.xml_data || xmlData;
         if (!currentXmlData?.accountRef || currentXmlData.accountRef === "Gastos por clasificar") {
-          console.log(`→ Setting default account for ${doc.doc_number}`);
+          console.log(`→ Setting account for ${doc.doc_number}`);
           
+          let accountRef = "80"; // Default QuickBooks: "Uncategorized Expense"
+          
+          // Primero intentar con el vendor_id
           if (updates.vendor_id || doc.vendor_id) {
             const { data: vendorData } = await supabase
               .from("vendors")
@@ -151,22 +154,32 @@ Deno.serve(async (req) => {
               .maybeSingle();
 
             if (vendorData?.default_account_ref) {
-              updates.xml_data = {
-                ...currentXmlData,
-                accountRef: vendorData.default_account_ref,
-              };
-              needsUpdate = true;
+              accountRef = vendorData.default_account_ref;
             }
           }
           
-          // Fallback a cuenta por defecto
-          if (!updates.xml_data?.accountRef || updates.xml_data.accountRef === "Gastos por clasificar") {
-            updates.xml_data = {
-              ...currentXmlData,
-              accountRef: "1", // Cuenta por defecto
-            };
-            needsUpdate = true;
+          // Si no hay cuenta del vendor, buscar en reglas de clasificación
+          if (!accountRef || accountRef === "80") {
+            const { data: classificationRule } = await supabase
+              .from("vendor_classification_rules")
+              .select("account_code")
+              .eq("organization_id", organization_id)
+              .ilike("vendor_name", doc.supplier_name)
+              .eq("is_active", true)
+              .maybeSingle();
+            
+            if (classificationRule?.account_code) {
+              // Extraer solo el código numérico (ej: "5105" de "5105 Costo de ventas")
+              accountRef = classificationRule.account_code.split(" ")[0];
+              console.log(`✓ Using account from classification rule: ${accountRef}`);
+            }
           }
+          
+          updates.xml_data = {
+            ...currentXmlData,
+            accountRef: accountRef,
+          };
+          needsUpdate = true;
         }
 
         // Corrección 4: Limpiar nombres problemáticos

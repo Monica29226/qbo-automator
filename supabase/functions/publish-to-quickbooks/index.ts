@@ -219,14 +219,48 @@ Deno.serve(async (req) => {
         // Obtener o crear vendor
         const vendorId = await findOrCreateVendor(doc.supplier_name, doc.supplier_tax_id);
 
-        // Buscar cuenta contable del vendor
-        const { data: vendorData } = await supabase
-          .from("vendors")
-          .select("default_account_ref")
-          .eq("id", doc.vendor_id)
-          .maybeSingle();
-
-        const accountRef = vendorData?.default_account_ref || "1"; // Default a "Gastos sin clasificar" con ID 1
+        // Buscar cuenta contable del vendor o de las reglas de clasificación
+        let accountRef = "80"; // Default QuickBooks: "Uncategorized Expense"
+        
+        if (doc.vendor_id) {
+          const { data: vendorData } = await supabase
+            .from("vendors")
+            .select("default_account_ref")
+            .eq("id", doc.vendor_id)
+            .maybeSingle();
+          
+          if (vendorData?.default_account_ref) {
+            accountRef = vendorData.default_account_ref;
+          }
+        }
+        
+        // Si no hay vendor_id, buscar en las reglas de clasificación por nombre
+        if (!doc.vendor_id || !accountRef || accountRef === "80") {
+          const { data: classificationRule } = await supabase
+            .from("vendor_classification_rules")
+            .select("account_code")
+            .eq("organization_id", organization_id)
+            .ilike("vendor_name", doc.supplier_name)
+            .eq("is_active", true)
+            .maybeSingle();
+          
+          if (classificationRule?.account_code) {
+            // Extraer solo el código numérico (ej: "5105" de "5105 Costo de ventas")
+            accountRef = classificationRule.account_code.split(" ")[0];
+            console.log(`Using account from classification rule: ${accountRef} for ${doc.supplier_name}`);
+          }
+        }
+        
+        // Si aún no hay cuenta, buscar en xml_data.cuentaContable
+        if ((!accountRef || accountRef === "80") && doc.xml_data?.cuentaContable) {
+          const xmlAccount = doc.xml_data.cuentaContable.split(" ")[0];
+          if (xmlAccount && xmlAccount !== "Gastos" && xmlAccount !== "por" && xmlAccount !== "clasificar") {
+            accountRef = xmlAccount;
+            console.log(`Using account from XML: ${accountRef}`);
+          }
+        }
+        
+        console.log(`Final accountRef for ${doc.doc_number}: ${accountRef}`);
 
         // CRITICAL: Log document details for debugging
         console.log(`Processing document ${doc.doc_number}:`, {
