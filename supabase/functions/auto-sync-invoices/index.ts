@@ -79,23 +79,17 @@ serve(async (req) => {
       try {
         // 1. Fetch invoices from Gmail
         console.log(`Fetching Gmail invoices for ${org.name}...`);
-        const gmailResponse = await fetch(
-          `${supabaseUrl}/functions/v1/gmail-fetch-invoices`,
+        const { data: gmailData, error: gmailError } = await supabase.functions.invoke(
+          "gmail-fetch-invoices",
           {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${supabaseKey}`,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({ organization_id: org.id }),
+            body: { organization_id: org.id },
           }
         );
 
-        if (!gmailResponse.ok) {
-          throw new Error(`Gmail fetch failed: ${await gmailResponse.text()}`);
+        if (gmailError) {
+          throw new Error(`Gmail fetch failed: ${gmailError.message}`);
         }
 
-        const gmailData = await gmailResponse.json();
         console.log(`Gmail sync for ${org.name}: ${gmailData.invoices_processed} processed, ${gmailData.invoices_failed} failed`);
 
         // 2. Publish to QuickBooks (si hay facturas procesadas)
@@ -105,23 +99,16 @@ serve(async (req) => {
           // Esperar un poco para asegurar que las facturas están en la BD
           await new Promise(resolve => setTimeout(resolve, 2000));
 
-          const qboResponse = await fetch(
-            `${supabaseUrl}/functions/v1/publish-to-quickbooks`,
+          const { data: qboData, error: qboError } = await supabase.functions.invoke(
+            "publish-to-quickbooks",
             {
-              method: "POST",
-              headers: {
-                Authorization: `Bearer ${supabaseKey}`,
-                "Content-Type": "application/json",
-              },
-              body: JSON.stringify({ organization_id: org.id }),
+              body: { organization_id: org.id },
             }
           );
 
-          if (!qboResponse.ok) {
-            throw new Error(`QuickBooks publish failed: ${await qboResponse.text()}`);
+          if (qboError) {
+            throw new Error(`QuickBooks publish failed: ${qboError.message}`);
           }
-
-          const qboData = await qboResponse.json();
           console.log(`QuickBooks sync for ${org.name}: ${qboData.published} published, ${qboData.failed} failed`);
 
           // Actualizar log de sincronización

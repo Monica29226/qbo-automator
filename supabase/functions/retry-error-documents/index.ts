@@ -226,6 +226,9 @@ Deno.serve(async (req) => {
                 organization_id: organization_id,
                 document_ids: [doc.id],
               },
+              headers: {
+                Authorization: authHeader,
+              },
             }
           );
 
