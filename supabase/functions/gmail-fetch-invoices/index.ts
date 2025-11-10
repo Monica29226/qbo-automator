@@ -172,8 +172,8 @@ serve(async (req) => {
       }
     };
 
-    // Procesar mensajes - aumentar límite en force_resync
-    const messageLimit = force_resync ? 50 : 10;
+    // Procesar mensajes - límite aumentado para procesamiento completo
+    const messageLimit = force_resync ? 50 : 50;
     console.log(`Processing up to ${messageLimit} messages`);
     
     for (const message of messages.slice(0, messageLimit)) {

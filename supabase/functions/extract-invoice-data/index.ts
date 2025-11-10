@@ -17,12 +17,12 @@ serve(async (req) => {
       throw new Error("XML content is required");
     }
 
-    const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
-    if (!OPENAI_API_KEY) {
-      throw new Error("OPENAI_API_KEY is not configured");
+    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
+    if (!LOVABLE_API_KEY) {
+      throw new Error("LOVABLE_API_KEY is not configured");
     }
 
-    console.log("Extracting invoice data from XML...");
+    console.log("Extracting invoice data from XML using Lovable AI...");
 
     const systemPrompt = `You are an expert in bookkeeping. Your role is to read and analyze financial invoices, bills or vendor credits that come in XML format, then extract all relevant purchase information. You ALWAYS base your outputs on real and factual information contained in the original invoice. Ignore fields of the XML that don't contribute to the invoice's, bill's or credit's content extraction, such as signatures. The input ALWAYS comes in a VALID XML FORMAT, so you MUST use whatever info the user gives you, even if you think it is not a valid XML. You must accept any XML like format as input and try to extract as high fidelity as possible.
 
@@ -47,14 +47,14 @@ CRITICAL: You MUST extract line items (detalle array). Look for:
 
 The detalle array MUST NEVER be empty.`;
 
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${OPENAI_API_KEY}`,
+        "Authorization": `Bearer ${LOVABLE_API_KEY}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "gpt-4o-mini",
+        model: "google/gemini-2.5-flash",
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user", content: `Extract invoice data from this XML:\n\n${xmlContent}` }
