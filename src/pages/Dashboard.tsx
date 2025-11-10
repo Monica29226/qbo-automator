@@ -30,6 +30,7 @@ const Dashboard = () => {
   });
   const [isFetchingEmails, setIsFetchingEmails] = useState(false);
   const [isAutoSyncing, setIsAutoSyncing] = useState(false);
+  const [isRetryingErrors, setIsRetryingErrors] = useState(false);
   const [connections, setConnections] = useState({
     gmail: false,
     quickbooks: false,
@@ -302,6 +303,45 @@ const Dashboard = () => {
     }
   };
 
+  const handleRetryAllErrors = async () => {
+    if (!activeOrganization) return;
+
+    setIsRetryingErrors(true);
+    toast.info("Reintentando facturas con errores...");
+
+    try {
+      const { data, error } = await supabase.functions.invoke("retry-error-documents", {
+        body: { organization_id: activeOrganization },
+      });
+
+      if (error) throw error;
+
+      const fixed = data.fixed || 0;
+      const published = data.published || 0;
+      const failed = data.failed || 0;
+      const skipped = data.skipped || 0;
+
+      if (fixed > 0 || published > 0) {
+        toast.success(
+          `✓ ${fixed} corregidas, ${published} publicadas a QuickBooks${failed > 0 ? `, ${failed} fallidas` : ''}${skipped > 0 ? `, ${skipped} omitidas` : ''}`
+        );
+      } else if (failed > 0) {
+        toast.error(`No se pudo reintentar ninguna factura (${failed} errores)`);
+      } else {
+        toast.info("No hay facturas con errores para reintentar");
+      }
+
+      // Refrescar stats y documentos
+      fetchStats();
+      queryClient.invalidateQueries({ queryKey: ["recent-documents"] });
+    } catch (error) {
+      console.error("Error retrying error documents:", error);
+      toast.error("Error al reintentar facturas con errores");
+    } finally {
+      setIsRetryingErrors(false);
+    }
+  };
+
   if (!activeOrganization) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
@@ -369,6 +409,27 @@ const Dashboard = () => {
                 </>
               )}
             </Button>
+            {stats.errors > 0 && (
+              <Button 
+                variant="destructive" 
+                size="sm" 
+                onClick={handleRetryAllErrors}
+                disabled={isRetryingErrors}
+                className="bg-red-600 hover:bg-red-700"
+              >
+                {isRetryingErrors ? (
+                  <>
+                    <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                    Reintentando...
+                  </>
+                ) : (
+                  <>
+                    <AlertCircle className="h-4 w-4 mr-2" />
+                    Reintentar Errores ({stats.errors})
+                  </>
+                )}
+              </Button>
+            )}
             <Button 
               variant="secondary" 
               size="sm" 
