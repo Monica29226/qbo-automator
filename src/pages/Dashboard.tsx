@@ -1,7 +1,7 @@
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { FileText, CheckCircle, AlertCircle, Clock, Settings, Database, LogOut, Users, Upload, Eye, Plug, FileSpreadsheet, Mail, RefreshCw, Send, Shield } from "lucide-react";
+import { FileText, CheckCircle, AlertCircle, Clock, Settings, Database, LogOut, Users, Upload, Eye, Plug, FileSpreadsheet, Mail, RefreshCw, Send, Shield, FileCheck } from "lucide-react";
 import { StatsCard } from "@/components/dashboard/StatsCard";
 import { RecentDocuments } from "@/components/dashboard/RecentDocuments";
 import { ProcessingFlow } from "@/components/dashboard/ProcessingFlow";
@@ -579,6 +579,12 @@ const Dashboard = () => {
                 </Link>
               </Button>
             )}
+            <Button variant="outline" size="sm" asChild>
+              <Link to="/audit-report">
+                <FileCheck className="h-4 w-4 mr-2" />
+                Reporte Auditoría
+              </Link>
+            </Button>
             <Button variant="outline" size="sm" onClick={signOut}>
               <LogOut className="h-4 w-4 mr-2" />
               Salir
