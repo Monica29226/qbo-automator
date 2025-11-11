@@ -441,10 +441,29 @@ Deno.serve(async (req) => {
             const subtotal = cantidad * precioUnitario * multiplier; // Negativo si es nota de crédito
             
             if (Math.abs(subtotal) > 0) {
+              // Construir descripción detallada con toda la información disponible
+              const descripcionBase = item.descripcion || item.detalle || item.Detalle || "";
+              const unidadMedida = item.unidadMedida || item.UnidadMedida || "";
+              const codigoComercial = item.codigoComercial || item.codigo || "";
+              
+              let descripcionCompleta = descripcionBase;
+              
+              // Agregar cantidad y unidad de medida si existen
+              if (cantidad && unidadMedida) {
+                descripcionCompleta = `${cantidad} ${unidadMedida} - ${descripcionCompleta}`;
+              } else if (cantidad > 1) {
+                descripcionCompleta = `Cant: ${cantidad} - ${descripcionCompleta}`;
+              }
+              
+              // Agregar código comercial si existe
+              if (codigoComercial) {
+                descripcionCompleta = `[${codigoComercial}] ${descripcionCompleta}`;
+              }
+              
               lines.push({
                 DetailType: "AccountBasedExpenseLineDetail",
                 Amount: subtotal,
-                Description: (item.descripcion || item.detalle || "")?.substring(0, 4000) || `Línea ${lines.length + 1}`,
+                Description: descripcionCompleta.substring(0, 4000) || `Línea ${lines.length + 1}`,
                 AccountBasedExpenseLineDetail: {
                   AccountRef: {
                     value: accountRef,
