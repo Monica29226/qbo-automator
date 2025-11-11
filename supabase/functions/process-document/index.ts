@@ -297,7 +297,24 @@ serve(async (req) => {
 
     if (saveError) {
       console.error("Error saving document:", saveError);
-      throw new Error("Failed to save document");
+      
+      // Detectar error de duplicado por constraint único
+      if (saveError.code === '23505' || saveError.message?.includes('unique_doc_number_per_org')) {
+        return new Response(
+          JSON.stringify({
+            success: false,
+            status: "duplicate",
+            error: `La factura ${extractedData.doc_number} ya existe en el sistema`,
+            message: "Documento duplicado - no se puede procesar",
+          }),
+          {
+            status: 409, // Conflict
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          }
+        );
+      }
+      
+      throw new Error("Failed to save document: " + saveError.message);
     }
 
     return new Response(

@@ -196,7 +196,38 @@ Deno.serve(async (req) => {
     // Procesar cada documento
     for (const doc of documents) {
       try {
-        // Verificar duplicado en QBO
+        console.log(`Processing document ${doc.doc_number} (ID: ${doc.id})`);
+        
+        // VALIDACIÓN 1: Verificar que no exista otro documento con el mismo número en la DB
+        const { data: duplicateInDB, error: dbCheckError } = await supabase
+          .from("processed_documents")
+          .select("id, doc_number, status, qbo_entity_id")
+          .eq("organization_id", organization_id)
+          .eq("doc_number", doc.doc_number)
+          .neq("id", doc.id) // Excluir el documento actual
+          .maybeSingle();
+        
+        if (duplicateInDB) {
+          console.warn(`⚠️ Document ${doc.doc_number} already exists in DB with ID: ${duplicateInDB.id}`);
+          
+          // Marcar como error para evitar publicación
+          await supabase
+            .from("processed_documents")
+            .update({
+              status: "error",
+              error_message: `Factura duplicada - Ya existe con ID ${duplicateInDB.id} (${duplicateInDB.status})`,
+            })
+            .eq("id", doc.id);
+          
+          results.failed++;
+          results.errors.push({
+            doc_number: doc.doc_number,
+            error: "Factura duplicada en la base de datos",
+          });
+          continue;
+        }
+        
+        // VALIDACIÓN 2: Verificar duplicado en QBO
         const existingBillId = await checkDuplicateBill(doc.doc_number);
         if (existingBillId) {
           console.log(`Bill ${doc.doc_number} already exists in QuickBooks with ID: ${existingBillId}`);
