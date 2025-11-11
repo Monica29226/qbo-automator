@@ -250,8 +250,38 @@ Deno.serve(async (req) => {
         // Obtener o crear vendor
         const vendorId = await findOrCreateVendor(doc.supplier_name, doc.supplier_tax_id);
 
+        // Función para obtener el ID real de QuickBooks de una cuenta por su código
+        const getAccountIdByCode = async (accountCode: string): Promise<string | null> => {
+          try {
+            const queryUrl = `https://quickbooks.api.intuit.com/v3/company/${realmId}/query?query=${encodeURIComponent(
+              `SELECT Id, Name, AcctNum FROM Account WHERE AcctNum='${accountCode}' MAXRESULTS 1`
+            )}`;
+            
+            const response = await fetch(queryUrl, {
+              headers: {
+                Authorization: `Bearer ${accessToken}`,
+                Accept: "application/json",
+              },
+            });
+
+            if (response.ok) {
+              const data = await response.json();
+              if (data.QueryResponse?.Account && data.QueryResponse.Account.length > 0) {
+                const accountId = data.QueryResponse.Account[0].Id;
+                console.log(`✓ Found QuickBooks Account ID ${accountId} for code ${accountCode}`);
+                return accountId;
+              }
+            }
+            console.warn(`⚠️ Account code ${accountCode} not found in QuickBooks`);
+            return null;
+          } catch (error) {
+            console.error(`Error fetching account ID for ${accountCode}:`, error);
+            return null;
+          }
+        };
+
         // Buscar cuenta contable del vendor o de las reglas de clasificación
-        let accountRef = "60"; // Default QuickBooks: Gastos generales (Expense account)
+        let accountCode = "60"; // Default QuickBooks: Gastos generales (Expense account)
         
         if (doc.vendor_id) {
           const { data: vendorData } = await supabase
@@ -261,12 +291,12 @@ Deno.serve(async (req) => {
             .maybeSingle();
           
           if (vendorData?.default_account_ref) {
-            accountRef = vendorData.default_account_ref;
+            accountCode = vendorData.default_account_ref;
           }
         }
         
         // Si no hay vendor_id, buscar en las reglas de clasificación por nombre
-        if (!doc.vendor_id || !accountRef || accountRef === "60") {
+        if (!doc.vendor_id || !accountCode || accountCode === "60") {
           const { data: classificationRule } = await supabase
             .from("vendor_classification_rules")
             .select("account_code")
@@ -277,21 +307,23 @@ Deno.serve(async (req) => {
           
           if (classificationRule?.account_code) {
             // Extraer solo el código numérico (ej: "5105" de "5105 Costo de ventas")
-            accountRef = classificationRule.account_code.split(" ")[0];
-            console.log(`Using account from classification rule: ${accountRef} for ${doc.supplier_name}`);
+            accountCode = classificationRule.account_code.split(" ")[0];
+            console.log(`Using account code from classification rule: ${accountCode} for ${doc.supplier_name}`);
           }
         }
         
         // Si aún no hay cuenta, buscar en xml_data.cuentaContable
-        if ((!accountRef || accountRef === "60") && doc.xml_data?.cuentaContable) {
+        if ((!accountCode || accountCode === "60") && doc.xml_data?.cuentaContable) {
           const xmlAccount = doc.xml_data.cuentaContable.split(" ")[0];
           if (xmlAccount && xmlAccount !== "Gastos" && xmlAccount !== "por" && xmlAccount !== "clasificar") {
-            accountRef = xmlAccount;
-            console.log(`Using account from XML: ${accountRef}`);
+            accountCode = xmlAccount;
+            console.log(`Using account code from XML: ${accountCode}`);
           }
         }
         
-        console.log(`Final accountRef for ${doc.doc_number}: ${accountRef}`);
+        // Obtener el ID real de QuickBooks para el código de cuenta
+        const accountRef = await getAccountIdByCode(accountCode) || "60";
+        console.log(`Final accountRef (QB ID) for ${doc.doc_number}: ${accountRef} (from code ${accountCode})`);
 
         // CRITICAL: Log document details for debugging
         console.log(`Processing document ${doc.doc_number}:`, {
