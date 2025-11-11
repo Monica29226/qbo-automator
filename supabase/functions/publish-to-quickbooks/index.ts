@@ -220,7 +220,7 @@ Deno.serve(async (req) => {
         const vendorId = await findOrCreateVendor(doc.supplier_name, doc.supplier_tax_id);
 
         // Buscar cuenta contable del vendor o de las reglas de clasificación
-        let accountRef = "80"; // Default QuickBooks: "Uncategorized Expense"
+        let accountRef = "60"; // Default QuickBooks: Gastos generales (Expense account)
         
         if (doc.vendor_id) {
           const { data: vendorData } = await supabase
@@ -235,7 +235,7 @@ Deno.serve(async (req) => {
         }
         
         // Si no hay vendor_id, buscar en las reglas de clasificación por nombre
-        if (!doc.vendor_id || !accountRef || accountRef === "80") {
+        if (!doc.vendor_id || !accountRef || accountRef === "60") {
           const { data: classificationRule } = await supabase
             .from("vendor_classification_rules")
             .select("account_code")
@@ -252,7 +252,7 @@ Deno.serve(async (req) => {
         }
         
         // Si aún no hay cuenta, buscar en xml_data.cuentaContable
-        if ((!accountRef || accountRef === "80") && doc.xml_data?.cuentaContable) {
+        if ((!accountRef || accountRef === "60") && doc.xml_data?.cuentaContable) {
           const xmlAccount = doc.xml_data.cuentaContable.split(" ")[0];
           if (xmlAccount && xmlAccount !== "Gastos" && xmlAccount !== "por" && xmlAccount !== "clasificar") {
             accountRef = xmlAccount;
