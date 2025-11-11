@@ -9,7 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { FileText, ArrowLeft, Download, AlertTriangle, CheckCircle2, Search } from "lucide-react";
+import { FileText, ArrowLeft, Download, AlertTriangle, CheckCircle2, Search, RefreshCw } from "lucide-react";
 import { OrganizationSwitcher } from "@/components/OrganizationSwitcher";
 import { toast } from "sonner";
 
@@ -41,6 +41,7 @@ export default function AuditReport() {
   const [documents, setDocuments] = useState<AuditDocument[]>([]);
   const [vendorRules, setVendorRules] = useState<VendorRule[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isRepublishing, setIsRepublishing] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [accountFilter, setAccountFilter] = useState("all");
@@ -154,6 +155,48 @@ export default function AuditReport() {
     toast.success("Reporte exportado correctamente");
   };
 
+  const handleRepublishCreditNotes = async () => {
+    if (!activeOrganization) return;
+
+    const creditNotes = documents.filter(d => d.doc_type === "NC" && d.status === "published");
+    
+    if (creditNotes.length === 0) {
+      toast.info("No hay notas de crédito publicadas para republicar");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Se van a republicar ${creditNotes.length} notas de crédito con montos negativos.\n\n` +
+      "Esto eliminará las NC existentes en QuickBooks y las volverá a crear correctamente.\n\n" +
+      "¿Deseas continuar?"
+    );
+
+    if (!confirmed) return;
+
+    setIsRepublishing(true);
+    toast.info(`Republicando ${creditNotes.length} notas de crédito...`);
+
+    try {
+      const { data, error } = await supabase.functions.invoke("republish-credit-notes", {
+        body: { organization_id: activeOrganization },
+      });
+
+      if (error) throw error;
+
+      toast.success(
+        `✓ ${data.republished} NC republicadas correctamente (${data.deleted} eliminadas, ${data.failed} fallidas)`
+      );
+
+      // Recargar datos
+      await fetchData();
+    } catch (error) {
+      console.error("Error republishing credit notes:", error);
+      toast.error("Error al republicar notas de crédito");
+    } finally {
+      setIsRepublishing(false);
+    }
+  };
+
   const uniqueAccounts = Array.from(new Set(documents.map(getAccountForDocument))).sort();
 
   const getStatusBadge = (status: string) => {
@@ -259,10 +302,30 @@ export default function AuditReport() {
                   Filtrar y analizar facturas por cuenta contable
                 </CardDescription>
               </div>
-              <Button onClick={exportToCSV} variant="outline">
-                <Download className="h-4 w-4 mr-2" />
-                Exportar CSV
-              </Button>
+              <div className="flex gap-2">
+                <Button 
+                  onClick={handleRepublishCreditNotes} 
+                  variant="outline"
+                  disabled={isRepublishing}
+                  className="border-orange-500 text-orange-600 hover:bg-orange-50 dark:hover:bg-orange-950"
+                >
+                  {isRepublishing ? (
+                    <>
+                      <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                      Republicando...
+                    </>
+                  ) : (
+                    <>
+                      <RefreshCw className="h-4 w-4 mr-2" />
+                      Republicar NC
+                    </>
+                  )}
+                </Button>
+                <Button onClick={exportToCSV} variant="outline">
+                  <Download className="h-4 w-4 mr-2" />
+                  Exportar CSV
+                </Button>
+              </div>
             </div>
           </CardHeader>
           <CardContent className="space-y-4">

@@ -50,3 +50,6 @@ verify_jwt = false
 
 [functions.process-document]
 verify_jwt = false
+
+[functions.republish-credit-notes]
+verify_jwt = true
