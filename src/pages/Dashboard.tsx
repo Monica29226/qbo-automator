@@ -40,6 +40,27 @@ const Dashboard = () => {
     if (activeOrganization) {
       fetchStats();
       fetchConnections();
+
+      // Subscribe to real-time updates for stats
+      const channel = supabase
+        .channel('dashboard_stats_changes')
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'processed_documents'
+          },
+          () => {
+            console.log('Document changed, updating stats...');
+            fetchStats();
+          }
+        )
+        .subscribe();
+
+      return () => {
+        supabase.removeChannel(channel);
+      };
     }
   }, [activeOrganization]);
 
