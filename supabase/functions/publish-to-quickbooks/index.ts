@@ -324,11 +324,34 @@ Deno.serve(async (req) => {
               }
             }
             
-            // Si no se encontró, listar todas las cuentas de gasto para debugging
-            console.error(`❌ Account code ${accountCode} NOT FOUND in QuickBooks after 3 searches`);
-            console.log(`📋 Listing all Expense accounts for debugging...`);
+            // Búsqueda 4: Buscar en cuentas Cost of Goods Sold (COGS) - para Costo de ventas
+            query = `SELECT Id, Name, AcctNum, FullyQualifiedName, AccountType FROM Account WHERE AccountType='Cost of Goods Sold' AND (AcctNum='${accountCode}' OR AcctNum LIKE '${accountCode}%' OR Name LIKE '%${accountCode}%')`;
+            queryUrl = `https://quickbooks.api.intuit.com/v3/company/${realmId}/query?query=${encodeURIComponent(query)}`;
             
-            query = `SELECT Id, Name, AcctNum, AccountType FROM Account WHERE AccountType='Expense' MAXRESULTS 50`;
+            console.log(`Query 4 (COGS accounts): ${query}`);
+            response = await fetch(queryUrl, {
+              headers: {
+                Authorization: `Bearer ${accessToken}`,
+                Accept: "application/json",
+              },
+            });
+
+            if (response.ok) {
+              const data = await response.json();
+              console.log(`Query 4 result:`, JSON.stringify(data.QueryResponse));
+              
+              if (data.QueryResponse?.Account && data.QueryResponse.Account.length > 0) {
+                const account = data.QueryResponse.Account[0];
+                console.log(`✓ Found account via COGS search: ID=${account.Id}, Name="${account.Name}", AcctNum="${account.AcctNum}", Type="${account.AccountType}"`);
+                return account.Id;
+              }
+            }
+            
+            // Si no se encontró, listar todas las cuentas de gasto y COGS para debugging
+            console.error(`❌ Account code ${accountCode} NOT FOUND in QuickBooks after 4 searches`);
+            console.log(`📋 Listing all Expense and COGS accounts for debugging...`);
+            
+            query = `SELECT Id, Name, AcctNum, AccountType FROM Account WHERE AccountType IN ('Expense', 'Cost of Goods Sold') MAXRESULTS 100`;
             queryUrl = `https://quickbooks.api.intuit.com/v3/company/${realmId}/query?query=${encodeURIComponent(query)}`;
             
             response = await fetch(queryUrl, {
@@ -341,9 +364,9 @@ Deno.serve(async (req) => {
             if (response.ok) {
               const data = await response.json();
               if (data.QueryResponse?.Account) {
-                console.log(`📋 Available Expense Accounts (${data.QueryResponse.Account.length}):`);
+                console.log(`📋 Available Accounts (${data.QueryResponse.Account.length}):`);
                 data.QueryResponse.Account.forEach((acc: any) => {
-                  console.log(`  - ID: ${acc.Id}, AcctNum: "${acc.AcctNum || 'N/A'}", Name: "${acc.Name}"`);
+                  console.log(`  - ID: ${acc.Id}, Type: ${acc.AccountType}, AcctNum: "${acc.AcctNum || 'N/A'}", Name: "${acc.Name}"`);
                 });
               }
             }
