@@ -265,10 +265,20 @@ Deno.serve(async (req) => {
         // CRITICAL: Log document details for debugging
         console.log(`Processing document ${doc.doc_number}:`, {
           doc_id: doc.id,
+          doc_type: doc.doc_type,
           has_xml_data: !!doc.xml_data,
           detalle_length: doc.xml_data?.detalle?.length || 0,
-          total_amount: doc.total_amount
+          total_amount: doc.total_amount,
+          is_credit_note: doc.xml_data?.esNotaCredito || doc.doc_type === 'NC'
         });
+
+        // Determinar si es una nota de crédito
+        const isCreditNote = doc.xml_data?.esNotaCredito === true || doc.doc_type === 'NC';
+        const multiplier = isCreditNote ? -1 : 1;
+        
+        if (isCreditNote) {
+          console.log(`⚠️ Processing as CREDIT NOTE with negative amounts`);
+        }
 
         // Preparar líneas del bill con validación robusta
         const lines = [];
@@ -280,9 +290,9 @@ Deno.serve(async (req) => {
             // Usar el subtotal (cantidad * precioUnitario) en lugar del total con IVA
             const cantidad = parseFloat(item.cantidad) || 1;
             const precioUnitario = parseFloat(item.precioUnitario) || 0;
-            const subtotal = cantidad * precioUnitario;
+            const subtotal = cantidad * precioUnitario * multiplier; // Negativo si es nota de crédito
             
-            if (subtotal > 0) {
+            if (Math.abs(subtotal) > 0) {
               lines.push({
                 DetailType: "AccountBasedExpenseLineDetail",
                 Amount: subtotal,
@@ -300,9 +310,9 @@ Deno.serve(async (req) => {
         // DOUBLE VALIDATION: Si aún no hay líneas, crear una línea por defecto con el subtotal
         if (lines.length === 0) {
           console.warn(`⚠️ No valid lines found for ${doc.doc_number}, creating fallback line`);
-          const subtotal = parseFloat(doc.total_amount as any) - parseFloat(doc.total_tax as any) || 0;
+          const subtotal = (parseFloat(doc.total_amount as any) - parseFloat(doc.total_tax as any)) * multiplier || 0;
           
-          if (subtotal <= 0) {
+          if (Math.abs(subtotal) <= 0) {
             console.error(`Invalid total amount for ${doc.doc_number}: ${doc.total_amount}`);
             throw new Error(`Invalid total amount: ${doc.total_amount}. Cannot create bill without valid amount.`);
           }
@@ -310,7 +320,7 @@ Deno.serve(async (req) => {
           lines.push({
             DetailType: "AccountBasedExpenseLineDetail",
             Amount: subtotal,
-            Description: `Factura ${doc.doc_number} - ${doc.supplier_name}`,
+            Description: `${isCreditNote ? 'Nota de Crédito' : 'Factura'} ${doc.doc_number} - ${doc.supplier_name}`,
             AccountBasedExpenseLineDetail: {
               AccountRef: {
                 value: accountRef,
@@ -321,12 +331,12 @@ Deno.serve(async (req) => {
         }
         
         // Agregar línea de IVA si existe
-        const totalTax = parseFloat(doc.total_tax as any) || 0;
-        if (totalTax > 0) {
+        const totalTax = (parseFloat(doc.total_tax as any) || 0) * multiplier; // Negativo si es nota de crédito
+        if (Math.abs(totalTax) > 0) {
           lines.push({
             DetailType: "AccountBasedExpenseLineDetail",
             Amount: totalTax,
-            Description: "IVA (Impuesto al Valor Agregado)",
+            Description: `IVA (Impuesto al Valor Agregado)${isCreditNote ? ' - NC' : ''}`,
             AccountBasedExpenseLineDetail: {
               AccountRef: {
                 value: accountRef, // Mismo account que las líneas principales
@@ -336,7 +346,7 @@ Deno.serve(async (req) => {
           console.log(`✓ Added tax line with amount: ${totalTax}`);
         }
         
-        const subtotalLines = lines.slice(0, -1).reduce((sum, l) => sum + l.Amount, 0);
+        const subtotalLines = lines.slice(0, lines.length - (Math.abs(totalTax) > 0 ? 1 : 0)).reduce((sum, l) => sum + l.Amount, 0);
         console.log(`✓ Final line count for ${doc.doc_number}: ${lines.length} line(s), subtotal: ${subtotalLines}, tax: ${totalTax}, total: ${lines.reduce((sum, l) => sum + l.Amount, 0)}`);
 
         // Preparar DocNumber - QuickBooks acepta máx 21 caracteres
