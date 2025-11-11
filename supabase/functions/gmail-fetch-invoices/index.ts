@@ -190,7 +190,22 @@ serve(async (req) => {
         const messageData = await messageResponse.json();
         const parts = messageData.payload?.parts || [];
 
-        // Buscar archivos adjuntos XML
+        // Buscar archivos adjuntos XML y PDF
+        let xmlFilename = null;
+        let pdfAttachmentId = null;
+        let pdfFilename = null;
+        
+        for (const part of parts) {
+          if (part.filename?.toLowerCase().endsWith(".xml")) {
+            xmlFilename = part.filename;
+          }
+          if (part.filename?.toLowerCase().endsWith(".pdf")) {
+            pdfAttachmentId = part.body?.attachmentId;
+            pdfFilename = part.filename;
+          }
+        }
+        
+        // Procesar XML
         for (const part of parts) {
           if (part.filename?.toLowerCase().endsWith(".xml")) {
             const attachmentId = part.body?.attachmentId;
@@ -245,6 +260,54 @@ serve(async (req) => {
 
               const invoiceData = extractResult.data;
 
+              // Descargar y guardar PDF si existe
+              let pdfUrl = null;
+              if (pdfAttachmentId && pdfFilename) {
+                try {
+                  console.log(`Downloading PDF: ${pdfFilename}`);
+                  
+                  const pdfAttachmentResponse = await fetch(
+                    `https://gmail.googleapis.com/gmail/v1/users/me/messages/${message.id}/attachments/${pdfAttachmentId}`,
+                    {
+                      headers: { Authorization: `Bearer ${accessToken}` },
+                    }
+                  );
+
+                  if (pdfAttachmentResponse.ok) {
+                    const pdfAttachmentData = await pdfAttachmentResponse.json();
+                    const pdfBase64 = pdfAttachmentData.data.replace(/-/g, "+").replace(/_/g, "/");
+                    
+                    // Decodificar base64 a bytes
+                    const pdfBinary = atob(pdfBase64);
+                    const pdfBytes = new Uint8Array(pdfBinary.length);
+                    for (let i = 0; i < pdfBinary.length; i++) {
+                      pdfBytes[i] = pdfBinary.charCodeAt(i);
+                    }
+                    
+                    // Guardar en Supabase Storage
+                    const pdfPath = `${organization_id}/${invoiceData.numeroConsecutivo}.pdf`;
+                    const { error: uploadError } = await supabase.storage
+                      .from("company-documents")
+                      .upload(pdfPath, pdfBytes, {
+                        contentType: "application/pdf",
+                        upsert: true
+                      });
+                    
+                    if (!uploadError) {
+                      const { data: urlData } = supabase.storage
+                        .from("company-documents")
+                        .getPublicUrl(pdfPath);
+                      pdfUrl = urlData.publicUrl;
+                      console.log(`✓ PDF saved: ${pdfPath}`);
+                    } else {
+                      console.error(`Failed to upload PDF:`, uploadError);
+                    }
+                  }
+                } catch (pdfError) {
+                  console.error(`Error downloading PDF:`, pdfError);
+                }
+              }
+
               // Verificar duplicados
               const docKey = invoiceData.numeroConsecutivo;
               const { data: existingDoc } = await supabase
@@ -274,17 +337,19 @@ serve(async (req) => {
                 const { error: updateError } = await supabase
                   .from("processed_documents")
                   .update({
-                    status: "processed",
-                    error_message: null,
-                    xml_data: invoiceData,
-                    doc_type: invoiceData.esNotaCredito ? "NotaCreditoElectronica" : "FacturaElectronica",
-                    doc_number: invoiceData.numeroConsecutivo,
-                    issue_date: issueDate,
-                    supplier_name: invoiceData.emisor.nombre,
-                    supplier_tax_id: invoiceData.emisor.identificacion,
-                    supplier_email: invoiceData.emisor.correo || null,
-                    currency: invoiceData.moneda,
-                    total_amount: invoiceData.totalComprobante,
+                  status: "processed",
+                  error_message: null,
+                  xml_data: invoiceData,
+                  doc_type: invoiceData.esNotaCredito ? "NotaCreditoElectronica" : "FacturaElectronica",
+                  doc_number: invoiceData.numeroConsecutivo,
+                  issue_date: issueDate,
+                  supplier_name: invoiceData.emisor.nombre,
+                  supplier_tax_id: invoiceData.emisor.identificacion,
+                  supplier_email: invoiceData.emisor.correo || null,
+                  currency: invoiceData.moneda,
+                  total_amount: invoiceData.totalComprobante,
+                  total_tax: invoiceData.totalImpuesto || 0,
+                  pdf_attachment_url: pdfUrl,
                   })
                   .eq("id", existingDoc.id);
                   
@@ -324,12 +389,12 @@ serve(async (req) => {
                   supplier_email: invoiceData.emisor.correo || null,
                   currency: invoiceData.moneda,
                   total_amount: invoiceData.totalComprobante,
-                  total_tax: invoiceData.detalle.reduce((sum: number, d: any) => 
-                    sum + (d.montoTotalLinea * d.tarifa / 100), 0),
+                  total_tax: invoiceData.totalImpuesto || 0,
                   total_discount: invoiceData.detalle.reduce((sum: number, d: any) => 
                     sum + d.montoDescuento, 0),
                   status: invoiceData.aceptada ? "processed" : "rejected",
                   xml_data: invoiceData,
+                  pdf_attachment_url: pdfUrl,
                   organization_id,
                 })
                 .select()

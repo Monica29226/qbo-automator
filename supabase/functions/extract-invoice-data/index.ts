@@ -113,6 +113,7 @@ The detalle array MUST NEVER be empty.`;
                   subTotal: { type: "number", description: "Subtotal de todos los productos o servicios antes de impuestos y descuentos." },
                   tipoCambio: { type: "number", description: "Tipo de cambio aplicado si la moneda es distinta de la moneda base." },
                   montoTotalLinea: { type: "number", description: "Monto total de todas las líneas de detalle." },
+                  totalImpuesto: { type: "number", description: "Monto total de IVA e impuestos aplicados al comprobante. CRITICAL: Siempre extraer este valor." },
                   totalComprobante: { type: "number", description: "Monto total del comprobante, incluyendo impuestos y descuentos." },
                   totalExonerado: { type: "number", description: "Monto total exonerado de impuestos si aplica." },
                   totalIvaDevuelto: { type: "number", description: "Monto total de IVA devuelto o acreditado si aplica." },
