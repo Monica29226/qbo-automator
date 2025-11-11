@@ -325,7 +325,8 @@ Deno.serve(async (req) => {
             }
             
             // Búsqueda 4: Buscar en cuentas Cost of Goods Sold (COGS) - para Costo de ventas
-            query = `SELECT Id, Name, AcctNum, FullyQualifiedName, AccountType FROM Account WHERE AccountType='Cost of Goods Sold' AND (AcctNum='${accountCode}' OR AcctNum LIKE '${accountCode}%' OR Name LIKE '%${accountCode}%')`;
+            // Importante: QuickBooks requiere búsquedas más simples para COGS
+            query = `SELECT Id, Name, AcctNum, AccountType FROM Account WHERE AccountType='Cost of Goods Sold'`;
             queryUrl = `https://quickbooks.api.intuit.com/v3/company/${realmId}/query?query=${encodeURIComponent(query)}`;
             
             console.log(`Query 4 (COGS accounts): ${query}`);
@@ -341,9 +342,22 @@ Deno.serve(async (req) => {
               console.log(`Query 4 result:`, JSON.stringify(data.QueryResponse));
               
               if (data.QueryResponse?.Account && data.QueryResponse.Account.length > 0) {
-                const account = data.QueryResponse.Account[0];
-                console.log(`✓ Found account via COGS search: ID=${account.Id}, Name="${account.Name}", AcctNum="${account.AcctNum}", Type="${account.AccountType}"`);
-                return account.Id;
+                // Buscar la cuenta manualmente en los resultados
+                const cogsAccount = data.QueryResponse.Account.find((acc: any) => 
+                  acc.AcctNum === accountCode || 
+                  acc.AcctNum?.toString().startsWith(accountCode) ||
+                  acc.Name?.includes(accountCode)
+                );
+                
+                if (cogsAccount) {
+                  console.log(`✓ Found account via COGS search: ID=${cogsAccount.Id}, Name="${cogsAccount.Name}", AcctNum="${cogsAccount.AcctNum}", Type="${cogsAccount.AccountType}"`);
+                  return cogsAccount.Id;
+                } else {
+                  console.log(`⚠️ No COGS account found with code ${accountCode}. Available COGS accounts:`);
+                  data.QueryResponse.Account.forEach((acc: any) => {
+                    console.log(`  - ID: ${acc.Id}, AcctNum: "${acc.AcctNum || 'N/A'}", Name: "${acc.Name}"`);
+                  });
+                }
               }
             }
             
