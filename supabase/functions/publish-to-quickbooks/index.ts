@@ -250,14 +250,17 @@ Deno.serve(async (req) => {
         // Obtener o crear vendor
         const vendorId = await findOrCreateVendor(doc.supplier_name, doc.supplier_tax_id);
 
-        // Función para obtener el ID real de QuickBooks de una cuenta por su código
+        // Función mejorada para obtener el ID real de QuickBooks de una cuenta por su código
         const getAccountIdByCode = async (accountCode: string): Promise<string | null> => {
           try {
-            const queryUrl = `https://quickbooks.api.intuit.com/v3/company/${realmId}/query?query=${encodeURIComponent(
-              `SELECT Id, Name, AcctNum FROM Account WHERE AcctNum='${accountCode}' MAXRESULTS 1`
-            )}`;
+            console.log(`🔍 Searching for account with code: ${accountCode}`);
             
-            const response = await fetch(queryUrl, {
+            // Búsqueda 1: Coincidencia exacta en AcctNum
+            let query = `SELECT Id, Name, AcctNum, FullyQualifiedName, AccountType FROM Account WHERE AcctNum='${accountCode}'`;
+            let queryUrl = `https://quickbooks.api.intuit.com/v3/company/${realmId}/query?query=${encodeURIComponent(query)}`;
+            
+            console.log(`Query 1 (exact AcctNum): ${query}`);
+            let response = await fetch(queryUrl, {
               headers: {
                 Authorization: `Bearer ${accessToken}`,
                 Accept: "application/json",
@@ -266,13 +269,85 @@ Deno.serve(async (req) => {
 
             if (response.ok) {
               const data = await response.json();
+              console.log(`Query 1 result:`, JSON.stringify(data.QueryResponse));
+              
               if (data.QueryResponse?.Account && data.QueryResponse.Account.length > 0) {
-                const accountId = data.QueryResponse.Account[0].Id;
-                console.log(`✓ Found QuickBooks Account ID ${accountId} for code ${accountCode}`);
-                return accountId;
+                const account = data.QueryResponse.Account[0];
+                console.log(`✓ Found account via exact AcctNum: ID=${account.Id}, Name="${account.Name}", AcctNum="${account.AcctNum}"`);
+                return account.Id;
               }
             }
-            console.warn(`⚠️ Account code ${accountCode} not found in QuickBooks`);
+            
+            // Búsqueda 2: LIKE en AcctNum (para cuentas con sufijos tipo "5105-01")
+            query = `SELECT Id, Name, AcctNum, FullyQualifiedName, AccountType FROM Account WHERE AcctNum LIKE '${accountCode}%'`;
+            queryUrl = `https://quickbooks.api.intuit.com/v3/company/${realmId}/query?query=${encodeURIComponent(query)}`;
+            
+            console.log(`Query 2 (LIKE AcctNum): ${query}`);
+            response = await fetch(queryUrl, {
+              headers: {
+                Authorization: `Bearer ${accessToken}`,
+                Accept: "application/json",
+              },
+            });
+
+            if (response.ok) {
+              const data = await response.json();
+              console.log(`Query 2 result:`, JSON.stringify(data.QueryResponse));
+              
+              if (data.QueryResponse?.Account && data.QueryResponse.Account.length > 0) {
+                const account = data.QueryResponse.Account[0];
+                console.log(`✓ Found account via LIKE AcctNum: ID=${account.Id}, Name="${account.Name}", AcctNum="${account.AcctNum}"`);
+                return account.Id;
+              }
+            }
+            
+            // Búsqueda 3: Buscar en Name (para cuentas donde el código está en el nombre)
+            query = `SELECT Id, Name, AcctNum, FullyQualifiedName, AccountType FROM Account WHERE Name LIKE '%${accountCode}%'`;
+            queryUrl = `https://quickbooks.api.intuit.com/v3/company/${realmId}/query?query=${encodeURIComponent(query)}`;
+            
+            console.log(`Query 3 (Name contains): ${query}`);
+            response = await fetch(queryUrl, {
+              headers: {
+                Authorization: `Bearer ${accessToken}`,
+                Accept: "application/json",
+              },
+            });
+
+            if (response.ok) {
+              const data = await response.json();
+              console.log(`Query 3 result:`, JSON.stringify(data.QueryResponse));
+              
+              if (data.QueryResponse?.Account && data.QueryResponse.Account.length > 0) {
+                const account = data.QueryResponse.Account[0];
+                console.log(`✓ Found account via Name search: ID=${account.Id}, Name="${account.Name}", AcctNum="${account.AcctNum}"`);
+                return account.Id;
+              }
+            }
+            
+            // Si no se encontró, listar todas las cuentas de gasto para debugging
+            console.error(`❌ Account code ${accountCode} NOT FOUND in QuickBooks after 3 searches`);
+            console.log(`📋 Listing all Expense accounts for debugging...`);
+            
+            query = `SELECT Id, Name, AcctNum, AccountType FROM Account WHERE AccountType='Expense' MAXRESULTS 50`;
+            queryUrl = `https://quickbooks.api.intuit.com/v3/company/${realmId}/query?query=${encodeURIComponent(query)}`;
+            
+            response = await fetch(queryUrl, {
+              headers: {
+                Authorization: `Bearer ${accessToken}`,
+                Accept: "application/json",
+              },
+            });
+
+            if (response.ok) {
+              const data = await response.json();
+              if (data.QueryResponse?.Account) {
+                console.log(`📋 Available Expense Accounts (${data.QueryResponse.Account.length}):`);
+                data.QueryResponse.Account.forEach((acc: any) => {
+                  console.log(`  - ID: ${acc.Id}, AcctNum: "${acc.AcctNum || 'N/A'}", Name: "${acc.Name}"`);
+                });
+              }
+            }
+            
             return null;
           } catch (error) {
             console.error(`Error fetching account ID for ${accountCode}:`, error);
@@ -322,8 +397,18 @@ Deno.serve(async (req) => {
         }
         
         // Obtener el ID real de QuickBooks para el código de cuenta
-        const accountRef = await getAccountIdByCode(accountCode) || "60";
-        console.log(`Final accountRef (QB ID) for ${doc.doc_number}: ${accountRef} (from code ${accountCode})`);
+        let accountRef = await getAccountIdByCode(accountCode);
+        
+        if (!accountRef) {
+          console.error(`❌ CRITICAL: Account ${accountCode} not found for vendor ${doc.supplier_name}`);
+          console.error(`   This invoice will be classified incorrectly into default account "60"`);
+          console.error(`   Please verify that account ${accountCode} exists in QuickBooks`);
+          
+          // Throw error instead of silent fallback for visibility
+          throw new Error(`Cuenta ${accountCode} no existe en QuickBooks. Factura ${doc.doc_number} - Proveedor: ${doc.supplier_name}. Verifica que la cuenta esté creada.`);
+        }
+        
+        console.log(`✅ Final accountRef (QB ID) for ${doc.doc_number}: ${accountRef} (from code ${accountCode})`);
 
         // CRITICAL: Log document details for debugging
         console.log(`Processing document ${doc.doc_number}:`, {
