@@ -277,11 +277,15 @@ Deno.serve(async (req) => {
         if (xmlData?.detalle && Array.isArray(xmlData.detalle) && xmlData.detalle.length > 0) {
           console.log(`Found ${xmlData.detalle.length} line items in xml_data`);
           for (const item of xmlData.detalle) {
-            const amount = parseFloat(item.montoTotalLinea) || 0;
-            if (amount > 0) {
+            // Usar el subtotal (cantidad * precioUnitario) en lugar del total con IVA
+            const cantidad = parseFloat(item.cantidad) || 1;
+            const precioUnitario = parseFloat(item.precioUnitario) || 0;
+            const subtotal = cantidad * precioUnitario;
+            
+            if (subtotal > 0) {
               lines.push({
                 DetailType: "AccountBasedExpenseLineDetail",
-                Amount: amount,
+                Amount: subtotal,
                 Description: (item.descripcion || item.detalle || "")?.substring(0, 4000) || `Línea ${lines.length + 1}`,
                 AccountBasedExpenseLineDetail: {
                   AccountRef: {
@@ -293,19 +297,19 @@ Deno.serve(async (req) => {
           }
         }
         
-        // DOUBLE VALIDATION: Si aún no hay líneas, crear una línea por defecto con el total
+        // DOUBLE VALIDATION: Si aún no hay líneas, crear una línea por defecto con el subtotal
         if (lines.length === 0) {
           console.warn(`⚠️ No valid lines found for ${doc.doc_number}, creating fallback line`);
-          const amount = parseFloat(doc.total_amount as any) || 0;
+          const subtotal = parseFloat(doc.total_amount as any) - parseFloat(doc.total_tax as any) || 0;
           
-          if (amount <= 0) {
+          if (subtotal <= 0) {
             console.error(`Invalid total amount for ${doc.doc_number}: ${doc.total_amount}`);
             throw new Error(`Invalid total amount: ${doc.total_amount}. Cannot create bill without valid amount.`);
           }
           
           lines.push({
             DetailType: "AccountBasedExpenseLineDetail",
-            Amount: amount,
+            Amount: subtotal,
             Description: `Factura ${doc.doc_number} - ${doc.supplier_name}`,
             AccountBasedExpenseLineDetail: {
               AccountRef: {
@@ -313,10 +317,27 @@ Deno.serve(async (req) => {
               },
             },
           });
-          console.log(`✓ Created fallback line with amount: ${amount}`);
+          console.log(`✓ Created fallback line with subtotal: ${subtotal}`);
         }
         
-        console.log(`✓ Final line count for ${doc.doc_number}: ${lines.length} line(s), total: ${lines.reduce((sum, l) => sum + l.Amount, 0)}`);
+        // Agregar línea de IVA si existe
+        const totalTax = parseFloat(doc.total_tax as any) || 0;
+        if (totalTax > 0) {
+          lines.push({
+            DetailType: "AccountBasedExpenseLineDetail",
+            Amount: totalTax,
+            Description: "IVA (Impuesto al Valor Agregado)",
+            AccountBasedExpenseLineDetail: {
+              AccountRef: {
+                value: accountRef, // Mismo account que las líneas principales
+              },
+            },
+          });
+          console.log(`✓ Added tax line with amount: ${totalTax}`);
+        }
+        
+        const subtotalLines = lines.slice(0, -1).reduce((sum, l) => sum + l.Amount, 0);
+        console.log(`✓ Final line count for ${doc.doc_number}: ${lines.length} line(s), subtotal: ${subtotalLines}, tax: ${totalTax}, total: ${lines.reduce((sum, l) => sum + l.Amount, 0)}`);
 
         // Preparar DocNumber - QuickBooks acepta máx 21 caracteres
         // Pero guardamos el número completo en PrivateNote
@@ -385,12 +406,23 @@ Deno.serve(async (req) => {
         // Adjuntar PDF si existe
         if (doc.pdf_attachment_url) {
           try {
-            console.log(`Attaching PDF for bill ${doc.doc_number}`);
+            console.log(`Attempting to attach PDF for bill ${doc.doc_number}, URL: ${doc.pdf_attachment_url}`);
+            
+            // Extraer el path correcto del storage
+            const pdfPath = doc.pdf_attachment_url.replace(/^.*\/object\/public\/company-documents\//, "")
+                                                   .replace(/^.*\/company-documents\//, "");
+            
+            console.log(`Downloading PDF from path: ${pdfPath}`);
             
             // Descargar el PDF del storage
-            const { data: pdfData } = await supabase.storage
+            const { data: pdfData, error: downloadError } = await supabase.storage
               .from("company-documents")
-              .download(doc.pdf_attachment_url.replace(/^.*\/company-documents\//, ""));
+              .download(pdfPath);
+
+            if (downloadError) {
+              console.error(`Failed to download PDF: ${downloadError.message}`);
+              throw downloadError;
+            }
 
             if (pdfData) {
               // Convertir blob a base64
@@ -446,16 +478,20 @@ Deno.serve(async (req) => {
               );
 
               if (attachResponse.ok) {
-                console.log(`PDF attached successfully to bill ${doc.doc_number}`);
+                console.log(`✓ PDF attached successfully to bill ${doc.doc_number}`);
               } else {
                 const errorText = await attachResponse.text();
-                console.error(`Failed to attach PDF: ${errorText}`);
+                console.error(`❌ Failed to attach PDF (HTTP ${attachResponse.status}): ${errorText}`);
               }
+            } else {
+              console.warn(`⚠️ No PDF data retrieved for ${doc.doc_number}`);
             }
           } catch (pdfError) {
-            console.error(`Error attaching PDF for ${doc.doc_number}:`, pdfError);
+            console.error(`❌ Error attaching PDF for ${doc.doc_number}:`, pdfError);
             // No fallar la publicación si falla el adjunto
           }
+        } else {
+          console.log(`No PDF attachment URL for ${doc.doc_number}, skipping PDF upload`);
         }
 
         // Actualizar documento con QBO ID
