@@ -227,40 +227,7 @@ serve(async (req) => {
 
               console.log(`Processing invoice: ${part.filename}`);
 
-              // Extraer datos con IA
-              const extractResponse = await fetch(
-                `${supabaseUrl}/functions/v1/extract-invoice-data`,
-                {
-                  method: "POST",
-                  headers: {
-                    Authorization: `Bearer ${supabaseKey}`,
-                    "Content-Type": "application/json",
-                  },
-                  body: JSON.stringify({
-                    xmlContent,
-                    categories,
-                  }),
-                }
-              );
-
-              if (!extractResponse.ok) {
-                const errorText = await extractResponse.text();
-                console.error(`AI extraction failed for ${part.filename}:`, errorText);
-                errors.push({ filename: part.filename, error: "AI extraction failed" });
-                continue;
-              }
-
-              const extractResult = await extractResponse.json();
-              
-              if (!extractResult.success || !extractResult.data) {
-                console.error(`Invalid AI response for ${part.filename}`);
-                errors.push({ filename: part.filename, error: "Invalid AI response" });
-                continue;
-              }
-
-              const invoiceData = extractResult.data;
-
-              // Descargar y guardar PDF si existe
+              // Descargar y guardar PDF si existe (antes de procesar)
               let pdfUrl = null;
               if (pdfAttachmentId && pdfFilename) {
                 try {
@@ -284,8 +251,12 @@ serve(async (req) => {
                       pdfBytes[i] = pdfBinary.charCodeAt(i);
                     }
                     
+                    // Extraer número de documento del XML para el nombre del archivo
+                    const docNumberMatch = xmlContent.match(/<NumeroConsecutivo>(.*?)<\/NumeroConsecutivo>/);
+                    const docNumber = docNumberMatch ? docNumberMatch[1] : `invoice_${Date.now()}`;
+                    
                     // Guardar en Supabase Storage
-                    const pdfPath = `${organization_id}/${invoiceData.numeroConsecutivo}.pdf`;
+                    const pdfPath = `${organization_id}/${docNumber}.pdf`;
                     const { error: uploadError } = await supabase.storage
                       .from("company-documents")
                       .upload(pdfPath, pdfBytes, {
@@ -308,110 +279,49 @@ serve(async (req) => {
                 }
               }
 
-              // Verificar duplicados
-              const docKey = invoiceData.numeroConsecutivo;
-              const { data: existingDoc } = await supabase
-                .from("processed_documents")
-                .select("id, status")
-                .eq("doc_key", docKey)
-                .eq("organization_id", organization_id)
-                .maybeSingle();
+              // Procesar documento con process-document-xml (sin IA)
+              const processResponse = await fetch(
+                `${supabaseUrl}/functions/v1/process-document-xml`,
+                {
+                  method: "POST",
+                  headers: {
+                    Authorization: `Bearer ${supabaseKey}`,
+                    "Content-Type": "application/json",
+                  },
+                  body: JSON.stringify({
+                    organization_id,
+                    xml_content: xmlContent,
+                    pdf_attachment_url: pdfUrl,
+                    file_path: part.filename,
+                  }),
+                }
+              );
 
-              if (existingDoc && !force_resync) {
-                console.log(`Duplicate invoice (skipping): ${part.filename}`);
-                errors.push({ filename: part.filename, error: "Duplicate" });
+              if (!processResponse.ok) {
+                const errorText = await processResponse.text();
+                console.error(`XML processing failed for ${part.filename}:`, errorText);
+                errors.push({ filename: part.filename, error: "XML processing failed" });
                 continue;
               }
+
+              const processResult = await processResponse.json();
               
-              // Si force_resync y existe, actualizar en lugar de insertar nuevo
-              if (existingDoc && force_resync) {
-                console.log(`Force resyncing existing invoice: ${part.filename}`);
-                
-                const issueDate = parseIssueDate(invoiceData.fechaEmision);
-                if (!issueDate) {
-                  console.error(`Invalid date for ${part.filename}: ${invoiceData.fechaEmision}`);
-                  errors.push({ filename: part.filename, error: `Invalid date: ${invoiceData.fechaEmision}` });
-                  continue;
-                }
-                
-                const { error: updateError } = await supabase
-                  .from("processed_documents")
-                  .update({
-                  status: "processed",
-                  error_message: null,
-                  xml_data: invoiceData,
-                  doc_type: invoiceData.esNotaCredito ? "NotaCreditoElectronica" : "FacturaElectronica",
-                  doc_number: invoiceData.numeroConsecutivo,
-                  issue_date: issueDate,
-                  supplier_name: invoiceData.emisor.nombre,
-                  supplier_tax_id: invoiceData.emisor.identificacion,
-                  supplier_email: invoiceData.emisor.correo || null,
-                  currency: invoiceData.moneda,
-                  total_amount: invoiceData.totalComprobante,
-                  total_tax: invoiceData.totalImpuesto || 0,
-                  pdf_attachment_url: pdfUrl,
-                  })
-                  .eq("id", existingDoc.id);
-                  
-                if (!updateError) {
-                  console.log(`Successfully re-processed: ${part.filename}`);
-                  processedInvoices.push({
-                    filename: part.filename,
-                    doc_id: existingDoc.id,
-                    supplier: invoiceData.emisor.nombre,
-                    amount: invoiceData.totalComprobante,
-                  });
-                } else {
-                  console.error(`Error updating ${part.filename}:`, updateError);
-                  errors.push({ filename: part.filename, error: updateError.message });
-                }
+              if (!processResult.success) {
+                console.error(`Processing error for ${part.filename}:`, processResult.error || processResult.message);
+                errors.push({ filename: part.filename, error: processResult.error || processResult.message });
                 continue;
               }
 
-              // Validar y limpiar fecha
-              const issueDate = parseIssueDate(invoiceData.fechaEmision);
-              if (!issueDate) {
-                console.error(`Invalid date for ${part.filename}: ${invoiceData.fechaEmision}`);
-                errors.push({ filename: part.filename, error: `Invalid date: ${invoiceData.fechaEmision}` });
-                continue;
-              }
+              console.log(`Successfully processed: ${part.filename} (${processResult.status})`);
+              processedInvoices.push({
+                filename: part.filename,
+                doc_id: processResult.doc_id,
+                status: processResult.status,
+                account_code: processResult.account_code,
+              });
 
-              // Guardar en base de datos
-              const { data: savedDoc, error: saveError } = await supabase
-                .from("processed_documents")
-                .insert({
-                  doc_key: docKey,
-                  doc_type: invoiceData.esNotaCredito ? "NotaCreditoElectronica" : "FacturaElectronica",
-                  doc_number: invoiceData.numeroConsecutivo,
-                  issue_date: issueDate,
-                  supplier_name: invoiceData.emisor.nombre,
-                  supplier_tax_id: invoiceData.emisor.identificacion,
-                  supplier_email: invoiceData.emisor.correo || null,
-                  currency: invoiceData.moneda,
-                  total_amount: invoiceData.totalComprobante,
-                  total_tax: invoiceData.totalImpuesto || 0,
-                  total_discount: invoiceData.detalle.reduce((sum: number, d: any) => 
-                    sum + d.montoDescuento, 0),
-                  status: invoiceData.aceptada ? "processed" : "rejected",
-                  xml_data: invoiceData,
-                  pdf_attachment_url: pdfUrl,
-                  organization_id,
-                })
-                .select()
-                .single();
-
-              if (saveError) {
-                console.error(`Error saving ${part.filename}:`, saveError);
-                errors.push({ filename: part.filename, error: saveError.message });
-              } else {
-                console.log(`Successfully processed: ${part.filename}`);
-                processedInvoices.push({
-                  filename: part.filename,
-                  doc_id: savedDoc.id,
-                  supplier: invoiceData.emisor.nombre,
-                  amount: invoiceData.totalComprobante,
-                });
-              }
+              // La función process-document-xml ya manejó todo el procesamiento
+              // No necesitamos guardar nada adicional aquí
             } catch (xmlError) {
               console.error(`Error processing XML ${part.filename}:`, xmlError);
               errors.push({ 
