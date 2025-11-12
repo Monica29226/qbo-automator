@@ -8,6 +8,8 @@ import { ProcessingFlow } from "@/components/dashboard/ProcessingFlow";
 import { CronMonitor } from "@/components/dashboard/CronMonitor";
 import { MonthSync } from "@/components/dashboard/MonthSync";
 import { AICreditsMonitor } from "@/components/dashboard/AICreditsMonitor";
+import { QBOAccountsDiagnostic } from "@/components/dashboard/QBOAccountsDiagnostic";
+import { ErrorLogsViewer } from "@/components/dashboard/ErrorLogsViewer";
 import { OrganizationSwitcher } from "@/components/OrganizationSwitcher";
 import { useAuth } from "@/hooks/useAuth";
 import { Link, useNavigate } from "react-router-dom";
@@ -450,6 +452,12 @@ const Dashboard = () => {
                   </>
                 )}
               </Button>
+            )}
+            {isAdmin && stats.errors > 0 && (
+              <ErrorLogsViewer />
+            )}
+            {isAdmin && (
+              <QBOAccountsDiagnostic />
             )}
             <Button 
               variant="secondary" 

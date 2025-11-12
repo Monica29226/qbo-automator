@@ -53,3 +53,6 @@ verify_jwt = false
 
 [functions.republish-credit-notes]
 verify_jwt = true
+
+[functions.list-quickbooks-accounts]
+verify_jwt = true

@@ -398,8 +398,9 @@ Deno.serve(async (req) => {
         };
 
         // Buscar cuenta contable del vendor o de las reglas de clasificación
-        let accountCode = "60"; // Default QuickBooks: Gastos generales (Expense account)
+        let accountCode: string | null = null;
         
+        // 1. Primero intentar desde el vendor
         if (doc.vendor_id) {
           const { data: vendorData } = await supabase
             .from("vendors")
@@ -409,11 +410,12 @@ Deno.serve(async (req) => {
           
           if (vendorData?.default_account_ref) {
             accountCode = vendorData.default_account_ref;
+            console.log(`✓ Account code from vendor: ${accountCode}`);
           }
         }
         
-        // Si no hay vendor_id, buscar en las reglas de clasificación por nombre
-        if (!doc.vendor_id || !accountCode || accountCode === "60") {
+        // 2. Si no hay cuenta del vendor, buscar en las reglas de clasificación por nombre
+        if (!accountCode) {
           const { data: classificationRule } = await supabase
             .from("vendor_classification_rules")
             .select("account_code")
@@ -425,17 +427,24 @@ Deno.serve(async (req) => {
           if (classificationRule?.account_code) {
             // Extraer solo el código numérico (ej: "5105" de "5105 Costo de ventas")
             accountCode = classificationRule.account_code.split(" ")[0];
-            console.log(`Using account code from classification rule: ${accountCode} for ${doc.supplier_name}`);
+            console.log(`✓ Account code from classification rule: ${accountCode} for ${doc.supplier_name}`);
           }
         }
         
-        // Si aún no hay cuenta, buscar en xml_data.cuentaContable
-        if ((!accountCode || accountCode === "60") && doc.xml_data?.cuentaContable) {
+        // 3. Si aún no hay cuenta, buscar en xml_data.cuentaContable
+        if (!accountCode && doc.xml_data?.cuentaContable) {
           const xmlAccount = doc.xml_data.cuentaContable.split(" ")[0];
           if (xmlAccount && xmlAccount !== "Gastos" && xmlAccount !== "por" && xmlAccount !== "clasificar") {
             accountCode = xmlAccount;
-            console.log(`Using account code from XML: ${accountCode}`);
+            console.log(`✓ Account code from XML: ${accountCode}`);
           }
+        }
+        
+        // 4. Si no se pudo determinar ninguna cuenta, error descriptivo
+        if (!accountCode) {
+          const errorMsg = `❌ No se pudo determinar cuenta contable para factura ${doc.doc_number} - Proveedor: ${doc.supplier_name}. Opciones: 1) Configurar cuenta en vendor, 2) Agregar regla de clasificación, 3) Verificar XML cuentaContable`;
+          console.error(errorMsg);
+          throw new Error(errorMsg);
         }
         
         // Obtener el ID real de QuickBooks para el código de cuenta
