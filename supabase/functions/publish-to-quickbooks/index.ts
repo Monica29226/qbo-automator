@@ -287,140 +287,80 @@ Deno.serve(async (req) => {
           try {
             console.log(`🔍 Searching for account with code: ${accountCode}`);
             
-            // Búsqueda 1: Coincidencia exacta en AcctNum
-            let query = `SELECT Id, Name, AcctNum, FullyQualifiedName, AccountType FROM Account WHERE AcctNum='${accountCode}'`;
-            let queryUrl = `https://quickbooks.api.intuit.com/v3/company/${realmId}/query?query=${encodeURIComponent(query)}`;
+            // ⚡ NUEVA ESTRATEGIA: Obtener TODAS las cuentas y buscar manualmente
+            // Esto evita problemas con queries específicas que no devuelven resultados
+            const query = `SELECT Id, Name, AcctNum, AccountType FROM Account MAXRESULTS 1000`;
+            const queryUrl = `https://quickbooks.api.intuit.com/v3/company/${realmId}/query?query=${encodeURIComponent(query)}`;
             
-            console.log(`Query 1 (exact AcctNum): ${query}`);
-            let response = await fetch(queryUrl, {
+            console.log(`📊 Fetching all QuickBooks accounts...`);
+            const response = await fetch(queryUrl, {
               headers: {
                 Authorization: `Bearer ${accessToken}`,
                 Accept: "application/json",
               },
             });
 
-            if (response.ok) {
-              const data = await response.json();
-              console.log(`Query 1 result:`, JSON.stringify(data.QueryResponse));
-              
-              if (data.QueryResponse?.Account && data.QueryResponse.Account.length > 0) {
-                const account = data.QueryResponse.Account[0];
-                console.log(`✓ Found account via exact AcctNum: ID=${account.Id}, Name="${account.Name}", AcctNum="${account.AcctNum}"`);
-                return account.Id;
-              }
+            if (!response.ok) {
+              console.error(`❌ Failed to fetch accounts from QuickBooks`);
+              return null;
             }
-            
-            // Búsqueda 2: LIKE en AcctNum (para cuentas con sufijos tipo "5105-01")
-            query = `SELECT Id, Name, AcctNum, FullyQualifiedName, AccountType FROM Account WHERE AcctNum LIKE '${accountCode}%'`;
-            queryUrl = `https://quickbooks.api.intuit.com/v3/company/${realmId}/query?query=${encodeURIComponent(query)}`;
-            
-            console.log(`Query 2 (LIKE AcctNum): ${query}`);
-            response = await fetch(queryUrl, {
-              headers: {
-                Authorization: `Bearer ${accessToken}`,
-                Accept: "application/json",
-              },
-            });
 
-            if (response.ok) {
-              const data = await response.json();
-              console.log(`Query 2 result:`, JSON.stringify(data.QueryResponse));
-              
-              if (data.QueryResponse?.Account && data.QueryResponse.Account.length > 0) {
-                const account = data.QueryResponse.Account[0];
-                console.log(`✓ Found account via LIKE AcctNum: ID=${account.Id}, Name="${account.Name}", AcctNum="${account.AcctNum}"`);
-                return account.Id;
-              }
-            }
+            const data = await response.json();
+            const allAccounts = data.QueryResponse?.Account || [];
+            console.log(`✓ Retrieved ${allAccounts.length} accounts from QuickBooks`);
             
-            // Búsqueda 3: Buscar en Name (para cuentas donde el código está en el nombre)
-            query = `SELECT Id, Name, AcctNum, FullyQualifiedName, AccountType FROM Account WHERE Name LIKE '%${accountCode}%'`;
-            queryUrl = `https://quickbooks.api.intuit.com/v3/company/${realmId}/query?query=${encodeURIComponent(query)}`;
-            
-            console.log(`Query 3 (Name contains): ${query}`);
-            response = await fetch(queryUrl, {
-              headers: {
-                Authorization: `Bearer ${accessToken}`,
-                Accept: "application/json",
-              },
-            });
-
-            if (response.ok) {
-              const data = await response.json();
-              console.log(`Query 3 result:`, JSON.stringify(data.QueryResponse));
-              
-              if (data.QueryResponse?.Account && data.QueryResponse.Account.length > 0) {
-                const account = data.QueryResponse.Account[0];
-                console.log(`✓ Found account via Name search: ID=${account.Id}, Name="${account.Name}", AcctNum="${account.AcctNum}"`);
-                return account.Id;
-              }
-            }
-            
-            // Búsqueda 4: Buscar en cuentas Cost of Goods Sold (COGS) - para Costo de ventas
-            // Importante: Soporta QuickBooks en inglés y español
-            query = `SELECT Id, Name, AcctNum, AccountType FROM Account WHERE AccountType IN ('Cost of Goods Sold', 'Costo de las ventas')`;
-            queryUrl = `https://quickbooks.api.intuit.com/v3/company/${realmId}/query?query=${encodeURIComponent(query)}`;
-            
-            console.log(`Query 4 (COGS accounts): ${query}`);
-            response = await fetch(queryUrl, {
-              headers: {
-                Authorization: `Bearer ${accessToken}`,
-                Accept: "application/json",
-              },
-            });
-
-            if (response.ok) {
-              const data = await response.json();
-              console.log(`Query 4 result:`, JSON.stringify(data.QueryResponse));
-              
-              if (data.QueryResponse?.Account && data.QueryResponse.Account.length > 0) {
-                // Registrar el AccountType para debugging
-                console.log(`📊 Found ${data.QueryResponse.Account.length} COGS accounts. Sample AccountType: "${data.QueryResponse.Account[0].AccountType}"`);
-                
-                // Buscar la cuenta manualmente en los resultados
-                const cogsAccount = data.QueryResponse.Account.find((acc: any) => 
-                  acc.AcctNum === accountCode || 
-                  acc.AcctNum?.toString().startsWith(accountCode) ||
-                  acc.Name?.includes(accountCode)
-                );
-                
-                if (cogsAccount) {
-                  console.log(`✓ Found account via COGS search: ID=${cogsAccount.Id}, Name="${cogsAccount.Name}", AcctNum="${cogsAccount.AcctNum}", Type="${cogsAccount.AccountType}"`);
-                  return cogsAccount.Id;
-                } else {
-                  console.log(`⚠️ No COGS account found with code ${accountCode}. Available COGS accounts:`);
-                  data.QueryResponse.Account.forEach((acc: any) => {
-                    console.log(`  - ID: ${acc.Id}, AcctNum: "${acc.AcctNum || 'N/A'}", Name: "${acc.Name}", Type: "${acc.AccountType}"`);
-                  });
+            // Buscar la cuenta que coincida con nuestro código
+            const targetAccount = allAccounts.find((acc: any) => {
+              // Buscar por AcctNum (si existe)
+              if (acc.AcctNum) {
+                if (acc.AcctNum === accountCode || acc.AcctNum.startsWith(accountCode)) {
+                  return true;
                 }
-              } else {
-                console.log(`⚠️ Query 4 returned no COGS accounts`);
               }
-            }
-            
-            // Si no se encontró, listar todas las cuentas de gasto y COGS para debugging
-            console.error(`❌ Account code ${accountCode} NOT FOUND in QuickBooks after 4 searches`);
-            console.log(`📋 Listing all Expense and COGS accounts for debugging...`);
-            
-            query = `SELECT Id, Name, AcctNum, AccountType FROM Account WHERE AccountType IN ('Expense', 'Cost of Goods Sold', 'Costo de las ventas') MAXRESULTS 100`;
-            queryUrl = `https://quickbooks.api.intuit.com/v3/company/${realmId}/query?query=${encodeURIComponent(query)}`;
-            
-            response = await fetch(queryUrl, {
-              headers: {
-                Authorization: `Bearer ${accessToken}`,
-                Accept: "application/json",
-              },
+              
+              // Buscar por Name (muchas veces el código está al inicio del nombre)
+              if (acc.Name) {
+                // Coincidencia exacta al inicio: "5105 Alimentos"
+                if (acc.Name.startsWith(accountCode + ' ')) {
+                  return true;
+                }
+                // Coincidencia exacta al inicio sin espacio: "5105Alimentos"
+                if (acc.Name.startsWith(accountCode)) {
+                  return true;
+                }
+                // Coincidencia con espacio en medio: "Cuenta 5105"
+                if (acc.Name.includes(' ' + accountCode + ' ')) {
+                  return true;
+                }
+              }
+              
+              return false;
             });
-
-            if (response.ok) {
-              const data = await response.json();
-              if (data.QueryResponse?.Account) {
-                console.log(`📋 Available Accounts (${data.QueryResponse.Account.length}):`);
-                data.QueryResponse.Account.forEach((acc: any) => {
-                  console.log(`  - ID: ${acc.Id}, Type: ${acc.AccountType}, AcctNum: "${acc.AcctNum || 'N/A'}", Name: "${acc.Name}"`);
-                });
-              }
+            
+            if (targetAccount) {
+              console.log(`✅ FOUND account with code ${accountCode}:`);
+              console.log(`   ID: ${targetAccount.Id}`);
+              console.log(`   Name: "${targetAccount.Name}"`);
+              console.log(`   AcctNum: "${targetAccount.AcctNum || 'N/A'}"`);
+              console.log(`   Type: "${targetAccount.AccountType}"`);
+              return targetAccount.Id;
             }
+            
+            // Si no se encontró, mostrar cuentas similares para debugging
+            console.error(`❌ Account ${accountCode} NOT FOUND in ${allAccounts.length} QuickBooks accounts`);
+            console.log(`🔍 Accounts that might be related (containing "${accountCode.substring(0, 2)}"):`);
+            const similarAccounts = allAccounts
+              .filter((acc: any) => {
+                const nameStr = (acc.Name || '').toLowerCase();
+                const numStr = (acc.AcctNum || '').toString();
+                const searchPrefix = accountCode.substring(0, 2);
+                return nameStr.includes(searchPrefix) || numStr.includes(searchPrefix);
+              })
+              .slice(0, 15);
+            
+            similarAccounts.forEach((acc: any) => {
+              console.log(`   - ID: ${acc.Id}, AcctNum: "${acc.AcctNum || 'N/A'}", Name: "${acc.Name}", Type: "${acc.AccountType}"`);
+            });
             
             return null;
           } catch (error) {
