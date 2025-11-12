@@ -77,25 +77,28 @@ const Dashboard = () => {
 
     const { data, error } = await supabase
       .from("processed_documents")
-      .select("status, created_at")
+      .select("status, created_at, processed_at")
       .eq("organization_id", activeOrganization);
 
     if (!error && data) {
-      const todayDocs = data.filter(
-        (doc) => new Date(doc.created_at) >= today
+      // Documentos PROCESADOS hoy (usando processed_at)
+      const processedToday = data.filter(
+        (doc) => doc.processed_at && new Date(doc.processed_at) >= today && doc.status === "processed"
       );
+      
+      // Documentos creados este mes
       const thisMonth = data.filter(
         (doc) =>
           new Date(doc.created_at).getMonth() === new Date().getMonth()
       );
 
       setStats({
-        processed: todayDocs.filter((d) => d.status === "processed").length,
+        processed: processedToday.length, // Solo las procesadas HOY
         review: data.filter((d) => d.status === "review").length,
         pending: data.filter((d) => d.status === "pending").length,
         total: thisMonth.length,
         errors: data.filter((d) => d.status === "error").length,
-        published: data.filter((d) => d.status === "processed" || d.status === "duplicate").length, // Corregido: "published" ya no existe, ahora es "processed"
+        published: data.filter((d) => d.status === "processed" || d.status === "duplicate").length,
       });
     }
   };
