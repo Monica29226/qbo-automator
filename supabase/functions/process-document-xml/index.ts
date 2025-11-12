@@ -204,6 +204,7 @@ Deno.serve(async (req) => {
         exchange_rate,
         vendor_id: vendorId,
         status,
+        processed_at: status === "processed" ? new Date().toISOString() : null,
         xml_data: {
           emisor: {
             nombre: supplier_name,
