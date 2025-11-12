@@ -458,12 +458,13 @@ Deno.serve(async (req) => {
         if (xmlData?.detalle && Array.isArray(xmlData.detalle) && xmlData.detalle.length > 0) {
           console.log(`Found ${xmlData.detalle.length} line items in xml_data`);
           for (const item of xmlData.detalle) {
-            // Usar el subtotal (cantidad * precioUnitario) en lugar del total con IVA
+            // Usar el subtotal (cantidad * precioUnitario) sin IVA
             const cantidad = parseFloat(item.cantidad) || 1;
             const precioUnitario = parseFloat(item.precioUnitario) || 0;
-            const subtotal = cantidad * precioUnitario * multiplier; // Negativo si es nota de crédito
+            const subtotal = parseFloat(item.subtotal) || (cantidad * precioUnitario);
+            const lineAmount = subtotal * multiplier; // Negativo si es nota de crédito
             
-            if (Math.abs(subtotal) > 0) {
+            if (Math.abs(lineAmount) > 0) {
               // Construir descripción detallada usando todos los campos capturados
               const descripcionBase = item.descripcion || "";
               const unidadMedida = item.unidadMedida || "";
@@ -477,21 +478,16 @@ Deno.serve(async (req) => {
                 descripcionCompleta = `[${codigoProducto}] ${descripcionCompleta}`;
               }
               
-              // Agregar cantidad y unidad de medida
-              if (cantidad && unidadMedida) {
-                descripcionCompleta = `${cantidad} ${unidadMedida} - ${descripcionCompleta}`;
+              // Agregar cantidad y unidad de medida con precio unitario (sin IVA)
+              if (cantidad && unidadMedida && precioUnitario > 0) {
+                descripcionCompleta = `${cantidad} ${unidadMedida} × ₡${precioUnitario.toFixed(2)} - ${descripcionCompleta}`;
               } else if (cantidad > 1) {
                 descripcionCompleta = `Cant: ${cantidad} - ${descripcionCompleta}`;
               }
               
-              // Agregar precio unitario para referencia
-              if (precioUnitario > 0) {
-                descripcionCompleta += ` (₡${precioUnitario.toFixed(2)} c/u)`;
-              }
-              
               lines.push({
                 DetailType: "AccountBasedExpenseLineDetail",
-                Amount: subtotal,
+                Amount: lineAmount,
                 Description: descripcionCompleta.substring(0, 4000) || `Línea ${numeroLinea}`,
                 AccountBasedExpenseLineDetail: {
                   AccountRef: {
@@ -500,7 +496,7 @@ Deno.serve(async (req) => {
                 },
               });
               
-              console.log(`✓ Line ${numeroLinea}: ${descripcionBase.substring(0, 50)} - Amount: ${subtotal}`);
+              console.log(`✓ Line ${numeroLinea}: ${descripcionBase.substring(0, 50)} - Amount: ${lineAmount} (subtotal sin IVA)`);
             }
           }
         }
@@ -616,9 +612,15 @@ Deno.serve(async (req) => {
           try {
             console.log(`Attempting to attach PDF for bill ${doc.doc_number}, URL: ${doc.pdf_attachment_url}`);
             
-            // Extraer el path correcto del storage
-            const pdfPath = doc.pdf_attachment_url.replace(/^.*\/object\/public\/company-documents\//, "")
-                                                   .replace(/^.*\/company-documents\//, "");
+            // Extraer el path correcto del storage - manejar múltiples formatos de URL
+            let pdfPath = doc.pdf_attachment_url;
+            if (pdfPath.includes('/object/public/company-documents/')) {
+              pdfPath = pdfPath.split('/object/public/company-documents/')[1];
+            } else if (pdfPath.includes('/company-documents/')) {
+              pdfPath = pdfPath.split('/company-documents/').pop() || pdfPath;
+            }
+            
+            console.log(`Extracted PDF path: ${pdfPath}`);
             
             console.log(`Downloading PDF from path: ${pdfPath}`);
             
