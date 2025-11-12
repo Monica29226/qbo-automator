@@ -68,15 +68,11 @@ Deno.serve(async (req) => {
       errors: [] as any[],
     };
 
-    // Intentar corregir y publicar cada documento
+    // Intentar re-procesar y publicar cada documento
     for (const doc of errorDocs) {
       console.log(`\n=== Processing document ${doc.doc_number} ===`);
       
       try {
-        const xmlData = doc.xml_data as any;
-        let needsUpdate = false;
-        const updates: any = {};
-
         // Detectar duplicados - skip y marcar como publicado
         if (doc.error_message?.includes("duplicate") || doc.error_message?.includes("duplicado")) {
           console.log(`✓ Duplicate detected: ${doc.doc_number} - marking as published (skip)`);
@@ -93,185 +89,104 @@ Deno.serve(async (req) => {
           continue;
         }
 
-        // Corrección 1: Validar que tenga líneas en XML
-        if (!xmlData?.detalle || !Array.isArray(xmlData.detalle) || xmlData.detalle.length === 0) {
-          console.log(`→ Adding default line item for ${doc.doc_number}`);
-          updates.xml_data = {
-            ...xmlData,
-            detalle: [{
-              descripcion: `Factura ${doc.doc_number}`,
-              montoTotalLinea: doc.total_amount,
-              cantidad: 1,
-            }],
-          };
-          needsUpdate = true;
-        } else {
-          updates.xml_data = xmlData;
-        }
-
-        // Corrección 2: Clasificar proveedor si es null
-        if (!doc.vendor_id && doc.supplier_name) {
-          console.log(`→ Classifying vendor for ${doc.doc_number}: ${doc.supplier_name}`);
-          
-          try {
-            const { data: classifyData } = await supabase.functions.invoke("classify-vendor", {
-              body: {
-                organization_id: organization_id,
-                supplier: {
-                  nombre: doc.supplier_name,
-                  identificacion: doc.supplier_tax_id || "",
-                  email: doc.supplier_email || "",
-                },
-                xmlData: updates.xml_data || xmlData,
-              },
-            });
-
-            if (classifyData?.vendorId) {
-              console.log(`✓ Vendor classified: ${classifyData.vendorId}`);
-              updates.vendor_id = classifyData.vendorId;
-              needsUpdate = true;
-            } else {
-              console.log(`⚠ Could not classify vendor, will use default account`);
-            }
-          } catch (classifyError) {
-            console.error(`⚠ Vendor classification failed:`, classifyError);
-          }
-        }
-
-        // Corrección 3: Asegurar cuenta contable usando las reglas de clasificación
-        const currentXmlData = updates.xml_data || xmlData;
-        if (!currentXmlData?.accountRef || currentXmlData.accountRef === "Gastos por clasificar") {
-          console.log(`→ Setting account for ${doc.doc_number}`);
-          
-          let accountRef = "80"; // Default QuickBooks: "Uncategorized Expense"
-          
-          // Primero intentar con el vendor_id
-          if (updates.vendor_id || doc.vendor_id) {
-            const { data: vendorData } = await supabase
-              .from("vendors")
-              .select("default_account_ref")
-              .eq("id", updates.vendor_id || doc.vendor_id)
-              .maybeSingle();
-
-            if (vendorData?.default_account_ref) {
-              accountRef = vendorData.default_account_ref;
-            }
-          }
-          
-          // Si no hay cuenta del vendor, buscar en reglas de clasificación
-          if (!accountRef || accountRef === "80") {
-            const { data: classificationRule } = await supabase
-              .from("vendor_classification_rules")
-              .select("account_code")
-              .eq("organization_id", organization_id)
-              .ilike("vendor_name", doc.supplier_name)
-              .eq("is_active", true)
-              .maybeSingle();
-            
-            if (classificationRule?.account_code) {
-              // Extraer solo el código numérico (ej: "5105" de "5105 Costo de ventas")
-              accountRef = classificationRule.account_code.split(" ")[0];
-              console.log(`✓ Using account from classification rule: ${accountRef}`);
-            }
-          }
-          
-          updates.xml_data = {
-            ...currentXmlData,
-            accountRef: accountRef,
-          };
-          needsUpdate = true;
-        }
-
-        // Corrección 4: Limpiar nombres problemáticos
-        if (doc.supplier_name && (
-          doc.supplier_name.includes("@") ||
-          doc.supplier_name.includes("<?xml") ||
-          doc.supplier_name.length > 100
-        )) {
-          console.log(`→ Cleaning supplier name for ${doc.doc_number}`);
-          updates.supplier_name = doc.supplier_name
-            .replace(/<?xml.*?>/g, "")
-            .replace(/@.*$/g, "")
-            .substring(0, 100)
-            .trim();
-          needsUpdate = true;
-        }
-
-        // Actualizar documento con correcciones
-        if (needsUpdate) {
-          updates.status = "processed";
-          updates.error_message = null;
-          
-          const { error: updateError } = await supabase
-            .from("processed_documents")
-            .update(updates)
-            .eq("id", doc.id);
-
-          if (updateError) {
-            throw updateError;
-          }
-
-          console.log(`✓ Document corrected: ${doc.doc_number}`);
-          results.fixed++;
-        }
-
-        // Intentar publicar a QuickBooks
-        console.log(`→ Publishing to QuickBooks: ${doc.doc_number}`);
+        // Re-procesar el documento con el nuevo flujo XML
+        console.log(`→ Re-processing document with XML parser: ${doc.doc_number}`);
         
-        try {
-          const { data: publishData, error: publishError } = await supabase.functions.invoke(
-            "publish-to-quickbooks",
-            {
-              body: {
-                organization_id: organization_id,
-                document_ids: [doc.id],
-              },
-              headers: {
-                Authorization: authHeader,
-              },
+        // Primero, eliminar el documento con error de la BD
+        await supabase
+          .from("processed_documents")
+          .delete()
+          .eq("id", doc.id);
+
+        // Re-procesar usando process-document-xml si hay xml_attachment_url
+        if (doc.xml_attachment_url) {
+          try {
+            // Descargar el XML
+            const xmlResponse = await fetch(doc.xml_attachment_url);
+            if (!xmlResponse.ok) {
+              throw new Error(`Failed to fetch XML: ${xmlResponse.statusText}`);
             }
-          );
+            const xmlContent = await xmlResponse.text();
 
-          if (publishError) throw publishError;
+            // Re-procesar con process-document-xml
+            const { data: reprocessData, error: reprocessError } = await supabase.functions.invoke(
+              "process-document-xml",
+              {
+                body: {
+                  organization_id: organization_id,
+                  xml_content: xmlContent,
+                  pdf_url: doc.pdf_attachment_url,
+                  xml_url: doc.xml_attachment_url,
+                },
+              }
+            );
 
-          if (publishData?.published > 0) {
-            console.log(`✓ Successfully published: ${doc.doc_number}`);
-            results.published++;
-          } else if (publishData?.failed > 0) {
-            console.log(`✗ Publication failed: ${doc.doc_number}`);
-            const errorMsg = publishData.errors?.[0]?.error || "Unknown publication error";
+            if (reprocessError) throw reprocessError;
+
+            if (reprocessData?.success && reprocessData?.documentId) {
+              console.log(`✓ Document re-processed: ${doc.doc_number}`);
+              results.fixed++;
+
+              // Ahora intentar publicar el nuevo documento
+              const { data: publishData, error: publishError } = await supabase.functions.invoke(
+                "publish-to-quickbooks",
+                {
+                  body: {
+                    organization_id: organization_id,
+                    document_ids: [reprocessData.documentId],
+                  },
+                  headers: {
+                    Authorization: authHeader,
+                  },
+                }
+              );
+
+              if (publishError) throw publishError;
+
+              if (publishData?.published > 0) {
+                console.log(`✓ Successfully published: ${doc.doc_number}`);
+                results.published++;
+              } else if (publishData?.failed > 0) {
+                console.log(`✗ Publication failed: ${doc.doc_number}`);
+                const errorMsg = publishData.errors?.[0]?.error || "Unknown publication error";
+                results.failed++;
+                results.errors.push({
+                  doc_number: doc.doc_number,
+                  error: errorMsg,
+                });
+              }
+            } else {
+              throw new Error(reprocessData?.error || "Re-processing failed");
+            }
+          } catch (xmlError: any) {
+            console.error(`✗ Error re-processing ${doc.doc_number}:`, xmlError);
             
+            // Restaurar el documento con error
             await supabase
               .from("processed_documents")
-              .update({
-                status: "error",
-                error_message: errorMsg,
-              })
-              .eq("id", doc.id);
+              .insert({
+                ...doc,
+                error_message: `Re-processing failed: ${xmlError.message}`,
+              });
             
             results.failed++;
             results.errors.push({
               doc_number: doc.doc_number,
-              error: errorMsg,
+              error: xmlError.message,
             });
           }
-        } catch (publishError: any) {
-          console.error(`✗ Error publishing ${doc.doc_number}:`, publishError);
+        } else {
+          console.log(`⚠ No XML URL found for ${doc.doc_number}, skipping`);
           
-          const errorMsg = publishError.message || "Error al publicar en QuickBooks";
-          
+          // Restaurar el documento
           await supabase
             .from("processed_documents")
-            .update({
-              status: "error",
-              error_message: errorMsg,
-            })
-            .eq("id", doc.id);
+            .insert(doc);
           
           results.failed++;
           results.errors.push({
             doc_number: doc.doc_number,
-            error: errorMsg,
+            error: "No XML URL available for re-processing",
           });
         }
 

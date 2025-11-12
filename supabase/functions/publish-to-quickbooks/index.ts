@@ -126,11 +126,20 @@ Deno.serve(async (req) => {
 
     // Helper para buscar vendor en QBO
     const findOrCreateVendor = async (supplierName: string, supplierTaxId: string) => {
-      // Buscar vendor existente por DisplayName o PrimaryTaxIdentifier
-      const searchQuery = `SELECT * FROM Vendor WHERE DisplayName = '${supplierName.replace(/'/g, "\\'")}'`;
-      const searchUrl = `https://quickbooks.api.intuit.com/v3/company/${realmId}/query?query=${encodeURIComponent(searchQuery)}`;
+      // Normalizar nombre del proveedor para evitar problemas de encoding
+      const normalizedName = supplierName
+        .normalize('NFD')  // Descomponer caracteres con acentos
+        .replace(/[\u0300-\u036f]/g, '')  // Remover marcas diacríticas
+        .substring(0, 100)
+        .trim();
+      
+      console.log(`Searching/creating vendor: "${supplierName}" (normalized: "${normalizedName}")`);
+      
+      // Buscar vendor existente primero con nombre original
+      let searchQuery = `SELECT * FROM Vendor WHERE DisplayName = '${supplierName.replace(/'/g, "\\'")}'`;
+      let searchUrl = `https://quickbooks.api.intuit.com/v3/company/${realmId}/query?query=${encodeURIComponent(searchQuery)}`;
 
-      const searchResponse = await fetch(searchUrl, {
+      let searchResponse = await fetch(searchUrl, {
         headers: {
           "Authorization": `Bearer ${accessToken}`,
           "Accept": "application/json",
@@ -140,12 +149,34 @@ Deno.serve(async (req) => {
       if (searchResponse.ok) {
         const searchData = await searchResponse.json();
         if (searchData.QueryResponse?.Vendor?.length > 0) {
+          console.log(`✓ Found existing vendor: ${searchData.QueryResponse.Vendor[0].DisplayName}`);
           return searchData.QueryResponse.Vendor[0].Id;
         }
       }
+      
+      // Si no se encuentra con nombre original, buscar con nombre normalizado
+      if (normalizedName !== supplierName) {
+        searchQuery = `SELECT * FROM Vendor WHERE DisplayName = '${normalizedName.replace(/'/g, "\\'")}'`;
+        searchUrl = `https://quickbooks.api.intuit.com/v3/company/${realmId}/query?query=${encodeURIComponent(searchQuery)}`;
 
-      // Crear vendor si no existe
-      console.log(`Creating vendor: ${supplierName}`);
+        searchResponse = await fetch(searchUrl, {
+          headers: {
+            "Authorization": `Bearer ${accessToken}`,
+            "Accept": "application/json",
+          },
+        });
+
+        if (searchResponse.ok) {
+          const searchData = await searchResponse.json();
+          if (searchData.QueryResponse?.Vendor?.length > 0) {
+            console.log(`✓ Found existing vendor with normalized name: ${searchData.QueryResponse.Vendor[0].DisplayName}`);
+            return searchData.QueryResponse.Vendor[0].Id;
+          }
+        }
+      }
+
+      // Crear vendor si no existe - usar nombre normalizado para evitar errores de encoding
+      console.log(`Creating vendor with normalized name: ${normalizedName}`);
       const createResponse = await fetch(
         `https://quickbooks.api.intuit.com/v3/company/${realmId}/vendor`,
         {
@@ -153,10 +184,10 @@ Deno.serve(async (req) => {
           headers: {
             "Authorization": `Bearer ${accessToken}`,
             "Accept": "application/json",
-            "Content-Type": "application/json",
+            "Content-Type": "application/json; charset=utf-8",
           },
           body: JSON.stringify({
-            DisplayName: supplierName.substring(0, 100),
+            DisplayName: normalizedName,
             PrimaryTaxIdentifier: supplierTaxId || undefined,
           }),
         }
@@ -164,11 +195,12 @@ Deno.serve(async (req) => {
 
       if (!createResponse.ok) {
         const errorText = await createResponse.text();
-        console.error(`Failed to create vendor: ${errorText}`);
-        throw new Error(`Failed to create vendor: ${supplierName}`);
+        console.error(`Failed to create vendor "${normalizedName}": ${errorText}`);
+        throw new Error(`No se pudo crear el proveedor "${supplierName}" en QuickBooks. Error: ${errorText.substring(0, 200)}`);
       }
 
       const vendorData = await createResponse.json();
+      console.log(`✓ Created vendor: ${vendorData.Vendor.DisplayName} (ID: ${vendorData.Vendor.Id})`);
       return vendorData.Vendor.Id;
     };
 
