@@ -549,6 +549,62 @@ Deno.serve(async (req) => {
           ? doc.doc_number.substring(doc.doc_number.length - 21) // Últimos 21 caracteres
           : doc.doc_number;
 
+        // VALIDACIÓN DE TOTALES: Verificar que subtotal + IVA = total antes de publicar
+        console.log("=== VALIDACIÓN DE TOTALES ===");
+        
+        const xmlSubtotal = Math.abs(parseFloat(xmlData?.subTotal || "0"));
+        const xmlTotalImpuesto = Math.abs(parseFloat(xmlData?.totalImpuesto || "0"));
+        const xmlTotalComprobante = Math.abs(parseFloat(xmlData?.totalComprobante || "0"));
+        
+        // Calcular totales de las líneas que vamos a enviar a QuickBooks
+        let calculatedSubtotal = 0;
+        let calculatedTax = 0;
+        
+        for (const line of lines) {
+          if (line.Description?.includes("IVA")) {
+            calculatedTax += Math.abs(line.Amount);
+          } else {
+            calculatedSubtotal += Math.abs(line.Amount);
+          }
+        }
+        
+        const calculatedTotal = calculatedSubtotal + calculatedTax;
+        
+        console.log(`XML: Subtotal=${xmlSubtotal}, IVA=${xmlTotalImpuesto}, Total=${xmlTotalComprobante}`);
+        console.log(`Calculado: Subtotal=${calculatedSubtotal.toFixed(2)}, IVA=${calculatedTax.toFixed(2)}, Total=${calculatedTotal.toFixed(2)}`);
+        
+        // Validar con tolerancia de 1 colón por redondeos
+        const tolerance = 1.0;
+        const subtotalDiff = Math.abs(xmlSubtotal - calculatedSubtotal);
+        const taxDiff = Math.abs(xmlTotalImpuesto - calculatedTax);
+        const totalDiff = Math.abs(xmlTotalComprobante - calculatedTotal);
+        
+        if (subtotalDiff > tolerance || taxDiff > tolerance || totalDiff > tolerance) {
+          const errorMsg = `VALIDACIÓN FALLIDA - Diferencias: Subtotal=${subtotalDiff.toFixed(2)}₡, IVA=${taxDiff.toFixed(2)}₡, Total=${totalDiff.toFixed(2)}₡`;
+          console.error(errorMsg);
+          console.error(`Detalle: XML(${xmlSubtotal}+${xmlTotalImpuesto}=${xmlTotalComprobante}) vs Calc(${calculatedSubtotal.toFixed(2)}+${calculatedTax.toFixed(2)}=${calculatedTotal.toFixed(2)})`);
+          
+          await supabase
+            .from("processed_documents")
+            .update({
+              status: "error",
+              error_message: `${errorMsg}. Los totales calculados no coinciden con el XML. Revisar líneas e impuestos.`,
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", doc.id);
+          
+          results.failed++;
+          results.errors.push({
+            doc_number: doc.doc_number,
+            error: errorMsg,
+          });
+          
+          continue; // Saltar este documento y continuar con el siguiente
+        }
+        
+        console.log("✓ Validación de totales exitosa - Los montos coinciden con el XML");
+        console.log("=== FIN VALIDACIÓN ===");
+
         // FINAL VALIDATION before sending to QuickBooks
         if (!lines || lines.length === 0) {
           console.error(`❌ Cannot create bill without line items for doc ${doc.doc_number}`);
