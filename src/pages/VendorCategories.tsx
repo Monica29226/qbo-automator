@@ -5,11 +5,13 @@ import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { toast } from "sonner";
-import { Plus, Trash2, Upload } from "lucide-react";
+import { Plus, Trash2, Upload, AlertCircle } from "lucide-react";
 import * as XLSX from 'xlsx';
+import { QBOAccountsDiagnostic } from "@/components/dashboard/QBOAccountsDiagnostic";
 
 export default function VendorCategories() {
   const { activeOrganization } = useAuth();
@@ -134,6 +136,31 @@ export default function VendorCategories() {
             />
           </div>
         </div>
+
+        <Alert>
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>Antes de configurar proveedores</AlertTitle>
+          <AlertDescription>
+            Consulta las cuentas disponibles en QuickBooks para asignarlas correctamente a tus proveedores.
+            {categories?.length === 0 && (
+              <span className="block mt-2 font-semibold text-destructive">
+                ⚠️ No hay proveedores configurados. Agrega proveedores con cuentas válidas de QuickBooks.
+              </span>
+            )}
+          </AlertDescription>
+        </Alert>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Cuentas de QuickBooks Disponibles</CardTitle>
+            <CardDescription>
+              Usa este diagnóstico para ver qué cuentas existen en QuickBooks y sus códigos
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <QBOAccountsDiagnostic />
+          </CardContent>
+        </Card>
 
         <Card>
           <CardHeader>
