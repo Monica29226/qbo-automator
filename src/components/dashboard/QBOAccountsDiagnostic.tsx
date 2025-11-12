@@ -84,68 +84,41 @@ export const QBOAccountsDiagnostic = () => {
       </Button>
 
       <Dialog open={isOpen} onOpenChange={setIsOpen}>
-        <DialogContent className="max-w-5xl max-h-[80vh]">
+        <DialogContent className="max-w-3xl max-h-[80vh]">
           <DialogHeader>
-            <DialogTitle>Cuentas de QuickBooks</DialogTitle>
+            <DialogTitle>Cuentas Disponibles en QuickBooks</DialogTitle>
             <DialogDescription>
-              Total: {accounts.length} cuentas encontradas
+              {accounts.length} cuentas activas. Usa el código para configurar tus proveedores.
             </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-4">
-            {/* Filter by type */}
-            <div className="flex flex-wrap gap-2">
-              <Button
-                size="sm"
-                variant={selectedType === null ? "default" : "outline"}
-                onClick={() => setSelectedType(null)}
-              >
-                Todas ({accounts.length})
-              </Button>
-              {Object.entries(byType).map(([type, accs]) => (
-                <Button
-                  key={type}
-                  size="sm"
-                  variant={selectedType === type ? "default" : "outline"}
-                  onClick={() => setSelectedType(type)}
-                >
-                  {type} ({accs.length})
-                </Button>
-              ))}
-            </div>
-
-            {/* Accounts table */}
-            <ScrollArea className="h-[400px]">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Código</TableHead>
-                    <TableHead>Nombre</TableHead>
-                    <TableHead>Tipo</TableHead>
-                    <TableHead>Estado</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {displayedAccounts.map((acc) => (
+          <ScrollArea className="h-[500px]">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-32">Código</TableHead>
+                  <TableHead>Nombre de Cuenta</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {accounts
+                  .filter(acc => acc.active && acc.accountNumber)
+                  .sort((a, b) => {
+                    const numA = parseInt(a.accountNumber || '0');
+                    const numB = parseInt(b.accountNumber || '0');
+                    return numA - numB;
+                  })
+                  .map((acc) => (
                     <TableRow key={acc.id}>
-                      <TableCell className="font-mono">
-                        {acc.accountNumber || <span className="text-muted-foreground">Sin código</span>}
+                      <TableCell className="font-mono font-semibold text-primary">
+                        {acc.accountNumber}
                       </TableCell>
                       <TableCell>{acc.name}</TableCell>
-                      <TableCell>
-                        <Badge variant="outline">{acc.type}</Badge>
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant={acc.active ? "default" : "secondary"}>
-                          {acc.active ? "Activa" : "Inactiva"}
-                        </Badge>
-                      </TableCell>
                     </TableRow>
                   ))}
-                </TableBody>
-              </Table>
-            </ScrollArea>
-          </div>
+              </TableBody>
+            </Table>
+          </ScrollArea>
         </DialogContent>
       </Dialog>
     </>
