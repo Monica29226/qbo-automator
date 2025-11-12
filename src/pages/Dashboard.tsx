@@ -12,6 +12,7 @@ import { QBOAccountsDiagnostic } from "@/components/dashboard/QBOAccountsDiagnos
 import { ErrorLogsViewer } from "@/components/dashboard/ErrorLogsViewer";
 import { OrganizationSwitcher } from "@/components/OrganizationSwitcher";
 import { PublishAllButton } from "@/components/PublishAllButton";
+import { PublishReviewButton } from "@/components/PublishReviewButton";
 import { SyncFromExcelDialog } from "@/components/SyncFromExcelDialog";
 import { useAuth } from "@/hooks/useAuth";
 import { Link, useNavigate } from "react-router-dom";
@@ -542,6 +543,11 @@ const Dashboard = () => {
                 Revisión ({stats.review})
               </Link>
             </Button>
+            {stats.review > 0 && (
+              <div className="w-48">
+                <PublishReviewButton />
+              </div>
+            )}
             {isAdmin && (
               <Button variant="outline" size="sm" asChild>
                 <Link to="/integrations">
