@@ -280,8 +280,8 @@ Deno.serve(async (req) => {
             body: {
               organization_id: organizationId,
               xml_content: gmailResult.xmlContent,
-              pdf_url: gmailResult.pdfUrl,
-              xml_url: gmailResult.xmlUrl,
+              pdf_attachment_url: gmailResult.pdfUrl,
+              xml_attachment_url: gmailResult.xmlUrl,
             },
           }
         );
