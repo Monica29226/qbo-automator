@@ -260,22 +260,22 @@ Deno.serve(async (req) => {
           await supabase
             .from("processed_documents")
             .update({ 
-              status: "error_permanent",
-              error_message: "Max retries reached (3 attempts)"
+              status: "error",
+              error_message: "[PERMANENTE] Max retries reached (3 attempts)"
             })
             .eq("id", doc.id);
           results.failed++;
           continue;
         }
 
-        // Detectar duplicados - skip y marcar como publicado
+        // Detectar duplicados - skip y marcar como duplicado
         if (doc.error_message?.includes("duplicate") || doc.error_message?.includes("duplicado")) {
-          console.log(`✓ Duplicate detected: ${doc.doc_number} - marking as published (skip)`);
+          console.log(`✓ Duplicate detected: ${doc.doc_number} - marking as duplicate (skip)`);
           
           await supabase
             .from("processed_documents")
             .update({ 
-              status: "published",
+              status: "duplicate",
               error_message: "Documento duplicado - ya existe en QuickBooks"
             })
             .eq("id", doc.id);
