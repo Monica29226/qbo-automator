@@ -5,6 +5,177 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+// Helper function to get Gmail credentials
+async function getGmailCredentials(supabase: any, organizationId: string) {
+  const { data: accounts, error } = await supabase
+    .from("integration_accounts")
+    .select("*")
+    .eq("organization_id", organizationId)
+    .eq("service_type", "gmail")
+    .eq("is_active", true)
+    .order("created_at", { ascending: false })
+    .limit(1);
+
+  if (error || !accounts || accounts.length === 0) {
+    throw new Error("No active Gmail account found");
+  }
+
+  const account = accounts[0];
+  const credentials = account.credentials;
+
+  // Check if token needs refresh
+  const expiresAt = new Date(credentials.expires_at).getTime();
+  const now = Date.now();
+
+  if (now >= expiresAt - 5 * 60 * 1000) {
+    // Refresh token
+    const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        client_id: Deno.env.get("GOOGLE_CLIENT_ID")!,
+        client_secret: Deno.env.get("GOOGLE_CLIENT_SECRET")!,
+        refresh_token: credentials.refresh_token,
+        grant_type: "refresh_token",
+      }),
+    });
+
+    if (!tokenResponse.ok) {
+      throw new Error("Failed to refresh Gmail token");
+    }
+
+    const tokenData = await tokenResponse.json();
+    credentials.access_token = tokenData.access_token;
+    credentials.expires_at = new Date(now + tokenData.expires_in * 1000).toISOString();
+
+    // Update credentials in DB
+    await supabase
+      .from("integration_accounts")
+      .update({ credentials })
+      .eq("id", account.id);
+  }
+
+  return credentials.access_token;
+}
+
+// Helper function to search Gmail for document and download XML/PDF
+async function searchGmailForDocument(
+  accessToken: string,
+  docNumber: string,
+  supabase: any,
+  organizationId: string
+): Promise<{ xmlContent: string; pdfUrl: string | null; xmlUrl: string | null } | null> {
+  try {
+    console.log(`🔍 Searching Gmail for document: ${docNumber}`);
+    
+    // Search for emails with XML attachment containing the doc number
+    const searchQuery = encodeURIComponent(`has:attachment filename:xml "${docNumber}"`);
+    const searchResponse = await fetch(
+      `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${searchQuery}&maxResults=5`,
+      { headers: { Authorization: `Bearer ${accessToken}` } }
+    );
+
+    if (!searchResponse.ok) {
+      console.error(`Gmail search failed: ${searchResponse.status}`);
+      return null;
+    }
+
+    const searchData = await searchResponse.json();
+    if (!searchData.messages || searchData.messages.length === 0) {
+      console.log(`❌ No messages found in Gmail for: ${docNumber}`);
+      return null;
+    }
+
+    // Get the first message details
+    const messageId = searchData.messages[0].id;
+    const messageResponse = await fetch(
+      `https://gmail.googleapis.com/gmail/v1/users/me/messages/${messageId}`,
+      { headers: { Authorization: `Bearer ${accessToken}` } }
+    );
+
+    if (!messageResponse.ok) {
+      console.error(`Failed to fetch message: ${messageResponse.status}`);
+      return null;
+    }
+
+    const messageData = await messageResponse.json();
+    let xmlContent = "";
+    let pdfUrl: string | null = null;
+    let xmlUrl: string | null = null;
+
+    // Process attachments
+    for (const part of messageData.payload.parts || []) {
+      const filename = part.filename || "";
+      const mimeType = part.mimeType || "";
+      
+      if (!part.body?.attachmentId) continue;
+
+      // Download attachment
+      const attachmentResponse = await fetch(
+        `https://gmail.googleapis.com/gmail/v1/users/me/messages/${messageId}/attachments/${part.body.attachmentId}`,
+        { headers: { Authorization: `Bearer ${accessToken}` } }
+      );
+
+      if (!attachmentResponse.ok) continue;
+
+      const attachmentData = await attachmentResponse.json();
+      const fileContent = Uint8Array.from(atob(attachmentData.data.replace(/-/g, "+").replace(/_/g, "/")), c => c.charCodeAt(0));
+
+      // Handle XML
+      if (filename.toLowerCase().endsWith(".xml") || mimeType.includes("xml")) {
+        xmlContent = new TextDecoder().decode(fileContent);
+        console.log(`✓ XML found: ${filename}`);
+
+        // Save XML to storage
+        const xmlPath = `${organizationId}/${docNumber}.xml`;
+        const { error: uploadError } = await supabase.storage
+          .from("company-documents")
+          .upload(xmlPath, fileContent, {
+            contentType: "application/xml",
+            upsert: true,
+          });
+
+        if (!uploadError) {
+          const { data: urlData } = supabase.storage
+            .from("company-documents")
+            .getPublicUrl(xmlPath);
+          xmlUrl = urlData.publicUrl;
+          console.log(`✓ XML saved to storage: ${xmlPath}`);
+        }
+      }
+
+      // Handle PDF
+      if (filename.toLowerCase().endsWith(".pdf") || mimeType === "application/pdf") {
+        const pdfPath = `${organizationId}/${docNumber}.pdf`;
+        const { error: uploadError } = await supabase.storage
+          .from("company-documents")
+          .upload(pdfPath, fileContent, {
+            contentType: "application/pdf",
+            upsert: true,
+          });
+
+        if (!uploadError) {
+          const { data: urlData } = supabase.storage
+            .from("company-documents")
+            .getPublicUrl(pdfPath);
+          pdfUrl = urlData.publicUrl;
+          console.log(`✓ PDF saved to storage: ${pdfPath}`);
+        }
+      }
+    }
+
+    if (!xmlContent) {
+      console.log(`❌ No XML content found in message`);
+      return null;
+    }
+
+    return { xmlContent, pdfUrl, xmlUrl };
+  } catch (error) {
+    console.error(`Error searching Gmail:`, error);
+    return null;
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -68,11 +239,35 @@ Deno.serve(async (req) => {
       errors: [] as any[],
     };
 
+    // Get Gmail credentials once for all documents
+    let gmailAccessToken: string | null = null;
+    try {
+      gmailAccessToken = await getGmailCredentials(supabase, organization_id);
+      console.log(`✓ Gmail credentials obtained`);
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : "Unknown error";
+      console.log(`⚠ Could not get Gmail credentials: ${errorMsg}`);
+    }
+
     // Intentar re-procesar y publicar cada documento
     for (const doc of errorDocs) {
-      console.log(`\n=== Processing document ${doc.doc_number} ===`);
+      console.log(`\n=== Processing document ${doc.doc_number} (retry ${doc.retry_count || 0}) ===`);
       
       try {
+        // Check retry limit
+        if ((doc.retry_count || 0) >= 3) {
+          console.log(`⚠ Document ${doc.doc_number} has reached max retries, skipping`);
+          await supabase
+            .from("processed_documents")
+            .update({ 
+              status: "error_permanent",
+              error_message: "Max retries reached (3 attempts)"
+            })
+            .eq("id", doc.id);
+          results.failed++;
+          continue;
+        }
+
         // Detectar duplicados - skip y marcar como publicado
         if (doc.error_message?.includes("duplicate") || doc.error_message?.includes("duplicado")) {
           console.log(`✓ Duplicate detected: ${doc.doc_number} - marking as published (skip)`);
@@ -89,24 +284,53 @@ Deno.serve(async (req) => {
           continue;
         }
 
+        let xmlContent = "";
+        let pdfUrl = doc.pdf_attachment_url;
+        let xmlUrl = doc.xml_attachment_url;
+
         // Re-procesar el documento con el nuevo flujo XML
         console.log(`→ Re-processing document with XML parser: ${doc.doc_number}`);
-        
+
+        // Si no hay xml_attachment_url, intentar recuperar de Gmail
+        if (!doc.xml_attachment_url && gmailAccessToken) {
+          console.log(`⚠ No XML URL found, attempting Gmail recovery...`);
+          
+          const gmailResult = await searchGmailForDocument(
+            gmailAccessToken,
+            doc.doc_number,
+            supabase,
+            organization_id
+          );
+
+          if (gmailResult) {
+            xmlContent = gmailResult.xmlContent;
+            pdfUrl = gmailResult.pdfUrl || pdfUrl;
+            xmlUrl = gmailResult.xmlUrl || xmlUrl;
+            console.log(`✓ Document recovered from Gmail`);
+          } else {
+            throw new Error("Could not recover document from Gmail - not found");
+          }
+        } else if (!doc.xml_attachment_url) {
+          throw new Error("No XML URL and Gmail credentials unavailable");
+        }
+
         // Primero, eliminar el documento con error de la BD
         await supabase
           .from("processed_documents")
           .delete()
           .eq("id", doc.id);
 
-        // Re-procesar usando process-document-xml si hay xml_attachment_url
-        if (doc.xml_attachment_url) {
+        // Re-procesar usando process-document-xml
+        if (doc.xml_attachment_url || xmlContent) {
           try {
-            // Descargar el XML
-            const xmlResponse = await fetch(doc.xml_attachment_url);
-            if (!xmlResponse.ok) {
-              throw new Error(`Failed to fetch XML: ${xmlResponse.statusText}`);
+            // Descargar el XML si no lo tenemos ya
+            if (!xmlContent) {
+              const xmlResponse = await fetch(doc.xml_attachment_url);
+              if (!xmlResponse.ok) {
+                throw new Error(`Failed to fetch XML: ${xmlResponse.statusText}`);
+              }
+              xmlContent = await xmlResponse.text();
             }
-            const xmlContent = await xmlResponse.text();
 
             // Re-procesar con process-document-xml
             const { data: reprocessData, error: reprocessError } = await supabase.functions.invoke(
@@ -115,8 +339,8 @@ Deno.serve(async (req) => {
                 body: {
                   organization_id: organization_id,
                   xml_content: xmlContent,
-                  pdf_url: doc.pdf_attachment_url,
-                  xml_url: doc.xml_attachment_url,
+                  pdf_url: pdfUrl,
+                  xml_url: xmlUrl,
                 },
               }
             );
@@ -161,12 +385,14 @@ Deno.serve(async (req) => {
           } catch (xmlError: any) {
             console.error(`✗ Error re-processing ${doc.doc_number}:`, xmlError);
             
-            // Restaurar el documento con error
+            // Update existing document with error (don't create duplicate)
             await supabase
               .from("processed_documents")
               .insert({
                 ...doc,
                 error_message: `Re-processing failed: ${xmlError.message}`,
+                retry_count: (doc.retry_count || 0) + 1,
+                updated_at: new Date().toISOString(),
               });
             
             results.failed++;
@@ -176,23 +402,22 @@ Deno.serve(async (req) => {
             });
           }
         } else {
-          console.log(`⚠ No XML URL found for ${doc.doc_number}, skipping`);
-          
-          // Restaurar el documento
-          await supabase
-            .from("processed_documents")
-            .insert(doc);
-          
-          results.failed++;
-          results.errors.push({
-            doc_number: doc.doc_number,
-            error: "No XML URL available for re-processing",
-          });
+          throw new Error("No XML content available for re-processing");
         }
 
       } catch (error) {
         console.error(`✗ Failed to process document ${doc.doc_number}:`, error);
         const errorMessage = error instanceof Error ? error.message : "Unknown error";
+        
+        // Update existing document with error (don't create duplicate)
+        await supabase
+          .from("processed_documents")
+          .update({
+            error_message: `Retry failed: ${errorMessage}`,
+            retry_count: (doc.retry_count || 0) + 1,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", doc.id);
         
         results.failed++;
         results.errors.push({

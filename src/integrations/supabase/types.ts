@@ -321,6 +321,7 @@ export type Database = {
           processed_by: string | null
           qbo_entity_id: string | null
           qbo_entity_type: string | null
+          retry_count: number | null
           status: string
           supplier_email: string | null
           supplier_name: string
@@ -350,6 +351,7 @@ export type Database = {
           processed_by?: string | null
           qbo_entity_id?: string | null
           qbo_entity_type?: string | null
+          retry_count?: number | null
           status?: string
           supplier_email?: string | null
           supplier_name: string
@@ -379,6 +381,7 @@ export type Database = {
           processed_by?: string | null
           qbo_entity_id?: string | null
           qbo_entity_type?: string | null
+          retry_count?: number | null
           status?: string
           supplier_email?: string | null
           supplier_name?: string
