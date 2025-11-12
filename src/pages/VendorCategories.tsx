@@ -9,7 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { toast } from "sonner";
-import { Plus, Trash2, Upload, AlertCircle } from "lucide-react";
+import { Plus, Trash2, Upload, AlertCircle, Info, CheckCircle2 } from "lucide-react";
 import * as XLSX from 'xlsx';
 import { QBOAccountsDiagnostic } from "@/components/dashboard/QBOAccountsDiagnostic";
 
@@ -117,7 +117,12 @@ export default function VendorCategories() {
     <div className="min-h-screen bg-background p-6">
       <div className="max-w-7xl mx-auto space-y-6">
         <div className="flex justify-between items-center">
-          <h1 className="text-3xl font-bold">Categorías de Proveedores</h1>
+          <div>
+            <h1 className="text-3xl font-bold">Configuración de Proveedores</h1>
+            <p className="text-muted-foreground mt-1">
+              Asigna cuentas de QuickBooks a cada proveedor para publicación automática
+            </p>
+          </div>
           <div className="flex gap-2">
             <Label htmlFor="excel-upload" className="cursor-pointer">
               <Button variant="outline" asChild>
@@ -137,18 +142,68 @@ export default function VendorCategories() {
           </div>
         </div>
 
-        <Alert>
-          <AlertCircle className="h-4 w-4" />
-          <AlertTitle>Antes de configurar proveedores</AlertTitle>
-          <AlertDescription>
-            Consulta las cuentas disponibles en QuickBooks para asignarlas correctamente a tus proveedores.
-            {categories?.length === 0 && (
-              <span className="block mt-2 font-semibold text-destructive">
-                ⚠️ No hay proveedores configurados. Agrega proveedores con cuentas válidas de QuickBooks.
-              </span>
-            )}
-          </AlertDescription>
-        </Alert>
+        {categories?.length === 0 && (
+          <Alert variant="destructive">
+            <AlertCircle className="h-4 w-4" />
+            <AlertTitle>⚠️ Sin proveedores configurados</AlertTitle>
+            <AlertDescription>
+              Los documentos NO se publicarán automáticamente en QuickBooks hasta que configures al menos un proveedor.
+              Sigue los pasos a continuación para empezar.
+            </AlertDescription>
+          </Alert>
+        )}
+
+        <Card className="border-primary/20 bg-primary/5">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Info className="h-5 w-5 text-primary" />
+              Guía Rápida de Configuración
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid md:grid-cols-3 gap-4">
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <div className="h-8 w-8 rounded-full bg-primary text-primary-foreground flex items-center justify-center font-bold">1</div>
+                  <h3 className="font-semibold">Consulta las Cuentas</h3>
+                </div>
+                <p className="text-sm text-muted-foreground pl-10">
+                  Revisa las cuentas disponibles en QuickBooks abajo para ver los códigos correctos
+                </p>
+              </div>
+              
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <div className="h-8 w-8 rounded-full bg-primary text-primary-foreground flex items-center justify-center font-bold">2</div>
+                  <h3 className="font-semibold">Agrega Proveedores</h3>
+                </div>
+                <p className="text-sm text-muted-foreground pl-10">
+                  Ingresa la identificación fiscal, nombre y código de cuenta para cada proveedor
+                </p>
+              </div>
+              
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <div className="h-8 w-8 rounded-full bg-primary text-primary-foreground flex items-center justify-center font-bold">3</div>
+                  <h3 className="font-semibold">Publicación Automática</h3>
+                </div>
+                <p className="text-sm text-muted-foreground pl-10">
+                  Los documentos de estos proveedores se publicarán automáticamente en QuickBooks
+                </p>
+              </div>
+            </div>
+
+            <Alert>
+              <CheckCircle2 className="h-4 w-4" />
+              <AlertTitle>Ejemplo de configuración</AlertTitle>
+              <AlertDescription className="space-y-1">
+                <p><strong>Identificación:</strong> 3101234567 (cédula jurídica del proveedor)</p>
+                <p><strong>Nombre:</strong> Corporación ABC S.A.</p>
+                <p><strong>Cuenta:</strong> 6000 (código de la cuenta de gastos en QuickBooks)</p>
+              </AlertDescription>
+            </Alert>
+          </CardContent>
+        </Card>
 
         <Card>
           <CardHeader>
@@ -164,38 +219,59 @@ export default function VendorCategories() {
 
         <Card>
           <CardHeader>
-            <CardTitle>Agregar Nueva Categoría</CardTitle>
+            <CardTitle>Agregar Nuevo Proveedor</CardTitle>
+            <CardDescription>
+              Completa todos los campos para agregar un proveedor. Los documentos de este proveedor se publicarán automáticamente.
+            </CardDescription>
           </CardHeader>
           <CardContent>
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-              <div>
-                <Label>Identificación</Label>
+              <div className="space-y-2">
+                <Label htmlFor="identification">
+                  Identificación Fiscal *
+                </Label>
                 <Input
+                  id="identification"
                   value={newCategory.vendor_identification}
                   onChange={(e) => setNewCategory({ ...newCategory, vendor_identification: e.target.value })}
                   placeholder="3101123456"
                 />
+                <p className="text-xs text-muted-foreground">
+                  Cédula jurídica o física del proveedor
+                </p>
               </div>
-              <div>
-                <Label>Nombre del Proveedor</Label>
+              <div className="space-y-2">
+                <Label htmlFor="vendor-name">
+                  Nombre del Proveedor *
+                </Label>
                 <Input
+                  id="vendor-name"
                   value={newCategory.vendor_name}
                   onChange={(e) => setNewCategory({ ...newCategory, vendor_name: e.target.value })}
                   placeholder="Compañía XYZ S.A."
                 />
+                <p className="text-xs text-muted-foreground">
+                  Nombre completo según factura
+                </p>
               </div>
-              <div>
-                <Label>Cuenta Contable</Label>
+              <div className="space-y-2">
+                <Label htmlFor="account-code">
+                  Cuenta QuickBooks *
+                </Label>
                 <Input
+                  id="account-code"
                   value={newCategory.account_code}
                   onChange={(e) => setNewCategory({ ...newCategory, account_code: e.target.value })}
                   placeholder="6000"
                 />
+                <p className="text-xs text-muted-foreground">
+                  Código de cuenta (ej: 5105, 6000)
+                </p>
               </div>
               <div className="flex items-end">
-                <Button onClick={handleAdd} className="w-full">
+                <Button onClick={handleAdd} className="w-full" size="lg">
                   <Plus className="h-4 w-4 mr-2" />
-                  Agregar
+                  Agregar Proveedor
                 </Button>
               </div>
             </div>
