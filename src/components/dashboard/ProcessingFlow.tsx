@@ -37,6 +37,27 @@ export const ProcessingFlow = () => {
   useEffect(() => {
     if (activeOrganization) {
       fetchFlowData();
+
+      // Subscribe to real-time updates
+      const channel = supabase
+        .channel('processing_flow_changes')
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'processed_documents'
+          },
+          () => {
+            console.log('Processing flow: Document changed, updating stats...');
+            fetchFlowData();
+          }
+        )
+        .subscribe();
+
+      return () => {
+        supabase.removeChannel(channel);
+      };
     }
   }, [activeOrganization]);
 

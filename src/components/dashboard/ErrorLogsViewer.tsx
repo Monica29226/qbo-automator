@@ -40,6 +40,32 @@ export const ErrorLogsViewer = () => {
   const [errors, setErrors] = useState<ErrorDocument[]>([]);
   const [errorCounts, setErrorCounts] = useState<Record<string, number>>({});
 
+  // Real-time subscription
+  useEffect(() => {
+    if (!activeOrganization || !isOpen) return;
+
+    const channel = supabase
+      .channel('error_logs_changes')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'processed_documents',
+          filter: `organization_id=eq.${activeOrganization}`
+        },
+        (payload) => {
+          console.log('Error logs: Document changed, refreshing...');
+          fetchErrors();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [activeOrganization, isOpen]);
+
   const fetchErrors = async () => {
     if (!activeOrganization) return;
 
