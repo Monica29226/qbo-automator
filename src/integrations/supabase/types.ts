@@ -576,6 +576,39 @@ export type Database = {
         }
         Relationships: []
       }
+      vendor_categories: {
+        Row: {
+          account_code: string
+          created_at: string
+          id: string
+          is_active: boolean
+          organization_id: string
+          updated_at: string
+          vendor_identification: string
+          vendor_name: string
+        }
+        Insert: {
+          account_code: string
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          organization_id: string
+          updated_at?: string
+          vendor_identification: string
+          vendor_name: string
+        }
+        Update: {
+          account_code?: string
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          organization_id?: string
+          updated_at?: string
+          vendor_identification?: string
+          vendor_name?: string
+        }
+        Relationships: []
+      }
       vendor_classification_rules: {
         Row: {
           account_code: string

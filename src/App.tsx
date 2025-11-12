@@ -19,6 +19,7 @@ import ErrorDocuments from "./pages/ErrorDocuments";
 import PublishedDocuments from "./pages/PublishedDocuments";
 import AcceptInvitation from "./pages/AcceptInvitation";
 import AuditReport from "./pages/AuditReport";
+import VendorCategories from "./pages/VendorCategories";
 import NotFound from "./pages/NotFound";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 
@@ -94,6 +95,14 @@ const App = () => (
             element={
               <ProtectedRoute requireAdmin>
                 <VendorRules />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/vendor-categories"
+            element={
+              <ProtectedRoute requireAdmin>
+                <VendorCategories />
               </ProtectedRoute>
             }
           />

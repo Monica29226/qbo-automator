@@ -1,31 +1,63 @@
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { FileText, Zap, Shield, BarChart3, ArrowRight, CheckCircle } from "lucide-react";
+import { FileText, Zap, Shield, BarChart3, ArrowRight, CheckCircle, Tag } from "lucide-react";
 import { Link } from "react-router-dom";
 
 const Index = () => {
   return (
     <div className="min-h-screen bg-background">
+      {/* Quick Actions - Admin Only */}
+      <section className="bg-muted/30 py-4 border-b">
+        <div className="container mx-auto px-6">
+          <div className="flex gap-3 overflow-x-auto pb-2">
+            <Link to="/dashboard">
+              <Button variant="outline" size="sm">
+                <BarChart3 className="mr-2 h-4 w-4" />
+                Dashboard
+              </Button>
+            </Link>
+            <Link to="/vendor-categories">
+              <Button variant="outline" size="sm">
+                <Tag className="mr-2 h-4 w-4" />
+                Categorías de Proveedores
+              </Button>
+            </Link>
+            <Link to="/review-queue">
+              <Button variant="outline" size="sm">
+                <FileText className="mr-2 h-4 w-4" />
+                Cola de Revisión
+              </Button>
+            </Link>
+            <Link to="/integrations">
+              <Button variant="outline" size="sm">
+                <Zap className="mr-2 h-4 w-4" />
+                Integraciones
+              </Button>
+            </Link>
+          </div>
+        </div>
+      </section>
+
       {/* Hero Section */}
       <section className="relative overflow-hidden bg-gradient-to-br from-primary/5 via-background to-accent/5">
         <div className="container mx-auto px-6 py-20 lg:py-32">
           <div className="max-w-4xl mx-auto text-center">
             <Badge className="mb-6" variant="secondary">
-              Automatización Contable para Costa Rica
+              Procesamiento XML Directo - Sin IA
             </Badge>
             <h1 className="text-4xl md:text-5xl lg:text-6xl font-bold text-foreground mb-6 leading-tight">
-              De Correo a QuickBooks
-              <span className="block text-primary mt-2">en Segundos</span>
+              De XML a QuickBooks
+              <span className="block text-primary mt-2">Sin Intervención Manual</span>
             </h1>
             <p className="text-lg md:text-xl text-muted-foreground mb-8 max-w-2xl mx-auto">
-              Procesa automáticamente facturas y notas de crédito desde Gmail/Outlook,
-              extrae XML según estándar Costa Rica, y registra en QuickBooks Online sin intervención manual.
+              Sistema de extracción XML directo con mapeo predefinido de proveedores. 
+              Procesa facturas y notas de crédito de Costa Rica según Hacienda v4.x y registra automáticamente en QuickBooks.
             </p>
             <div className="flex flex-col sm:flex-row gap-4 justify-center">
               <Button size="lg" asChild className="text-lg h-12 px-8">
-                <Link to="/auth">
-                  Comenzar Ahora
+                <Link to="/vendor-categories">
+                  Configurar Categorías
                   <ArrowRight className="ml-2 h-5 w-5" />
                 </Link>
               </Button>
@@ -44,43 +76,43 @@ const Index = () => {
         <div className="container mx-auto px-6">
           <div className="text-center mb-16">
             <h2 className="text-3xl md:text-4xl font-bold text-foreground mb-4">
-              Todo lo que Necesitas
+              Extracción XML Directa
             </h2>
             <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
-              Solución completa para automatizar el procesamiento de facturas de proveedores
+              Procesamiento rápido y preciso sin depender de IA
             </p>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
             <FeatureCard
               icon={FileText}
-              title="Extracción Automática"
-              description="Lee correos, detecta XML/PDF, parsea según estándar Hacienda CR v4.x con validación completa."
+              title="Parseo XML Nativo"
+              description="Lee directamente XML de Hacienda CR v4.x extrayendo todos los campos estructurados sin IA."
             />
             <FeatureCard
-              icon={Zap}
-              title="Clasificación Inteligente"
-              description="Mapea automáticamente proveedores usando catálogo, cédula jurídica y reglas personalizadas."
+              icon={Tag}
+              title="Mapeo Predefinido"
+              description="Catálogo de proveedores con identificación → cuenta contable para clasificación instantánea."
             />
             <FeatureCard
               icon={Shield}
-              title="Validación de IVA"
-              description="Calcula impuestos con tasas 0/1/2/4/13%, identifica exentos, y aplica descuentos correctamente."
+              title="Validación Automática"
+              description="Detecta duplicados, valida montos, identifica notas de crédito y aplica negativos correctamente."
             />
             <FeatureCard
               icon={BarChart3}
-              title="Integración QuickBooks"
-              description="Crea Bills y VendorCredits automáticamente con adjuntos XML/PDF y anti-duplicados."
+              title="Registro en QuickBooks"
+              description="Crea Bills y VendorCredits con líneas de detalle, impuestos y adjuntos PDF/XML."
             />
             <FeatureCard
               icon={CheckCircle}
               title="Cola de Revisión"
-              description="Envía documentos no reconocidos a cola manual con interfaz de aprobación rápida."
+              description="Proveedores sin categoría van a cola manual con interfaz de aprobación rápida."
             />
             <FeatureCard
-              icon={Shield}
-              title="Trazabilidad Total"
-              description="Registra cada paso del proceso con logs detallados y reportes de auditoría."
+              icon={Zap}
+              title="Importación Masiva"
+              description="Carga catálogo completo de proveedores desde Excel (identificación, nombre, cuenta)."
             />
           </div>
         </div>
@@ -91,10 +123,10 @@ const Index = () => {
         <div className="container mx-auto px-6">
           <div className="text-center mb-16">
             <h2 className="text-3xl md:text-4xl font-bold text-foreground mb-4">
-              Cómo Funciona
+              Flujo de Procesamiento
             </h2>
             <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
-              Flujo automatizado de principio a fin
+              100% automático con mapeo predefinido
             </p>
           </div>
 
@@ -102,23 +134,23 @@ const Index = () => {
             <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
               <ProcessStep
                 number="1"
-                title="Recibir"
-                description="Conecta Gmail/Outlook y define filtros de bandejas"
+                title="Recibir XML"
+                description="Lee correo o carga manual con XML de factura"
               />
               <ProcessStep
                 number="2"
-                title="Extraer"
-                description="Parse XML CR v4.x con validación de campos"
+                title="Extraer Datos"
+                description="Parse directo de campos: proveedor, monto, líneas"
               />
               <ProcessStep
                 number="3"
-                title="Clasificar"
-                description="Match automático con catálogo de proveedores"
+                title="Buscar Categoría"
+                description="Match por identificación en catálogo predefinido"
               />
               <ProcessStep
                 number="4"
-                title="Registrar"
-                description="Publica en QBO como Bill o VendorCredit"
+                title="Publicar QBO"
+                description="Crea Bill/Credit con cuenta asignada"
               />
             </div>
           </div>
@@ -129,13 +161,15 @@ const Index = () => {
       <section className="py-20 bg-gradient-to-br from-primary to-accent">
         <div className="container mx-auto px-6 text-center">
           <h2 className="text-3xl md:text-4xl font-bold text-primary-foreground mb-6">
-            Listo para Automatizar?
+            Listo para Configurar?
           </h2>
           <p className="text-lg text-primary-foreground/90 mb-8 max-w-2xl mx-auto">
-            Configura tus conexiones y comienza a procesar facturas en minutos
+            Define tu catálogo de proveedores y comienza a procesar facturas automáticamente
           </p>
-          <Button size="lg" variant="secondary" className="text-lg h-12 px-8">
-            Comenzar Ahora
+          <Button size="lg" variant="secondary" asChild className="text-lg h-12 px-8">
+            <Link to="/vendor-categories">
+              Configurar Ahora
+            </Link>
           </Button>
         </div>
       </section>
