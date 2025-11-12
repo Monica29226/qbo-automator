@@ -38,7 +38,7 @@ const PublishedDocuments = () => {
       .from("processed_documents")
       .select("id, doc_number, supplier_name, issue_date, total_amount, qbo_entity_id, pdf_attachment_url, created_at")
       .eq("organization_id", activeOrganization)
-      .eq("status", "published")
+      .in("status", ["processed", "duplicate"])
       .order("created_at", { ascending: false })
       .limit(100);
 

@@ -95,7 +95,7 @@ const Dashboard = () => {
         pending: data.filter((d) => d.status === "pending").length,
         total: thisMonth.length,
         errors: data.filter((d) => d.status === "error").length,
-        published: data.filter((d) => d.status === "published").length,
+        published: data.filter((d) => d.status === "processed" || d.status === "duplicate").length, // Corregido: "published" ya no existe, ahora es "processed"
       });
     }
   };

@@ -158,7 +158,7 @@ export default function AuditReport() {
   const handleRepublishCreditNotes = async () => {
     if (!activeOrganization) return;
 
-    const creditNotes = documents.filter(d => d.doc_type === "NC" && d.status === "published");
+    const creditNotes = documents.filter(d => d.doc_type === "NC" && d.status === "processed");
     
     if (creditNotes.length === 0) {
       toast.info("No hay notas de crédito publicadas para republicar");
@@ -264,7 +264,7 @@ export default function AuditReport() {
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold text-green-600">
-                {documents.filter(d => d.status === "published").length}
+                {documents.filter(d => d.status === "processed" || d.status === "duplicate").length}
               </div>
             </CardContent>
           </Card>
