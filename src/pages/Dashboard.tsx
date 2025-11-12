@@ -11,6 +11,8 @@ import { AICreditsMonitor } from "@/components/dashboard/AICreditsMonitor";
 import { QBOAccountsDiagnostic } from "@/components/dashboard/QBOAccountsDiagnostic";
 import { ErrorLogsViewer } from "@/components/dashboard/ErrorLogsViewer";
 import { OrganizationSwitcher } from "@/components/OrganizationSwitcher";
+import { PublishAllButton } from "@/components/PublishAllButton";
+import { SyncFromExcelButton } from "@/components/SyncFromExcelButton";
 import { useAuth } from "@/hooks/useAuth";
 import { Link, useNavigate } from "react-router-dom";
 import { useEffect, useState } from "react";
@@ -497,6 +499,7 @@ const Dashboard = () => {
                 </>
               )}
             </Button>
+            <SyncFromExcelButton />
             <Button 
               variant="secondary" 
               size="sm" 
