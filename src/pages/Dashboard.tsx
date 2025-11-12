@@ -12,7 +12,7 @@ import { QBOAccountsDiagnostic } from "@/components/dashboard/QBOAccountsDiagnos
 import { ErrorLogsViewer } from "@/components/dashboard/ErrorLogsViewer";
 import { OrganizationSwitcher } from "@/components/OrganizationSwitcher";
 import { PublishAllButton } from "@/components/PublishAllButton";
-import { SyncFromExcelButton } from "@/components/SyncFromExcelButton";
+import { SyncFromExcelDialog } from "@/components/SyncFromExcelDialog";
 import { useAuth } from "@/hooks/useAuth";
 import { Link, useNavigate } from "react-router-dom";
 import { useEffect, useState } from "react";
@@ -499,7 +499,7 @@ const Dashboard = () => {
                 </>
               )}
             </Button>
-            <SyncFromExcelButton />
+            <SyncFromExcelDialog />
             <Button 
               variant="secondary" 
               size="sm" 
