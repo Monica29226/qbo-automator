@@ -141,7 +141,7 @@ export const ErrorLogsViewer = () => {
                       <TableCell>
                         {new Intl.NumberFormat('es-CR', {
                           style: 'currency',
-                          currency: doc.currency
+                          currency: doc.currency || 'CRC'
                         }).format(doc.total_amount)}
                       </TableCell>
                       <TableCell className="max-w-[300px]">
