@@ -24,17 +24,43 @@ function parseLineItems(xml: string): any[] {
   const detailRegex = /<LineaDetalle>(.*?)<\/LineaDetalle>/gis;
   const lineItems: any[] = [];
   let match;
+  let lineNumber = 1;
   
   while ((match = detailRegex.exec(xml)) !== null) {
     const lineXml = match[1];
     
+    // Extract all relevant fields for each line item
+    const descripcion = parseXMLValue(lineXml, 'Detalle') || parseXMLValue(lineXml, 'NombreComercial') || '';
+    const cantidad = parseFloat(parseXMLValue(lineXml, 'Cantidad') || '1');
+    const unidadMedida = parseXMLValue(lineXml, 'UnidadMedida') || 'Unidad';
+    const precioUnitario = parseFloat(parseXMLValue(lineXml, 'PrecioUnitario') || '0');
+    const montoTotalLinea = parseFloat(parseXMLValue(lineXml, 'MontoTotalLinea') || '0');
+    const montoDescuento = parseFloat(parseXMLValue(lineXml, 'MontoDescuento') || '0');
+    const subtotal = parseFloat(parseXMLValue(lineXml, 'SubTotal') || (cantidad * precioUnitario).toString());
+    
+    // Extract tax information per line
+    const tarifa = parseFloat(parseXMLValue(lineXml, 'Tarifa') || '0');
+    const codigoTarifa = parseXMLValue(lineXml, 'CodigoTarifa') || parseXMLValue(lineXml, 'Codigo');
+    const montoImpuesto = parseFloat(parseXMLValue(lineXml, 'MontoImpuesto') || parseXMLValue(lineXml, 'Monto') || '0');
+    
+    // Extract product code if available
+    const codigoProducto = parseXMLValue(lineXml, 'Codigo') || parseXMLValue(lineXml, 'CodigoCabys');
+    
     lineItems.push({
-      descripcion: parseXMLValue(lineXml, 'Detalle') || parseXMLValue(lineXml, 'NombreComercial'),
-      cantidad: parseFloat(parseXMLValue(lineXml, 'Cantidad') || '1'),
-      precioUnitario: parseFloat(parseXMLValue(lineXml, 'PrecioUnitario') || '0'),
-      montoTotalLinea: parseFloat(parseXMLValue(lineXml, 'MontoTotalLinea') || '0'),
-      montoDescuento: parseFloat(parseXMLValue(lineXml, 'MontoDescuento') || '0'),
-      tarifa: parseFloat(parseXMLValue(lineXml, 'Tarifa') || '0')
+      numeroLinea: lineNumber++,
+      codigoProducto,
+      descripcion,
+      cantidad,
+      unidadMedida,
+      precioUnitario,
+      subtotal,
+      montoDescuento,
+      montoTotalLinea,
+      impuesto: {
+        tarifa,
+        codigoTarifa,
+        montoImpuesto
+      }
     });
   }
   

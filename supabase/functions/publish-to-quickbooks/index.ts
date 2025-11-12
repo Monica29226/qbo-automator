@@ -464,35 +464,43 @@ Deno.serve(async (req) => {
             const subtotal = cantidad * precioUnitario * multiplier; // Negativo si es nota de crédito
             
             if (Math.abs(subtotal) > 0) {
-              // Construir descripción detallada con toda la información disponible
-              const descripcionBase = item.descripcion || item.detalle || item.Detalle || "";
-              const unidadMedida = item.unidadMedida || item.UnidadMedida || "";
-              const codigoComercial = item.codigoComercial || item.codigo || "";
+              // Construir descripción detallada usando todos los campos capturados
+              const descripcionBase = item.descripcion || "";
+              const unidadMedida = item.unidadMedida || "";
+              const codigoProducto = item.codigoProducto || "";
+              const numeroLinea: number = item.numeroLinea || (lines.length + 1);
               
               let descripcionCompleta = descripcionBase;
               
-              // Agregar cantidad y unidad de medida si existen
+              // Agregar código de producto si existe
+              if (codigoProducto) {
+                descripcionCompleta = `[${codigoProducto}] ${descripcionCompleta}`;
+              }
+              
+              // Agregar cantidad y unidad de medida
               if (cantidad && unidadMedida) {
                 descripcionCompleta = `${cantidad} ${unidadMedida} - ${descripcionCompleta}`;
               } else if (cantidad > 1) {
                 descripcionCompleta = `Cant: ${cantidad} - ${descripcionCompleta}`;
               }
               
-              // Agregar código comercial si existe
-              if (codigoComercial) {
-                descripcionCompleta = `[${codigoComercial}] ${descripcionCompleta}`;
+              // Agregar precio unitario para referencia
+              if (precioUnitario > 0) {
+                descripcionCompleta += ` (₡${precioUnitario.toFixed(2)} c/u)`;
               }
               
               lines.push({
                 DetailType: "AccountBasedExpenseLineDetail",
                 Amount: subtotal,
-                Description: descripcionCompleta.substring(0, 4000) || `Línea ${lines.length + 1}`,
+                Description: descripcionCompleta.substring(0, 4000) || `Línea ${numeroLinea}`,
                 AccountBasedExpenseLineDetail: {
                   AccountRef: {
                     value: accountRef,
                   },
                 },
               });
+              
+              console.log(`✓ Line ${numeroLinea}: ${descripcionBase.substring(0, 50)} - Amount: ${subtotal}`);
             }
           }
         }
