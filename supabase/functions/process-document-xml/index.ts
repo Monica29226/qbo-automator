@@ -69,6 +69,17 @@ Deno.serve(async (req) => {
     const supplier_tax_id = parseXMLValue(xmlContent, 'Numero') || parseXMLValue(xmlContent, 'NumeroIdentificacion');
     const supplier_email = parseXMLValue(xmlContent, 'CorreoElectronico');
     
+    // Validate required fields
+    if (!doc_number) {
+      throw new Error("Document number (NumeroConsecutivo) not found in XML");
+    }
+    if (!issue_date || issue_date === '') {
+      throw new Error("Issue date (FechaEmision) not found in XML");
+    }
+    if (!supplier_name) {
+      throw new Error("Supplier name (Nombre) not found in XML");
+    }
+    
     // Parse amounts
     const subtotal = parseFloat(parseXMLValue(xmlContent, 'TotalGravado') || parseXMLValue(xmlContent, 'TotalVenta') || '0');
     const total_tax = parseFloat(parseXMLValue(xmlContent, 'TotalImpuesto') || '0');
@@ -82,11 +93,11 @@ Deno.serve(async (req) => {
     const detalle = parseLineItems(xmlContent);
     
     // Determine document type and apply negative amounts for credit notes
-    let doc_type = 'Invoice';
+    let doc_type = 'FacturaElectronica';
     let esNotaCredito = false;
     
     if (xmlContent.includes('NotaCreditoElectronica')) {
-      doc_type = 'Credit Note';
+      doc_type = 'NotaCreditoElectronica';
       esNotaCredito = true;
       total_amount = -Math.abs(total_amount);
       detalle.forEach(item => {
@@ -94,9 +105,9 @@ Deno.serve(async (req) => {
         item.precioUnitario = -Math.abs(item.precioUnitario);
       });
     } else if (xmlContent.includes('NotaDebitoElectronica')) {
-      doc_type = 'Debit Note';
+      doc_type = 'NotaDebitoElectronica';
     } else if (xmlContent.includes('TiqueteElectronico')) {
-      doc_type = 'Ticket';
+      doc_type = 'TiqueteElectronico';
     }
     
     // Check acceptance status
@@ -203,6 +214,7 @@ Deno.serve(async (req) => {
         success: true,
         status,
         message: status === "processed" ? "Document processed successfully" : "Needs manual review",
+        documentId: document.id,
         doc_id: document.id,
         account_code: accountCode
       }),
