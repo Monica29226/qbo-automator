@@ -56,7 +56,7 @@ export const ProcessingFlow = () => {
       setStats({
         total: docs.length,
         success: docs.filter(d => d.status === "processed").length,
-        errors: docs.filter(d => d.error_message).length,
+        errors: docs.filter(d => d.status === "error").length, // Corregido: usar status en lugar de error_message
         pending: docs.filter(d => d.status === "pending" || d.status === "review").length,
       });
     }
