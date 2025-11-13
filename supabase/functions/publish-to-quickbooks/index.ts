@@ -308,30 +308,50 @@ Deno.serve(async (req) => {
             console.log(`✓ Retrieved ${taxCodes.length} tax codes from QuickBooks`);
             
             // Buscar el código que coincida con la tasa de impuesto
-            // Soportar tasas: 1%, 2%, 4%, 8%, 13%
+            // Soportar tasas: 0%, 1%, 2%, 4%, 8%, 13%
             for (const taxCode of taxCodes) {
               const name = (taxCode.Name || "").toLowerCase();
               const description = (taxCode.Description || "").toLowerCase();
-              const targetRate = `${taxRate}%`.toLowerCase();
               
-              // Buscar por múltiples patrones para mayor flexibilidad
-              const patterns = [
-                targetRate,                    // "13%"
-                `(${taxRate}%)`,              // "(13%)"
-                `${taxRate} %`,               // "13 %"
-                `iva ${taxRate}%`,            // "iva 13%"
-                `impuesto ${taxRate}%`,       // "impuesto 13%"
-              ];
-              
-              for (const pattern of patterns) {
-                if (name.includes(pattern) || description.includes(pattern)) {
-                  console.log(`✅ Found tax code for ${taxRate}%: ${taxCode.Name} (ID: ${taxCode.Id})`);
-                  return taxCode.Id;
+              // Para tasa 0%, buscar códigos "NON", "Sin IVA", "0%", etc.
+              if (taxRate === 0) {
+                const zeroPatterns = [
+                  'non',
+                  'sin iva',
+                  'sin impuesto',
+                  'exento',
+                  'exempt',
+                  '0%',
+                  '(0%)',
+                ];
+                
+                for (const pattern of zeroPatterns) {
+                  if (name.includes(pattern) || description.includes(pattern)) {
+                    console.log(`✅ Found tax code for 0%: ${taxCode.Name} (ID: ${taxCode.Id})`);
+                    return taxCode.Id;
+                  }
+                }
+              } else {
+                // Para tasas > 0%
+                const targetRate = `${taxRate}%`.toLowerCase();
+                const patterns = [
+                  targetRate,                    // "13%"
+                  `(${taxRate}%)`,              // "(13%)"
+                  `${taxRate} %`,               // "13 %"
+                  `iva ${taxRate}%`,            // "iva 13%"
+                  `impuesto ${taxRate}%`,       // "impuesto 13%"
+                ];
+                
+                for (const pattern of patterns) {
+                  if (name.includes(pattern) || description.includes(pattern)) {
+                    console.log(`✅ Found tax code for ${taxRate}%: ${taxCode.Name} (ID: ${taxCode.Id})`);
+                    return taxCode.Id;
+                  }
                 }
               }
             }
             
-            console.warn(`⚠️ No tax code found for ${taxRate}% in QuickBooks. Available codes:`, 
+            console.error(`❌ No tax code found for ${taxRate}% in QuickBooks. Available codes:`, 
               taxCodes.slice(0, 10).map((t: any) => `${t.Name} (${t.Description || 'N/A'})`).join(', '));
             return null;
           } catch (error) {
@@ -587,27 +607,32 @@ Deno.serve(async (req) => {
                 },
               };
              
-             // Agregar TaxCodeRef a cada línea individual si tiene tasa de impuesto
+             // SIEMPRE agregar TaxCodeRef (requerido por QuickBooks)
+             const taxRateToUse = tasaImpuesto || 0;
+             
+             // Verificar si ya tenemos el código de impuesto en caché
+             if (!taxCodeCache.has(taxRateToUse)) {
+               const taxCodeRef = await getTaxCodeRef(taxRateToUse);
+               taxCodeCache.set(taxRateToUse, taxCodeRef);
+             }
+             
+             const taxCodeRef = taxCodeCache.get(taxRateToUse);
+             
+             if (!taxCodeRef) {
+               // CRÍTICO: QuickBooks requiere TaxCodeRef en TODAS las líneas
+               console.error(`❌ CRÍTICO: No se encontró código de impuesto para ${taxRateToUse}% - NO se puede crear el bill`);
+               throw new Error(`No se encontró código de impuesto para ${taxRateToUse}% en QuickBooks. Configure los códigos de impuesto correctamente antes de publicar.`);
+             }
+             
+             lineDetail.AccountBasedExpenseLineDetail.TaxCodeRef = {
+               value: taxCodeRef,
+             };
+             
              if (tasaImpuesto > 0) {
-               // Verificar si ya tenemos el código de impuesto en caché
-               if (!taxCodeCache.has(tasaImpuesto)) {
-                 const taxCodeRef = await getTaxCodeRef(tasaImpuesto);
-                 taxCodeCache.set(tasaImpuesto, taxCodeRef);
-               }
-               
-               const taxCodeRef = taxCodeCache.get(tasaImpuesto);
-               
-                 if (taxCodeRef) {
-                   lineDetail.AccountBasedExpenseLineDetail.TaxCodeRef = {
-                     value: taxCodeRef,
-                   };
-                   console.log(`✓ Line ${numeroLinea}: ${descripcionBase.substring(0, 40)} - Subtotal: ${lineAmount.toFixed(2)}, IVA ${tasaImpuesto}%: ${montoImpuesto.toFixed(2)} [TaxCode: ${taxCodeRef}] → QBO calculará total`);
-                 } else {
-                   console.warn(`⚠️ Line ${numeroLinea}: No se encontró código de impuesto para ${tasaImpuesto}% - enviando solo subtotal: ${lineAmount.toFixed(2)}`);
-                 }
-               } else {
-                 console.log(`✓ Line ${numeroLinea}: ${descripcionBase.substring(0, 50)} - Subtotal: ${lineAmount.toFixed(2)} (sin IVA)`);
-              }
+               console.log(`✓ Line ${numeroLinea}: ${descripcionBase.substring(0, 40)} - Subtotal: ${lineAmount.toFixed(2)}, IVA ${tasaImpuesto}%: ${montoImpuesto.toFixed(2)} [TaxCode: ${taxCodeRef}] → QBO calculará total`);
+             } else {
+               console.log(`✓ Line ${numeroLinea}: ${descripcionBase.substring(0, 50)} - Subtotal: ${lineAmount.toFixed(2)} [TaxCode: ${taxCodeRef} - Sin IVA]`);
+             }
               
               lines.push(lineDetail);
             }
