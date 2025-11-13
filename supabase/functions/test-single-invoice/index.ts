@@ -42,6 +42,7 @@ Deno.serve(async (req) => {
     };
 
     // PASO 1: Obtener credenciales de Gmail
+    const gmailCredsStepIndex = result.steps.length;
     result.steps.push({ step: 1, name: "Getting Gmail credentials", status: "running" });
     
     const { data: gmailAccount } = await supabase
@@ -93,9 +94,10 @@ Deno.serve(async (req) => {
         .eq("service_type", "gmail");
     }
 
-    result.steps[0].status = "completed";
+    result.steps[gmailCredsStepIndex].status = "completed";
 
     // PASO 2: Buscar factura en Gmail
+    const gmailSearchStepIndex = result.steps.length;
     result.steps.push({ step: 2, name: `Searching Gmail for ${doc_number}`, status: "running" });
     
     // Extraer solo los últimos 10-12 dígitos del número para búsqueda más flexible
@@ -135,11 +137,12 @@ Deno.serve(async (req) => {
     }
 
     console.log(`✅ Found ${searchData.messages.length} message(s) in Gmail`);
-    result.steps[1].status = "completed";
-    result.steps[1].messages_found = searchData.messages.length;
-    result.steps[1].found = searchData.messages.length;
+    result.steps[gmailSearchStepIndex].status = "completed";
+    result.steps[gmailSearchStepIndex].messages_found = searchData.messages.length;
+    result.steps[gmailSearchStepIndex].found = searchData.messages.length;
 
     // PASO 3: Descargar attachments
+    const downloadStepIndex = result.steps.length;
     result.steps.push({ step: 3, name: "Downloading XML and PDF", status: "running" });
     
     let xmlContent = "";
@@ -280,11 +283,12 @@ Deno.serve(async (req) => {
       throw new Error(`XML not found in any of the ${searchData.messages.length} email(s). The emails may only contain response XMLs (MensajeHacienda) and not the actual invoice.`);
     }
 
-    result.steps[2].status = "completed";
-    result.steps[2].xml_found = !!xmlContent;
-    result.steps[2].pdf_found = !!pdfUrl;
+    result.steps[downloadStepIndex].status = "completed";
+    result.steps[downloadStepIndex].xml_found = !!xmlContent;
+    result.steps[downloadStepIndex].pdf_found = !!pdfUrl;
 
     // PASO 4: Procesar XML
+    const processStepIndex = result.steps.length;
     result.steps.push({ step: 4, name: "Processing XML document", status: "running" });
     
     // Primero verificar si el documento ya existe
@@ -317,11 +321,11 @@ Deno.serve(async (req) => {
         account_code: existingDoc.xml_data?.cuentaContable || 'N/A',
         status: existingDoc.status
       };
-      result.steps[3].status = "completed";
-      result.steps[3].document_id = processData.documentId;
-      result.steps[3].account_code = processData.account_code;
-      result.steps[3].doc_status = processData.status;
-      result.steps[3].note = "Document already exists, updated attachment URLs";
+      result.steps[processStepIndex].status = "completed";
+      result.steps[processStepIndex].document_id = processData.documentId;
+      result.steps[processStepIndex].account_code = processData.account_code;
+      result.steps[processStepIndex].doc_status = processData.status;
+      result.steps[processStepIndex].note = "Document already exists, updated attachment URLs";
     } else {
       const { data: newProcessData, error: processError } = await supabase.functions.invoke(
         "process-document-xml",
@@ -341,10 +345,10 @@ Deno.serve(async (req) => {
       }
 
       processData = newProcessData;
-      result.steps[3].status = "completed";
-      result.steps[3].document_id = processData.documentId;
-      result.steps[3].account_code = processData.account_code;
-      result.steps[3].doc_status = processData.status;
+      result.steps[processStepIndex].status = "completed";
+      result.steps[processStepIndex].document_id = processData.documentId;
+      result.steps[processStepIndex].account_code = processData.account_code;
+      result.steps[processStepIndex].doc_status = processData.status;
     }
 
     // PASO 5: Publicar a QuickBooks (si está en estado 'processed' y NO tiene qbo_entity_id)
@@ -358,32 +362,51 @@ Deno.serve(async (req) => {
     console.log(`📤 Checking if document should be published. Status: ${docCheck?.status}, QBO ID: ${docCheck?.qbo_entity_id}, DocumentId: ${processData.documentId}`);
     
     if (docCheck?.status === "processed" && !docCheck?.qbo_entity_id) {
+      const publishStepIndex = result.steps.length;
       result.steps.push({ step: 5, name: "Publishing to QuickBooks", status: "running" });
       
       console.log(`📤 Attempting to publish document ${processData.documentId} to QuickBooks...`);
       
-      const { data: publishData, error: publishError } = await supabase.functions.invoke(
-        "publish-to-quickbooks",
-        {
-          body: {
-            organization_id,
-            document_ids: [processData.documentId],
-          },
-          headers: { Authorization: authHeader },
+      try {
+        const { data: publishData, error: publishError } = await supabase.functions.invoke(
+          "publish-to-quickbooks",
+          {
+            body: {
+              organization_id,
+              document_ids: [processData.documentId],
+            },
+            headers: { Authorization: authHeader },
+          }
+        );
+
+        if (publishError) {
+          console.error(`❌ Publishing error: ${publishError.message}`);
+          throw new Error(`Publishing failed: ${publishError.message}`);
         }
-      );
 
-      if (publishError) {
-        console.error(`❌ Publishing error: ${publishError.message}`);
-        throw new Error(`Publishing failed: ${publishError.message}`);
+        if (!publishData || typeof publishData !== 'object') {
+          console.error(`❌ Invalid publish response:`, publishData);
+          throw new Error(`Publishing returned invalid response`);
+        }
+
+        console.log(`✅ Publishing result:`, publishData);
+        
+        result.steps[publishStepIndex].status = "completed";
+        result.steps[publishStepIndex].published = publishData.published || 0;
+        result.steps[publishStepIndex].failed = publishData.failed || 0;
+        result.steps[publishStepIndex].errors = publishData.errors || [];
+        
+        // If there were failures, note them
+        if (publishData.failed > 0) {
+          result.steps[publishStepIndex].note = `${publishData.failed} document(s) failed to publish`;
+        }
+      } catch (publishErr) {
+        const errorMsg = publishErr instanceof Error ? publishErr.message : String(publishErr);
+        console.error(`❌ Publish exception:`, publishErr);
+        result.steps[publishStepIndex].status = "error";
+        result.steps[publishStepIndex].error = errorMsg;
+        throw new Error(`Publishing failed: ${errorMsg}`);
       }
-
-      console.log(`✅ Publishing result:`, publishData);
-      
-      result.steps[4].status = "completed";
-      result.steps[4].published = publishData.published || 0;
-      result.steps[4].failed = publishData.failed || 0;
-      result.steps[4].errors = publishData.errors || [];
     } else {
       console.log(`⚠️  Skipping QuickBooks - document status: ${docCheck?.status}, QBO ID: ${docCheck?.qbo_entity_id}`);
       
