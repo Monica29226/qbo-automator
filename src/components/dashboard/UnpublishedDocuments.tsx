@@ -4,7 +4,7 @@ import { AlertTriangle } from "lucide-react";
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
-import { PublishSingleDocButton } from "../PublishSingleDocButton";
+import { RepublishSingleDocButton } from "../RepublishSingleDocButton";
 
 interface UnpublishedDoc {
   id: string;
@@ -124,7 +124,7 @@ export const UnpublishedDocuments = () => {
                   <span className="font-semibold">{formatCurrency(doc.total_amount, doc.currency)}</span>
                 </div>
               </div>
-              <PublishSingleDocButton docNumber={doc.doc_number} documentId={doc.id} />
+              <RepublishSingleDocButton docNumber={doc.doc_number} documentId={doc.id} />
             </div>
           ))}
         </div>

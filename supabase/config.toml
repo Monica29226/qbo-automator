@@ -74,3 +74,9 @@ verify_jwt = true
 
 [functions.test-totals-validation]
 verify_jwt = false
+
+[functions.republish-single-document]
+verify_jwt = true
+
+[functions.delete-bills-from-quickbooks]
+verify_jwt = true
