@@ -13,6 +13,7 @@ import { ErrorLogsViewer } from "@/components/dashboard/ErrorLogsViewer";
 import { UnpublishedDocuments } from "@/components/dashboard/UnpublishedDocuments";
 import { TotalsValidationTest } from "@/components/dashboard/TotalsValidationTest";
 import { VerifyBillButton } from "@/components/dashboard/VerifyBillButton";
+import { RepublishIVAButton } from "@/components/dashboard/RepublishIVAButton";
 import { OrganizationSwitcher } from "@/components/OrganizationSwitcher";
 import { PublishAllButton } from "@/components/PublishAllButton";
 import { PublishReviewButton } from "@/components/PublishReviewButton";
@@ -562,6 +563,9 @@ const Dashboard = () => {
                 <PublishReviewButton />
               </div>
             )}
+            <div className="w-64">
+              <RepublishIVAButton />
+            </div>
             <PublishAllProcessedButton />
             {isAdmin && (
               <Button variant="outline" size="sm" asChild>

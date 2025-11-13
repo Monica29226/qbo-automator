@@ -54,6 +54,9 @@ verify_jwt = false
 [functions.process-document-xml]
 verify_jwt = false
 
+[functions.republish-bills-with-iva]
+verify_jwt = true
+
 [functions.republish-credit-notes]
 verify_jwt = true
 
