@@ -10,7 +10,6 @@ import { MonthSync } from "@/components/dashboard/MonthSync";
 import { AICreditsMonitor } from "@/components/dashboard/AICreditsMonitor";
 import { QBOAccountsDiagnostic } from "@/components/dashboard/QBOAccountsDiagnostic";
 import { ErrorLogsViewer } from "@/components/dashboard/ErrorLogsViewer";
-import { UnpublishedDocuments } from "@/components/dashboard/UnpublishedDocuments";
 import { TotalsValidationTest } from "@/components/dashboard/TotalsValidationTest";
 import { VerifyBillButton } from "@/components/dashboard/VerifyBillButton";
 import { DeleteBillsButton } from "@/components/dashboard/DeleteBillsButton";
@@ -732,10 +731,6 @@ const Dashboard = () => {
 
         <div className="mb-8">
           <MonthSync />
-        </div>
-
-        <div className="mb-8">
-          <UnpublishedDocuments />
         </div>
 
         <div className="mb-8">
