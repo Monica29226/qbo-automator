@@ -146,16 +146,27 @@ Deno.serve(async (req) => {
         });
         const attachData = await attachResponse.json();
         const xmlBuffer = Uint8Array.from(atob(attachData.data.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
-        xmlContent = new TextDecoder().decode(xmlBuffer);
+        const tempXml = new TextDecoder().decode(xmlBuffer);
         
-        // Upload XML to Supabase Storage
-        const xmlFileName = `${organization_id}/${Date.now()}_${filename}`;
-        const { data: xmlUploadData } = await supabase.storage
-          .from("company-documents")
-          .upload(xmlFileName, xmlBuffer, { contentType: "application/xml" });
-        
-        if (xmlUploadData) {
-          xmlUrl = supabase.storage.from("company-documents").getPublicUrl(xmlUploadData.path).data.publicUrl;
+        // Solo tomar el XML de la factura, NO el MensajeHacienda
+        if (tempXml.includes('FacturaElectronica') || 
+            tempXml.includes('NotaCreditoElectronica') || 
+            tempXml.includes('TiqueteElectronico') ||
+            tempXml.includes('NotaDebitoElectronica')) {
+          xmlContent = tempXml;
+          
+          // Upload XML to Supabase Storage
+          const xmlFileName = `${organization_id}/${Date.now()}_${filename}`;
+          const { data: xmlUploadData } = await supabase.storage
+            .from("company-documents")
+            .upload(xmlFileName, xmlBuffer, { contentType: "application/xml" });
+          
+          if (xmlUploadData) {
+            xmlUrl = supabase.storage.from("company-documents").getPublicUrl(xmlUploadData.path).data.publicUrl;
+          }
+          console.log("✅ Found invoice XML:", filename);
+        } else {
+          console.log("⏩ Skipping MensajeHacienda XML");
         }
       }
       
