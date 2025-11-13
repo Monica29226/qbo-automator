@@ -540,8 +540,16 @@ Deno.serve(async (req) => {
             const precioUnitario = parseFloat(item.precioUnitario) || 0;
             const subtotal = parseFloat(item.subtotal) || (cantidad * precioUnitario);
             const lineAmount = subtotal * multiplier; // Negativo si es nota de crédito
-            const montoImpuesto = (parseFloat(item.montoImpuesto) || 0) * multiplier; // IVA de esta línea
             const tasaImpuesto = parseFloat(item.tarifa) || 0; // Tasa de impuesto (1%, 2%, 4%, 8%, 13%, etc.)
+            
+            // CRÍTICO: Calcular montoImpuesto si no está presente en XML
+            let montoImpuesto = parseFloat(item.montoImpuesto) || 0;
+            if (montoImpuesto === 0 && tasaImpuesto > 0) {
+              // Calcular IVA: subtotal * (tasa / 100)
+              montoImpuesto = subtotal * (tasaImpuesto / 100);
+              console.log(`⚙️ Calculando IVA automáticamente: ${subtotal} × ${tasaImpuesto}% = ${montoImpuesto.toFixed(2)}`);
+            }
+            montoImpuesto = montoImpuesto * multiplier; // Aplicar multiplicador si es nota de crédito
             
             if (Math.abs(lineAmount) > 0) {
               // Construir descripción detallada usando todos los campos capturados
@@ -576,28 +584,28 @@ Deno.serve(async (req) => {
                   },
                 },
               };
-            
-            // Agregar TaxCodeRef a cada línea individual si tiene IVA
-            if (Math.abs(montoImpuesto) > 0 && tasaImpuesto > 0) {
-              // Verificar si ya tenemos el código de impuesto en caché
-              if (!taxCodeCache.has(tasaImpuesto)) {
-                const taxCodeRef = await getTaxCodeRef(tasaImpuesto);
-                taxCodeCache.set(tasaImpuesto, taxCodeRef);
-              }
-              
-              const taxCodeRef = taxCodeCache.get(tasaImpuesto);
-              
-              if (taxCodeRef) {
-                lineDetail.AccountBasedExpenseLineDetail.TaxCodeRef = {
-                  value: taxCodeRef,
-                };
-                console.log(`✓ Line ${numeroLinea}: ${descripcionBase.substring(0, 40)} - Amount: ${lineAmount.toFixed(2)} (subtotal), IVA ${tasaImpuesto}%: ${montoImpuesto.toFixed(2)} calculado por QB [TaxCode: ${taxCodeRef}]`);
-              } else {
-                console.warn(`⚠️ Line ${numeroLinea}: No se encontró código de impuesto para ${tasaImpuesto}% en QuickBooks - Enviando solo subtotal: ${lineAmount.toFixed(2)}`);
-              }
-            } else {
-              console.log(`✓ Line ${numeroLinea}: ${descripcionBase.substring(0, 50)} - Amount: ${lineAmount} (sin IVA o tasa 0%)`);
-            }
+             
+             // Agregar TaxCodeRef a cada línea individual si tiene tasa de impuesto
+             if (tasaImpuesto > 0) {
+               // Verificar si ya tenemos el código de impuesto en caché
+               if (!taxCodeCache.has(tasaImpuesto)) {
+                 const taxCodeRef = await getTaxCodeRef(tasaImpuesto);
+                 taxCodeCache.set(tasaImpuesto, taxCodeRef);
+               }
+               
+               const taxCodeRef = taxCodeCache.get(tasaImpuesto);
+               
+               if (taxCodeRef) {
+                 lineDetail.AccountBasedExpenseLineDetail.TaxCodeRef = {
+                   value: taxCodeRef,
+                 };
+                 console.log(`✓ Line ${numeroLinea}: ${descripcionBase.substring(0, 40)} - Amount: ${lineAmount.toFixed(2)} (subtotal), IVA ${tasaImpuesto}%: ${montoImpuesto.toFixed(2)} (calculado por QB) [TaxCode: ${taxCodeRef}]`);
+               } else {
+                 console.warn(`⚠️ Line ${numeroLinea}: No se encontró código de impuesto para ${tasaImpuesto}% en QuickBooks - IVA no será aplicado. Enviando subtotal: ${lineAmount.toFixed(2)}`);
+               }
+             } else {
+               console.log(`✓ Line ${numeroLinea}: ${descripcionBase.substring(0, 50)} - Amount: ${lineAmount.toFixed(2)} (sin IVA o tasa 0%)`);
+             }
               
               lines.push(lineDetail);
             }
