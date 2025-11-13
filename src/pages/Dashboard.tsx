@@ -16,7 +16,6 @@ import { DeleteBillsButton } from "@/components/dashboard/DeleteBillsButton";
 import { UpdateDocumentsWithVendors } from "@/components/dashboard/UpdateDocumentsWithVendors";
 import { ExtractMissingVendors } from "@/components/dashboard/ExtractMissingVendors";
 import { RepublishAllQBOButton } from "@/components/dashboard/RepublishAllQBOButton";
-import { CleanQBOReferences } from "@/components/dashboard/CleanQBOReferences";
 import { TestAutoSyncFlow } from "@/components/dashboard/TestAutoSyncFlow";
 import { PendingDocumentsLog } from "@/components/dashboard/PendingDocumentsLog";
 import { OrganizationSwitcher } from "@/components/OrganizationSwitcher";
@@ -516,7 +515,6 @@ const Dashboard = () => {
               <UpdateDocumentsWithVendors />
               <RepublishAllQBOButton />
               <DeleteBillsButton organizationId={activeOrganization || ''} />
-              <CleanQBOReferences />
             </div>
             <Button variant="outline" size="sm" asChild>
               <Link to="/review-queue">
@@ -532,7 +530,6 @@ const Dashboard = () => {
             {activeOrganization && (
               <>
                 <DeleteBillsButton organizationId={activeOrganization} />
-                <CleanQBOReferences />
               </>
             )}
             <PublishAllProcessedButton />
