@@ -386,7 +386,23 @@ Deno.serve(async (req) => {
           }
         }
         
-        // 2. Si no hay cuenta del vendor, buscar en las reglas de clasificación por nombre
+        // 2. Si no hay cuenta del vendor, buscar en vendor_categories por tax_id
+        if (!accountCode && doc.supplier_tax_id) {
+          const { data: vendorCategory } = await supabase
+            .from("vendor_categories")
+            .select("account_code")
+            .eq("organization_id", organization_id)
+            .eq("vendor_identification", doc.supplier_tax_id)
+            .eq("is_active", true)
+            .maybeSingle();
+          
+          if (vendorCategory?.account_code) {
+            accountCode = vendorCategory.account_code;
+            console.log(`✓ Account code from vendor_categories: ${accountCode} for ${doc.supplier_name}`);
+          }
+        }
+        
+        // 3. Si no hay cuenta, buscar en las reglas de clasificación por nombre
         if (!accountCode) {
           const { data: classificationRule } = await supabase
             .from("vendor_classification_rules")
@@ -403,7 +419,7 @@ Deno.serve(async (req) => {
           }
         }
         
-        // 3. Si aún no hay cuenta, buscar en xml_data.cuentaContable
+        // 4. Si aún no hay cuenta, buscar en xml_data.cuentaContable
         if (!accountCode && doc.xml_data?.cuentaContable) {
           const xmlAccount = doc.xml_data.cuentaContable.split(" ")[0];
           if (xmlAccount && xmlAccount !== "Gastos" && xmlAccount !== "por" && xmlAccount !== "clasificar") {
@@ -412,9 +428,9 @@ Deno.serve(async (req) => {
           }
         }
         
-        // 4. Si no se pudo determinar ninguna cuenta, error descriptivo
+        // 5. Si no se pudo determinar ninguna cuenta, error descriptivo
         if (!accountCode) {
-          const errorMsg = `❌ No se pudo determinar cuenta contable para factura ${doc.doc_number} - Proveedor: ${doc.supplier_name}. Opciones: 1) Configurar cuenta en vendor, 2) Agregar regla de clasificación, 3) Verificar XML cuentaContable`;
+          const errorMsg = `❌ No se pudo determinar cuenta contable para factura ${doc.doc_number} - Proveedor: ${doc.supplier_name} (Tax ID: ${doc.supplier_tax_id}). Opciones: 1) Agregar a vendor_categories, 2) Agregar regla de clasificación, 3) Verificar XML cuentaContable`;
           console.error(errorMsg);
           throw new Error(errorMsg);
         }
