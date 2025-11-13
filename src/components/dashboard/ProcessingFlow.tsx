@@ -96,9 +96,9 @@ export const ProcessingFlow = () => {
       });
     }
 
-    // Fetch rules count
+    // Fetch rules count from vendor_categories
     const { count } = await supabase
-      .from("vendor_classification_rules")
+      .from("vendor_categories")
       .select("*", { count: "exact", head: true })
       .eq("organization_id", activeOrganization)
       .eq("is_active", true);
