@@ -201,25 +201,6 @@ const Dashboard = () => {
     return months[month - 1];
   };
 
-  const handleSyncOctober = async () => {
-    await handleFetchGmailInvoices(10, 2025);
-    
-    // Esperar un momento y luego publicar automáticamente a QuickBooks
-    setTimeout(async () => {
-      toast.info("Publicando facturas de octubre a QuickBooks...");
-      await handlePublishToQuickBooks();
-    }, 2000);
-  };
-
-  const handleSyncNovember = async () => {
-    await handleFetchGmailInvoices(11, 2025);
-    
-    // Esperar un momento y luego publicar automáticamente a QuickBooks
-    setTimeout(async () => {
-      toast.info("Publicando facturas de noviembre a QuickBooks...");
-      await handlePublishToQuickBooks();
-    }, 2000);
-  };
 
   const handleAutoSync = async () => {
     if (!activeOrganization) return;
@@ -538,42 +519,6 @@ const Dashboard = () => {
               <DeleteBillsButton organizationId={activeOrganization || ''} />
               <CleanQBOReferences />
             </div>
-            <Button
-              variant="secondary" 
-              size="sm" 
-              onClick={handleSyncOctober}
-              disabled={isFetchingEmails}
-            >
-              {isFetchingEmails ? (
-                <>
-                  <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
-                  Procesando...
-                </>
-              ) : (
-                <>
-                  <Clock className="h-4 w-4 mr-2" />
-                  Sincronizar Octubre
-                </>
-              )}
-            </Button>
-            <Button 
-              variant="secondary" 
-              size="sm" 
-              onClick={handleSyncNovember}
-              disabled={isFetchingEmails}
-            >
-              {isFetchingEmails ? (
-                <>
-                  <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
-                  Procesando...
-                </>
-              ) : (
-                <>
-                  <Clock className="h-4 w-4 mr-2" />
-                  Sincronizar Noviembre
-                </>
-              )}
-            </Button>
             <Button variant="outline" size="sm" asChild>
               <Link to="/review-queue">
                 <Eye className="h-4 w-4 mr-2" />
