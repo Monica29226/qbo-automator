@@ -142,22 +142,14 @@ Deno.serve(async (req) => {
     // PASO 3: Descargar attachments
     result.steps.push({ step: 3, name: "Downloading XML and PDF", status: "running" });
     
-    const messageId = searchData.messages[0].id;
-    const messageUrl = `https://gmail.googleapis.com/gmail/v1/users/me/messages/${messageId}`;
-    
-    const messageResponse = await fetch(messageUrl, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
-
-    const message = await messageResponse.json();
-    
     let xmlContent = "";
     let pdfUrl = "";
     let xmlUrl = "";
+    let foundValidInvoice = false;
 
     // Función recursiva para extraer attachments de estructuras anidadas
-    const extractAttachments = async (parts: any[], depth = 0): Promise<void> => {
-      if (!parts || !Array.isArray(parts)) return;
+    const extractAttachments = async (messageId: string, parts: any[], depth = 0): Promise<boolean> => {
+      if (!parts || !Array.isArray(parts)) return false;
       
       console.log(`📎 Extracting attachments at depth ${depth}, found ${parts.length} parts`);
       
@@ -169,7 +161,8 @@ Deno.serve(async (req) => {
         
         // Si tiene subpartes, procesarlas recursivamente
         if (part.parts && Array.isArray(part.parts)) {
-          await extractAttachments(part.parts, depth + 1);
+          const found = await extractAttachments(messageId, part.parts, depth + 1);
+          if (found) return true;
           continue;
         }
         
@@ -214,6 +207,7 @@ Deno.serve(async (req) => {
               xmlUrl = supabase.storage.from("company-documents").getPublicUrl(xmlUploadData.path).data.publicUrl;
             }
             console.log("✅ Found invoice XML:", filename);
+            return true; // Señal de que encontramos un XML válido
           } else {
             console.log("⏩ Skipping MensajeHacienda or unknown XML type");
           }
@@ -252,20 +246,38 @@ Deno.serve(async (req) => {
           console.log("✅ Found PDF:", filename);
         }
       }
+      
+      return false;
     };
 
-    // Extraer attachments del mensaje
-    const parts = message.payload.parts || [message.payload];
-    await extractAttachments(parts);
+    // Iterar sobre TODOS los mensajes hasta encontrar uno con XML válido
+    console.log(`🔍 Searching through ${searchData.messages.length} message(s) for valid invoice XML...`);
+    
+    for (let i = 0; i < searchData.messages.length; i++) {
+      const messageId = searchData.messages[i].id;
+      console.log(`📧 Checking message ${i + 1}/${searchData.messages.length} (ID: ${messageId})`);
+      
+      const messageUrl = `https://gmail.googleapis.com/gmail/v1/users/me/messages/${messageId}`;
+      const messageResponse = await fetch(messageUrl, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+
+      const message = await messageResponse.json();
+
+      if (message.payload) {
+        const parts = message.payload.parts || [message.payload];
+        foundValidInvoice = await extractAttachments(messageId, parts);
+        
+        if (foundValidInvoice) {
+          console.log(`✅ Found valid invoice XML in message ${i + 1}`);
+          break;
+        }
+      }
+    }
 
     if (!xmlContent) {
-      console.error("❌ No valid XML found in email. Message structure:", JSON.stringify({
-        hasPayload: !!message.payload,
-        hasParts: !!message.payload?.parts,
-        partsLength: message.payload?.parts?.length,
-        payloadMimeType: message.payload?.mimeType
-      }));
-      throw new Error("XML not found in email. The email may not contain a valid invoice XML attachment.");
+      console.error(`❌ No valid invoice XML found in any of the ${searchData.messages.length} message(s)`);
+      throw new Error(`XML not found in any of the ${searchData.messages.length} email(s). The emails may only contain response XMLs (MensajeHacienda) and not the actual invoice.`);
     }
 
     result.steps[2].status = "completed";
