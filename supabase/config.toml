@@ -59,3 +59,15 @@ verify_jwt = true
 
 [functions.list-quickbooks-accounts]
 verify_jwt = true
+
+[functions.verify-bill-details]
+verify_jwt = true
+
+[functions.test-single-invoice]
+verify_jwt = true
+
+[functions.sync-from-excel]
+verify_jwt = true
+
+[functions.test-totals-validation]
+verify_jwt = false

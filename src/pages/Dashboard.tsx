@@ -12,6 +12,7 @@ import { QBOAccountsDiagnostic } from "@/components/dashboard/QBOAccountsDiagnos
 import { ErrorLogsViewer } from "@/components/dashboard/ErrorLogsViewer";
 import { UnpublishedDocuments } from "@/components/dashboard/UnpublishedDocuments";
 import { TotalsValidationTest } from "@/components/dashboard/TotalsValidationTest";
+import { VerifyBillButton } from "@/components/dashboard/VerifyBillButton";
 import { OrganizationSwitcher } from "@/components/OrganizationSwitcher";
 import { PublishAllButton } from "@/components/PublishAllButton";
 import { PublishReviewButton } from "@/components/PublishReviewButton";
@@ -468,6 +469,9 @@ const Dashboard = () => {
             )}
             {isAdmin && (
               <QBOAccountsDiagnostic />
+            )}
+            {isAdmin && (
+              <VerifyBillButton />
             )}
             <Button 
               variant="secondary" 
