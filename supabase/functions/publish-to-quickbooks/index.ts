@@ -479,10 +479,14 @@ Deno.serve(async (req) => {
         
         // 4. Si aún no hay cuenta, buscar en xml_data.cuentaContable
         if (!accountCode && doc.xml_data?.cuentaContable) {
-          const xmlAccount = doc.xml_data.cuentaContable.split(" ")[0];
+          // Extraer solo el código, ignorando descripción adicional
+          // Formato: "6130-03 Gasto de operacion:Utencilios cafeteria" -> "6130-03"
+          const rawAccount = doc.xml_data.cuentaContable.trim();
+          const xmlAccount = rawAccount.split(" ")[0].split(":")[0];
+          
           if (xmlAccount && xmlAccount !== "Gastos" && xmlAccount !== "por" && xmlAccount !== "clasificar") {
             accountCode = xmlAccount;
-            console.log(`✓ Account code from XML: ${accountCode}`);
+            console.log(`✓ Account code extracted from XML: ${accountCode} (from: ${rawAccount})`);
           }
         }
         
@@ -693,10 +697,12 @@ Deno.serve(async (req) => {
           };
           
           // Agregar tipo de cambio si está disponible en el XML
-          const exchangeRate = parseFloat(xmlData?.tipoCambio || '1');
+          const exchangeRate = parseFloat(xmlData?.resumen_factura?.tipoCambio || xmlData?.tipoCambio || '1');
           if (exchangeRate && exchangeRate > 1) {
             billPayload.ExchangeRate = exchangeRate;
             console.log(`💱 USD Invoice - Exchange Rate: ${exchangeRate}`);
+          } else {
+            console.log(`💰 Currency set to USD but no valid exchange rate found, QuickBooks will use default`);
           }
           console.log(`💰 Currency set to USD for invoice ${doc.doc_number}`);
         }
