@@ -213,6 +213,19 @@ Deno.serve(async (req) => {
     
     if (existingDoc) {
       console.log(`📄 Document already exists with status: ${existingDoc.status}`);
+      
+      // Actualizar URLs de attachments si no existen
+      if (xmlUrl || pdfUrl) {
+        console.log(`📎 Updating attachment URLs for existing document`);
+        await supabase
+          .from('processed_documents')
+          .update({
+            xml_attachment_url: xmlUrl || undefined,
+            pdf_attachment_url: pdfUrl || undefined,
+          })
+          .eq('id', existingDoc.id);
+      }
+      
       processData = {
         documentId: existingDoc.id,
         account_code: existingDoc.xml_data?.cuentaContable || 'N/A',
@@ -222,7 +235,7 @@ Deno.serve(async (req) => {
       result.steps[3].document_id = processData.documentId;
       result.steps[3].account_code = processData.account_code;
       result.steps[3].doc_status = processData.status;
-      result.steps[3].note = "Document already exists, using existing record";
+      result.steps[3].note = "Document already exists, updated attachment URLs";
     } else {
       const { data: newProcessData, error: processError } = await supabase.functions.invoke(
         "process-document-xml",
