@@ -551,6 +551,9 @@ Deno.serve(async (req) => {
             }
             montoImpuesto = montoImpuesto * multiplier; // Aplicar multiplicador si es nota de crédito
             
+            // Calcular monto total CON IVA incluido
+            const amountWithTax = lineAmount + montoImpuesto;
+            
             if (Math.abs(lineAmount) > 0) {
               // Construir descripción detallada usando todos los campos capturados
               const descripcionBase = item.descripcion || "";
@@ -572,11 +575,10 @@ Deno.serve(async (req) => {
                 descripcionCompleta = `Cant: ${cantidad} - ${descripcionCompleta}`;
               }
               
-              // CRÍTICO: Amount debe ser SOLO el subtotal (sin IVA)
-              // QuickBooks calcula el IVA automáticamente cuando se usa TaxCodeRef
+              // ENVIAR MONTO CON IVA INCLUIDO
               const lineDetail: any = {
                 DetailType: "AccountBasedExpenseLineDetail",
-                Amount: lineAmount, // Solo subtotal - QuickBooks calcula el IVA
+                Amount: amountWithTax, // Monto CON IVA incluido
                 Description: descripcionCompleta.substring(0, 4000) || `Línea ${numeroLinea}`,
                 AccountBasedExpenseLineDetail: {
                   AccountRef: {
@@ -595,17 +597,17 @@ Deno.serve(async (req) => {
                
                const taxCodeRef = taxCodeCache.get(tasaImpuesto);
                
-               if (taxCodeRef) {
-                  lineDetail.AccountBasedExpenseLineDetail.TaxCodeRef = {
-                    value: taxCodeRef,
-                  };
-                  console.log(`✓ Line ${numeroLinea}: ${descripcionBase.substring(0, 40)} - Amount: ${amountWithTax.toFixed(2)} (CON IVA), Base: ${lineAmount.toFixed(2)}, IVA ${tasaImpuesto}%: ${montoImpuesto.toFixed(2)} [TaxCode: ${taxCodeRef}]`);
-               } else {
-                 console.warn(`⚠️ Line ${numeroLinea}: No se encontró código de impuesto para ${tasaImpuesto}% en QuickBooks - IVA no será aplicado. Enviando subtotal: ${lineAmount.toFixed(2)}`);
-               }
-             } else {
-               console.log(`✓ Line ${numeroLinea}: ${descripcionBase.substring(0, 50)} - Amount: ${lineAmount.toFixed(2)} (sin IVA o tasa 0%)`);
-             }
+                if (taxCodeRef) {
+                   lineDetail.AccountBasedExpenseLineDetail.TaxCodeRef = {
+                     value: taxCodeRef,
+                   };
+                   console.log(`✓ Line ${numeroLinea}: ${descripcionBase.substring(0, 40)} - Amount: ${amountWithTax.toFixed(2)} (CON IVA incluido), Base: ${lineAmount.toFixed(2)}, IVA ${tasaImpuesto}%: ${montoImpuesto.toFixed(2)} [TaxCode: ${taxCodeRef}]`);
+                } else {
+                  console.warn(`⚠️ Line ${numeroLinea}: No se encontró código de impuesto para ${tasaImpuesto}% - enviando solo subtotal: ${lineAmount.toFixed(2)}`);
+                }
+              } else {
+                console.log(`✓ Line ${numeroLinea}: ${descripcionBase.substring(0, 50)} - Amount: ${amountWithTax.toFixed(2)} (sin IVA)`);
+              }
               
               lines.push(lineDetail);
             }
@@ -683,6 +685,7 @@ Deno.serve(async (req) => {
           Line: lines,
           DueDate: doc.issue_date,
           PrivateNote: `Factura XML: ${doc.doc_number}\nProveedor: ${doc.supplier_name}\nImportado automáticamente`,
+          GlobalTaxCalculation: "TaxInclusive", // Montos incluyen IVA
         };
 
         // NO agregar TxnTaxDetail a nivel de factura - el IVA se maneja línea por línea
