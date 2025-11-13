@@ -13,10 +13,16 @@ interface ProcessDocumentRequest {
   file_path?: string;
 }
 
-// Enhanced XML parser functions
+// Enhanced XML parser functions with namespace support
 function parseXMLValue(xml: string, tag: string): string {
-  const regex = new RegExp(`<${tag}>([^<]*)<\/${tag}>`, 'i');
-  const match = xml.match(regex);
+  // Try with namespace prefix (e.g., <ns:NumeroConsecutivo>)
+  let regex = new RegExp(`<[\\w]*:?${tag}[^>]*>([^<]*)<\\/[\\w]*:?${tag}>`, 'i');
+  let match = xml.match(regex);
+  if (match) return match[1].trim();
+  
+  // Try without namespace
+  regex = new RegExp(`<${tag}[^>]*>([^<]*)<\\/${tag}>`, 'i');
+  match = xml.match(regex);
   return match ? match[1].trim() : '';
 }
 
@@ -86,17 +92,22 @@ Deno.serve(async (req) => {
 
     const xmlContent = payload.xml_content || '';
     
+    console.log("📄 XML Preview:", xmlContent.substring(0, 500));
+    
     // Parse XML to extract all data
     const doc_key = parseXMLValue(xmlContent, 'Clave');
     const doc_number = parseXMLValue(xmlContent, 'NumeroConsecutivo');
     const issue_date_str = parseXMLValue(xmlContent, 'FechaEmision');
-    const issue_date = issue_date_str.split('T')[0];
+    const issue_date = issue_date_str ? issue_date_str.split('T')[0] : '';
     const supplier_name = parseXMLValue(xmlContent, 'Nombre');
     const supplier_tax_id = parseXMLValue(xmlContent, 'Numero') || parseXMLValue(xmlContent, 'NumeroIdentificacion');
     const supplier_email = parseXMLValue(xmlContent, 'CorreoElectronico');
     
+    console.log("🔍 Parsed values:", { doc_number, doc_key: doc_key?.substring(0, 20), supplier_name, supplier_tax_id });
+    
     // Validate required fields
     if (!doc_number) {
+      console.error("❌ NumeroConsecutivo not found. XML structure:", xmlContent.substring(0, 1000));
       throw new Error("Document number (NumeroConsecutivo) not found in XML");
     }
     if (!issue_date || issue_date === '') {
