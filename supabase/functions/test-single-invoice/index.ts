@@ -98,8 +98,12 @@ Deno.serve(async (req) => {
     // PASO 2: Buscar factura en Gmail
     result.steps.push({ step: 2, name: `Searching Gmail for ${doc_number}`, status: "running" });
     
-    const searchQuery = `has:attachment filename:xml ${doc_number}`;
-    const searchUrl = `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(searchQuery)}`;
+    // Extraer solo los últimos 10-12 dígitos del número para búsqueda más flexible
+    const searchNumber = doc_number.slice(-12);
+    console.log(`📧 Searching Gmail with: ${searchNumber} (from ${doc_number})`);
+    
+    const searchQuery = `has:attachment filename:xml ${searchNumber}`;
+    const searchUrl = `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(searchQuery)}&maxResults=10`;
     
     const searchResponse = await fetch(searchUrl, {
       headers: { Authorization: `Bearer ${accessToken}` },
@@ -112,10 +116,27 @@ Deno.serve(async (req) => {
     const searchData = await searchResponse.json();
     
     if (!searchData.messages || searchData.messages.length === 0) {
-      throw new Error(`Invoice ${doc_number} not found in Gmail`);
+      // Intentar búsqueda alternativa con número completo
+      console.log(`⚠️ No results with ${searchNumber}, trying full number...`);
+      const altSearchQuery = `has:attachment filename:xml ${doc_number}`;
+      const altSearchUrl = `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(altSearchQuery)}&maxResults=10`;
+      
+      const altSearchResponse = await fetch(altSearchUrl, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      
+      const altSearchData = await altSearchResponse.json();
+      
+      if (!altSearchData.messages || altSearchData.messages.length === 0) {
+        throw new Error(`Invoice ${doc_number} not found in Gmail. Tried searching: "${searchNumber}" and "${doc_number}"`);
+      }
+      
+      searchData.messages = altSearchData.messages;
     }
 
+    console.log(`✅ Found ${searchData.messages.length} message(s) in Gmail`);
     result.steps[1].status = "completed";
+    result.steps[1].messages_found = searchData.messages.length;
     result.steps[1].found = searchData.messages.length;
 
     // PASO 3: Descargar attachments
