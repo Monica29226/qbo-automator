@@ -282,6 +282,52 @@ Deno.serve(async (req) => {
         // Obtener o crear vendor
         const vendorId = await findOrCreateVendor(doc.supplier_name, doc.supplier_tax_id);
 
+        // Función para obtener código de impuesto de QuickBooks
+        const getTaxCodeRef = async (taxRate: number): Promise<string | null> => {
+          try {
+            console.log(`🔍 Buscando código de impuesto para tasa: ${taxRate}%`);
+            
+            const query = `SELECT Id, Name, Description FROM TaxCode WHERE Active = true MAXRESULTS 100`;
+            const queryUrl = `https://quickbooks.api.intuit.com/v3/company/${realmId}/query?query=${encodeURIComponent(query)}`;
+            
+            const response = await fetch(queryUrl, {
+              headers: {
+                "Authorization": `Bearer ${accessToken}`,
+                "Accept": "application/json",
+              },
+            });
+
+            if (!response.ok) {
+              console.error("Failed to fetch tax codes from QuickBooks");
+              return null;
+            }
+
+            const data = await response.json();
+            const taxCodes = data.QueryResponse?.TaxCode || [];
+            
+            console.log(`✓ Retrieved ${taxCodes.length} tax codes from QuickBooks`);
+            
+            // Buscar el código que coincida con la tasa de impuesto
+            for (const taxCode of taxCodes) {
+              const name = (taxCode.Name || "").toLowerCase();
+              const description = (taxCode.Description || "").toLowerCase();
+              const targetRate = `${taxRate}%`.toLowerCase();
+              
+              // Buscar por nombre o descripción que contenga el porcentaje
+              if (name.includes(targetRate) || description.includes(targetRate) || name.includes(`(${taxRate}%)`)) {
+                console.log(`✅ Found tax code: ${taxCode.Name} (ID: ${taxCode.Id})`);
+                return taxCode.Id;
+              }
+            }
+            
+            console.warn(`⚠️ No exact tax code found for ${taxRate}%`);
+            return null;
+          } catch (error) {
+            console.error("Error fetching tax codes:", error);
+            return null;
+          }
+        };
+
         // Función mejorada para obtener el ID real de QuickBooks de una cuenta por su código
         const getAccountIdByCode = async (accountCode: string): Promise<string | null> => {
           try {
@@ -581,10 +627,24 @@ Deno.serve(async (req) => {
 
         // Agregar TxnTaxDetail solo si hay IVA
         if (Math.abs(totalTax) > 0) {
-          billPayload.TxnTaxDetail = {
-            TotalTax: totalTax,
-          };
-          console.log(`✓ Added TxnTaxDetail with tax amount: ${totalTax}`);
+          // Obtener el código de impuesto de QuickBooks (13% para IVA Costa Rica)
+          const taxCodeRef = await getTaxCodeRef(13);
+          
+          if (taxCodeRef) {
+            billPayload.TxnTaxDetail = {
+              TxnTaxCodeRef: {
+                value: taxCodeRef,
+              },
+              TotalTax: totalTax,
+            };
+            console.log(`✓ Added TxnTaxDetail with tax code: ${taxCodeRef} and amount: ${totalTax}`);
+          } else {
+            // Fallback si no se encuentra el código de impuesto
+            billPayload.TxnTaxDetail = {
+              TotalTax: totalTax,
+            };
+            console.warn(`⚠️ No tax code found, using TotalTax only: ${totalTax}`);
+          }
         }
 
         console.log(`Creating bill in QuickBooks for ${doc.doc_number} with ${lines.length} line(s)`);
