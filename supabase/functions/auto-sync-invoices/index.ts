@@ -138,15 +138,17 @@ serve(async (req) => {
             status: "success",
           });
         } else {
-          // Actualizar log con 0 facturas procesadas
+          // Actualizar log con 0 facturas procesadas pero registrar los fallos
           if (syncLog) {
+            const hasFailures = gmailData.invoices_failed > 0;
             await supabase
               .from("sync_logs")
               .update({
-                status: "success",
-                gmail_fetched: 0,
+                status: hasFailures ? "error" : "success",
+                gmail_fetched: gmailData.messages_found || 0,
                 gmail_processed: 0,
-                gmail_failed: 0,
+                gmail_failed: gmailData.invoices_failed,
+                error_message: hasFailures ? `${gmailData.invoices_failed} facturas fallaron en procesamiento de Gmail` : null,
                 completed_at: new Date().toISOString(),
                 execution_time_ms: Date.now() - syncStartTime,
               })
@@ -157,7 +159,8 @@ serve(async (req) => {
             organization_id: org.id,
             organization_name: org.name,
             gmail_processed: 0,
-            status: "no_new_invoices",
+            gmail_failed: gmailData.invoices_failed,
+            status: gmailData.invoices_failed > 0 ? "partial_error" : "no_new_invoices",
           });
         }
       } catch (error) {

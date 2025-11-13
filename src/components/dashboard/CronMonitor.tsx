@@ -292,19 +292,30 @@ export const CronMonitor = () => {
             <CheckCircle className="h-4 w-4 text-muted-foreground" />
             <p className="text-xs text-muted-foreground font-medium">Última Sincronización</p>
           </div>
-          {lastSync && lastSync.status === "success" ? (
+          {lastSync ? (
             <>
-              <p className="text-lg font-bold">
-                {lastSync.gmail_processed} procesadas
-              </p>
-              <p className="text-xs text-muted-foreground mt-1">
-                {lastSync.qbo_published} publicadas en QB
-              </p>
+              {lastSync.status === "error" ? (
+                <>
+                  <p className="text-lg font-bold text-destructive">Error</p>
+                  <p className="text-xs text-muted-foreground mt-1 line-clamp-2">
+                    {lastSync.error_message || "Error en sincronización"}
+                  </p>
+                </>
+              ) : lastSync.status === "success" ? (
+                <>
+                  <p className="text-lg font-bold">
+                    {lastSync.gmail_processed} procesadas
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {lastSync.qbo_published} publicadas • {lastSync.gmail_failed > 0 ? `${lastSync.gmail_failed} fallidas` : '0 errores'}
+                  </p>
+                </>
+              ) : (
+                <p className="text-sm text-muted-foreground">En curso...</p>
+              )}
             </>
           ) : (
-            <p className="text-sm text-muted-foreground">
-              {lastSync?.status === "error" ? "Error" : "Sin datos"}
-            </p>
+            <p className="text-sm text-muted-foreground">Sin datos</p>
           )}
         </div>
       </div>
