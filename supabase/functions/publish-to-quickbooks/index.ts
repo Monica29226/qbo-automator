@@ -564,20 +564,18 @@ Deno.serve(async (req) => {
                 descripcionCompleta = `Cant: ${cantidad} - ${descripcionCompleta}`;
               }
               
-            // CRÍTICO: Incluir IVA en el Amount de cada línea
-            // QuickBooks requiere el monto total (subtotal + IVA) cuando se usa TaxCodeRef
-            const lineAmountWithTax = lineAmount + montoImpuesto;
-            
-            const lineDetail: any = {
-              DetailType: "AccountBasedExpenseLineDetail",
-              Amount: lineAmountWithTax, // Total CON IVA incluido
-              Description: descripcionCompleta.substring(0, 4000) || `Línea ${numeroLinea}`,
-              AccountBasedExpenseLineDetail: {
-                AccountRef: {
-                  value: accountRef,
+              // CRÍTICO: Amount debe ser SOLO el subtotal (sin IVA)
+              // QuickBooks calcula el IVA automáticamente cuando se usa TaxCodeRef
+              const lineDetail: any = {
+                DetailType: "AccountBasedExpenseLineDetail",
+                Amount: lineAmount, // Solo subtotal - QuickBooks calcula el IVA
+                Description: descripcionCompleta.substring(0, 4000) || `Línea ${numeroLinea}`,
+                AccountBasedExpenseLineDetail: {
+                  AccountRef: {
+                    value: accountRef,
+                  },
                 },
-              },
-            };
+              };
             
             // Agregar TaxCodeRef a cada línea individual si tiene IVA
             if (Math.abs(montoImpuesto) > 0 && tasaImpuesto > 0) {
@@ -593,9 +591,9 @@ Deno.serve(async (req) => {
                 lineDetail.AccountBasedExpenseLineDetail.TaxCodeRef = {
                   value: taxCodeRef,
                 };
-                console.log(`✓ Line ${numeroLinea}: ${descripcionBase.substring(0, 40)} - Subtotal: ${lineAmount.toFixed(2)}, IVA ${tasaImpuesto}%: ${montoImpuesto.toFixed(2)}, Total: ${lineAmountWithTax.toFixed(2)} [TaxCode: ${taxCodeRef}]`);
+                console.log(`✓ Line ${numeroLinea}: ${descripcionBase.substring(0, 40)} - Amount: ${lineAmount.toFixed(2)} (subtotal), IVA ${tasaImpuesto}%: ${montoImpuesto.toFixed(2)} calculado por QB [TaxCode: ${taxCodeRef}]`);
               } else {
-                console.warn(`⚠️ Line ${numeroLinea}: No se encontró código de impuesto para ${tasaImpuesto}% en QuickBooks - Enviando Amount CON IVA: ${lineAmountWithTax.toFixed(2)} (Subtotal: ${lineAmount.toFixed(2)} + IVA: ${montoImpuesto.toFixed(2)})`);
+                console.warn(`⚠️ Line ${numeroLinea}: No se encontró código de impuesto para ${tasaImpuesto}% en QuickBooks - Enviando solo subtotal: ${lineAmount.toFixed(2)}`);
               }
             } else {
               console.log(`✓ Line ${numeroLinea}: ${descripcionBase.substring(0, 50)} - Amount: ${lineAmount} (sin IVA o tasa 0%)`);
