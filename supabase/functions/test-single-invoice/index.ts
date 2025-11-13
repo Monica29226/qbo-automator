@@ -293,11 +293,22 @@ Deno.serve(async (req) => {
       result.steps[4].errors = publishData.errors || [];
     } else {
       console.log(`⚠️  Skipping QuickBooks - document status is: ${processData.status}`);
+      
+      // Determinar razón específica basada en el estado del documento
+      let skipReason = "Document needs manual review";
+      if (processData.account_code === "Gastos por clasificar") {
+        skipReason = "Vendor not found in vendor_categories - assigned to 'Gastos por clasificar'";
+      } else if (processData.status === "pending") {
+        skipReason = `Document has pending status (Account: ${processData.account_code}) - may need republishing`;
+      } else if (processData.status === "review") {
+        skipReason = `Document marked for review (Account: ${processData.account_code})`;
+      }
+      
       result.steps.push({ 
         step: 5, 
         name: "Skipped QuickBooks (needs review)", 
         status: "skipped",
-        reason: "Document needs manual review - vendor not in vendor_categories"
+        reason: skipReason
       });
     }
 
