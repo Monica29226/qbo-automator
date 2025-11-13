@@ -24,6 +24,24 @@ export const PublishSingleDocButton = ({ docNumber, documentId }: PublishSingleD
     toast.info(`Publicando factura ${docNumber} a QuickBooks...`);
 
     try {
+      // Si el documento está en "review", primero cambiarlo a "pending"
+      const { data: currentDoc } = await supabase
+        .from("processed_documents")
+        .select("status")
+        .eq("id", documentId)
+        .single();
+
+      if (currentDoc?.status === "review") {
+        await supabase
+          .from("processed_documents")
+          .update({ 
+            status: "pending",
+            error_message: null,
+            retry_count: 0
+          })
+          .eq("id", documentId);
+      }
+
       const { data, error } = await supabase.functions.invoke("publish-to-quickbooks", {
         body: {
           organization_id: activeOrganization,

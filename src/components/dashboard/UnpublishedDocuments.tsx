@@ -10,10 +10,13 @@ interface UnpublishedDoc {
   id: string;
   doc_number: string;
   supplier_name: string;
+  supplier_tax_id: string;
   issue_date: string;
   total_amount: number;
   currency: string;
   xml_data: any;
+  status: string;
+  error_message: string | null;
 }
 
 export const UnpublishedDocuments = () => {
@@ -33,15 +36,15 @@ export const UnpublishedDocuments = () => {
     setIsLoading(true);
     const { data, error } = await supabase
       .from("processed_documents")
-      .select("id, doc_number, supplier_name, issue_date, total_amount, currency, xml_data")
+      .select("id, doc_number, supplier_name, supplier_tax_id, issue_date, total_amount, currency, xml_data, status, error_message")
       .eq("organization_id", activeOrganization)
-      .eq("status", "processed")
+      .in("status", ["processed", "review"])
       .is("qbo_entity_id", null)
       .order("created_at", { ascending: false })
       .limit(20);
 
     if (!error && data) {
-      setDocuments(data);
+      setDocuments(data as any);
     }
     setIsLoading(false);
   };
@@ -94,6 +97,11 @@ export const UnpublishedDocuments = () => {
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 mb-1">
                   <span className="font-medium text-sm truncate">{doc.doc_number}</span>
+                  {doc.status === 'review' && (
+                    <Badge variant="destructive" className="text-xs">
+                      Requiere Revisión
+                    </Badge>
+                  )}
                   <Badge variant="outline" className="text-xs">
                     {doc.xml_data?.cuentaContable || 'Sin cuenta'}
                   </Badge>
@@ -101,6 +109,16 @@ export const UnpublishedDocuments = () => {
                 <p className="text-xs text-muted-foreground truncate mb-1">
                   {doc.supplier_name}
                 </p>
+                {doc.error_message && (
+                  <p className="text-xs text-destructive mb-1 line-clamp-2">
+                    {doc.error_message}
+                  </p>
+                )}
+                {doc.status === 'review' && doc.error_message?.includes('vendor not in vendor_categories') && (
+                  <p className="text-xs text-orange-600 mb-1">
+                    → Agregar proveedor ID {doc.supplier_tax_id} en Configuración → Proveedores
+                  </p>
+                )}
                 <div className="flex items-center gap-3 text-xs text-muted-foreground">
                   <span>{new Date(doc.issue_date).toLocaleDateString('es-CR')}</span>
                   <span className="font-semibold">{formatCurrency(doc.total_amount, doc.currency)}</span>
