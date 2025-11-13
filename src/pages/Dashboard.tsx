@@ -17,6 +17,7 @@ import { UpdateDocumentsWithVendors } from "@/components/dashboard/UpdateDocumen
 import { ExtractMissingVendors } from "@/components/dashboard/ExtractMissingVendors";
 import { RepublishAllQBOButton } from "@/components/dashboard/RepublishAllQBOButton";
 import { CleanQBOReferences } from "@/components/dashboard/CleanQBOReferences";
+import { TestAutoSyncFlow } from "@/components/dashboard/TestAutoSyncFlow";
 import { OrganizationSwitcher } from "@/components/OrganizationSwitcher";
 import { PublishAllButton } from "@/components/PublishAllButton";
 import { PublishReviewButton } from "@/components/PublishReviewButton";
@@ -517,6 +518,7 @@ const Dashboard = () => {
             </Button>
             <SyncFromExcelDialog />
             <div className="w-full space-y-2">
+              <TestAutoSyncFlow />
               <TestSingleInvoiceButton />
               <ExtractMissingVendors />
               <UpdateDocumentsWithVendors />
