@@ -682,6 +682,8 @@ Deno.serve(async (req) => {
           Line: lines,
           DueDate: doc.issue_date,
           PrivateNote: `Factura XML: ${doc.doc_number}\nProveedor: ${doc.supplier_name}\nImportado automáticamente`,
+          // CRÍTICO: Especificar que los impuestos NO están incluidos en el monto de las líneas
+          GlobalTaxCalculation: "TaxExcluded",
         };
 
         // Agregar TxnTaxDetail explícitamente con el total de impuestos
@@ -689,7 +691,7 @@ Deno.serve(async (req) => {
           billPayload.TxnTaxDetail = {
             TotalTax: totalTax
           };
-          console.log(`✓ Added TxnTaxDetail with TotalTax: ${totalTax.toFixed(2)}`);
+          console.log(`✓ Added TxnTaxDetail with TotalTax: ${totalTax.toFixed(2)} - GlobalTaxCalculation: TaxExcluded`);
         } else {
           console.log(`✓ No tax to add (totalTax: ${totalTax})`);
         }
