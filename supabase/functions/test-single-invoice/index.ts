@@ -155,64 +155,117 @@ Deno.serve(async (req) => {
     let pdfUrl = "";
     let xmlUrl = "";
 
-    // Extraer attachments
-    const parts = message.payload.parts || [message.payload];
-    for (const part of parts) {
-      const filename = part.filename?.toLowerCase() || "";
+    // Función recursiva para extraer attachments de estructuras anidadas
+    const extractAttachments = async (parts: any[], depth = 0): Promise<void> => {
+      if (!parts || !Array.isArray(parts)) return;
       
-      if (filename.endsWith(".xml") && part.body?.attachmentId) {
-        const attachUrl = `https://gmail.googleapis.com/gmail/v1/users/me/messages/${messageId}/attachments/${part.body.attachmentId}`;
-        const attachResponse = await fetch(attachUrl, {
-          headers: { Authorization: `Bearer ${accessToken}` },
-        });
-        const attachData = await attachResponse.json();
-        const xmlBuffer = Uint8Array.from(atob(attachData.data.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
-        const tempXml = new TextDecoder().decode(xmlBuffer);
+      console.log(`📎 Extracting attachments at depth ${depth}, found ${parts.length} parts`);
+      
+      for (const part of parts) {
+        const filename = part.filename?.toLowerCase() || "";
+        const mimeType = part.mimeType || "";
         
-        // Solo tomar el XML de la factura, NO el MensajeHacienda
-        if (tempXml.includes('FacturaElectronica') || 
-            tempXml.includes('NotaCreditoElectronica') || 
-            tempXml.includes('TiqueteElectronico') ||
-            tempXml.includes('NotaDebitoElectronica')) {
-          xmlContent = tempXml;
+        console.log(`  - Part: ${filename || '(no name)'}, mimeType: ${mimeType}, hasAttachmentId: ${!!part.body?.attachmentId}, hasData: ${!!part.body?.data}`);
+        
+        // Si tiene subpartes, procesarlas recursivamente
+        if (part.parts && Array.isArray(part.parts)) {
+          await extractAttachments(part.parts, depth + 1);
+          continue;
+        }
+        
+        // Procesar XML
+        if (filename.endsWith(".xml") && (part.body?.attachmentId || part.body?.data)) {
+          let xmlData: string;
           
-          // Upload XML to Supabase Storage
-          const xmlFileName = `${organization_id}/${Date.now()}_${filename}`;
-          const { data: xmlUploadData } = await supabase.storage
-            .from("company-documents")
-            .upload(xmlFileName, xmlBuffer, { contentType: "application/xml" });
-          
-          if (xmlUploadData) {
-            xmlUrl = supabase.storage.from("company-documents").getPublicUrl(xmlUploadData.path).data.publicUrl;
+          if (part.body.attachmentId) {
+            // Attachment separado
+            console.log(`📥 Downloading XML attachment: ${filename}`);
+            const attachUrl = `https://gmail.googleapis.com/gmail/v1/users/me/messages/${messageId}/attachments/${part.body.attachmentId}`;
+            const attachResponse = await fetch(attachUrl, {
+              headers: { Authorization: `Bearer ${accessToken}` },
+            });
+            const attachData = await attachResponse.json();
+            xmlData = attachData.data;
+          } else if (part.body.data) {
+            // Attachment inline
+            console.log(`📄 Using inline XML data: ${filename}`);
+            xmlData = part.body.data;
+          } else {
+            continue;
           }
-          console.log("✅ Found invoice XML:", filename);
-        } else {
-          console.log("⏩ Skipping MensajeHacienda XML");
+          
+          const xmlBuffer = Uint8Array.from(atob(xmlData.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
+          const tempXml = new TextDecoder().decode(xmlBuffer);
+          
+          // Solo tomar el XML de la factura, NO el MensajeHacienda
+          if (tempXml.includes('FacturaElectronica') || 
+              tempXml.includes('NotaCreditoElectronica') || 
+              tempXml.includes('TiqueteElectronico') ||
+              tempXml.includes('NotaDebitoElectronica')) {
+            xmlContent = tempXml;
+            
+            // Upload XML to Supabase Storage
+            const xmlFileName = `${organization_id}/${Date.now()}_${filename}`;
+            const { data: xmlUploadData } = await supabase.storage
+              .from("company-documents")
+              .upload(xmlFileName, xmlBuffer, { contentType: "application/xml" });
+            
+            if (xmlUploadData) {
+              xmlUrl = supabase.storage.from("company-documents").getPublicUrl(xmlUploadData.path).data.publicUrl;
+            }
+            console.log("✅ Found invoice XML:", filename);
+          } else {
+            console.log("⏩ Skipping MensajeHacienda or unknown XML type");
+          }
+        }
+        
+        // Procesar PDF
+        if (filename.endsWith(".pdf") && (part.body?.attachmentId || part.body?.data)) {
+          let pdfData: string;
+          
+          if (part.body.attachmentId) {
+            console.log(`📥 Downloading PDF attachment: ${filename}`);
+            const attachUrl = `https://gmail.googleapis.com/gmail/v1/users/me/messages/${messageId}/attachments/${part.body.attachmentId}`;
+            const attachResponse = await fetch(attachUrl, {
+              headers: { Authorization: `Bearer ${accessToken}` },
+            });
+            const attachData = await attachResponse.json();
+            pdfData = attachData.data;
+          } else if (part.body.data) {
+            console.log(`📄 Using inline PDF data: ${filename}`);
+            pdfData = part.body.data;
+          } else {
+            continue;
+          }
+          
+          const pdfBuffer = Uint8Array.from(atob(pdfData.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
+          
+          // Upload PDF to Supabase Storage
+          const pdfFileName = `${organization_id}/${Date.now()}_${filename}`;
+          const { data: pdfUploadData } = await supabase.storage
+            .from("company-documents")
+            .upload(pdfFileName, pdfBuffer, { contentType: "application/pdf" });
+          
+          if (pdfUploadData) {
+            pdfUrl = supabase.storage.from("company-documents").getPublicUrl(pdfUploadData.path).data.publicUrl;
+          }
+          console.log("✅ Found PDF:", filename);
         }
       }
-      
-      if (filename.endsWith(".pdf") && part.body?.attachmentId) {
-        const attachUrl = `https://gmail.googleapis.com/gmail/v1/users/me/messages/${messageId}/attachments/${part.body.attachmentId}`;
-        const attachResponse = await fetch(attachUrl, {
-          headers: { Authorization: `Bearer ${accessToken}` },
-        });
-        const attachData = await attachResponse.json();
-        const pdfBuffer = Uint8Array.from(atob(attachData.data.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
-        
-        // Upload PDF to Supabase Storage
-        const pdfFileName = `${organization_id}/${Date.now()}_${filename}`;
-        const { data: pdfUploadData } = await supabase.storage
-          .from("company-documents")
-          .upload(pdfFileName, pdfBuffer, { contentType: "application/pdf" });
-        
-        if (pdfUploadData) {
-          pdfUrl = supabase.storage.from("company-documents").getPublicUrl(pdfUploadData.path).data.publicUrl;
-        }
-      }
-    }
+    };
+
+    // Extraer attachments del mensaje
+    const parts = message.payload.parts || [message.payload];
+    await extractAttachments(parts);
 
     if (!xmlContent) {
-      throw new Error("XML not found in email");
+      console.error("❌ No valid XML found in email. Message structure:", JSON.stringify({
+        hasPayload: !!message.payload,
+        hasParts: !!message.payload?.parts,
+        partsLength: message.payload?.parts?.length,
+        payloadMimeType: message.payload?.mimeType
+      }));
+      throw new Error("XML not found in email. The email may not contain a valid invoice XML attachment.");
     }
 
     result.steps[2].status = "completed";
