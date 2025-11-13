@@ -31,19 +31,42 @@ export const PublishSingleDocButton = ({ docNumber, documentId }: PublishSingleD
         },
       });
 
-      if (error) throw error;
+      if (error) {
+        console.error("Error from edge function:", error);
+        const errorMsg = typeof error === 'string' 
+          ? error 
+          : error.message || JSON.stringify(error);
+        throw new Error(errorMsg);
+      }
 
       if (data.published > 0) {
         toast.success(`✓ Factura ${docNumber} publicada exitosamente a QuickBooks`);
         // Recargar la página después de 1 segundo
         setTimeout(() => window.location.reload(), 1000);
       } else if (data.failed > 0) {
-        const errorMsg = data.errors?.[0] || "Error desconocido";
-        toast.error(`Error al publicar: ${errorMsg}`);
+        const errors = data.errors || [];
+        const firstError = errors[0];
+        let errorMsg = "Error desconocido";
+        
+        if (typeof firstError === 'string') {
+          errorMsg = firstError;
+        } else if (firstError && firstError.error) {
+          errorMsg = firstError.error;
+        } else if (firstError) {
+          errorMsg = JSON.stringify(firstError);
+        }
+        
+        console.error("Publishing failed:", errorMsg, data);
+        toast.error(`Error al publicar: ${errorMsg}`, { duration: 6000 });
       }
     } catch (error) {
       console.error("Error publishing document:", error);
-      toast.error("Error al publicar la factura");
+      const errorMsg = error instanceof Error 
+        ? error.message 
+        : typeof error === 'string' 
+        ? error 
+        : "Error desconocido al publicar la factura";
+      toast.error(`Error: ${errorMsg}`, { duration: 6000 });
     } finally {
       setIsPublishing(false);
     }

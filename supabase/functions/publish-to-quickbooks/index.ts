@@ -591,17 +591,20 @@ Deno.serve(async (req) => {
         console.log(`XML: Subtotal=${xmlSubtotal}, IVA=${xmlTotalImpuesto}, Descuentos=${xmlTotalDescuentos}, Total=${xmlTotalComprobante}`);
         console.log(`Calculado: Subtotal=${calculatedSubtotal.toFixed(2)}, IVA=${calculatedTax.toFixed(2)}, Total=${calculatedTotal.toFixed(2)}`);
         
-        // VALIDACIÓN CORREGIDA: Fórmula correcta considerando descuentos
-        // (subtotal - descuentos) + IVA = total
+        // VALIDACIÓN CORREGIDA: Usar doc.total_amount como referencia real
+        // porque xmlTotalComprobante puede estar incorrecto en algunos XMLs (no incluye IVA)
         const tolerance = 1.0;
+        const docTotalAmount = Math.abs(doc.total_amount);
         const xmlSubtotalAfterDiscount = xmlSubtotal - xmlTotalDescuentos;
         const xmlExpectedTotal = xmlSubtotalAfterDiscount + xmlTotalImpuesto;
-        const xmlInternalDiff = Math.abs(xmlExpectedTotal - xmlTotalComprobante);
         
-        console.log(`Validación XML: ((${xmlSubtotal} - ${xmlTotalDescuentos}) + ${xmlTotalImpuesto}) = ${xmlExpectedTotal.toFixed(2)} vs Total=${xmlTotalComprobante}, Diff=${xmlInternalDiff.toFixed(2)}`);
+        // Comparar contra el total del documento (más confiable que el XML)
+        const totalDiff = Math.abs(xmlExpectedTotal - docTotalAmount);
         
-        if (xmlInternalDiff > tolerance) {
-          const errorMsg = `VALIDACIÓN FALLIDA - Diferencias: Subtotal=${xmlSubtotal.toFixed(2)}₡, Descuentos=${xmlTotalDescuentos.toFixed(2)}₡, IVA=${xmlTotalImpuesto.toFixed(2)}₡, Total=${xmlTotalComprobante.toFixed(2)}₡. Calculado: ${xmlExpectedTotal.toFixed(2)}₡. Diferencia: ${xmlInternalDiff.toFixed(2)}₡`;
+        console.log(`Validación: ((${xmlSubtotal} - ${xmlTotalDescuentos}) + ${xmlTotalImpuesto}) = ${xmlExpectedTotal.toFixed(2)} vs Doc Total=${docTotalAmount.toFixed(2)}, Diff=${totalDiff.toFixed(2)}`);
+        
+        if (totalDiff > tolerance) {
+          const errorMsg = `VALIDACIÓN FALLIDA - Diferencias: Subtotal=${xmlSubtotal.toFixed(2)}₡, Descuentos=${xmlTotalDescuentos.toFixed(2)}₡, IVA=${xmlTotalImpuesto.toFixed(2)}₡. Total esperado=${xmlExpectedTotal.toFixed(2)}₡ vs Total documento=${docTotalAmount.toFixed(2)}₡. Diferencia: ${totalDiff.toFixed(2)}₡`;
           console.error(errorMsg);
           
           await supabase
