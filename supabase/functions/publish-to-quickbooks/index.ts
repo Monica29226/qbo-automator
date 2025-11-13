@@ -686,6 +686,21 @@ Deno.serve(async (req) => {
           GlobalTaxCalculation: "TaxExcluded",
         };
 
+        // Agregar soporte multi-moneda para facturas en USD
+        if (doc.currency && doc.currency.toUpperCase() === 'USD') {
+          billPayload.CurrencyRef = {
+            value: "USD"
+          };
+          
+          // Agregar tipo de cambio si está disponible en el XML
+          const exchangeRate = parseFloat(xmlData?.tipoCambio || '1');
+          if (exchangeRate && exchangeRate > 1) {
+            billPayload.ExchangeRate = exchangeRate;
+            console.log(`💱 USD Invoice - Exchange Rate: ${exchangeRate}`);
+          }
+          console.log(`💰 Currency set to USD for invoice ${doc.doc_number}`);
+        }
+
         // Agregar TxnTaxDetail explícitamente con el total de impuestos
         if (totalTax > 0) {
           billPayload.TxnTaxDetail = {
