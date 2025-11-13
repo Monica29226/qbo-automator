@@ -565,7 +565,7 @@ Deno.serve(async (req) => {
           ? doc.doc_number.substring(doc.doc_number.length - 21) // Últimos 21 caracteres
           : doc.doc_number;
 
-        // VALIDACIÓN DE TOTALES: Verificar que subtotal + IVA - descuentos = total antes de publicar
+        // VALIDACIÓN DE TOTALES: Verificar consistencia antes de publicar
         console.log("=== VALIDACIÓN DE TOTALES ===");
         
         // Los valores están directamente en xml_data (NO en resumen_factura)
@@ -591,15 +591,16 @@ Deno.serve(async (req) => {
         console.log(`XML: Subtotal=${xmlSubtotal}, IVA=${xmlTotalImpuesto}, Descuentos=${xmlTotalDescuentos}, Total=${xmlTotalComprobante}`);
         console.log(`Calculado: Subtotal=${calculatedSubtotal.toFixed(2)}, IVA=${calculatedTax.toFixed(2)}, Total=${calculatedTotal.toFixed(2)}`);
         
-        // Validar la consistencia interna del XML: subTotal + totalImpuesto - totalDescuentos = totalComprobante
+        // VALIDACIÓN CORREGIDA: El subtotal en xml_data YA tiene descuentos aplicados
+        // Fórmula correcta: subtotal_con_descuento + IVA = total
         const tolerance = 1.0;
-        const xmlExpectedTotal = xmlSubtotal + xmlTotalImpuesto - xmlTotalDescuentos;
+        const xmlExpectedTotal = xmlSubtotal + xmlTotalImpuesto;
         const xmlInternalDiff = Math.abs(xmlExpectedTotal - xmlTotalComprobante);
         
-        console.log(`Validación XML interna: (${xmlSubtotal} + ${xmlTotalImpuesto} - ${xmlTotalDescuentos}) = ${xmlExpectedTotal.toFixed(2)} vs Total=${xmlTotalComprobante}, Diff=${xmlInternalDiff.toFixed(2)}`);
+        console.log(`Validación XML: (${xmlSubtotal} + ${xmlTotalImpuesto}) = ${xmlExpectedTotal.toFixed(2)} vs Total=${xmlTotalComprobante}, Diff=${xmlInternalDiff.toFixed(2)}`);
         
         if (xmlInternalDiff > tolerance) {
-          const errorMsg = `VALIDACIÓN FALLIDA - El XML tiene inconsistencias internas: (Subtotal + IVA - Descuentos) = ${xmlExpectedTotal.toFixed(2)}₡ pero Total = ${xmlTotalComprobante}₡. Diferencia: ${xmlInternalDiff.toFixed(2)}₡`;
+          const errorMsg = `VALIDACIÓN FALLIDA - Diferencias: Subtotal=${xmlSubtotal.toFixed(2)}₡, IVA=${xmlTotalImpuesto.toFixed(2)}₡, Total=${xmlTotalComprobante.toFixed(2)}₡. Los totales calculados no coinciden con el XML. Revisar líneas e impuestos.`;
           console.error(errorMsg);
           
           await supabase
