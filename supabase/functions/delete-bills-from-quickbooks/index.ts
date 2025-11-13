@@ -126,9 +126,9 @@ Deno.serve(async (req) => {
         );
 
         if (!billGetResponse.ok) {
-          const errorText = await billGetResponse.text();
-          console.error(`Failed to get bill for deletion: ${errorText}`);
-          throw new Error(`Failed to get bill: ${errorText}`);
+          const errorMsg = `Failed to get bill: ${billGetResponse.status} ${billGetResponse.statusText}`;
+          console.error(errorMsg);
+          throw new Error(errorMsg);
         }
 
         const billData = await billGetResponse.json();
@@ -152,9 +152,9 @@ Deno.serve(async (req) => {
         );
 
         if (!deleteResponse.ok) {
-          const errorText = await deleteResponse.text();
-          console.error(`Failed to delete bill: ${errorText}`);
-          throw new Error(errorText);
+          const errorMsg = `Failed to delete bill: ${deleteResponse.status} ${deleteResponse.statusText}`;
+          console.error(errorMsg);
+          throw new Error(errorMsg);
         }
 
         console.log(`✅ Deleted bill ${doc.doc_number} from QuickBooks`);
