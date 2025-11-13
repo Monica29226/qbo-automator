@@ -27,34 +27,38 @@ export const ExtractMissingVendors = () => {
     toast.info("Extrayendo vendors faltantes...");
 
     try {
-      // 1. Obtener todos los documentos únicos por proveedor
+      // 1. Obtener proveedores únicos de documentos pendientes
       const { data: docs, error: docsError } = await supabase
         .from("processed_documents")
-        .select("supplier_name, supplier_tax_id")
+        .select("supplier_name, supplier_tax_id, supplier_email")
         .eq("organization_id", activeOrganization)
+        .eq("status", "pending")
+        .is("vendor_id", null)
         .not("supplier_tax_id", "is", null);
 
       if (docsError) throw docsError;
 
-      // 2. Obtener vendors existentes
+      // 2. Obtener vendors existentes en la tabla vendors
       const { data: existingVendors, error: vendorsError } = await supabase
-        .from("vendor_categories")
-        .select("vendor_identification")
-        .eq("organization_id", activeOrganization);
+        .from("vendors")
+        .select("vendor_tax_id")
+        .eq("organization_id", activeOrganization)
+        .eq("is_active", true);
 
       if (vendorsError) throw vendorsError;
 
       const existingIds = new Set(
-        existingVendors?.map(v => v.vendor_identification) || []
+        existingVendors?.map(v => v.vendor_tax_id) || []
       );
 
-      // 3. Filtrar vendors únicos que NO están en vendor_categories
+      // 3. Filtrar vendors únicos que NO existen
       const uniqueVendors = new Map();
       docs?.forEach(doc => {
         if (!existingIds.has(doc.supplier_tax_id)) {
           uniqueVendors.set(doc.supplier_tax_id, {
             tax_id: doc.supplier_tax_id,
-            name: doc.supplier_name
+            name: doc.supplier_name,
+            email: doc.supplier_email
           });
         }
       });
@@ -94,13 +98,20 @@ export const ExtractMissingVendors = () => {
     toast.info(`Agregando ${vendor.name}...`);
 
     try {
+      const accountCode = vendorAccounts[vendor.tax_id] || "5105";
+      
+      // Insertar en la tabla vendors
       const { error } = await supabase
-        .from("vendor_categories")
+        .from("vendors")
         .insert({
           organization_id: activeOrganization,
-          vendor_identification: vendor.tax_id,
           vendor_name: vendor.name,
-          account_code: vendorAccounts[vendor.tax_id] || "5105",
+          vendor_tax_id: vendor.tax_id,
+          vendor_email: vendor.email || null,
+          qbo_vendor_ref: "", // Se llenará cuando se sincronice con QBO
+          default_account_ref: accountCode,
+          tax_rate: 0.13, // IVA por defecto en Costa Rica
+          tax_treatment: "standard",
           is_active: true
         });
 
@@ -121,6 +132,41 @@ export const ExtractMissingVendors = () => {
     } catch (error) {
       console.error("Error adding vendor:", error);
       toast.error(`Error al agregar ${vendor.name}`);
+    }
+  };
+
+  const handleAddAll = async () => {
+    if (!activeOrganization || missingVendors.length === 0) return;
+
+    toast.info(`Agregando ${missingVendors.length} vendors...`);
+
+    try {
+      const vendorsToInsert = missingVendors.map(vendor => ({
+        organization_id: activeOrganization,
+        vendor_name: vendor.name,
+        vendor_tax_id: vendor.tax_id,
+        vendor_email: vendor.email || null,
+        qbo_vendor_ref: "", // Se llenará cuando se sincronice con QBO
+        default_account_ref: vendorAccounts[vendor.tax_id] || "5105",
+        tax_rate: 0.13, // IVA por defecto en Costa Rica
+        tax_treatment: "standard",
+        is_active: true
+      }));
+
+      const { error } = await supabase
+        .from("vendors")
+        .insert(vendorsToInsert);
+
+      if (error) throw error;
+
+      toast.success(`✓ ${missingVendors.length} vendors agregados correctamente`);
+      setMissingVendors([]);
+      setVendorAccounts({});
+      setShowResult(false);
+
+    } catch (error) {
+      console.error("Error adding all vendors:", error);
+      toast.error("Error al agregar vendors masivamente");
     }
   };
 
@@ -150,18 +196,28 @@ export const ExtractMissingVendors = () => {
           <DialogHeader>
             <DialogTitle>Vendors Faltantes ({missingVendors.length})</DialogTitle>
             <DialogDescription>
-              Estos proveedores están en tus facturas pero no en vendor_categories
+              Estos proveedores están en tus facturas pero no han sido creados en el sistema
             </DialogDescription>
           </DialogHeader>
 
           {missingVendors.length > 0 ? (
             <div className="space-y-4">
+              <div className="flex justify-end mb-4">
+                <Button 
+                  onClick={handleAddAll}
+                  variant="default"
+                >
+                  Agregar Todos ({missingVendors.length})
+                </Button>
+              </div>
+              
               <div className="max-h-96 overflow-y-auto space-y-3">
                 {missingVendors.map((vendor, index) => (
                   <div key={index} className="p-4 border rounded-lg space-y-3">
                     <div className="font-medium">{vendor.name}</div>
                     <div className="text-sm text-muted-foreground">
                       ID: {vendor.tax_id}
+                      {vendor.email && <span className="ml-2">• {vendor.email}</span>}
                     </div>
                     <div className="flex items-center gap-2">
                       <label className="text-sm font-medium whitespace-nowrap">
