@@ -201,27 +201,52 @@ Deno.serve(async (req) => {
     // PASO 4: Procesar XML
     result.steps.push({ step: 4, name: "Processing XML document", status: "running" });
     
-    const { data: processData, error: processError } = await supabase.functions.invoke(
-      "process-document-xml",
-      {
-        body: {
-          organization_id,
-          xml_content: xmlContent,
-          xml_attachment_url: xmlUrl,
-          pdf_attachment_url: pdfUrl,
-        },
-        headers: { Authorization: authHeader },
+    // Primero verificar si el documento ya existe
+    const { data: existingDoc } = await supabase
+      .from('processed_documents')
+      .select('id, status, xml_data')
+      .eq('organization_id', organization_id)
+      .eq('doc_number', doc_number)
+      .maybeSingle();
+
+    let processData;
+    
+    if (existingDoc) {
+      console.log(`📄 Document already exists with status: ${existingDoc.status}`);
+      processData = {
+        documentId: existingDoc.id,
+        account_code: existingDoc.xml_data?.cuentaContable || 'N/A',
+        status: existingDoc.status
+      };
+      result.steps[3].status = "completed";
+      result.steps[3].document_id = processData.documentId;
+      result.steps[3].account_code = processData.account_code;
+      result.steps[3].doc_status = processData.status;
+      result.steps[3].note = "Document already exists, using existing record";
+    } else {
+      const { data: newProcessData, error: processError } = await supabase.functions.invoke(
+        "process-document-xml",
+        {
+          body: {
+            organization_id,
+            xml_content: xmlContent,
+            xml_attachment_url: xmlUrl,
+            pdf_attachment_url: pdfUrl,
+          },
+          headers: { Authorization: authHeader },
+        }
+      );
+
+      if (processError) {
+        throw new Error(`Processing failed: ${processError.message}`);
       }
-    );
 
-    if (processError) {
-      throw new Error(`Processing failed: ${processError.message}`);
+      processData = newProcessData;
+      result.steps[3].status = "completed";
+      result.steps[3].document_id = processData.documentId;
+      result.steps[3].account_code = processData.account_code;
+      result.steps[3].doc_status = processData.status;
     }
-
-    result.steps[3].status = "completed";
-    result.steps[3].document_id = processData.documentId;
-    result.steps[3].account_code = processData.account_code;
-    result.steps[3].doc_status = processData.status;
 
     // PASO 5: Publicar a QuickBooks (si está en estado 'processed')
     if (processData.status === "processed") {
