@@ -249,8 +249,12 @@ Deno.serve(async (req) => {
     }
 
     // PASO 5: Publicar a QuickBooks (si está en estado 'processed')
+    console.log(`📤 Checking if document should be published. Status: ${processData.status}, DocumentId: ${processData.documentId}`);
+    
     if (processData.status === "processed") {
       result.steps.push({ step: 5, name: "Publishing to QuickBooks", status: "running" });
+      
+      console.log(`📤 Attempting to publish document ${processData.documentId} to QuickBooks...`);
       
       const { data: publishData, error: publishError } = await supabase.functions.invoke(
         "publish-to-quickbooks",
@@ -264,14 +268,18 @@ Deno.serve(async (req) => {
       );
 
       if (publishError) {
+        console.error(`❌ Publishing error: ${publishError.message}`);
         throw new Error(`Publishing failed: ${publishError.message}`);
       }
 
+      console.log(`✅ Publishing result:`, publishData);
+      
       result.steps[4].status = "completed";
       result.steps[4].published = publishData.published || 0;
       result.steps[4].failed = publishData.failed || 0;
       result.steps[4].errors = publishData.errors || [];
     } else {
+      console.log(`⚠️  Skipping QuickBooks - document status is: ${processData.status}`);
       result.steps.push({ 
         step: 5, 
         name: "Skipped QuickBooks (needs review)", 
