@@ -79,15 +79,25 @@ serve(async (req) => {
       try {
         // 1. Fetch invoices from Gmail
         console.log(`Fetching Gmail invoices for ${org.name}...`);
-        const { data: gmailData, error: gmailError } = await supabase.functions.invoke(
+        const gmailResponse = await supabase.functions.invoke(
           "gmail-fetch-invoices",
           {
             body: { organization_id: org.id },
           }
         );
 
-        if (gmailError) {
-          throw new Error(`Gmail fetch failed: ${gmailError.message}`);
+        console.log("Gmail response status:", gmailResponse.error);
+        
+        if (gmailResponse.error) {
+          const errorDetails = JSON.stringify(gmailResponse.error);
+          console.error("Gmail error details:", errorDetails);
+          throw new Error(`Gmail fetch failed: ${errorDetails}`);
+        }
+
+        const gmailData = gmailResponse.data;
+        
+        if (!gmailData) {
+          throw new Error("Gmail fetch returned no data");
         }
 
         console.log(`Gmail sync for ${org.name}: ${gmailData.invoices_processed} processed, ${gmailData.invoices_failed} failed`);
@@ -99,15 +109,25 @@ serve(async (req) => {
           // Esperar un poco para asegurar que las facturas están en la BD
           await new Promise(resolve => setTimeout(resolve, 2000));
 
-          const { data: qboData, error: qboError } = await supabase.functions.invoke(
+          const qboResponse = await supabase.functions.invoke(
             "publish-to-quickbooks",
             {
               body: { organization_id: org.id },
             }
           );
 
-          if (qboError) {
-            throw new Error(`QuickBooks publish failed: ${qboError.message}`);
+          console.log("QuickBooks response status:", qboResponse.error);
+          
+          if (qboResponse.error) {
+            const errorDetails = JSON.stringify(qboResponse.error);
+            console.error("QuickBooks error details:", errorDetails);
+            throw new Error(`QuickBooks publish failed: ${errorDetails}`);
+          }
+
+          const qboData = qboResponse.data;
+          
+          if (!qboData) {
+            throw new Error("QuickBooks publish returned no data");
           }
           console.log(`QuickBooks sync for ${org.name}: ${qboData.published} published, ${qboData.failed} failed`);
 
