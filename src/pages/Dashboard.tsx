@@ -10,6 +10,7 @@ import { MonthSync } from "@/components/dashboard/MonthSync";
 import { AICreditsMonitor } from "@/components/dashboard/AICreditsMonitor";
 import { QBOAccountsDiagnostic } from "@/components/dashboard/QBOAccountsDiagnostic";
 import { ErrorLogsViewer } from "@/components/dashboard/ErrorLogsViewer";
+import { ErrorDocumentsModal } from "@/components/dashboard/ErrorDocumentsModal";
 import { TotalsValidationTest } from "@/components/dashboard/TotalsValidationTest";
 import { VerifyBillButton } from "@/components/dashboard/VerifyBillButton";
 import { DeleteBillsButton } from "@/components/dashboard/DeleteBillsButton";
@@ -47,6 +48,7 @@ const Dashboard = () => {
   const [isFetchingEmails, setIsFetchingEmails] = useState(false);
   const [isAutoSyncing, setIsAutoSyncing] = useState(false);
   const [isRetryingErrors, setIsRetryingErrors] = useState(false);
+  const [isErrorModalOpen, setIsErrorModalOpen] = useState(false);
   const [connections, setConnections] = useState({
     gmail: false,
     quickbooks: false,
@@ -521,6 +523,14 @@ const Dashboard = () => {
             <div className="w-full space-y-2">
               <TestAutoSyncFlow />
               <PendingDocumentsLog />
+              <Button 
+                variant="outline" 
+                className="w-full"
+                onClick={() => setIsErrorModalOpen(true)}
+              >
+                <AlertCircle className="h-4 w-4 mr-2 text-destructive" />
+                Ver Facturas con Errores
+              </Button>
               <TestSingleInvoiceButton />
               <ExtractMissingVendors />
               <UpdateDocumentsWithVendors />
@@ -769,6 +779,11 @@ const Dashboard = () => {
           <ProcessingFlow />
         </Card>
       </main>
+
+      <ErrorDocumentsModal 
+        open={isErrorModalOpen} 
+        onOpenChange={setIsErrorModalOpen} 
+      />
     </div>
   );
 };
