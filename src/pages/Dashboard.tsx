@@ -15,6 +15,7 @@ import { TotalsValidationTest } from "@/components/dashboard/TotalsValidationTes
 import { OrganizationSwitcher } from "@/components/OrganizationSwitcher";
 import { PublishAllButton } from "@/components/PublishAllButton";
 import { PublishReviewButton } from "@/components/PublishReviewButton";
+import { PublishAllProcessedButton } from "@/components/PublishAllProcessedButton";
 import { SyncFromExcelDialog } from "@/components/SyncFromExcelDialog";
 import { TestSingleInvoiceButton } from "@/components/TestSingleInvoiceButton";
 import { useAuth } from "@/hooks/useAuth";
@@ -557,6 +558,7 @@ const Dashboard = () => {
                 <PublishReviewButton />
               </div>
             )}
+            <PublishAllProcessedButton />
             {isAdmin && (
               <Button variant="outline" size="sm" asChild>
                 <Link to="/integrations">
