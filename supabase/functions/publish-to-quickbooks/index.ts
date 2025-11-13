@@ -596,10 +596,10 @@ Deno.serve(async (req) => {
                const taxCodeRef = taxCodeCache.get(tasaImpuesto);
                
                if (taxCodeRef) {
-                 lineDetail.AccountBasedExpenseLineDetail.TaxCodeRef = {
-                   value: taxCodeRef,
-                 };
-                 console.log(`✓ Line ${numeroLinea}: ${descripcionBase.substring(0, 40)} - Amount: ${lineAmount.toFixed(2)} (subtotal), IVA ${tasaImpuesto}%: ${montoImpuesto.toFixed(2)} (calculado por QB) [TaxCode: ${taxCodeRef}]`);
+                  lineDetail.AccountBasedExpenseLineDetail.TaxCodeRef = {
+                    value: taxCodeRef,
+                  };
+                  console.log(`✓ Line ${numeroLinea}: ${descripcionBase.substring(0, 40)} - Amount: ${amountWithTax.toFixed(2)} (CON IVA), Base: ${lineAmount.toFixed(2)}, IVA ${tasaImpuesto}%: ${montoImpuesto.toFixed(2)} [TaxCode: ${taxCodeRef}]`);
                } else {
                  console.warn(`⚠️ Line ${numeroLinea}: No se encontró código de impuesto para ${tasaImpuesto}% en QuickBooks - IVA no será aplicado. Enviando subtotal: ${lineAmount.toFixed(2)}`);
                }
