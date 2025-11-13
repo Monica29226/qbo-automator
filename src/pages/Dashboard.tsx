@@ -13,7 +13,6 @@ import { ErrorLogsViewer } from "@/components/dashboard/ErrorLogsViewer";
 import { UnpublishedDocuments } from "@/components/dashboard/UnpublishedDocuments";
 import { TotalsValidationTest } from "@/components/dashboard/TotalsValidationTest";
 import { VerifyBillButton } from "@/components/dashboard/VerifyBillButton";
-import { RepublishIVAButton } from "@/components/dashboard/RepublishIVAButton";
 import { DeleteBillsButton } from "@/components/dashboard/DeleteBillsButton";
 import { OrganizationSwitcher } from "@/components/OrganizationSwitcher";
 import { PublishAllButton } from "@/components/PublishAllButton";
@@ -564,9 +563,6 @@ const Dashboard = () => {
                 <PublishReviewButton />
               </div>
             )}
-            <div className="w-64">
-              <RepublishIVAButton />
-            </div>
             {activeOrganization && (
               <DeleteBillsButton organizationId={activeOrganization} />
             )}
