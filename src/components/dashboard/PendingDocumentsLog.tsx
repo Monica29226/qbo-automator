@@ -25,6 +25,23 @@ interface PendingDoc {
   retry_count: number;
 }
 
+// Helper para validar y sanitizar códigos de moneda
+const getValidCurrency = (currency: string | null | undefined): string => {
+  if (!currency) return 'CRC';
+  
+  // Lista de códigos de moneda válidos comunes
+  const validCurrencies = ['CRC', 'USD', 'EUR', 'GBP', 'JPY', 'CAD', 'AUD', 'CHF', 'CNY', 'MXN'];
+  const upperCurrency = currency.toUpperCase().trim();
+  
+  // Si es un código válido de 3 letras y está en la lista, usarlo
+  if (upperCurrency.length === 3 && validCurrencies.includes(upperCurrency)) {
+    return upperCurrency;
+  }
+  
+  // Fallback a CRC para cualquier valor inválido
+  return 'CRC';
+};
+
 export const PendingDocumentsLog = () => {
   const { activeOrganization } = useAuth();
   const [isOpen, setIsOpen] = useState(false);
@@ -120,7 +137,7 @@ export const PendingDocumentsLog = () => {
                         <p className="font-semibold">
                           {new Intl.NumberFormat('es-CR', {
                             style: 'currency',
-                            currency: doc.currency || 'CRC',
+                            currency: getValidCurrency(doc.currency),
                           }).format(doc.total_amount)}
                         </p>
                         <p className="text-xs text-muted-foreground">
