@@ -63,10 +63,13 @@ function parseLineItems(xml: string): any[] {
       montoDescuento,
       montoTotalLinea,
       impuesto: {
-        tarifa,
+        tarifa, // Tasa de impuesto (1, 2, 4, 8, 13, etc.)
         codigoTarifa,
-        montoImpuesto
-      }
+        montoImpuesto // Monto del IVA para esta línea
+      },
+      // Campos planos para acceso directo
+      tarifa,
+      montoImpuesto
     });
   }
   

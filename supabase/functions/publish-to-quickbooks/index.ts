@@ -308,19 +308,31 @@ Deno.serve(async (req) => {
             console.log(`✓ Retrieved ${taxCodes.length} tax codes from QuickBooks`);
             
             // Buscar el código que coincida con la tasa de impuesto
+            // Soportar tasas: 1%, 2%, 4%, 8%, 13%
             for (const taxCode of taxCodes) {
               const name = (taxCode.Name || "").toLowerCase();
               const description = (taxCode.Description || "").toLowerCase();
               const targetRate = `${taxRate}%`.toLowerCase();
               
-              // Buscar por nombre o descripción que contenga el porcentaje
-              if (name.includes(targetRate) || description.includes(targetRate) || name.includes(`(${taxRate}%)`)) {
-                console.log(`✅ Found tax code: ${taxCode.Name} (ID: ${taxCode.Id})`);
-                return taxCode.Id;
+              // Buscar por múltiples patrones para mayor flexibilidad
+              const patterns = [
+                targetRate,                    // "13%"
+                `(${taxRate}%)`,              // "(13%)"
+                `${taxRate} %`,               // "13 %"
+                `iva ${taxRate}%`,            // "iva 13%"
+                `impuesto ${taxRate}%`,       // "impuesto 13%"
+              ];
+              
+              for (const pattern of patterns) {
+                if (name.includes(pattern) || description.includes(pattern)) {
+                  console.log(`✅ Found tax code for ${taxRate}%: ${taxCode.Name} (ID: ${taxCode.Id})`);
+                  return taxCode.Id;
+                }
               }
             }
             
-            console.warn(`⚠️ No exact tax code found for ${taxRate}%`);
+            console.warn(`⚠️ No tax code found for ${taxRate}% in QuickBooks. Available codes:`, 
+              taxCodes.slice(0, 10).map((t: any) => `${t.Name} (${t.Description || 'N/A'})`).join(', '));
             return null;
           } catch (error) {
             console.error("Error fetching tax codes:", error);
@@ -517,10 +529,9 @@ Deno.serve(async (req) => {
         const lines = [];
         const xmlData = doc.xml_data as any;
         
-        // Obtener el código de impuesto de QuickBooks (13% para IVA Costa Rica) una sola vez
-        const taxCodeRef = await getTaxCodeRef(13);
-        console.log(`✓ Tax code reference obtained: ${taxCodeRef || 'not found'}`);
-
+        // Cache de códigos de impuesto para evitar múltiples llamadas al API
+        const taxCodeCache = new Map<number, string | null>();
+        
         if (xmlData?.detalle && Array.isArray(xmlData.detalle) && xmlData.detalle.length > 0) {
           console.log(`Found ${xmlData.detalle.length} line items in xml_data`);
           for (const item of xmlData.detalle) {
@@ -530,6 +541,7 @@ Deno.serve(async (req) => {
             const subtotal = parseFloat(item.subtotal) || (cantidad * precioUnitario);
             const lineAmount = subtotal * multiplier; // Negativo si es nota de crédito
             const montoImpuesto = (parseFloat(item.montoImpuesto) || 0) * multiplier; // IVA de esta línea
+            const tasaImpuesto = parseFloat(item.tarifa) || 0; // Tasa de impuesto (1%, 2%, 4%, 8%, 13%, etc.)
             
             if (Math.abs(lineAmount) > 0) {
               // Construir descripción detallada usando todos los campos capturados
@@ -563,14 +575,26 @@ Deno.serve(async (req) => {
                 },
               };
               
-              // Agregar TaxCodeRef a cada línea individual si existe código de impuesto y hay IVA
-              if (taxCodeRef && Math.abs(montoImpuesto) > 0) {
-                lineDetail.AccountBasedExpenseLineDetail.TaxCodeRef = {
-                  value: taxCodeRef,
-                };
-                console.log(`✓ Line ${numeroLinea}: ${descripcionBase.substring(0, 40)} - Subtotal: ${lineAmount.toFixed(2)}, IVA: ${montoImpuesto.toFixed(2)}`);
+              // Agregar TaxCodeRef a cada línea individual si tiene IVA
+              if (Math.abs(montoImpuesto) > 0 && tasaImpuesto > 0) {
+                // Verificar si ya tenemos el código de impuesto en caché
+                if (!taxCodeCache.has(tasaImpuesto)) {
+                  const taxCodeRef = await getTaxCodeRef(tasaImpuesto);
+                  taxCodeCache.set(tasaImpuesto, taxCodeRef);
+                }
+                
+                const taxCodeRef = taxCodeCache.get(tasaImpuesto);
+                
+                if (taxCodeRef) {
+                  lineDetail.AccountBasedExpenseLineDetail.TaxCodeRef = {
+                    value: taxCodeRef,
+                  };
+                  console.log(`✓ Line ${numeroLinea}: ${descripcionBase.substring(0, 40)} - Subtotal: ${lineAmount.toFixed(2)}, IVA ${tasaImpuesto}%: ${montoImpuesto.toFixed(2)} [TaxCode: ${taxCodeRef}]`);
+                } else {
+                  console.warn(`⚠️ Line ${numeroLinea}: No se encontró código de impuesto para ${tasaImpuesto}% en QuickBooks - Subtotal: ${lineAmount.toFixed(2)}, IVA: ${montoImpuesto.toFixed(2)}`);
+                }
               } else {
-                console.log(`✓ Line ${numeroLinea}: ${descripcionBase.substring(0, 50)} - Amount: ${lineAmount} (sin IVA)`);
+                console.log(`✓ Line ${numeroLinea}: ${descripcionBase.substring(0, 50)} - Amount: ${lineAmount} (sin IVA o tasa 0%)`);
               }
               
               lines.push(lineDetail);
