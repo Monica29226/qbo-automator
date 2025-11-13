@@ -98,8 +98,16 @@ Deno.serve(async (req) => {
     console.log("📄 XML Preview:", xmlContent.substring(0, 500));
     
     // Parse XML to extract all data
-    const doc_key = parseXMLValue(xmlContent, 'Clave');
-    const doc_number = parseXMLValue(xmlContent, 'NumeroConsecutivo');
+    const doc_key = parseXMLValue(xmlContent, 'Clave'); // Clave numérica larga (50 dígitos)
+    const doc_number = parseXMLValue(xmlContent, 'NumeroConsecutivo'); // Número de factura (ej: 00100001010000108314)
+    
+    // VALIDACIÓN CRÍTICA: Asegurar que doc_number NO sea la clave numérica
+    if (doc_number && doc_number.length > 30) {
+      console.error("❌ ERROR: doc_number parece ser una Clave en lugar de NumeroConsecutivo");
+      console.error(`   doc_number length: ${doc_number.length}, value: ${doc_number.substring(0, 50)}`);
+      throw new Error("NumeroConsecutivo inválido - parece ser una Clave numérica. Verificar estructura del XML.");
+    }
+    
     const issue_date_str = parseXMLValue(xmlContent, 'FechaEmision');
     const issue_date = issue_date_str ? issue_date_str.split('T')[0] : '';
     const supplier_name = parseXMLValue(xmlContent, 'Nombre');

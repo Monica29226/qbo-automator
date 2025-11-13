@@ -632,10 +632,21 @@ Deno.serve(async (req) => {
         console.log(`✓ Final line count for ${doc.doc_number}: ${lines.length} line(s), subtotal: ${subtotalLines}, tax: ${totalTax}, total: ${subtotalLines + totalTax}`);
 
         // Preparar DocNumber - QuickBooks acepta máx 21 caracteres
-        // Pero guardamos el número completo en PrivateNote
+        // IMPORTANTE: doc.doc_number contiene NumeroConsecutivo (ej: 00100001010000108314)
+        // NO la Clave numérica de 50 dígitos
+        console.log(`📋 DocNumber original: ${doc.doc_number} (length: ${doc.doc_number.length})`);
+        
+        // Validar que no sea la clave numérica por error
+        if (doc.doc_number.length > 30) {
+          console.error(`❌ ERROR: doc_number parece ser Clave numérica: ${doc.doc_number.substring(0, 50)}`);
+          throw new Error(`Invalid doc_number - appears to be Clave instead of NumeroConsecutivo for doc ${doc.id}`);
+        }
+        
         const qboDocNumber = doc.doc_number.length > 21 
           ? doc.doc_number.substring(doc.doc_number.length - 21) // Últimos 21 caracteres
           : doc.doc_number;
+        
+        console.log(`✓ Using DocNumber for QuickBooks: ${qboDocNumber}`);
 
         // Logging para debug (sin validación - publicar exactamente lo que dice el XML)
         console.log("=== DATOS PARA PUBLICACIÓN ===");
