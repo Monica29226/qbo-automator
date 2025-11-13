@@ -177,9 +177,14 @@ Deno.serve(async (req) => {
     let accountCode = "Gastos por clasificar";
     let vendorId = null;
     
-    console.log(`🔍 Buscando vendor con tax_id: '${supplier_tax_id}' para org: '${payload.organization_id}'`);
+    console.log(`🔍 [VENDOR LOOKUP START] tax_id='${supplier_tax_id}' (type: ${typeof supplier_tax_id}, length: ${supplier_tax_id?.length})`);
+    console.log(`🔍 [VENDOR LOOKUP START] org='${payload.organization_id}'`);
     
-    if (supplier_tax_id) {
+    if (!supplier_tax_id) {
+      console.error("❌ supplier_tax_id is empty or null!");
+    } else {
+      console.log(`✓ supplier_tax_id exists, proceeding with lookup...`);
+      
       const { data: category, error: catError } = await supabase
         .from('vendor_categories')
         .select('*')
@@ -187,6 +192,8 @@ Deno.serve(async (req) => {
         .eq('vendor_identification', supplier_tax_id)
         .eq('is_active', true)
         .maybeSingle();
+      
+      console.log(`🔍 [VENDOR LOOKUP RESULT] category=${category ? 'FOUND' : 'NOT FOUND'}, error=${catError ? catError.message : 'none'}`);
       
       if (catError) {
         console.error("❌ Error buscando vendor:", catError);
@@ -196,15 +203,28 @@ Deno.serve(async (req) => {
       } else {
         console.log("⚠️  No category found for tax_id:", supplier_tax_id);
         
-        // Debug: Verificar si existe con formato diferente
-        const { data: allVendors } = await supabase
+        // Debug: Listar TODOS los vendors para comparar
+        const { data: allVendors, error: listError } = await supabase
           .from('vendor_categories')
-          .select('vendor_identification, vendor_name')
+          .select('vendor_identification, vendor_name, account_code')
           .eq('organization_id', payload.organization_id)
-          .eq('is_active', true)
-          .limit(10);
+          .eq('is_active', true);
         
-        console.log("📋 Vendors disponibles:", allVendors);
+        if (listError) {
+          console.error("❌ Error listing vendors:", listError);
+        } else {
+          console.log("📋 Total vendors in DB:", allVendors?.length);
+          console.log("📋 First 5 vendors:", JSON.stringify(allVendors?.slice(0, 5)));
+          
+          // Buscar coincidencias parciales
+          const partialMatch = allVendors?.find(v => 
+            v.vendor_identification.includes(supplier_tax_id) || 
+            supplier_tax_id.includes(v.vendor_identification)
+          );
+          if (partialMatch) {
+            console.log("🔎 Partial match found:", partialMatch);
+          }
+        }
       }
     }
 
