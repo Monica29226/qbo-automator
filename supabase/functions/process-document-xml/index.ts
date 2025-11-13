@@ -177,20 +177,34 @@ Deno.serve(async (req) => {
     let accountCode = "Gastos por clasificar";
     let vendorId = null;
     
+    console.log(`🔍 Buscando vendor con tax_id: '${supplier_tax_id}' para org: '${payload.organization_id}'`);
+    
     if (supplier_tax_id) {
-      const { data: category } = await supabase
+      const { data: category, error: catError } = await supabase
         .from('vendor_categories')
         .select('*')
         .eq('organization_id', payload.organization_id)
         .eq('vendor_identification', supplier_tax_id)
         .eq('is_active', true)
-        .single();
+        .maybeSingle();
       
-      if (category) {
+      if (catError) {
+        console.error("❌ Error buscando vendor:", catError);
+      } else if (category) {
         accountCode = category.account_code;
         console.log("✅ Vendor category found:", category.vendor_name, "→", accountCode);
       } else {
-        console.log("⚠️  No category for:", supplier_tax_id);
+        console.log("⚠️  No category found for tax_id:", supplier_tax_id);
+        
+        // Debug: Verificar si existe con formato diferente
+        const { data: allVendors } = await supabase
+          .from('vendor_categories')
+          .select('vendor_identification, vendor_name')
+          .eq('organization_id', payload.organization_id)
+          .eq('is_active', true)
+          .limit(10);
+        
+        console.log("📋 Vendors disponibles:", allVendors);
       }
     }
 
