@@ -14,6 +14,7 @@ import { TotalsValidationTest } from "@/components/dashboard/TotalsValidationTes
 import { VerifyBillButton } from "@/components/dashboard/VerifyBillButton";
 import { UpdateDocumentsWithVendors } from "@/components/dashboard/UpdateDocumentsWithVendors";
 import { ExtractMissingVendors } from "@/components/dashboard/ExtractMissingVendors";
+import { AssignVendorsToDocuments } from "@/components/dashboard/AssignVendorsToDocuments";
 import { TestAutoSyncFlow } from "@/components/dashboard/TestAutoSyncFlow";
 import { PendingDocumentsLog } from "@/components/dashboard/PendingDocumentsLog";
 import { OrganizationSwitcher } from "@/components/OrganizationSwitcher";
@@ -510,6 +511,7 @@ const Dashboard = () => {
               </Button>
               <TestSingleInvoiceButton />
               <ExtractMissingVendors />
+              <AssignVendorsToDocuments />
               <UpdateDocumentsWithVendors />
             </div>
             <Button variant="outline" size="sm" asChild>
