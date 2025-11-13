@@ -6,7 +6,6 @@ import { StatsCard } from "@/components/dashboard/StatsCard";
 import { RecentDocuments } from "@/components/dashboard/RecentDocuments";
 import { ProcessingFlow } from "@/components/dashboard/ProcessingFlow";
 import { CronMonitor } from "@/components/dashboard/CronMonitor";
-import { MonthSync } from "@/components/dashboard/MonthSync";
 import { AICreditsMonitor } from "@/components/dashboard/AICreditsMonitor";
 import { QBOAccountsDiagnostic } from "@/components/dashboard/QBOAccountsDiagnostic";
 import { ErrorLogsViewer } from "@/components/dashboard/ErrorLogsViewer";
@@ -699,10 +698,6 @@ const Dashboard = () => {
         </div>
 
         <CronMonitor />
-
-        <div className="mb-8">
-          <MonthSync />
-        </div>
 
         <div className="mb-8">
           <TotalsValidationTest />
