@@ -93,10 +93,14 @@ Deno.serve(async (req) => {
         .eq("service_type", "quickbooks");
     }
 
-    // Buscar facturas publicadas (doc_type = 'FE') con IVA (total_tax > 0) y qbo_entity_id
+    // Buscar facturas publicadas con IVA que necesitan republicación
+    // Incluye facturas con cuenta incorrecta (60) y facturas con IVA
     const { data: bills, error: docError } = await supabase
       .from("processed_documents")
-      .select("*")
+      .select(`
+        *,
+        vendor_categories!inner(account_code)
+      `)
       .eq("organization_id", organization_id)
       .eq("doc_type", "FE")
       .eq("status", "processed")
