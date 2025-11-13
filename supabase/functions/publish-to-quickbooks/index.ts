@@ -684,8 +684,15 @@ Deno.serve(async (req) => {
           PrivateNote: `Factura XML: ${doc.doc_number}\nProveedor: ${doc.supplier_name}\nImportado automáticamente`,
         };
 
-        // QuickBooks calculará el IVA automáticamente usando los TaxCodeRef de cada línea
-        console.log(`✓ Tax will be calculated per line item by QuickBooks using TaxCodeRef`);
+        // Agregar TxnTaxDetail explícitamente con el total de impuestos
+        if (totalTax > 0) {
+          billPayload.TxnTaxDetail = {
+            TotalTax: totalTax
+          };
+          console.log(`✓ Added TxnTaxDetail with TotalTax: ${totalTax.toFixed(2)}`);
+        } else {
+          console.log(`✓ No tax to add (totalTax: ${totalTax})`);
+        }
 
         console.log(`Creating bill in QuickBooks for ${doc.doc_number} with ${lines.length} line(s)`);
 
