@@ -14,6 +14,7 @@ import { OrganizationSwitcher } from "@/components/OrganizationSwitcher";
 import { PublishAllButton } from "@/components/PublishAllButton";
 import { PublishReviewButton } from "@/components/PublishReviewButton";
 import { SyncFromExcelDialog } from "@/components/SyncFromExcelDialog";
+import { TestSingleInvoiceButton } from "@/components/TestSingleInvoiceButton";
 import { useAuth } from "@/hooks/useAuth";
 import { Link, useNavigate } from "react-router-dom";
 import { useEffect, useState } from "react";
@@ -504,7 +505,10 @@ const Dashboard = () => {
               )}
             </Button>
             <SyncFromExcelDialog />
-            <Button 
+            <div className="w-64">
+              <TestSingleInvoiceButton />
+            </div>
+            <Button
               variant="secondary" 
               size="sm" 
               onClick={handleSyncOctober}
