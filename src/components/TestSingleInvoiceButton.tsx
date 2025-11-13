@@ -29,6 +29,15 @@ export const TestSingleInvoiceButton = () => {
       return;
     }
 
+    // Validar que el número tenga 20 dígitos (formato estándar CR)
+    if (trimmedDocNumber.length !== 20) {
+      toast.error(`El número debe tener 20 dígitos. Actual: ${trimmedDocNumber.length} dígitos`);
+      return;
+    }
+
+    console.log("📤 Enviando factura al servidor:", trimmedDocNumber);
+    console.log("📏 Longitud del número:", trimmedDocNumber.length);
+
     setIsTesting(true);
     toast.info(`Procesando factura ${trimmedDocNumber}...`);
 
