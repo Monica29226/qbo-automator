@@ -569,9 +569,9 @@ Deno.serve(async (req) => {
         console.log("=== VALIDACIÓN DE TOTALES ===");
         
         // Usar valores del XML con fallback a los valores almacenados en la BD
-        const xmlSubtotal = Math.abs(parseFloat(xmlData?.subTotal || String(doc.total_amount - (doc.total_tax || 0))));
-        const xmlTotalImpuesto = Math.abs(parseFloat(xmlData?.totalImpuesto || String(doc.total_tax || 0)));
-        const xmlTotalComprobante = Math.abs(parseFloat(xmlData?.totalComprobante || String(doc.total_amount)));
+        const xmlSubtotal = Math.abs(parseFloat(xmlData?.resumen_factura?.subTotal || String(doc.total_amount - (doc.total_tax || 0))));
+        const xmlTotalImpuesto = Math.abs(parseFloat(xmlData?.resumen_factura?.totalImpuesto || String(doc.total_tax || 0)));
+        const xmlTotalComprobante = Math.abs(parseFloat(xmlData?.resumen_factura?.totalComprobante || String(doc.total_amount)));
         
         // Calcular totales de las líneas que vamos a enviar a QuickBooks
         let calculatedSubtotal = 0;
