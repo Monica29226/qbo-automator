@@ -26,6 +26,41 @@ function parseXMLValue(xml: string, tag: string): string {
   return match ? match[1].trim() : '';
 }
 
+// Función mejorada para extraer NumeroConsecutivo
+// El NumeroConsecutivo es usualmente de 20 dígitos y está al final de la Clave de 50 dígitos
+function parseNumeroConsecutivo(xml: string): string {
+  // Primero intentar extraer directamente del tag NumeroConsecutivo
+  const directValue = parseXMLValue(xml, 'NumeroConsecutivo');
+  
+  if (directValue && directValue.length > 0 && directValue.length <= 25) {
+    console.log(`✓ NumeroConsecutivo encontrado directamente: ${directValue} (${directValue.length} dígitos)`);
+    return directValue;
+  }
+  
+  // Si no existe o es demasiado largo (posiblemente es la Clave), extraer de Clave
+  const clave = parseXMLValue(xml, 'Clave');
+  
+  if (clave && clave.length === 50) {
+    // La Clave tiene 50 dígitos: 
+    // - Posiciones 1-21: información del emisor, fecha, tipo doc
+    // - Posiciones 22-30: información de situación y seguridad  
+    // - Posiciones 31-50: NumeroConsecutivo (últimos 20 dígitos)
+    const numeroConsecutivo = clave.substring(30, 50);
+    console.log(`✓ NumeroConsecutivo extraído de Clave (últimos 20 dígitos): ${numeroConsecutivo}`);
+    return numeroConsecutivo;
+  }
+  
+  // Fallback: si directValue existe pero es muy largo, recortarlo
+  if (directValue && directValue.length > 25) {
+    const shortened = directValue.substring(directValue.length - 20);
+    console.warn(`⚠️ NumeroConsecutivo muy largo (${directValue.length} dígitos), usando últimos 20: ${shortened}`);
+    return shortened;
+  }
+  
+  console.error(`❌ No se pudo extraer NumeroConsecutivo válido. Direct: ${directValue}, Clave: ${clave?.substring(0, 20)}...`);
+  return directValue || '';
+}
+
 function parseLineItems(xml: string): any[] {
   const detailRegex = /<LineaDetalle>(.*?)<\/LineaDetalle>/gis;
   const lineItems: any[] = [];
@@ -99,13 +134,13 @@ Deno.serve(async (req) => {
     
     // Parse XML to extract all data
     const doc_key = parseXMLValue(xmlContent, 'Clave'); // Clave numérica larga (50 dígitos)
-    const doc_number = parseXMLValue(xmlContent, 'NumeroConsecutivo'); // Número de factura (ej: 00100001010000108314)
+    const doc_number = parseNumeroConsecutivo(xmlContent); // Número de factura (20 dígitos aprox)
     
     // VALIDACIÓN CRÍTICA: Asegurar que doc_number NO sea la clave numérica
-    if (doc_number && doc_number.length > 30) {
-      console.error("❌ ERROR: doc_number parece ser una Clave en lugar de NumeroConsecutivo");
+    if (doc_number && doc_number.length > 25) {
+      console.error("❌ ERROR: doc_number muy largo, parece ser una Clave en lugar de NumeroConsecutivo");
       console.error(`   doc_number length: ${doc_number.length}, value: ${doc_number.substring(0, 50)}`);
-      throw new Error("NumeroConsecutivo inválido - parece ser una Clave numérica. Verificar estructura del XML.");
+      throw new Error("NumeroConsecutivo inválido - demasiado largo. Verificar estructura del XML.");
     }
     
     const issue_date_str = parseXMLValue(xmlContent, 'FechaEmision');
