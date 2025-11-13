@@ -540,24 +540,11 @@ Deno.serve(async (req) => {
           console.log(`✓ Created fallback line with subtotal: ${subtotal}`);
         }
         
-        // Agregar línea de IVA si existe
+        // Calcular el IVA para agregarlo al bill (no como línea sino como TxnTaxDetail)
         const totalTax = (parseFloat(doc.total_tax as any) || 0) * multiplier; // Negativo si es nota de crédito
-        if (Math.abs(totalTax) > 0) {
-          lines.push({
-            DetailType: "AccountBasedExpenseLineDetail",
-            Amount: totalTax,
-            Description: `IVA (Impuesto al Valor Agregado)${isCreditNote ? ' - NC' : ''}`,
-            AccountBasedExpenseLineDetail: {
-              AccountRef: {
-                value: accountRef, // Mismo account que las líneas principales
-              },
-            },
-          });
-          console.log(`✓ Added tax line with amount: ${totalTax}`);
-        }
         
-        const subtotalLines = lines.slice(0, lines.length - (Math.abs(totalTax) > 0 ? 1 : 0)).reduce((sum, l) => sum + l.Amount, 0);
-        console.log(`✓ Final line count for ${doc.doc_number}: ${lines.length} line(s), subtotal: ${subtotalLines}, tax: ${totalTax}, total: ${lines.reduce((sum, l) => sum + l.Amount, 0)}`);
+        const subtotalLines = lines.reduce((sum, l) => sum + l.Amount, 0);
+        console.log(`✓ Final line count for ${doc.doc_number}: ${lines.length} line(s), subtotal: ${subtotalLines}, tax: ${totalTax}, total: ${subtotalLines + totalTax}`);
 
         // Preparar DocNumber - QuickBooks acepta máx 21 caracteres
         // Pero guardamos el número completo en PrivateNote
@@ -571,7 +558,7 @@ Deno.serve(async (req) => {
         const xmlTotalImpuesto = Math.abs(parseFloat(xmlData?.totalImpuesto || String(doc.total_tax || 0)));
         const xmlTotalDescuentos = Math.abs(parseFloat(xmlData?.totalDescuentos || '0'));
         console.log(`XML: Subtotal=${xmlSubtotal}, IVA=${xmlTotalImpuesto}, Descuentos=${xmlTotalDescuentos}`);
-        console.log(`Líneas construidas: ${lines.length} línea(s), Total a enviar a QBO=${lines.reduce((sum, l) => sum + l.Amount, 0).toFixed(2)}`);
+        console.log(`Líneas construidas: ${lines.length} línea(s), Subtotal=${subtotalLines.toFixed(2)}, IVA=${totalTax.toFixed(2)}, Total a enviar a QBO=${(subtotalLines + totalTax).toFixed(2)}`);
         console.log("=== FIN DATOS ===");
 
         // FINAL VALIDATION before sending to QuickBooks
@@ -580,8 +567,8 @@ Deno.serve(async (req) => {
           throw new Error(`Cannot create bill without line items for doc ${doc.doc_number}`);
         }
 
-        // Crear Bill en QuickBooks
-        const billPayload = {
+        // Crear Bill en QuickBooks con TxnTaxDetail para el IVA
+        const billPayload: any = {
           VendorRef: {
             value: vendorId,
           },
@@ -591,6 +578,14 @@ Deno.serve(async (req) => {
           DueDate: doc.issue_date,
           PrivateNote: `Factura XML: ${doc.doc_number}\nProveedor: ${doc.supplier_name}\nImportado automáticamente`,
         };
+
+        // Agregar TxnTaxDetail solo si hay IVA
+        if (Math.abs(totalTax) > 0) {
+          billPayload.TxnTaxDetail = {
+            TotalTax: totalTax,
+          };
+          console.log(`✓ Added TxnTaxDetail with tax amount: ${totalTax}`);
+        }
 
         console.log(`Creating bill in QuickBooks for ${doc.doc_number} with ${lines.length} line(s)`);
 
