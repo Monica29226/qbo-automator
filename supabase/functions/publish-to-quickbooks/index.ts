@@ -591,16 +591,17 @@ Deno.serve(async (req) => {
         console.log(`XML: Subtotal=${xmlSubtotal}, IVA=${xmlTotalImpuesto}, Descuentos=${xmlTotalDescuentos}, Total=${xmlTotalComprobante}`);
         console.log(`Calculado: Subtotal=${calculatedSubtotal.toFixed(2)}, IVA=${calculatedTax.toFixed(2)}, Total=${calculatedTotal.toFixed(2)}`);
         
-        // VALIDACIÓN CORREGIDA: El subtotal en xml_data YA tiene descuentos aplicados
-        // Fórmula correcta: subtotal_con_descuento + IVA = total
+        // VALIDACIÓN CORREGIDA: Fórmula correcta considerando descuentos
+        // (subtotal - descuentos) + IVA = total
         const tolerance = 1.0;
-        const xmlExpectedTotal = xmlSubtotal + xmlTotalImpuesto;
+        const xmlSubtotalAfterDiscount = xmlSubtotal - xmlTotalDescuentos;
+        const xmlExpectedTotal = xmlSubtotalAfterDiscount + xmlTotalImpuesto;
         const xmlInternalDiff = Math.abs(xmlExpectedTotal - xmlTotalComprobante);
         
-        console.log(`Validación XML: (${xmlSubtotal} + ${xmlTotalImpuesto}) = ${xmlExpectedTotal.toFixed(2)} vs Total=${xmlTotalComprobante}, Diff=${xmlInternalDiff.toFixed(2)}`);
+        console.log(`Validación XML: ((${xmlSubtotal} - ${xmlTotalDescuentos}) + ${xmlTotalImpuesto}) = ${xmlExpectedTotal.toFixed(2)} vs Total=${xmlTotalComprobante}, Diff=${xmlInternalDiff.toFixed(2)}`);
         
         if (xmlInternalDiff > tolerance) {
-          const errorMsg = `VALIDACIÓN FALLIDA - Diferencias: Subtotal=${xmlSubtotal.toFixed(2)}₡, IVA=${xmlTotalImpuesto.toFixed(2)}₡, Total=${xmlTotalComprobante.toFixed(2)}₡. Los totales calculados no coinciden con el XML. Revisar líneas e impuestos.`;
+          const errorMsg = `VALIDACIÓN FALLIDA - Diferencias: Subtotal=${xmlSubtotal.toFixed(2)}₡, Descuentos=${xmlTotalDescuentos.toFixed(2)}₡, IVA=${xmlTotalImpuesto.toFixed(2)}₡, Total=${xmlTotalComprobante.toFixed(2)}₡. Calculado: ${xmlExpectedTotal.toFixed(2)}₡. Diferencia: ${xmlInternalDiff.toFixed(2)}₡`;
           console.error(errorMsg);
           
           await supabase
