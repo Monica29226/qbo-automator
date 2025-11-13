@@ -12,10 +12,8 @@ import { ErrorLogsViewer } from "@/components/dashboard/ErrorLogsViewer";
 import { ErrorDocumentsModal } from "@/components/dashboard/ErrorDocumentsModal";
 import { TotalsValidationTest } from "@/components/dashboard/TotalsValidationTest";
 import { VerifyBillButton } from "@/components/dashboard/VerifyBillButton";
-import { DeleteBillsButton } from "@/components/dashboard/DeleteBillsButton";
 import { UpdateDocumentsWithVendors } from "@/components/dashboard/UpdateDocumentsWithVendors";
 import { ExtractMissingVendors } from "@/components/dashboard/ExtractMissingVendors";
-import { RepublishAllQBOButton } from "@/components/dashboard/RepublishAllQBOButton";
 import { TestAutoSyncFlow } from "@/components/dashboard/TestAutoSyncFlow";
 import { PendingDocumentsLog } from "@/components/dashboard/PendingDocumentsLog";
 import { OrganizationSwitcher } from "@/components/OrganizationSwitcher";
@@ -513,8 +511,6 @@ const Dashboard = () => {
               <TestSingleInvoiceButton />
               <ExtractMissingVendors />
               <UpdateDocumentsWithVendors />
-              <RepublishAllQBOButton />
-              <DeleteBillsButton organizationId={activeOrganization || ''} />
             </div>
             <Button variant="outline" size="sm" asChild>
               <Link to="/review-queue">
@@ -526,11 +522,6 @@ const Dashboard = () => {
               <div className="w-48">
                 <PublishReviewButton />
               </div>
-            )}
-            {activeOrganization && (
-              <>
-                <DeleteBillsButton organizationId={activeOrganization} />
-              </>
             )}
             <PublishAllProcessedButton />
             {isAdmin && (
