@@ -284,12 +284,62 @@ Deno.serve(async (req) => {
           continue;
         }
 
+        // Si el documento YA TIENE xml_data, simplemente intentar publicarlo sin re-procesar
+        if (doc.xml_data && Object.keys(doc.xml_data).length > 0) {
+          console.log(`✓ Document already has parsed XML data, attempting direct publish: ${doc.doc_number}`);
+          
+          // Incrementar retry_count
+          await supabase
+            .from("processed_documents")
+            .update({ 
+              retry_count: (doc.retry_count || 0) + 1,
+              status: "pending", // Cambiar a pending para que publish-to-quickbooks lo procese
+              error_message: null
+            })
+            .eq("id", doc.id);
+
+          // Intentar publicar directamente
+          const { data: publishData, error: publishError } = await supabase.functions.invoke(
+            "publish-to-quickbooks",
+            {
+              body: {
+                organization_id: organization_id,
+                document_ids: [doc.id],
+              },
+              headers: {
+                Authorization: authHeader,
+              },
+            }
+          );
+
+          if (publishError) {
+            console.log(`✗ Publication failed for ${doc.doc_number}:`, publishError);
+            results.failed++;
+            results.errors.push({
+              doc_number: doc.doc_number,
+              error: publishError.message || "Unknown publication error",
+            });
+          } else if (publishData?.published > 0) {
+            console.log(`✓ Successfully published: ${doc.doc_number}`);
+            results.published++;
+          } else if (publishData?.failed > 0) {
+            console.log(`✗ Publication failed: ${doc.doc_number}`);
+            const errorMsg = publishData.errors?.[0]?.error || "Unknown publication error";
+            results.failed++;
+            results.errors.push({
+              doc_number: doc.doc_number,
+              error: errorMsg,
+            });
+          }
+          continue; // Pasar al siguiente documento
+        }
+
+        // Si NO tiene xml_data, intentar recuperar y re-procesar
         let xmlContent = "";
         let pdfUrl = doc.pdf_attachment_url;
         let xmlUrl = doc.xml_attachment_url;
 
-        // Re-procesar el documento con el nuevo flujo XML
-        console.log(`→ Re-processing document with XML parser: ${doc.doc_number}`);
+        console.log(`→ Document needs re-processing (no xml_data): ${doc.doc_number}`);
 
         // Si no hay xml_attachment_url, intentar recuperar de Gmail
         if (!doc.xml_attachment_url && gmailAccessToken) {
