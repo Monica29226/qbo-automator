@@ -16,6 +16,7 @@ import { DeleteBillsButton } from "@/components/dashboard/DeleteBillsButton";
 import { UpdateDocumentsWithVendors } from "@/components/dashboard/UpdateDocumentsWithVendors";
 import { ExtractMissingVendors } from "@/components/dashboard/ExtractMissingVendors";
 import { RepublishAllQBOButton } from "@/components/dashboard/RepublishAllQBOButton";
+import { CleanQBOReferences } from "@/components/dashboard/CleanQBOReferences";
 import { OrganizationSwitcher } from "@/components/OrganizationSwitcher";
 import { PublishAllButton } from "@/components/PublishAllButton";
 import { PublishReviewButton } from "@/components/PublishReviewButton";
@@ -521,6 +522,7 @@ const Dashboard = () => {
               <UpdateDocumentsWithVendors />
               <RepublishAllQBOButton />
               <DeleteBillsButton organizationId={activeOrganization || ''} />
+              <CleanQBOReferences />
             </div>
             <Button
               variant="secondary" 
@@ -570,7 +572,10 @@ const Dashboard = () => {
               </div>
             )}
             {activeOrganization && (
-              <DeleteBillsButton organizationId={activeOrganization} />
+              <>
+                <DeleteBillsButton organizationId={activeOrganization} />
+                <CleanQBOReferences />
+              </>
             )}
             <PublishAllProcessedButton />
             {isAdmin && (
