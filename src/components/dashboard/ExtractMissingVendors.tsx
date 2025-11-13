@@ -88,34 +88,39 @@ export const ExtractMissingVendors = () => {
     }));
   };
 
-  const handleAddAll = async () => {
-    if (!activeOrganization || missingVendors.length === 0) return;
+  const handleAddSingle = async (vendor: any) => {
+    if (!activeOrganization) return;
 
-    toast.info("Agregando vendors...");
+    toast.info(`Agregando ${vendor.name}...`);
 
     try {
-      const vendorsToInsert = missingVendors.map(v => ({
-        organization_id: activeOrganization,
-        vendor_identification: v.tax_id,
-        vendor_name: v.name,
-        account_code: vendorAccounts[v.tax_id] || "5105",
-        is_active: true
-      }));
-
       const { error } = await supabase
         .from("vendor_categories")
-        .insert(vendorsToInsert);
+        .insert({
+          organization_id: activeOrganization,
+          vendor_identification: vendor.tax_id,
+          vendor_name: vendor.name,
+          account_code: vendorAccounts[vendor.tax_id] || "5105",
+          is_active: true
+        });
 
       if (error) throw error;
 
-      toast.success(`✓ ${missingVendors.length} vendors agregados`);
-      setShowResult(false);
-      setMissingVendors([]);
-      setVendorAccounts({});
+      toast.success(`✓ ${vendor.name} agregado`);
+      
+      // Remover el vendor de la lista
+      setMissingVendors(prev => prev.filter(v => v.tax_id !== vendor.tax_id));
+      
+      // Limpiar la cuenta del vendor
+      setVendorAccounts(prev => {
+        const newAccounts = { ...prev };
+        delete newAccounts[vendor.tax_id];
+        return newAccounts;
+      });
 
     } catch (error) {
-      console.error("Error adding vendors:", error);
-      toast.error("Error al agregar vendors");
+      console.error("Error adding vendor:", error);
+      toast.error(`Error al agregar ${vendor.name}`);
     }
   };
 
@@ -149,11 +154,11 @@ export const ExtractMissingVendors = () => {
             </DialogDescription>
           </DialogHeader>
 
-          {missingVendors.length > 0 && (
+          {missingVendors.length > 0 ? (
             <div className="space-y-4">
               <div className="max-h-96 overflow-y-auto space-y-3">
                 {missingVendors.map((vendor, index) => (
-                  <div key={index} className="p-4 border rounded-lg space-y-2">
+                  <div key={index} className="p-4 border rounded-lg space-y-3">
                     <div className="font-medium">{vendor.name}</div>
                     <div className="text-sm text-muted-foreground">
                       ID: {vendor.tax_id}
@@ -169,14 +174,21 @@ export const ExtractMissingVendors = () => {
                         placeholder="Ej: 5105"
                         className="flex-1"
                       />
+                      <Button 
+                        onClick={() => handleAddSingle(vendor)}
+                        size="sm"
+                        className="whitespace-nowrap"
+                      >
+                        Guardar
+                      </Button>
                     </div>
                   </div>
                 ))}
               </div>
-
-              <Button onClick={handleAddAll} className="w-full">
-                Agregar Todos los Vendors
-              </Button>
+            </div>
+          ) : (
+            <div className="text-center py-8 text-muted-foreground">
+              No hay vendors pendientes por agregar
             </div>
           )}
         </DialogContent>
