@@ -14,6 +14,7 @@ import { UnpublishedDocuments } from "@/components/dashboard/UnpublishedDocument
 import { TotalsValidationTest } from "@/components/dashboard/TotalsValidationTest";
 import { VerifyBillButton } from "@/components/dashboard/VerifyBillButton";
 import { RepublishIVAButton } from "@/components/dashboard/RepublishIVAButton";
+import { DeleteBillsButton } from "@/components/dashboard/DeleteBillsButton";
 import { OrganizationSwitcher } from "@/components/OrganizationSwitcher";
 import { PublishAllButton } from "@/components/PublishAllButton";
 import { PublishReviewButton } from "@/components/PublishReviewButton";
@@ -566,6 +567,9 @@ const Dashboard = () => {
             <div className="w-64">
               <RepublishIVAButton />
             </div>
+            {activeOrganization && (
+              <DeleteBillsButton organizationId={activeOrganization} />
+            )}
             <PublishAllProcessedButton />
             {isAdmin && (
               <Button variant="outline" size="sm" asChild>
