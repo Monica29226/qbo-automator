@@ -517,6 +517,10 @@ Deno.serve(async (req) => {
         const lines = [];
         const xmlData = doc.xml_data as any;
         
+        // Obtener el código de impuesto de QuickBooks (13% para IVA Costa Rica) una sola vez
+        const taxCodeRef = await getTaxCodeRef(13);
+        console.log(`✓ Tax code reference obtained: ${taxCodeRef || 'not found'}`);
+
         if (xmlData?.detalle && Array.isArray(xmlData.detalle) && xmlData.detalle.length > 0) {
           console.log(`Found ${xmlData.detalle.length} line items in xml_data`);
           for (const item of xmlData.detalle) {
@@ -525,6 +529,7 @@ Deno.serve(async (req) => {
             const precioUnitario = parseFloat(item.precioUnitario) || 0;
             const subtotal = parseFloat(item.subtotal) || (cantidad * precioUnitario);
             const lineAmount = subtotal * multiplier; // Negativo si es nota de crédito
+            const montoImpuesto = (parseFloat(item.montoImpuesto) || 0) * multiplier; // IVA de esta línea
             
             if (Math.abs(lineAmount) > 0) {
               // Construir descripción detallada usando todos los campos capturados
@@ -547,7 +552,7 @@ Deno.serve(async (req) => {
                 descripcionCompleta = `Cant: ${cantidad} - ${descripcionCompleta}`;
               }
               
-              lines.push({
+              const lineDetail: any = {
                 DetailType: "AccountBasedExpenseLineDetail",
                 Amount: lineAmount,
                 Description: descripcionCompleta.substring(0, 4000) || `Línea ${numeroLinea}`,
@@ -556,9 +561,19 @@ Deno.serve(async (req) => {
                     value: accountRef,
                   },
                 },
-              });
+              };
               
-              console.log(`✓ Line ${numeroLinea}: ${descripcionBase.substring(0, 50)} - Amount: ${lineAmount} (subtotal sin IVA)`);
+              // Agregar TaxCodeRef a cada línea individual si existe código de impuesto y hay IVA
+              if (taxCodeRef && Math.abs(montoImpuesto) > 0) {
+                lineDetail.AccountBasedExpenseLineDetail.TaxCodeRef = {
+                  value: taxCodeRef,
+                };
+                console.log(`✓ Line ${numeroLinea}: ${descripcionBase.substring(0, 40)} - Subtotal: ${lineAmount.toFixed(2)}, IVA: ${montoImpuesto.toFixed(2)}`);
+              } else {
+                console.log(`✓ Line ${numeroLinea}: ${descripcionBase.substring(0, 50)} - Amount: ${lineAmount} (sin IVA)`);
+              }
+              
+              lines.push(lineDetail);
             }
           }
         }
@@ -625,27 +640,9 @@ Deno.serve(async (req) => {
           PrivateNote: `Factura XML: ${doc.doc_number}\nProveedor: ${doc.supplier_name}\nImportado automáticamente`,
         };
 
-        // Agregar TxnTaxDetail solo si hay IVA
-        if (Math.abs(totalTax) > 0) {
-          // Obtener el código de impuesto de QuickBooks (13% para IVA Costa Rica)
-          const taxCodeRef = await getTaxCodeRef(13);
-          
-          if (taxCodeRef) {
-            billPayload.TxnTaxDetail = {
-              TxnTaxCodeRef: {
-                value: taxCodeRef,
-              },
-              TotalTax: totalTax,
-            };
-            console.log(`✓ Added TxnTaxDetail with tax code: ${taxCodeRef} and amount: ${totalTax}`);
-          } else {
-            // Fallback si no se encuentra el código de impuesto
-            billPayload.TxnTaxDetail = {
-              TotalTax: totalTax,
-            };
-            console.warn(`⚠️ No tax code found, using TotalTax only: ${totalTax}`);
-          }
-        }
+        // NO agregar TxnTaxDetail a nivel de factura - el IVA se maneja línea por línea
+        // QuickBooks calculará el total automáticamente basándose en los TaxCodeRef de cada línea
+        console.log(`✓ Tax will be calculated per line item by QuickBooks using TaxCodeRef`);
 
         console.log(`Creating bill in QuickBooks for ${doc.doc_number} with ${lines.length} line(s)`);
 
