@@ -521,12 +521,11 @@ Deno.serve(async (req) => {
           is_credit_note: doc.xml_data?.esNotaCredito || doc.doc_type === 'NC'
         });
 
-        // Determinar si es una nota de crédito
-        const isCreditNote = doc.xml_data?.esNotaCredito === true || doc.doc_type === 'NC';
-        const multiplier = isCreditNote ? -1 : 1;
+        // Determinar si es una nota de crédito (los valores YA vienen negativos del procesamiento XML)
+        const isCreditNote = doc.xml_data?.esNotaCredito === true || doc.doc_type === 'NotaCreditoElectronica';
         
         if (isCreditNote) {
-          console.log(`⚠️ Processing as CREDIT NOTE with negative amounts`);
+          console.log(`⚠️ Processing CREDIT NOTE - amounts already negative from XML processing`);
         }
 
         // Preparar líneas del bill con validación robusta
@@ -543,7 +542,7 @@ Deno.serve(async (req) => {
             const cantidad = parseFloat(item.cantidad) || 1;
             const precioUnitario = parseFloat(item.precioUnitario) || 0;
             const subtotal = parseFloat(item.subtotal) || (cantidad * precioUnitario);
-            const lineAmount = subtotal * multiplier; // Negativo si es nota de crédito
+            const lineAmount = subtotal; // Los valores YA vienen negativos para notas de crédito
             const tasaImpuesto = parseFloat(item.tarifa) || 0; // Tasa de impuesto (1%, 2%, 4%, 8%, 13%, etc.)
             
             // CRÍTICO: Calcular montoImpuesto si no está presente en XML
@@ -553,7 +552,7 @@ Deno.serve(async (req) => {
               montoImpuesto = subtotal * (tasaImpuesto / 100);
               console.log(`⚙️ Calculando IVA automáticamente: ${subtotal} × ${tasaImpuesto}% = ${montoImpuesto.toFixed(2)}`);
             }
-            montoImpuesto = montoImpuesto * multiplier; // Aplicar multiplicador si es nota de crédito
+            // Los valores YA vienen con el signo correcto (negativo para notas de crédito)
             
             if (Math.abs(lineAmount) > 0) {
               // Construir descripción detallada usando todos los campos capturados
@@ -618,7 +617,7 @@ Deno.serve(async (req) => {
         // DOUBLE VALIDATION: Si aún no hay líneas, crear una línea por defecto con el subtotal
         if (lines.length === 0) {
           console.warn(`⚠️ No valid lines found for ${doc.doc_number}, creating fallback line`);
-          const subtotal = (parseFloat(doc.total_amount as any) - parseFloat(doc.total_tax as any)) * multiplier || 0;
+          const subtotal = (parseFloat(doc.total_amount as any) - parseFloat(doc.total_tax as any)) || 0;
           
           if (Math.abs(subtotal) <= 0) {
             console.error(`Invalid total amount for ${doc.doc_number}: ${doc.total_amount}`);
@@ -639,7 +638,8 @@ Deno.serve(async (req) => {
         }
         
         // Calcular el IVA para agregarlo al bill (no como línea sino como TxnTaxDetail)
-        const totalTax = (parseFloat(doc.total_tax as any) || 0) * multiplier; // Negativo si es nota de crédito
+        // Los valores YA vienen con el signo correcto (negativo para notas de crédito)
+        const totalTax = parseFloat(doc.total_tax as any) || 0;
         
         const subtotalLines = lines.reduce((sum, l) => sum + l.Amount, 0);
         console.log(`✓ Final line count for ${doc.doc_number}: ${lines.length} line(s), subtotal: ${subtotalLines}, tax: ${totalTax}, total: ${subtotalLines + totalTax}`);
