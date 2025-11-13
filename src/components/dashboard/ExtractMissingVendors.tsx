@@ -110,8 +110,8 @@ export const ExtractMissingVendors = () => {
           vendor_email: vendor.email || null,
           qbo_vendor_ref: "", // Se llenará cuando se sincronice con QBO
           default_account_ref: accountCode,
-          tax_rate: 0.13, // IVA por defecto en Costa Rica
-          tax_treatment: "standard",
+          tax_rate: 13, // IVA en Costa Rica (valor entero: 13 = 13%)
+          tax_treatment: "gravado",
           is_active: true
         });
 
@@ -148,8 +148,8 @@ export const ExtractMissingVendors = () => {
         vendor_email: vendor.email || null,
         qbo_vendor_ref: "", // Se llenará cuando se sincronice con QBO
         default_account_ref: vendorAccounts[vendor.tax_id] || "5105",
-        tax_rate: 0.13, // IVA por defecto en Costa Rica
-        tax_treatment: "standard",
+        tax_rate: 13, // IVA en Costa Rica (valor entero: 13 = 13%)
+        tax_treatment: "gravado",
         is_active: true
       }));
 
