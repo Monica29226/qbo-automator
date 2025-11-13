@@ -261,10 +261,17 @@ Deno.serve(async (req) => {
       result.steps[3].doc_status = processData.status;
     }
 
-    // PASO 5: Publicar a QuickBooks (si está en estado 'processed')
-    console.log(`📤 Checking if document should be published. Status: ${processData.status}, DocumentId: ${processData.documentId}`);
+    // PASO 5: Publicar a QuickBooks (si está en estado 'processed' y NO tiene qbo_entity_id)
+    // Verificar si el documento ya está publicado
+    const { data: docCheck } = await supabase
+      .from('processed_documents')
+      .select('qbo_entity_id, status')
+      .eq('id', processData.documentId)
+      .single();
     
-    if (processData.status === "processed") {
+    console.log(`📤 Checking if document should be published. Status: ${docCheck?.status}, QBO ID: ${docCheck?.qbo_entity_id}, DocumentId: ${processData.documentId}`);
+    
+    if (docCheck?.status === "processed" && !docCheck?.qbo_entity_id) {
       result.steps.push({ step: 5, name: "Publishing to QuickBooks", status: "running" });
       
       console.log(`📤 Attempting to publish document ${processData.documentId} to QuickBooks...`);
@@ -292,21 +299,23 @@ Deno.serve(async (req) => {
       result.steps[4].failed = publishData.failed || 0;
       result.steps[4].errors = publishData.errors || [];
     } else {
-      console.log(`⚠️  Skipping QuickBooks - document status is: ${processData.status}`);
+      console.log(`⚠️  Skipping QuickBooks - document status: ${docCheck?.status}, QBO ID: ${docCheck?.qbo_entity_id}`);
       
-      // Determinar razón específica basada en el estado del documento
+      // Determinar razón específica
       let skipReason = "Document needs manual review";
-      if (processData.account_code === "Gastos por clasificar") {
+      if (docCheck?.qbo_entity_id) {
+        skipReason = `Document already published to QuickBooks (QBO ID: ${docCheck.qbo_entity_id})`;
+      } else if (processData.account_code === "Gastos por clasificar") {
         skipReason = "Vendor not found in vendor_categories - assigned to 'Gastos por clasificar'";
-      } else if (processData.status === "pending") {
+      } else if (docCheck?.status === "pending") {
         skipReason = `Document has pending status (Account: ${processData.account_code}) - may need republishing`;
-      } else if (processData.status === "review") {
+      } else if (docCheck?.status === "review") {
         skipReason = `Document marked for review (Account: ${processData.account_code})`;
       }
       
       result.steps.push({ 
         step: 5, 
-        name: "Skipped QuickBooks (needs review)", 
+        name: docCheck?.qbo_entity_id ? "Already in QuickBooks" : "Skipped QuickBooks (needs review)", 
         status: "skipped",
         reason: skipReason
       });
