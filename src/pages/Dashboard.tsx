@@ -13,6 +13,8 @@ import { ErrorLogsViewer } from "@/components/dashboard/ErrorLogsViewer";
 import { TotalsValidationTest } from "@/components/dashboard/TotalsValidationTest";
 import { VerifyBillButton } from "@/components/dashboard/VerifyBillButton";
 import { DeleteBillsButton } from "@/components/dashboard/DeleteBillsButton";
+import { UpdateDocumentsWithVendors } from "@/components/dashboard/UpdateDocumentsWithVendors";
+import { ExtractMissingVendors } from "@/components/dashboard/ExtractMissingVendors";
 import { OrganizationSwitcher } from "@/components/OrganizationSwitcher";
 import { PublishAllButton } from "@/components/PublishAllButton";
 import { PublishReviewButton } from "@/components/PublishReviewButton";
@@ -512,8 +514,11 @@ const Dashboard = () => {
               )}
             </Button>
             <SyncFromExcelDialog />
-            <div className="w-full">
+            <div className="w-full space-y-2">
               <TestSingleInvoiceButton />
+              <ExtractMissingVendors />
+              <UpdateDocumentsWithVendors />
+              <DeleteBillsButton organizationId={activeOrganization || ''} />
             </div>
             <Button
               variant="secondary" 
