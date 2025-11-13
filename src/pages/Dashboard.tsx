@@ -505,7 +505,7 @@ const Dashboard = () => {
               )}
             </Button>
             <SyncFromExcelDialog />
-            <div className="w-64">
+            <div className="w-full">
               <TestSingleInvoiceButton />
             </div>
             <Button

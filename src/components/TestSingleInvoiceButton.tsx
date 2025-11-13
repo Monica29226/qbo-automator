@@ -1,9 +1,10 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { toast } from "sonner";
-import { TestTube, Loader2 } from "lucide-react";
+import { Upload, Loader2 } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -17,18 +18,25 @@ export const TestSingleInvoiceButton = () => {
   const [isTesting, setIsTesting] = useState(false);
   const [showResult, setShowResult] = useState(false);
   const [result, setResult] = useState<any>(null);
+  const [docNumber, setDocNumber] = useState("");
 
   const handleTest = async () => {
     if (!activeOrganization) return;
+    
+    const trimmedDocNumber = docNumber.trim();
+    if (!trimmedDocNumber) {
+      toast.error("Por favor ingresa un número de factura");
+      return;
+    }
 
     setIsTesting(true);
-    toast.info("Iniciando prueba con factura 00100001010000448004...");
+    toast.info(`Procesando factura ${trimmedDocNumber}...`);
 
     try {
       const { data, error } = await supabase.functions.invoke("test-single-invoice", {
         body: {
           organization_id: activeOrganization,
-          doc_number: "00100001010000448004",
+          doc_number: trimmedDocNumber,
         },
       });
 
@@ -38,13 +46,14 @@ export const TestSingleInvoiceButton = () => {
       setShowResult(true);
 
       if (data.success) {
-        toast.success("✓ Prueba completada exitosamente");
+        toast.success(`✓ Factura ${trimmedDocNumber} procesada exitosamente`);
+        setDocNumber(""); // Limpiar el campo después de éxito
       } else {
-        toast.error(`Error en la prueba: ${data.error}`);
+        toast.error(`Error: ${data.error}`);
       }
     } catch (error) {
-      console.error("Error testing invoice:", error);
-      toast.error("Error al probar la factura");
+      console.error("Error processing invoice:", error);
+      toast.error("Error al procesar la factura");
     } finally {
       setIsTesting(false);
     }
@@ -52,31 +61,44 @@ export const TestSingleInvoiceButton = () => {
 
   return (
     <>
-      <Button 
-        onClick={handleTest}
-        disabled={isTesting}
-        variant="outline"
-        className="w-full"
-      >
-        {isTesting ? (
-          <>
-            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-            Procesando...
-          </>
-        ) : (
-          <>
-            <TestTube className="h-4 w-4 mr-2" />
-            Probar Factura 00100001010000448004
-          </>
-        )}
-      </Button>
+      <div className="flex gap-2 w-full">
+        <Input
+          placeholder="Número de factura (ej: 00100001010000448004)"
+          value={docNumber}
+          onChange={(e) => setDocNumber(e.target.value)}
+          onKeyPress={(e) => {
+            if (e.key === 'Enter' && !isTesting) {
+              handleTest();
+            }
+          }}
+          disabled={isTesting}
+          className="flex-1"
+        />
+        <Button 
+          onClick={handleTest}
+          disabled={isTesting || !docNumber.trim()}
+          className="bg-blue-600 hover:bg-blue-700 text-white"
+        >
+          {isTesting ? (
+            <>
+              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              Procesando...
+            </>
+          ) : (
+            <>
+              <Upload className="h-4 w-4 mr-2" />
+              Subir a QuickBooks
+            </>
+          )}
+        </Button>
+      </div>
 
       <Dialog open={showResult} onOpenChange={setShowResult}>
         <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Resultado de la Prueba</DialogTitle>
+            <DialogTitle>Resultado del Procesamiento</DialogTitle>
             <DialogDescription>
-              Factura: 00100001010000448004
+              Factura: {result?.doc_number || "N/A"}
             </DialogDescription>
           </DialogHeader>
 
