@@ -565,12 +565,13 @@ Deno.serve(async (req) => {
           ? doc.doc_number.substring(doc.doc_number.length - 21) // Últimos 21 caracteres
           : doc.doc_number;
 
-        // VALIDACIÓN DE TOTALES: Verificar que subtotal + IVA = total antes de publicar
+        // VALIDACIÓN DE TOTALES: Verificar que subtotal + IVA - descuentos = total antes de publicar
         console.log("=== VALIDACIÓN DE TOTALES ===");
         
         // Los valores están directamente en xml_data (NO en resumen_factura)
         const xmlSubtotal = Math.abs(parseFloat(xmlData?.subTotal || String(doc.total_amount - (doc.total_tax || 0))));
         const xmlTotalImpuesto = Math.abs(parseFloat(xmlData?.totalImpuesto || String(doc.total_tax || 0)));
+        const xmlTotalDescuentos = Math.abs(parseFloat(xmlData?.totalDescuentos || '0'));
         const xmlTotalComprobante = Math.abs(parseFloat(xmlData?.totalComprobante || String(doc.total_amount)));
         
         // Calcular totales de las líneas que vamos a enviar a QuickBooks
@@ -587,25 +588,25 @@ Deno.serve(async (req) => {
         
         const calculatedTotal = calculatedSubtotal + calculatedTax;
         
-        console.log(`XML: Subtotal=${xmlSubtotal}, IVA=${xmlTotalImpuesto}, Total=${xmlTotalComprobante}`);
+        console.log(`XML: Subtotal=${xmlSubtotal}, IVA=${xmlTotalImpuesto}, Descuentos=${xmlTotalDescuentos}, Total=${xmlTotalComprobante}`);
         console.log(`Calculado: Subtotal=${calculatedSubtotal.toFixed(2)}, IVA=${calculatedTax.toFixed(2)}, Total=${calculatedTotal.toFixed(2)}`);
         
-        // Validar con tolerancia de 1 colón por redondeos
+        // Validar la consistencia interna del XML: subTotal + totalImpuesto - totalDescuentos = totalComprobante
         const tolerance = 1.0;
-        const subtotalDiff = Math.abs(xmlSubtotal - calculatedSubtotal);
-        const taxDiff = Math.abs(xmlTotalImpuesto - calculatedTax);
-        const totalDiff = Math.abs(xmlTotalComprobante - calculatedTotal);
+        const xmlExpectedTotal = xmlSubtotal + xmlTotalImpuesto - xmlTotalDescuentos;
+        const xmlInternalDiff = Math.abs(xmlExpectedTotal - xmlTotalComprobante);
         
-        if (subtotalDiff > tolerance || taxDiff > tolerance || totalDiff > tolerance) {
-          const errorMsg = `VALIDACIÓN FALLIDA - Diferencias: Subtotal=${subtotalDiff.toFixed(2)}₡, IVA=${taxDiff.toFixed(2)}₡, Total=${totalDiff.toFixed(2)}₡`;
+        console.log(`Validación XML interna: (${xmlSubtotal} + ${xmlTotalImpuesto} - ${xmlTotalDescuentos}) = ${xmlExpectedTotal.toFixed(2)} vs Total=${xmlTotalComprobante}, Diff=${xmlInternalDiff.toFixed(2)}`);
+        
+        if (xmlInternalDiff > tolerance) {
+          const errorMsg = `VALIDACIÓN FALLIDA - El XML tiene inconsistencias internas: (Subtotal + IVA - Descuentos) = ${xmlExpectedTotal.toFixed(2)}₡ pero Total = ${xmlTotalComprobante}₡. Diferencia: ${xmlInternalDiff.toFixed(2)}₡`;
           console.error(errorMsg);
-          console.error(`Detalle: XML(${xmlSubtotal}+${xmlTotalImpuesto}=${xmlTotalComprobante}) vs Calc(${calculatedSubtotal.toFixed(2)}+${calculatedTax.toFixed(2)}=${calculatedTotal.toFixed(2)})`);
           
           await supabase
             .from("processed_documents")
             .update({
               status: "error",
-              error_message: `${errorMsg}. Los totales calculados no coinciden con el XML. Revisar líneas e impuestos.`,
+              error_message: errorMsg,
               updated_at: new Date().toISOString(),
             })
             .eq("id", doc.id);
@@ -619,7 +620,7 @@ Deno.serve(async (req) => {
           continue; // Saltar este documento y continuar con el siguiente
         }
         
-        console.log("✓ Validación de totales exitosa - Los montos coinciden con el XML");
+        console.log("✓ Validación de consistencia interna del XML exitosa");
         console.log("=== FIN VALIDACIÓN ===");
 
         // FINAL VALIDATION before sending to QuickBooks
