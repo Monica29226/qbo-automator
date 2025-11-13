@@ -15,6 +15,7 @@ import { VerifyBillButton } from "@/components/dashboard/VerifyBillButton";
 import { DeleteBillsButton } from "@/components/dashboard/DeleteBillsButton";
 import { UpdateDocumentsWithVendors } from "@/components/dashboard/UpdateDocumentsWithVendors";
 import { ExtractMissingVendors } from "@/components/dashboard/ExtractMissingVendors";
+import { RepublishAllQBOButton } from "@/components/dashboard/RepublishAllQBOButton";
 import { OrganizationSwitcher } from "@/components/OrganizationSwitcher";
 import { PublishAllButton } from "@/components/PublishAllButton";
 import { PublishReviewButton } from "@/components/PublishReviewButton";
@@ -518,6 +519,7 @@ const Dashboard = () => {
               <TestSingleInvoiceButton />
               <ExtractMissingVendors />
               <UpdateDocumentsWithVendors />
+              <RepublishAllQBOButton />
               <DeleteBillsButton organizationId={activeOrganization || ''} />
             </div>
             <Button
