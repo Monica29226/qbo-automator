@@ -119,7 +119,7 @@ export const ErrorDocumentsModal = ({ open, onOpenChange }: ErrorDocumentsModalP
                       <div className="font-semibold">
                         {new Intl.NumberFormat('es-CR', {
                           style: 'currency',
-                          currency: error.currency || 'CRC',
+                          currency: ['CRC', 'USD', 'EUR'].includes(error.currency) ? error.currency : 'CRC',
                         }).format(error.total_amount)}
                       </div>
                     </div>
