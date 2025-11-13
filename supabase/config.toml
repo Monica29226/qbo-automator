@@ -80,3 +80,6 @@ verify_jwt = true
 
 [functions.delete-bills-from-quickbooks]
 verify_jwt = true
+
+[functions.create-user]
+verify_jwt = false
