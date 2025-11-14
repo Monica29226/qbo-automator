@@ -62,41 +62,110 @@ serve(async (req) => {
       ? new Date(credentials.expires_at).getTime() 
       : credentials.expires_at;
     
+    // Verificar si el token está próximo a expirar (menos de 24 horas)
+    const hoursUntilExpiration = expiresAt ? (expiresAt - Date.now()) / (1000 * 60 * 60) : null;
+    
+    if (hoursUntilExpiration !== null && hoursUntilExpiration < 24 && hoursUntilExpiration > 0) {
+      console.log(`⚠️ Token expiring in ${Math.floor(hoursUntilExpiration)} hours`);
+      
+      // Registrar alerta de token próximo a expirar
+      await supabase.from("alert_history").insert({
+        organization_id,
+        alert_type: "warning",
+        issues_count: 1,
+        issues_data: [{
+          type: "warning",
+          title: "Token de Gmail próximo a expirar",
+          description: `El token de acceso a Gmail expirará en ${Math.floor(hoursUntilExpiration)} horas. Se renovará automáticamente en la próxima sincronización.`,
+          actionRequired: "No se requiere acción, el token se renovará automáticamente",
+          data: {
+            hoursUntilExpiration: Math.floor(hoursUntilExpiration),
+            expiresAt: new Date(expiresAt).toISOString()
+          }
+        }]
+      });
+    }
+    
     if (expiresAt && Date.now() > expiresAt) {
       console.log("Access token expired, refreshing...");
       
       const GOOGLE_CLIENT_ID = Deno.env.get("GOOGLE_CLIENT_ID")!;
       const GOOGLE_CLIENT_SECRET = Deno.env.get("GOOGLE_CLIENT_SECRET")!;
 
-      const refreshResponse = await fetch("https://oauth2.googleapis.com/token", {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({
-          client_id: GOOGLE_CLIENT_ID,
-          client_secret: GOOGLE_CLIENT_SECRET,
-          refresh_token: credentials.refresh_token,
-          grant_type: "refresh_token",
-        }),
-      });
+      try {
+        const refreshResponse = await fetch("https://oauth2.googleapis.com/token", {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({
+            client_id: GOOGLE_CLIENT_ID,
+            client_secret: GOOGLE_CLIENT_SECRET,
+            refresh_token: credentials.refresh_token,
+            grant_type: "refresh_token",
+          }),
+        });
 
-      if (!refreshResponse.ok) {
-        throw new Error("Failed to refresh token");
+        if (!refreshResponse.ok) {
+          const errorText = await refreshResponse.text();
+          console.error("Token refresh failed:", errorText);
+          
+          // Registrar alerta crítica de fallo en renovación
+          await supabase.from("alert_history").insert({
+            organization_id,
+            alert_type: "critical",
+            issues_count: 1,
+            issues_data: [{
+              type: "critical",
+              title: "Fallo al renovar token de Gmail",
+              description: "No se pudo renovar el token de acceso a Gmail. Es necesario reconectar la cuenta.",
+              actionRequired: "Reconectar Gmail en Configuración > Integraciones",
+              data: {
+                error: errorText,
+                failedAt: new Date().toISOString()
+              }
+            }]
+          });
+          
+          throw new Error("Failed to refresh token");
+        }
+
+        const newTokens = await refreshResponse.json();
+        accessToken = newTokens.access_token;
+
+        // Actualizar tokens en DB
+        await supabase
+          .from("integration_accounts")
+          .update({
+            credentials: {
+              ...credentials,
+              access_token: newTokens.access_token,
+              expires_at: Date.now() + (newTokens.expires_in * 1000),
+            },
+          })
+          .eq("id", gmailAccount.id);
+          
+        console.log("✅ Token refreshed successfully");
+      } catch (refreshError) {
+        console.error("Error during token refresh:", refreshError);
+        
+        // Registrar alerta crítica
+        await supabase.from("alert_history").insert({
+          organization_id,
+          alert_type: "critical",
+          issues_count: 1,
+          issues_data: [{
+            type: "critical",
+            title: "Error crítico al renovar token de Gmail",
+            description: "Falló la renovación automática del token. Reconecte su cuenta de Gmail inmediatamente para evitar pérdida de sincronizaciones.",
+            actionRequired: "Reconectar Gmail en Configuración > Integraciones",
+            data: {
+              error: refreshError instanceof Error ? refreshError.message : "Unknown error",
+              failedAt: new Date().toISOString()
+            }
+          }]
+        });
+        
+        throw refreshError;
       }
-
-      const newTokens = await refreshResponse.json();
-      accessToken = newTokens.access_token;
-
-      // Actualizar tokens en DB
-      await supabase
-        .from("integration_accounts")
-        .update({
-          credentials: {
-            ...credentials,
-            access_token: newTokens.access_token,
-            expires_at: Date.now() + (newTokens.expires_in * 1000),
-          },
-        })
-        .eq("id", gmailAccount.id);
     }
 
     // Obtener settings de búsqueda
