@@ -393,27 +393,33 @@ Deno.serve(async (req) => {
             console.log(`✓ Retrieved ${allAccounts.length} accounts from QuickBooks`);
             
             // Buscar la cuenta que coincida con nuestro código
+            // Estrategia: buscar por código completo, o sin el sufijo después del guion
+            // Ej: buscar "6124-01" y también "6124" como alternativa
+            const codeVariants = [accountCode];
+            if (accountCode.includes('-')) {
+              const baseCode = accountCode.split('-')[0]; // "6124-01" → "6124"
+              codeVariants.push(baseCode);
+            }
+            
             const targetAccount = allAccounts.find((acc: any) => {
-              // Buscar por AcctNum (si existe)
-              if (acc.AcctNum) {
-                if (acc.AcctNum === accountCode || acc.AcctNum.startsWith(accountCode)) {
-                  return true;
+              for (const variant of codeVariants) {
+                // Buscar por AcctNum (si existe)
+                if (acc.AcctNum) {
+                  if (acc.AcctNum === variant || acc.AcctNum === accountCode) {
+                    return true;
+                  }
                 }
-              }
-              
-              // Buscar por Name (muchas veces el código está al inicio del nombre)
-              if (acc.Name) {
-                // Coincidencia exacta al inicio: "5105 Alimentos"
-                if (acc.Name.startsWith(accountCode + ' ')) {
-                  return true;
-                }
-                // Coincidencia exacta al inicio sin espacio: "5105Alimentos"
-                if (acc.Name.startsWith(accountCode)) {
-                  return true;
-                }
-                // Coincidencia con espacio en medio: "Cuenta 5105"
-                if (acc.Name.includes(' ' + accountCode + ' ')) {
-                  return true;
+                
+                // Buscar por Name (muchas veces el código está al inicio del nombre)
+                if (acc.Name) {
+                  // Coincidencia exacta al inicio: "6124 Gastos" o "6124-01 Alimentación"
+                  if (acc.Name.startsWith(variant + ' ') || acc.Name.startsWith(accountCode + ' ')) {
+                    return true;
+                  }
+                  // Coincidencia exacta al inicio sin espacio
+                  if (acc.Name.startsWith(variant) || acc.Name.startsWith(accountCode)) {
+                    return true;
+                  }
                 }
               }
               
@@ -464,8 +470,11 @@ Deno.serve(async (req) => {
             .maybeSingle();
           
           if (vendorData?.default_account_ref) {
-            accountCode = vendorData.default_account_ref;
-            console.log(`✓ Account code from vendor: ${accountCode}`);
+            // Extraer solo el código (antes del primer espacio)
+            // Ej: "6124-01 Alimentación y hoteles" → "6124-01"
+            const rawCode = vendorData.default_account_ref;
+            accountCode = rawCode.split(' ')[0].trim();
+            console.log(`✓ Account code from vendor: ${accountCode} (raw: ${rawCode})`);
           }
         }
         
