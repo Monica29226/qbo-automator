@@ -26,7 +26,7 @@ import { GmailTokenAlert } from "@/components/dashboard/GmailTokenAlert";
 import { QuickBooksTokenAlert } from "@/components/dashboard/QuickBooksTokenAlert";
 import { useAuth } from "@/hooks/useAuth";
 import { Link, useNavigate } from "react-router-dom";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
@@ -54,10 +54,10 @@ const Dashboard = () => {
 
   useEffect(() => {
     if (activeOrganization) {
-      fetchStats();
-      fetchConnections();
+      fetchStatsAndConnections();
 
-      // Subscribe to real-time updates for stats
+      // Debounced realtime update - only refresh every 2 seconds max
+      let timeoutId: NodeJS.Timeout;
       const channel = supabase
         .channel('dashboard_stats_changes')
         .on(
@@ -69,67 +69,83 @@ const Dashboard = () => {
             filter: `organization_id=eq.${activeOrganization}`
           },
           () => {
-            console.log('Document changed, updating stats...');
-            fetchStats();
+            clearTimeout(timeoutId);
+            timeoutId = setTimeout(() => {
+              fetchStatsAndConnections();
+            }, 2000);
           }
         )
         .subscribe();
 
       return () => {
+        clearTimeout(timeoutId);
         supabase.removeChannel(channel);
       };
     }
   }, [activeOrganization]);
 
-  const fetchStats = async () => {
+  // Combined fetch for stats and connections - single query optimization
+  const fetchStatsAndConnections = useCallback(async () => {
     if (!activeOrganization) return;
 
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    
     const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
 
-    // Obtener documentos de los últimos 7 días
-    const { data, error } = await supabase
-      .from("processed_documents")
-      .select("status, created_at, processed_at")
-      .eq("organization_id", activeOrganization)
-      .gte("created_at", sevenDaysAgo.toISOString());
+    // Parallel queries for better performance
+    const [docsResult, accountsResult] = await Promise.all([
+      supabase
+        .from("processed_documents")
+        .select("status, created_at, processed_at")
+        .eq("organization_id", activeOrganization)
+        .gte("created_at", sevenDaysAgo.toISOString()),
+      supabase
+        .from("integration_accounts")
+        .select("service_type")
+        .eq("organization_id", activeOrganization)
+        .eq("is_active", true)
+    ]);
 
-    if (!error && data) {
-      // Documentos PROCESADOS hoy (incluyendo published)
+    if (!docsResult.error && docsResult.data) {
+      const data = docsResult.data;
       const processedToday = data.filter(
         (doc) => doc.processed_at && new Date(doc.processed_at) >= today && 
         (doc.status === "processed" || doc.status === "published")
       );
       
       setStats({
-        processed: processedToday.length, // Procesadas HOY (processed + published)
-        review: data.filter((d) => d.status === "review").length, // 7 días
-        pending: data.filter((d) => d.status === "pending").length, // 7 días
-        total: data.length, // Total 7 días (para coincidir con flujo)
-        errors: data.filter((d) => d.status === "error").length, // 7 días
-        published: data.filter((d) => d.status === "published").length, // 7 días
+        processed: processedToday.length,
+        review: data.filter((d) => d.status === "review").length,
+        pending: data.filter((d) => d.status === "pending").length,
+        total: data.length,
+        errors: data.filter((d) => d.status === "error").length,
+        published: data.filter((d) => d.status === "published").length,
       });
     }
-  };
 
-  const fetchConnections = async () => {
-    if (!activeOrganization) return;
+    if (!accountsResult.error && accountsResult.data) {
+      const accounts = accountsResult.data;
+      setConnections({
+        gmail: accounts.some(a => a.service_type === "gmail"),
+        quickbooks: accounts.some(a => a.service_type === "quickbooks"),
+      });
+    }
+  }, [activeOrganization]);
 
-    const { data: accounts } = await supabase
-      .from("integration_accounts")
-      .select("service_type, is_active")
-      .eq("organization_id", activeOrganization)
-      .eq("is_active", true);
+  const getMonthName = useCallback((month: number) => {
+    const months = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 
+                    'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+    return months[month - 1];
+  }, []);
 
-    setConnections({
-      gmail: accounts?.some(a => a.service_type === "gmail") || false,
-      quickbooks: accounts?.some(a => a.service_type === "quickbooks") || false,
-    });
-  };
+  // Memoized connection status check
+  const hasRequiredConnections = useMemo(() => ({
+    gmail: connections.gmail,
+    quickbooks: connections.quickbooks,
+    both: connections.gmail && connections.quickbooks
+  }), [connections.gmail, connections.quickbooks]);
 
-  const handleFetchGmailInvoices = async (month?: number, year?: number) => {
+  const handleFetchGmailInvoices = useCallback(async (month?: number, year?: number) => {
     if (!activeOrganization) return;
 
     // Check if Gmail is connected first
@@ -183,7 +199,7 @@ const Dashboard = () => {
       }
 
       // Refrescar stats y documentos
-      fetchStats();
+      fetchStatsAndConnections();
       queryClient.invalidateQueries({ queryKey: ["recent-documents"] });
     } catch (error) {
       console.error("Error fetching Gmail invoices:", error);
@@ -191,16 +207,10 @@ const Dashboard = () => {
     } finally {
       setIsFetchingEmails(false);
     }
-  };
-
-  const getMonthName = (month: number) => {
-    const months = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 
-                    'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
-    return months[month - 1];
-  };
+  }, [activeOrganization, navigate, queryClient, fetchStatsAndConnections, getMonthName]);
 
 
-  const handleAutoSync = async () => {
+  const handleAutoSync = useCallback(async () => {
     if (!activeOrganization) return;
 
     setIsAutoSyncing(true);
@@ -224,7 +234,7 @@ const Dashboard = () => {
         }
       }
 
-      fetchStats();
+      fetchStatsAndConnections();
       queryClient.invalidateQueries({ queryKey: ["recent-documents"] });
     } catch (error) {
       console.error("Error in auto-sync:", error);
@@ -232,9 +242,9 @@ const Dashboard = () => {
     } finally {
       setIsAutoSyncing(false);
     }
-  };
+  }, [activeOrganization, queryClient, fetchStatsAndConnections]);
 
-  const handleForceResync = async () => {
+  const handleForceResync = useCallback(async () => {
     if (!activeOrganization) return;
     
     setIsFetchingEmails(true);
@@ -258,7 +268,7 @@ const Dashboard = () => {
       
       toast.success(`✓ ${processed} facturas reprocesadas${failed > 0 ? ` (${failed} fallidas)` : ''}`);
       
-      fetchStats();
+      fetchStatsAndConnections();
       queryClient.invalidateQueries({ queryKey: ["recent-documents"] });
     } catch (error: any) {
       console.error("Error in force resync:", error);
@@ -266,9 +276,9 @@ const Dashboard = () => {
     } finally {
       setIsFetchingEmails(false);
     }
-  };
+  }, [activeOrganization, queryClient, fetchStatsAndConnections]);
 
-  const handlePublishToQuickBooks = async () => {
+  const handlePublishToQuickBooks = useCallback(async () => {
     if (!activeOrganization) return;
 
     // Check if QuickBooks is connected first
@@ -314,7 +324,7 @@ const Dashboard = () => {
       }
 
       // Refrescar stats y documentos
-      fetchStats();
+      fetchStatsAndConnections();
       queryClient.invalidateQueries({ queryKey: ["recent-documents"] });
     } catch (error) {
       console.error("Error publishing to QuickBooks:", error);
@@ -322,9 +332,9 @@ const Dashboard = () => {
     } finally {
       setIsFetchingEmails(false);
     }
-  };
+  }, [activeOrganization, navigate, queryClient, fetchStatsAndConnections]);
 
-  const handleRetryAllErrors = async () => {
+  const handleRetryAllErrors = useCallback(async () => {
     if (!activeOrganization) return;
 
     setIsRetryingErrors(true);
@@ -353,7 +363,7 @@ const Dashboard = () => {
       }
 
       // Refrescar stats y documentos
-      fetchStats();
+      fetchStatsAndConnections();
       queryClient.invalidateQueries({ queryKey: ["recent-documents"] });
     } catch (error) {
       console.error("Error retrying error documents:", error);
@@ -361,7 +371,7 @@ const Dashboard = () => {
     } finally {
       setIsRetryingErrors(false);
     }
-  };
+  }, [activeOrganization, queryClient, fetchStatsAndConnections]);
 
   if (!activeOrganization) {
     return (
