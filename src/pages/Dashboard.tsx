@@ -24,6 +24,7 @@ import { SyncFromExcelDialog } from "@/components/SyncFromExcelDialog";
 import { TestSingleInvoiceButton } from "@/components/TestSingleInvoiceButton";
 import { GmailTokenAlert } from "@/components/dashboard/GmailTokenAlert";
 import { QuickBooksTokenAlert } from "@/components/dashboard/QuickBooksTokenAlert";
+import { VendorsWithoutRules } from "@/components/dashboard/VendorsWithoutRules";
 import { useAuth } from "@/hooks/useAuth";
 import { Link, useNavigate } from "react-router-dom";
 import { useEffect, useState, useCallback, useMemo } from "react";
@@ -701,6 +702,10 @@ const Dashboard = () => {
               />
             </div>
           </Card>
+        </div>
+
+        <div className="mb-8">
+          <VendorsWithoutRules />
         </div>
 
         <CronMonitor />
