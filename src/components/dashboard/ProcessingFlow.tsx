@@ -9,6 +9,7 @@ import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import { EmailListModal } from "./EmailListModal";
 import { PublishQBOModal } from "./PublishQBOModal";
+import { PendingDocumentsList } from "./PendingDocumentsList";
 
 interface StepStats {
   total: number;
@@ -237,6 +238,11 @@ export const ProcessingFlow = () => {
                       {step.actionLabel}
                     </Link>
                   </Button>
+                )}
+                {step.label === "Clasificar" && stats.pending > 0 && (
+                  <div className="mt-2">
+                    <PendingDocumentsList />
+                  </div>
                 )}
               </div>
             </div>
