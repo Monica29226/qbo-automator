@@ -98,13 +98,13 @@ Deno.serve(async (req) => {
         .eq("service_type", "quickbooks");
     }
 
-    // Obtener documentos a publicar
+    // Obtener documentos a publicar (pending o processed que no tengan qbo_entity_id)
     let query = supabase
       .from("processed_documents")
       .select("*")
       .eq("organization_id", organization_id)
       .is("qbo_entity_id", null)
-      .eq("status", "processed");
+      .in("status", ["pending", "processed"]);
 
     if (document_ids && document_ids.length > 0) {
       query = query.in("id", document_ids);
