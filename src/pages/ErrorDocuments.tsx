@@ -57,6 +57,13 @@ const ErrorDocuments = () => {
   };
 
   const getErrorSummary = (errorMessage: string) => {
+    if (errorMessage.includes("[PERMANENTE]")) {
+      return {
+        type: "Error Permanente",
+        description: errorMessage.replace("[PERMANENTE] Max retries reached (3 attempts) - Original: ", ""),
+        solution: "Usar botón 'Forzar Reintento' para resetear contador"
+      };
+    }
     if (errorMessage.includes("Falta el parámetro Line requerido")) {
       return {
         type: "Sin líneas de detalle",
@@ -83,6 +90,13 @@ const ErrorDocuments = () => {
         type: "Error al crear proveedor",
         description: "No se pudo crear el vendor en QuickBooks",
         solution: "Verificar permisos y conectividad con QuickBooks"
+      };
+    }
+    if (errorMessage.includes("No se pudo determinar cuenta contable")) {
+      return {
+        type: "Sin regla de clasificación",
+        description: "El proveedor no tiene configurada una cuenta contable",
+        solution: "Ir a Configuración → Reglas de Vendors y agregar regla"
       };
     }
     return {
@@ -130,15 +144,22 @@ const ErrorDocuments = () => {
     }
   };
 
-  const handleRetryAll = async () => {
+  const handleRetryAll = async (forceRetry = false) => {
     if (!activeOrganization || documents.length === 0) return;
 
-    const toastId = toast.loading(`Procesando ${documents.length} facturas con error...`);
+    const message = forceRetry 
+      ? `Forzando reintento de ${documents.length} facturas (incluyendo permanentes)...`
+      : `Procesando ${documents.length} facturas con error...`;
+    
+    const toastId = toast.loading(message);
     
     try {
+      const documentIds = documents.map(d => d.id);
       const { data, error } = await supabase.functions.invoke("retry-error-documents", {
         body: { 
-          organization_id: activeOrganization
+          organization_id: activeOrganization,
+          document_ids: documentIds,
+          force_retry: forceRetry
         },
       });
 
@@ -206,14 +227,24 @@ const ErrorDocuments = () => {
               </div>
             </div>
             {documents.length > 0 && (
-              <Button 
-                onClick={handleRetryAll}
-                variant="default"
-                className="gap-2"
-              >
-                <RefreshCw className="h-4 w-4" />
-                Reintentar Todas ({documents.length})
-              </Button>
+              <div className="flex gap-2">
+                <Button 
+                  onClick={() => handleRetryAll(false)}
+                  variant="default"
+                  className="gap-2"
+                >
+                  <RefreshCw className="h-4 w-4" />
+                  Reintentar Todas
+                </Button>
+                <Button 
+                  onClick={() => handleRetryAll(true)}
+                  variant="destructive"
+                  className="gap-2"
+                >
+                  <RefreshCw className="h-4 w-4" />
+                  Forzar Reintento
+                </Button>
+              </div>
             )}
           </div>
         </div>
@@ -278,6 +309,18 @@ const ErrorDocuments = () => {
                             {errorInfo.solution}
                           </p>
                         </div>
+                        
+                        {doc.error_message?.includes("[PERMANENTE]") && (
+                          <div className="mt-3 p-3 bg-destructive/10 rounded-lg border border-destructive/20">
+                            <p className="text-sm font-semibold text-destructive">
+                              ⚠️ Error Permanente - Límite de reintentos alcanzado (3 intentos)
+                            </p>
+                            <p className="text-xs text-muted-foreground mt-1">
+                              Usa el botón "Forzar Reintento" para resetear el contador e intentar de nuevo
+                            </p>
+                          </div>
+                        )}
+                        
                         <div className="pt-2 border-t border-border">
                           <Dialog>
                             <DialogTrigger asChild>

@@ -199,10 +199,20 @@ Deno.serve(async (req) => {
       throw new Error("Authentication failed");
     }
 
-    const { organization_id, document_ids } = await req.json();
+    const { organization_id, document_ids, force_retry } = await req.json();
 
     if (!organization_id) {
       throw new Error("organization_id is required");
+    }
+
+    // Si force_retry está activado, resetear retry_count antes de procesar
+    if (force_retry && document_ids && document_ids.length > 0) {
+      console.log(`🔄 Force retry enabled - resetting retry_count for ${document_ids.length} documents`);
+      await supabase
+        .from("processed_documents")
+        .update({ retry_count: 0 })
+        .in("id", document_ids)
+        .eq("organization_id", organization_id);
     }
 
     console.log(`Retrying error documents for organization: ${organization_id}`);
@@ -254,16 +264,20 @@ Deno.serve(async (req) => {
       console.log(`\n=== Processing document ${doc.doc_number} (retry ${doc.retry_count || 0}) ===`);
       
       try {
-        // Check retry limit
+        // Check retry limit - but preserve original error
         if ((doc.retry_count || 0) >= 3) {
           console.log(`⚠ Document ${doc.doc_number} has reached max retries, skipping`);
-          await supabase
-            .from("processed_documents")
-            .update({ 
-              status: "error",
-              error_message: "[PERMANENTE] Max retries reached (3 attempts)"
-            })
-            .eq("id", doc.id);
+          // Only update if not already marked as permanent
+          if (!doc.error_message?.includes("[PERMANENTE]")) {
+            const originalError = doc.error_message || "Unknown error";
+            await supabase
+              .from("processed_documents")
+              .update({ 
+                status: "error",
+                error_message: `[PERMANENTE] Max retries reached (3 attempts) - Original: ${originalError}`
+              })
+              .eq("id", doc.id);
+          }
           results.failed++;
           continue;
         }
