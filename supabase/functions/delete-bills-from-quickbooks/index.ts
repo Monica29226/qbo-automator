@@ -48,7 +48,7 @@ Deno.serve(async (req) => {
 
     const credentials = integration.credentials as any;
     let accessToken = credentials.access_token;
-    const realmId = credentials.realmId;
+    const realmId = credentials.realm_id; // Corregido: usar realm_id con guión bajo
 
     // Refrescar token si es necesario
     if (credentials.expires_at && new Date(credentials.expires_at) < new Date()) {
