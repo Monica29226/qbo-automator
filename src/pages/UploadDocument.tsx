@@ -119,13 +119,32 @@ const UploadDocument = () => {
         xmlPath = xmlFileName;
       }
 
-      const { data, error } = await supabase.functions.invoke("process-document", {
+      // Obtener URLs públicas si hay archivos subidos
+      let pdfUrl = null;
+      let xmlUrl = null;
+      
+      if (pdfPath) {
+        const { data: pdfUrlData } = supabase.storage
+          .from("company-documents")
+          .getPublicUrl(pdfPath);
+        pdfUrl = pdfUrlData.publicUrl;
+      }
+      
+      if (xmlPath) {
+        const { data: xmlUrlData } = supabase.storage
+          .from("company-documents")
+          .getPublicUrl(xmlPath);
+        xmlUrl = xmlUrlData.publicUrl;
+      }
+
+      // Usar process-document-xml para análisis automático del XML
+      const { data, error } = await supabase.functions.invoke("process-document-xml", {
         body: { 
           xml_content: xmlContent,
           organization_id: activeOrganization,
-          pdf_path: pdfPath,
-          xml_path: xmlPath,
-          doc_key: docKey,
+          pdf_attachment_url: pdfUrl,
+          xml_attachment_url: xmlUrl,
+          file_path: pdfPath || xmlPath,
         },
       });
 
