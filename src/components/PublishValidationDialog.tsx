@@ -24,6 +24,11 @@ interface ValidationResult {
     qboConnected: boolean;
     tokenExpired: boolean;
     tokenExpiresAt?: string;
+    invalidAccounts?: Array<{
+      vendor: string;
+      account: string;
+      docCount: number;
+    }>;
   };
 }
 
@@ -128,6 +133,99 @@ export const PublishValidationDialog = ({
         warnings.push(`${docsWithoutVendor} documento${docsWithoutVendor !== 1 ? 's' : ''} sin vendor asignado. Se crearán automáticamente en QuickBooks.`);
       }
 
+      // 5. Validar cuentas contables
+      console.log("🔍 Validating account codes...");
+      const invalidAccounts: Array<{ vendor: string; account: string; docCount: number }> = [];
+      
+      if (qboConnected && !tokenExpired) {
+        try {
+          // Obtener cuentas válidas de QuickBooks
+          const { data: qboData, error: qboError } = await supabase.functions.invoke(
+            "list-quickbooks-accounts",
+            {
+              body: { organization_id: activeOrganization },
+            }
+          );
+
+          if (qboError) throw qboError;
+
+          if (qboData?.success) {
+            const validAccountCodes = new Set(
+              qboData.accounts
+                .filter((acc: any) => acc.active && acc.accountNumber)
+                .map((acc: any) => acc.accountNumber)
+            );
+
+            console.log(`✓ Found ${validAccountCodes.size} valid QuickBooks accounts`);
+
+            // Obtener vendors y sus cuentas de los documentos pendientes
+            let docsQuery = supabase
+              .from("processed_documents")
+              .select(`
+                id,
+                supplier_name,
+                vendor_id,
+                vendors!inner(vendor_name, default_account_ref)
+              `)
+              .eq("organization_id", activeOrganization)
+              .is("qbo_entity_id", null)
+              .in("status", ["pending", "processed"]);
+
+            if (documentIds && documentIds.length > 0) {
+              docsQuery = docsQuery.in("id", documentIds);
+            }
+
+            const { data: docsWithVendors } = await docsQuery;
+
+            if (docsWithVendors && docsWithVendors.length > 0) {
+              // Agrupar por cuenta contable y contar documentos
+              const accountUsage = new Map<string, { vendor: string; count: number }>();
+              
+              docsWithVendors.forEach((doc: any) => {
+                const account = doc.vendors?.default_account_ref;
+                const vendor = doc.vendors?.vendor_name || doc.supplier_name;
+                
+                if (account) {
+                  const key = `${vendor}|${account}`;
+                  const existing = accountUsage.get(key);
+                  if (existing) {
+                    existing.count++;
+                  } else {
+                    accountUsage.set(key, { vendor, count: 1 });
+                  }
+                }
+              });
+
+              // Verificar cuáles cuentas son inválidas
+              accountUsage.forEach((data, key) => {
+                const account = key.split('|')[1];
+                if (!validAccountCodes.has(account)) {
+                  invalidAccounts.push({
+                    vendor: data.vendor,
+                    account: account,
+                    docCount: data.count,
+                  });
+                }
+              });
+
+              if (invalidAccounts.length > 0) {
+                const totalInvalidDocs = invalidAccounts.reduce((sum, item) => sum + item.docCount, 0);
+                errors.push(
+                  `${totalInvalidDocs} documento(s) con cuentas contables inválidas no se podrán publicar`
+                );
+                isValid = false;
+                console.log("❌ Invalid accounts found:", invalidAccounts);
+              } else {
+                console.log("✓ All accounts are valid");
+              }
+            }
+          }
+        } catch (error) {
+          console.error("Error validating accounts:", error);
+          warnings.push("No se pudo validar las cuentas contables. Continúe con precaución.");
+        }
+      }
+
       setValidation({
         isValid,
         warnings,
@@ -137,6 +235,7 @@ export const PublishValidationDialog = ({
           qboConnected,
           tokenExpired,
           tokenExpiresAt,
+          invalidAccounts: invalidAccounts.length > 0 ? invalidAccounts : undefined,
         },
       });
     } catch (error) {
@@ -228,6 +327,33 @@ export const PublishValidationDialog = ({
                     </ul>
                   </AlertDescription>
                 </Alert>
+              )}
+
+              {/* Detalles de cuentas inválidas */}
+              {validation.stats.invalidAccounts && validation.stats.invalidAccounts.length > 0 && (
+                <div className="mt-4 p-4 bg-destructive/10 rounded-lg border border-destructive/20">
+                  <h4 className="font-semibold text-sm mb-3 flex items-center gap-2">
+                    <XCircle className="h-4 w-4 text-destructive" />
+                    Cuentas Contables Inválidas
+                  </h4>
+                  <div className="space-y-2 text-sm">
+                    {validation.stats.invalidAccounts.map((item, idx) => (
+                      <div key={idx} className="flex items-center justify-between bg-background/50 p-2 rounded">
+                        <div className="flex-1">
+                          <div className="font-medium">{item.vendor}</div>
+                          <div className="text-xs text-muted-foreground">
+                            Cuenta: <code className="bg-destructive/20 px-1 rounded">{item.account}</code>
+                          </div>
+                        </div>
+                        <Badge variant="destructive">{item.docCount} doc(s)</Badge>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="mt-3 text-xs text-muted-foreground">
+                    💡 Solución: Ve a <strong>Configurar Vendors</strong> y actualiza las cuentas contables 
+                    de estos proveedores con códigos válidos de QuickBooks.
+                  </div>
+                </div>
               )}
 
               {/* Advertencias */}
