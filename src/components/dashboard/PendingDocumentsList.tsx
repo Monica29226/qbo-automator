@@ -12,8 +12,9 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { FileText, AlertCircle, Calendar, DollarSign, Building2 } from "lucide-react";
+import { FileText, AlertCircle, Calendar, DollarSign, Building2, Send, Loader2, RefreshCw } from "lucide-react";
 import { format } from "date-fns";
+import { toast } from "sonner";
 
 interface PendingDocument {
   id: string;
@@ -34,6 +35,7 @@ export const PendingDocumentsList = () => {
   const [pendingDocs, setPendingDocs] = useState<PendingDocument[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
+  const [isPublishing, setIsPublishing] = useState(false);
 
   const fetchPendingDocuments = async () => {
     if (!activeOrganization) return;
@@ -77,6 +79,43 @@ export const PendingDocumentsList = () => {
     return "Pendiente de revisión";
   };
 
+  const handlePublishAll = async () => {
+    if (!activeOrganization || pendingDocs.length === 0) return;
+
+    setIsPublishing(true);
+    toast.info(`Publicando ${pendingDocs.length} facturas pendientes a QuickBooks...`);
+
+    try {
+      const { data, error } = await supabase.functions.invoke("publish-to-quickbooks", {
+        body: { 
+          organization_id: activeOrganization,
+          document_ids: pendingDocs.map(doc => doc.id)
+        }
+      });
+
+      if (error) throw error;
+
+      const published = data.published || 0;
+      const failed = data.failed || 0;
+
+      if (published > 0) {
+        toast.success(
+          `✓ ${published} factura${published !== 1 ? 's' : ''} publicada${published !== 1 ? 's' : ''} en QuickBooks${failed > 0 ? ` (${failed} fallidas)` : ''}`
+        );
+        fetchPendingDocuments(); // Refresh list
+      } else if (failed > 0) {
+        toast.error(`No se pudo publicar ninguna factura (${failed} errores)`);
+      } else {
+        toast.info("No hay facturas para publicar");
+      }
+    } catch (error: any) {
+      console.error("Error publishing to QuickBooks:", error);
+      toast.error(`Error al publicar en QuickBooks: ${error.message}`);
+    } finally {
+      setIsPublishing(false);
+    }
+  };
+
   return (
     <Dialog open={isOpen} onOpenChange={setIsOpen}>
       <DialogTrigger asChild>
@@ -87,14 +126,52 @@ export const PendingDocumentsList = () => {
       </DialogTrigger>
       <DialogContent className="max-w-4xl max-h-[80vh]">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <AlertCircle className="h-5 w-5 text-warning" />
-            Documentos Pendientes ({pendingDocs.length})
-          </DialogTitle>
-          <DialogDescription>
-            Listado de facturas que requieren atención antes de publicar a QuickBooks
-          </DialogDescription>
+          <div className="flex items-center justify-between">
+            <div>
+              <DialogTitle className="flex items-center gap-2">
+                <AlertCircle className="h-5 w-5 text-warning" />
+                Facturas en Estado Pendiente
+              </DialogTitle>
+              <DialogDescription>
+                Documentos que están esperando ser procesados
+              </DialogDescription>
+            </div>
+            <div className="flex gap-2">
+              <Button
+                onClick={fetchPendingDocuments}
+                disabled={isLoading || isPublishing}
+                variant="outline"
+                size="sm"
+              >
+                <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
+                Refrescar
+              </Button>
+              {pendingDocs.length > 0 && (
+                <Button
+                  onClick={handlePublishAll}
+                  disabled={isPublishing || isLoading}
+                  size="sm"
+                >
+                  {isPublishing ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Publicando...
+                    </>
+                  ) : (
+                    <>
+                      <Send className="h-4 w-4 mr-2" />
+                      Publicar Todas ({pendingDocs.length})
+                    </>
+                  )}
+                </Button>
+              )}
+            </div>
+          </div>
         </DialogHeader>
+        
+        <div className="text-sm text-muted-foreground mb-2">
+          Total: <span className="font-semibold text-foreground">{pendingDocs.length}</span> documentos pendientes
+        </div>
 
         <ScrollArea className="h-[60vh] pr-4">
           {isLoading ? (
