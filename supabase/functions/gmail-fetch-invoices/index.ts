@@ -58,7 +58,11 @@ serve(async (req) => {
 
     // Verificar si el token está expirado y renovarlo si es necesario
     let accessToken = credentials.access_token;
-    if (credentials.expires_at && Date.now() > credentials.expires_at) {
+    const expiresAt = typeof credentials.expires_at === 'string' 
+      ? new Date(credentials.expires_at).getTime() 
+      : credentials.expires_at;
+    
+    if (expiresAt && Date.now() > expiresAt) {
       console.log("Access token expired, refreshing...");
       
       const GOOGLE_CLIENT_ID = Deno.env.get("GOOGLE_CLIENT_ID")!;
