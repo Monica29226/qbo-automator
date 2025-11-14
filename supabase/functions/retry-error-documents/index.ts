@@ -337,6 +337,16 @@ Deno.serve(async (req) => {
 
           if (publishError) {
             console.log(`✗ Publication failed for ${doc.doc_number}:`, publishError);
+            
+            // Actualizar documento con error específico
+            await supabase
+              .from("processed_documents")
+              .update({
+                status: "error",
+                error_message: `Error de publicación: ${publishError.message || "Unknown publication error"}`,
+              })
+              .eq("id", doc.id);
+            
             results.failed++;
             results.errors.push({
               doc_number: doc.doc_number,
@@ -348,6 +358,16 @@ Deno.serve(async (req) => {
           } else if (publishData?.failed > 0) {
             console.log(`✗ Publication failed: ${doc.doc_number}`);
             const errorMsg = publishData.errors?.[0]?.error || "Unknown publication error";
+            
+            // Actualizar documento con error específico de QuickBooks
+            await supabase
+              .from("processed_documents")
+              .update({
+                status: "error",
+                error_message: errorMsg,
+              })
+              .eq("id", doc.id);
+            
             results.failed++;
             results.errors.push({
               doc_number: doc.doc_number,
