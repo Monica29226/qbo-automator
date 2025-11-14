@@ -183,14 +183,10 @@ Deno.serve(async (req) => {
       // Crear vendor si no existe - usar nombre normalizado para evitar errores de encoding
       console.log(`Creating vendor with normalized name: ${normalizedName}`);
       
-      // Preparar body del vendor - solo incluir campos que tengan valor
+      // Preparar body del vendor - QuickBooks API no acepta PrimaryTaxIdentifier
       const vendorBody: any = {
         DisplayName: normalizedName,
       };
-      
-      if (supplierTaxId) {
-        vendorBody.PrimaryTaxIdentifier = supplierTaxId;
-      }
       
       const createResponse = await fetch(
         `https://quickbooks.api.intuit.com/v3/company/${realmId}/vendor`,
