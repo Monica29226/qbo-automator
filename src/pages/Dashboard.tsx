@@ -96,24 +96,19 @@ const Dashboard = () => {
       .gte("created_at", sevenDaysAgo.toISOString());
 
     if (!error && data) {
-      // Documentos PROCESADOS hoy (usando processed_at)
+      // Documentos PROCESADOS hoy (incluyendo published)
       const processedToday = data.filter(
-        (doc) => doc.processed_at && new Date(doc.processed_at) >= today && doc.status === "processed"
+        (doc) => doc.processed_at && new Date(doc.processed_at) >= today && 
+        (doc.status === "processed" || doc.status === "published")
       );
       
-      // Documentos creados este mes
-      const thisMonth = data.filter(
-        (doc) =>
-          new Date(doc.created_at).getMonth() === new Date().getMonth()
-      );
-
       setStats({
-        processed: processedToday.length, // Solo las procesadas HOY
-        review: data.filter((d) => d.status === "review").length,
-        pending: data.filter((d) => d.status === "pending").length,
-        total: thisMonth.length,
-        errors: data.filter((d) => d.status === "error").length,
-        published: data.filter((d) => d.status === "published").length,
+        processed: processedToday.length, // Procesadas HOY (processed + published)
+        review: data.filter((d) => d.status === "review").length, // 7 días
+        pending: data.filter((d) => d.status === "pending").length, // 7 días
+        total: data.length, // Total 7 días (para coincidir con flujo)
+        errors: data.filter((d) => d.status === "error").length, // 7 días
+        published: data.filter((d) => d.status === "published").length, // 7 días
       });
     }
   };
@@ -650,7 +645,7 @@ const Dashboard = () => {
             variant="default"
           />
           <StatsCard
-            title="Total Mes"
+            title="Total (7 días)"
             value={stats.total.toString()}
             change="+18%"
             icon={FileText}
