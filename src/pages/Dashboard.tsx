@@ -26,6 +26,7 @@ import { GmailTokenAlert } from "@/components/dashboard/GmailTokenAlert";
 import { QuickBooksTokenAlert } from "@/components/dashboard/QuickBooksTokenAlert";
 import { VendorsWithoutRules } from "@/components/dashboard/VendorsWithoutRules";
 import { ErrorDiagnostic } from "@/components/dashboard/ErrorDiagnostic";
+import { MigrateAndRetryButton } from "@/components/dashboard/MigrateAndRetryButton";
 import { useAuth } from "@/hooks/useAuth";
 import { Link, useNavigate } from "react-router-dom";
 import { useEffect, useState, useCallback, useMemo } from "react";
@@ -522,6 +523,7 @@ const Dashboard = () => {
                 <AlertCircle className="h-4 w-4 mr-2 text-destructive" />
                 Ver Facturas con Errores
               </Button>
+              {stats.errors > 0 && <MigrateAndRetryButton />}
               <TestSingleInvoiceButton />
               <ExtractMissingVendors />
               <AssignVendorsToDocuments />
