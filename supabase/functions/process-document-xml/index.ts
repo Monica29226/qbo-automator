@@ -233,9 +233,10 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Look up vendor category by tax ID
+    // Look up vendor by tax ID for automatic assignment
     let accountCode = "Gastos por clasificar";
     let vendorId = null;
+    let status = "pending";
     
     console.log(`🔍 [VENDOR LOOKUP START] tax_id='${supplier_tax_id}' (type: ${typeof supplier_tax_id}, length: ${supplier_tax_id?.length})`);
     console.log(`🔍 [VENDOR LOOKUP START] org='${payload.organization_id}'`);
@@ -245,50 +246,63 @@ Deno.serve(async (req) => {
     } else {
       console.log(`✓ supplier_tax_id exists, proceeding with lookup...`);
       
-      const { data: category, error: catError } = await supabase
-        .from('vendor_categories')
+      // First, look up vendor in vendors table for automatic assignment
+      const { data: vendor, error: vendorError } = await supabase
+        .from('vendors')
         .select('*')
         .eq('organization_id', payload.organization_id)
-        .eq('vendor_identification', supplier_tax_id)
+        .eq('vendor_tax_id', supplier_tax_id)
         .eq('is_active', true)
         .maybeSingle();
       
-      console.log(`🔍 [VENDOR LOOKUP RESULT] category=${category ? 'FOUND' : 'NOT FOUND'}, error=${catError ? catError.message : 'none'}`);
+      console.log(`🔍 [VENDOR LOOKUP] vendor=${vendor ? 'FOUND' : 'NOT FOUND'}, error=${vendorError ? vendorError.message : 'none'}`);
       
-      if (catError) {
-        console.error("❌ Error buscando vendor:", catError);
-      } else if (category) {
-        accountCode = category.account_code;
-        console.log("✅ Vendor category found:", category.vendor_name, "→", accountCode);
+      if (vendorError) {
+        console.error("❌ Error buscando vendor:", vendorError);
+      } else if (vendor) {
+        vendorId = vendor.id;
+        accountCode = vendor.default_account_ref;
+        status = "processed";
+        console.log("✅ Vendor found and assigned:", vendor.vendor_name, "→", accountCode);
       } else {
-        console.log("⚠️  No category found for tax_id:", supplier_tax_id);
+        console.log("⚠️  No vendor found for tax_id:", supplier_tax_id);
         
-        // Debug: Listar TODOS los vendors para comparar
-        const { data: allVendors, error: listError } = await supabase
+        // Fallback: check vendor_categories for account code
+        const { data: category, error: catError } = await supabase
           .from('vendor_categories')
-          .select('vendor_identification, vendor_name, account_code')
+          .select('*')
           .eq('organization_id', payload.organization_id)
-          .eq('is_active', true);
+          .eq('vendor_identification', supplier_tax_id)
+          .eq('is_active', true)
+          .maybeSingle();
         
-        if (listError) {
-          console.error("❌ Error listing vendors:", listError);
+        console.log(`🔍 [CATEGORY LOOKUP] category=${category ? 'FOUND' : 'NOT FOUND'}, error=${catError ? catError.message : 'none'}`);
+        
+        if (catError) {
+          console.error("❌ Error buscando category:", catError);
+        } else if (category) {
+          accountCode = category.account_code;
+          status = "review";
+          console.log("✅ Category found (needs manual review):", category.vendor_name, "→", accountCode);
         } else {
-          console.log("📋 Total vendors in DB:", allVendors?.length);
-          console.log("📋 First 5 vendors:", JSON.stringify(allVendors?.slice(0, 5)));
+          console.log("⚠️  No category found for tax_id:", supplier_tax_id);
           
-          // Buscar coincidencias parciales
-          const partialMatch = allVendors?.find(v => 
-            v.vendor_identification.includes(supplier_tax_id) || 
-            supplier_tax_id.includes(v.vendor_identification)
-          );
-          if (partialMatch) {
-            console.log("🔎 Partial match found:", partialMatch);
+          // Debug: List vendors to compare
+          const { data: allVendors, error: listError } = await supabase
+            .from('vendors')
+            .select('vendor_tax_id, vendor_name, default_account_ref')
+            .eq('organization_id', payload.organization_id)
+            .eq('is_active', true)
+            .limit(5);
+          
+          if (listError) {
+            console.error("❌ Error listing vendors:", listError);
+          } else {
+            console.log("📋 Sample vendors in DB:", JSON.stringify(allVendors));
           }
         }
       }
     }
-
-    const status = accountCode !== "Gastos por clasificar" ? "processed" : "review";
 
     // Save document
     const { data: document, error: insertError } = await supabase
