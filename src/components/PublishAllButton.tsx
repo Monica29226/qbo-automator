@@ -1,11 +1,14 @@
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { toast } from "sonner";
 import { Send } from "lucide-react";
+import { PublishValidationDialog } from "./PublishValidationDialog";
 
 export const PublishAllButton = () => {
   const { activeOrganization } = useAuth();
+  const [showValidation, setShowValidation] = useState(false);
 
   const handlePublishAll = async () => {
     if (!activeOrganization) return;
@@ -44,12 +47,20 @@ export const PublishAllButton = () => {
   };
 
   return (
-    <Button 
-      onClick={handlePublishAll}
-      className="w-full"
-    >
-      <Send className="h-4 w-4 mr-2" />
-      Publicar Todas a QuickBooks
-    </Button>
+    <>
+      <PublishValidationDialog
+        open={showValidation}
+        onOpenChange={setShowValidation}
+        onConfirm={handlePublishAll}
+      />
+      
+      <Button 
+        onClick={() => setShowValidation(true)}
+        className="w-full"
+      >
+        <Send className="h-4 w-4 mr-2" />
+        Publicar Todas a QuickBooks
+      </Button>
+    </>
   );
 };

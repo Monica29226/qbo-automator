@@ -15,6 +15,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { FileText, AlertCircle, Calendar, DollarSign, Building2, Send, Loader2, RefreshCw } from "lucide-react";
 import { format } from "date-fns";
 import { toast } from "sonner";
+import { PublishValidationDialog } from "../PublishValidationDialog";
 
 interface PendingDocument {
   id: string;
@@ -36,6 +37,7 @@ export const PendingDocumentsList = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
   const [isPublishing, setIsPublishing] = useState(false);
+  const [showValidation, setShowValidation] = useState(false);
 
   const fetchPendingDocuments = async () => {
     if (!activeOrganization) return;
@@ -117,7 +119,15 @@ export const PendingDocumentsList = () => {
   };
 
   return (
-    <Dialog open={isOpen} onOpenChange={setIsOpen}>
+    <>
+      <PublishValidationDialog
+        open={showValidation}
+        onOpenChange={setShowValidation}
+        onConfirm={handlePublishAll}
+        documentIds={pendingDocs.map(doc => doc.id)}
+      />
+      
+      <Dialog open={isOpen} onOpenChange={setIsOpen}>
       <DialogTrigger asChild>
         <Button variant="outline" size="sm" className="gap-2">
           <FileText className="h-4 w-4" />
@@ -148,7 +158,7 @@ export const PendingDocumentsList = () => {
               </Button>
               {pendingDocs.length > 0 && (
                 <Button
-                  onClick={handlePublishAll}
+                  onClick={() => setShowValidation(true)}
                   disabled={isPublishing || isLoading}
                   size="sm"
                 >
@@ -237,5 +247,6 @@ export const PendingDocumentsList = () => {
         </ScrollArea>
       </DialogContent>
     </Dialog>
+    </>
   );
 };
