@@ -568,10 +568,29 @@ Deno.serve(async (req) => {
             const precioUnitario = parseFloat(item.precioUnitario) || 0;
             const subtotal = parseFloat(item.subtotal) || (cantidad * precioUnitario);
             const lineAmount = subtotal; // Los valores YA vienen negativos para notas de crédito
-            const tasaImpuesto = parseFloat(item.tarifa) || 0; // Tasa de impuesto (1%, 2%, 4%, 8%, 13%, etc.)
             
-            // CRÍTICO: Calcular montoImpuesto si no está presente en XML
-            let montoImpuesto = parseFloat(item.montoImpuesto) || 0;
+            // IMPORTANTE: Obtener SOLO el impuesto IVA (código 01)
+            // Ignorar impuestos específicos (código 05) y otros
+            let tasaImpuesto = 0;
+            let montoImpuesto = 0;
+            
+            if (item.impuestos && Array.isArray(item.impuestos)) {
+              // Buscar el impuesto con código 01 (IVA)
+              const ivaImpuesto = item.impuestos.find((imp: any) => imp.codigo === '01');
+              if (ivaImpuesto) {
+                tasaImpuesto = parseFloat(ivaImpuesto.tarifa) || 0;
+                montoImpuesto = parseFloat(ivaImpuesto.monto) || 0;
+                console.log(`✓ IVA encontrado para línea: ${tasaImpuesto}% (monto: ${montoImpuesto})`);
+              } else {
+                console.log(`ℹ️ No se encontró IVA (código 01) en esta línea, usando tasa 0%`);
+              }
+            } else {
+              // Fallback al método antiguo si no hay array de impuestos
+              tasaImpuesto = parseFloat(item.tarifa) || 0;
+              montoImpuesto = parseFloat(item.montoImpuesto) || 0;
+            }
+            
+            // CRÍTICO: Calcular montoImpuesto si no está presente
             if (montoImpuesto === 0 && tasaImpuesto > 0) {
               // Calcular IVA: subtotal * (tasa / 100)
               montoImpuesto = subtotal * (tasaImpuesto / 100);
