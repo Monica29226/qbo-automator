@@ -4,35 +4,12 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { toast } from "sonner";
 import { Upload, Loader2 } from "lucide-react";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog";
+import { PublishValidationDialog } from "./PublishValidationDialog";
 
 export const PublishAllProcessedButton = () => {
   const { activeOrganization } = useAuth();
   const [isPublishing, setIsPublishing] = useState(false);
-  const [pendingCount, setPendingCount] = useState<number | null>(null);
-
-  const fetchPendingCount = async () => {
-    if (!activeOrganization) return;
-
-    const { count } = await supabase
-      .from("processed_documents")
-      .select("*", { count: "exact", head: true })
-      .eq("organization_id", activeOrganization)
-      .eq("status", "processed")
-      .is("qbo_entity_id", null);
-
-    setPendingCount(count || 0);
-  };
+  const [showValidation, setShowValidation] = useState(false);
 
   const handlePublishAll = async () => {
     if (!activeOrganization) {
@@ -107,55 +84,32 @@ export const PublishAllProcessedButton = () => {
   };
 
   return (
-    <AlertDialog onOpenChange={(open) => open && fetchPendingCount()}>
-      <AlertDialogTrigger asChild>
-        <Button
-          variant="default"
-          size="sm"
-          className="bg-green-600 hover:bg-green-700"
-        >
-          <Upload className="h-4 w-4 mr-2" />
-          Publicar Todos a QBO
-        </Button>
-      </AlertDialogTrigger>
-      <AlertDialogContent>
-        <AlertDialogHeader>
-          <AlertDialogTitle>Publicar Todos los Documentos Procesados</AlertDialogTitle>
-          <AlertDialogDescription>
-            {pendingCount !== null ? (
-              <>
-                Se publicarán <strong>{pendingCount} documentos procesados</strong> que aún no están en QuickBooks.
-                <br /><br />
-                Este proceso puede tomar varios minutos dependiendo de la cantidad de documentos.
-                <br /><br />
-                ¿Deseas continuar?
-              </>
-            ) : (
-              "Cargando..."
-            )}
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel disabled={isPublishing}>Cancelar</AlertDialogCancel>
-          <AlertDialogAction
-            onClick={handlePublishAll}
-            disabled={isPublishing || pendingCount === 0}
-            className="bg-green-600 hover:bg-green-700"
-          >
-            {isPublishing ? (
-              <>
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                Publicando...
-              </>
-            ) : (
-              <>
-                <Upload className="h-4 w-4 mr-2" />
-                Publicar {pendingCount || 0} Documentos
-              </>
-            )}
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
+    <>
+      <PublishValidationDialog
+        open={showValidation}
+        onOpenChange={setShowValidation}
+        onConfirm={handlePublishAll}
+      />
+      
+      <Button
+        variant="default"
+        size="sm"
+        className="bg-green-600 hover:bg-green-700"
+        onClick={() => setShowValidation(true)}
+        disabled={isPublishing}
+      >
+        {isPublishing ? (
+          <>
+            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+            Publicando...
+          </>
+        ) : (
+          <>
+            <Upload className="h-4 w-4 mr-2" />
+            Publicar Todos a QBO
+          </>
+        )}
+      </Button>
+    </>
   );
 };
