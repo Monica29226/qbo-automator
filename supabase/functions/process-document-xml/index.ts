@@ -79,10 +79,30 @@ function parseLineItems(xml: string): any[] {
     const montoDescuento = parseFloat(parseXMLValue(lineXml, 'MontoDescuento') || '0');
     const subtotal = parseFloat(parseXMLValue(lineXml, 'SubTotal') || (cantidad * precioUnitario).toString());
     
-    // Extract tax information per line
-    const tarifa = parseFloat(parseXMLValue(lineXml, 'Tarifa') || '0');
-    const codigoTarifa = parseXMLValue(lineXml, 'CodigoTarifa') || parseXMLValue(lineXml, 'Codigo');
-    const montoImpuesto = parseFloat(parseXMLValue(lineXml, 'MontoImpuesto') || parseXMLValue(lineXml, 'Monto') || '0');
+    // Extract ALL tax information per line (puede haber múltiples impuestos)
+    const impuestosRegex = /<Impuesto>(.*?)<\/Impuesto>/gis;
+    const impuestos: any[] = [];
+    let taxMatch;
+    
+    while ((taxMatch = impuestosRegex.exec(lineXml)) !== null) {
+      const taxXml = taxMatch[1];
+      const codigo = parseXMLValue(taxXml, 'Codigo');
+      const tarifa = parseFloat(parseXMLValue(taxXml, 'Tarifa') || '0');
+      const monto = parseFloat(parseXMLValue(taxXml, 'Monto') || '0');
+      const codigoTarifaIVA = parseXMLValue(taxXml, 'CodigoTarifaIVA');
+      
+      impuestos.push({
+        codigo,
+        tarifa,
+        monto,
+        codigoTarifaIVA
+      });
+    }
+    
+    // Para mantener compatibilidad, extraer el IVA principal (código 01)
+    const ivaImpuesto = impuestos.find(imp => imp.codigo === '01');
+    const tarifa = ivaImpuesto?.tarifa || 0;
+    const montoImpuesto = ivaImpuesto?.monto || 0;
     
     // Extract product code if available
     const codigoProducto = parseXMLValue(lineXml, 'Codigo') || parseXMLValue(lineXml, 'CodigoCabys');
@@ -91,6 +111,7 @@ function parseLineItems(xml: string): any[] {
       numeroLinea: lineNumber++,
       codigoProducto,
       descripcion,
+      impuestos, // Array con TODOS los impuestos
       cantidad,
       unidadMedida,
       precioUnitario,
@@ -98,8 +119,7 @@ function parseLineItems(xml: string): any[] {
       montoDescuento,
       montoTotalLinea,
       impuesto: {
-        tarifa, // Tasa de impuesto (1, 2, 4, 8, 13, etc.)
-        codigoTarifa,
+        tarifa, // Tasa de impuesto IVA (1, 2, 4, 8, 13, etc.)
         montoImpuesto // Monto del IVA para esta línea
       },
       // Campos planos para acceso directo
