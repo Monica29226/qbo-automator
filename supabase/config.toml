@@ -86,3 +86,9 @@ verify_jwt = false
 
 [functions.refresh-integration-tokens]
 verify_jwt = false
+
+[functions.migrate-and-retry-all]
+verify_jwt = true
+
+[functions.republish-from-extracted-data]
+verify_jwt = true
