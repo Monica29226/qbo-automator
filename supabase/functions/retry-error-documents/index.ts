@@ -284,8 +284,17 @@ Deno.serve(async (req) => {
           continue;
         }
 
-        // Si el documento YA TIENE xml_data, simplemente intentar publicarlo sin re-procesar
-        if (doc.xml_data && Object.keys(doc.xml_data).length > 0) {
+        // FORZAR re-procesamiento si el XML no tiene el array de impuestos en los line items
+        // Esto actualiza documentos antiguos procesados con código viejo
+        const needsReprocessing = !doc.xml_data?.detalle?.[0]?.impuestos || 
+                                  doc.error_message?.includes("tasa impositiva");
+        
+        if (needsReprocessing) {
+          console.log(`⚠️  XML data is outdated (missing tax array), forcing reprocessing for: ${doc.doc_number}`);
+        }
+        
+        // Si el documento tiene xml_data Y NO necesita re-procesamiento, intentar publicar directamente
+        if (doc.xml_data && Object.keys(doc.xml_data).length > 0 && !needsReprocessing) {
           console.log(`✓ Document already has parsed XML data, attempting direct publish: ${doc.doc_number}`);
           
           // Incrementar retry_count
