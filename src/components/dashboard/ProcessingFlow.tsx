@@ -89,11 +89,17 @@ export const ProcessingFlow = () => {
       .gte("created_at", new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString());
 
     if (docs) {
+      // Contar todos los documentos procesados (processed + published)
+      const processed = docs.filter(d => d.status === "processed" || d.status === "published").length;
+      const pending = docs.filter(d => d.status === "pending").length;
+      const review = docs.filter(d => d.status === "review").length;
+      const errors = docs.filter(d => d.status === "error").length;
+      
       setStats({
         total: docs.length,
-        success: docs.filter(d => d.status === "processed").length,
-        errors: docs.filter(d => d.status === "error").length, // Corregido: usar status en lugar de error_message
-        pending: docs.filter(d => d.status === "pending" || d.status === "review").length,
+        success: processed,
+        errors: errors,
+        pending: pending + review, // Combinar pending + review para mostrar total
       });
     }
 
