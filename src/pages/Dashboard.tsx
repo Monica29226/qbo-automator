@@ -64,7 +64,8 @@ const Dashboard = () => {
           {
             event: '*',
             schema: 'public',
-            table: 'processed_documents'
+            table: 'processed_documents',
+            filter: `organization_id=eq.${activeOrganization}`
           },
           () => {
             console.log('Document changed, updating stats...');

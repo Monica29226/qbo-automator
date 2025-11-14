@@ -46,10 +46,24 @@ export const ProcessingFlow = () => {
           {
             event: '*',
             schema: 'public',
-            table: 'processed_documents'
+            table: 'processed_documents',
+            filter: `organization_id=eq.${activeOrganization}`
           },
           () => {
             console.log('Processing flow: Document changed, updating stats...');
+            fetchFlowData();
+          }
+        )
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'vendor_categories',
+            filter: `organization_id=eq.${activeOrganization}`
+          },
+          () => {
+            console.log('Processing flow: Vendor rules changed, updating stats...');
             fetchFlowData();
           }
         )
