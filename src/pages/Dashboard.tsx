@@ -23,6 +23,7 @@ import { PublishAllProcessedButton } from "@/components/PublishAllProcessedButto
 import { SyncFromExcelDialog } from "@/components/SyncFromExcelDialog";
 import { TestSingleInvoiceButton } from "@/components/TestSingleInvoiceButton";
 import { GmailTokenAlert } from "@/components/dashboard/GmailTokenAlert";
+import { QuickBooksTokenAlert } from "@/components/dashboard/QuickBooksTokenAlert";
 import { useAuth } from "@/hooks/useAuth";
 import { Link, useNavigate } from "react-router-dom";
 import { useEffect, useState } from "react";
@@ -605,6 +606,7 @@ const Dashboard = () => {
         </div>
 
         <GmailTokenAlert />
+        <QuickBooksTokenAlert />
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
           <StatsCard
@@ -645,6 +647,8 @@ const Dashboard = () => {
             change="+5"
             icon={Clock}
             variant="default"
+            onActionClick={() => navigate("/review-queue")}
+            actionLabel="Ver Pendientes"
           />
           <StatsCard
             title="Total (7 días)"

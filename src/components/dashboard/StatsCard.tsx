@@ -1,4 +1,5 @@
 import { Card } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -8,9 +9,19 @@ interface StatsCardProps {
   change: string;
   icon: LucideIcon;
   variant?: "default" | "primary" | "success" | "warning";
+  onActionClick?: () => void;
+  actionLabel?: string;
 }
 
-export const StatsCard = ({ title, value, change, icon: Icon, variant = "default" }: StatsCardProps) => {
+export const StatsCard = ({ 
+  title, 
+  value, 
+  change, 
+  icon: Icon, 
+  variant = "default",
+  onActionClick,
+  actionLabel 
+}: StatsCardProps) => {
   const isPositive = change.startsWith("+");
   
   const variantStyles = {
@@ -42,6 +53,16 @@ export const StatsCard = ({ title, value, change, icon: Icon, variant = "default
           {change} vs ayer
         </p>
       </div>
+      {onActionClick && actionLabel && (
+        <Button 
+          onClick={onActionClick}
+          variant="outline"
+          size="sm"
+          className="mt-4 w-full"
+        >
+          {actionLabel}
+        </Button>
+      )}
     </Card>
   );
 };
