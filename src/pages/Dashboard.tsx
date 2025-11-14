@@ -22,6 +22,7 @@ import { PublishReviewButton } from "@/components/PublishReviewButton";
 import { PublishAllProcessedButton } from "@/components/PublishAllProcessedButton";
 import { SyncFromExcelDialog } from "@/components/SyncFromExcelDialog";
 import { TestSingleInvoiceButton } from "@/components/TestSingleInvoiceButton";
+import { GmailTokenAlert } from "@/components/dashboard/GmailTokenAlert";
 import { useAuth } from "@/hooks/useAuth";
 import { Link, useNavigate } from "react-router-dom";
 import { useEffect, useState } from "react";
@@ -602,6 +603,8 @@ const Dashboard = () => {
             </Badge>
           </div>
         </div>
+
+        <GmailTokenAlert />
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
           <StatsCard
