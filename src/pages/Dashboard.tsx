@@ -4,7 +4,6 @@ import { Button } from "@/components/ui/button";
 import { FileText, CheckCircle, AlertCircle, Clock, Settings, Database, LogOut, Users, Upload, Eye, Plug, FileSpreadsheet, Mail, RefreshCw, Send, Shield, FileCheck } from "lucide-react";
 import { StatsCard } from "@/components/dashboard/StatsCard";
 import { RecentDocuments } from "@/components/dashboard/RecentDocuments";
-import { ProcessingFlow } from "@/components/dashboard/ProcessingFlow";
 import { CronMonitor } from "@/components/dashboard/CronMonitor";
 import { AICreditsMonitor } from "@/components/dashboard/AICreditsMonitor";
 import { QBOAccountsDiagnostic } from "@/components/dashboard/QBOAccountsDiagnostic";
@@ -693,24 +692,9 @@ const Dashboard = () => {
           <TotalsValidationTest />
         </div>
 
-        <Card className="p-6">
-          <div className="flex items-center justify-between mb-6">
-            <h3 className="text-lg font-semibold flex items-center gap-2">
-              <Clock className="h-5 w-5 text-primary" />
-              Flujo de Procesamiento
-            </h3>
-            <Button variant="outline" size="sm" asChild>
-              <Link to="/vendor-rules">
-                <FileSpreadsheet className="h-4 w-4 mr-2" />
-                Gestionar Reglas
-              </Link>
-            </Button>
-          </div>
-          <ProcessingFlow />
-        </Card>
       </main>
 
-      <ErrorDocumentsModal 
+      <ErrorDocumentsModal
         open={isErrorModalOpen} 
         onOpenChange={setIsErrorModalOpen} 
       />
