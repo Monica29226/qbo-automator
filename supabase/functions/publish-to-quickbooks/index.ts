@@ -925,7 +925,7 @@ Deno.serve(async (req) => {
           .update({
             qbo_entity_id: billId,
             qbo_entity_type: "Bill",
-            status: "processed",
+            status: "published",
             processed_at: new Date().toISOString(),
             processed_by: userId,
             error_message: null,
