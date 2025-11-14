@@ -1,7 +1,7 @@
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { AlertCircle, ArrowLeft, RefreshCw, FileText } from "lucide-react";
+import { AlertCircle, ArrowLeft, RefreshCw, FileText, Database } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
@@ -17,6 +17,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { ErrorDiagnostic } from "@/components/dashboard/ErrorDiagnostic";
 
 interface ErrorDocument {
   id: string;
@@ -196,6 +197,52 @@ const ErrorDocuments = () => {
     }
   };
 
+  const handleRepublishFromData = async () => {
+    if (!activeOrganization) return;
+
+    const toastId = toast.loading("Republicando facturas desde datos extraídos...");
+
+    try {
+      const { data, error } = await supabase.functions.invoke("republish-from-extracted-data", {
+        body: {
+          organization_id: activeOrganization,
+        },
+      });
+
+      if (error) throw error;
+
+      const { published, failed, skipped } = data.results;
+
+      if (published > 0 && failed === 0) {
+        toast.success(
+          `✓ ${published} factura${published !== 1 ? 's' : ''} republicada${published !== 1 ? 's' : ''} exitosamente`,
+          { id: toastId, duration: 5000 }
+        );
+      } else if (published > 0 && failed > 0) {
+        toast.warning(
+          `${published} republicada${published !== 1 ? 's' : ''}, ${failed} fallida${failed !== 1 ? 's' : ''}`,
+          { id: toastId, duration: 6000 }
+        );
+      } else if (skipped > 0) {
+        toast.info(
+          `No se encontraron facturas con datos extraídos para republicar`,
+          { id: toastId, duration: 5000 }
+        );
+      } else {
+        toast.error(
+          `No se pudieron republicar las facturas`,
+          { id: toastId, duration: 6000 }
+        );
+      }
+
+      setTimeout(() => fetchErrorDocuments(), 1500);
+
+    } catch (error: any) {
+      console.error("Error republishing:", error);
+      toast.error(`Error al republicar: ${error.message}`, { id: toastId });
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
@@ -229,8 +276,16 @@ const ErrorDocuments = () => {
             {documents.length > 0 && (
               <div className="flex gap-2">
                 <Button 
-                  onClick={() => handleRetryAll(false)}
+                  onClick={handleRepublishFromData}
                   variant="default"
+                  className="gap-2"
+                >
+                  <Database className="h-4 w-4" />
+                  Republicar desde Datos
+                </Button>
+                <Button 
+                  onClick={() => handleRetryAll(false)}
+                  variant="outline"
                   className="gap-2"
                 >
                   <RefreshCw className="h-4 w-4" />
@@ -251,6 +306,13 @@ const ErrorDocuments = () => {
       </header>
 
       <main className="container mx-auto px-6 py-8">
+        {/* Diagnostic Section */}
+        {documents.length > 0 && (
+          <div className="mb-8">
+            <ErrorDiagnostic />
+          </div>
+        )}
+
         {documents.length === 0 ? (
           <Card className="p-12 text-center">
             <div className="text-muted-foreground space-y-4">
