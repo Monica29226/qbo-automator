@@ -84,11 +84,15 @@ const Dashboard = () => {
 
     const today = new Date();
     today.setHours(0, 0, 0, 0);
+    
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
 
+    // Obtener documentos de los últimos 7 días
     const { data, error } = await supabase
       .from("processed_documents")
       .select("status, created_at, processed_at")
-      .eq("organization_id", activeOrganization);
+      .eq("organization_id", activeOrganization)
+      .gte("created_at", sevenDaysAgo.toISOString());
 
     if (!error && data) {
       // Documentos PROCESADOS hoy (usando processed_at)
@@ -108,7 +112,7 @@ const Dashboard = () => {
         pending: data.filter((d) => d.status === "pending").length,
         total: thisMonth.length,
         errors: data.filter((d) => d.status === "error").length,
-        published: data.filter((d) => d.status === "processed" || d.status === "duplicate").length,
+        published: data.filter((d) => d.status === "published").length,
       });
     }
   };
