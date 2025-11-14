@@ -4,9 +4,11 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Loader2, AlertCircle, Calendar, FileText } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Loader2, AlertCircle, Calendar, FileText, RefreshCw } from "lucide-react";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
+import { toast } from "sonner";
 
 interface ErrorDocumentsModalProps {
   open: boolean;
@@ -30,6 +32,8 @@ export const ErrorDocumentsModal = ({ open, onOpenChange }: ErrorDocumentsModalP
   const { activeOrganization } = useAuth();
   const [errors, setErrors] = useState<ErrorDocument[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [retryingAll, setRetryingAll] = useState(false);
+  const [retryingIds, setRetryingIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (open && activeOrganization) {
@@ -67,17 +71,111 @@ export const ErrorDocumentsModal = ({ open, onOpenChange }: ErrorDocumentsModalP
     );
   };
 
+  const retryDocument = async (documentId: string, docNumber: string) => {
+    if (!activeOrganization) return;
+    
+    setRetryingIds(prev => new Set(prev).add(documentId));
+    toast.info(`Reprocesando factura ${docNumber}...`);
+    
+    try {
+      const { data, error } = await supabase.functions.invoke("retry-error-documents", {
+        body: { 
+          organization_id: activeOrganization,
+          document_ids: [documentId]
+        }
+      });
+
+      if (error) throw error;
+
+      if (data.processed > 0) {
+        toast.success(`✓ Factura ${docNumber} reprocesada exitosamente`);
+        fetchErrors(); // Refresh list
+      } else if (data.failed > 0) {
+        const errorMsg = data.errors?.[0]?.error || "Error desconocido";
+        toast.error(`Error al reprocesar: ${errorMsg}`);
+      }
+    } catch (error: any) {
+      console.error("Error retrying document:", error);
+      toast.error(`Error al reprocesar factura: ${error.message}`);
+    } finally {
+      setRetryingIds(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(documentId);
+        return newSet;
+      });
+    }
+  };
+
+  const retryAllErrors = async () => {
+    if (!activeOrganization || errors.length === 0) return;
+    
+    setRetryingAll(true);
+    toast.info(`Reprocesando ${errors.length} facturas con error...`);
+    
+    try {
+      const documentIds = errors.map(e => e.id);
+      
+      const { data, error } = await supabase.functions.invoke("retry-error-documents", {
+        body: { 
+          organization_id: activeOrganization,
+          document_ids: documentIds
+        }
+      });
+
+      if (error) throw error;
+
+      const processed = data.processed || 0;
+      const failed = data.failed || 0;
+
+      if (processed > 0) {
+        toast.success(`✓ ${processed} factura${processed !== 1 ? 's' : ''} reprocesada${processed !== 1 ? 's' : ''}${failed > 0 ? ` (${failed} fallidas)` : ''}`);
+        fetchErrors(); // Refresh list
+      } else {
+        toast.error(`No se pudieron reprocesar las facturas (${failed} errores)`);
+      }
+    } catch (error: any) {
+      console.error("Error retrying all documents:", error);
+      toast.error(`Error al reprocesar facturas: ${error.message}`);
+    } finally {
+      setRetryingAll(false);
+    }
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-4xl max-h-[80vh]">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <AlertCircle className="h-5 w-5 text-destructive" />
-            Documentos con Errores
-          </DialogTitle>
-          <DialogDescription>
-            Últimos 50 documentos con errores de procesamiento
-          </DialogDescription>
+          <div className="flex items-center justify-between">
+            <div>
+              <DialogTitle className="flex items-center gap-2">
+                <AlertCircle className="h-5 w-5 text-destructive" />
+                Documentos con Errores
+              </DialogTitle>
+              <DialogDescription>
+                Últimos 50 documentos con errores de procesamiento
+              </DialogDescription>
+            </div>
+            {errors.length > 0 && (
+              <Button
+                onClick={retryAllErrors}
+                disabled={retryingAll}
+                variant="outline"
+                size="sm"
+              >
+                {retryingAll ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Reprocesando...
+                  </>
+                ) : (
+                  <>
+                    <RefreshCw className="h-4 w-4 mr-2" />
+                    Reprocesar Todos ({errors.length})
+                  </>
+                )}
+              </Button>
+            )}
+          </div>
         </DialogHeader>
 
         {isLoading ? (
@@ -134,11 +232,27 @@ export const ErrorDocumentsModal = ({ open, onOpenChange }: ErrorDocumentsModalP
 
                     <div className="flex items-center justify-between mt-2 pt-2 border-t border-destructive/10">
                       <span className="text-xs text-muted-foreground">
-                        Creado: {format(new Date(error.created_at), "d MMM, HH:mm", { locale: es })}
+                        Creado: {format(new Date(error.created_at), "d MMM, HH:mm", { locale: es })} • Reintentos: {error.retry_count}
                       </span>
-                      <span className="text-xs text-muted-foreground">
-                        Reintentos: {error.retry_count}
-                      </span>
+                      <Button
+                        onClick={() => retryDocument(error.id, error.doc_number)}
+                        disabled={retryingIds.has(error.id) || retryingAll}
+                        size="sm"
+                        variant="outline"
+                        className="h-7 text-xs"
+                      >
+                        {retryingIds.has(error.id) ? (
+                          <>
+                            <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                            Reprocesando...
+                          </>
+                        ) : (
+                          <>
+                            <RefreshCw className="h-3 w-3 mr-1" />
+                            Reprocesar
+                          </>
+                        )}
+                      </Button>
                     </div>
                   </div>
                 </div>
