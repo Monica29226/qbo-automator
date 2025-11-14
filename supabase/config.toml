@@ -10,7 +10,7 @@ verify_jwt = true
 verify_jwt = false
 
 [functions.gmail-fetch-invoices]
-verify_jwt = true
+verify_jwt = false
 
 [functions.quickbooks-oauth-init]
 verify_jwt = true
@@ -25,7 +25,7 @@ verify_jwt = true
 verify_jwt = false
 
 [functions.publish-to-quickbooks]
-verify_jwt = true
+verify_jwt = false
 
 [functions.auto-sync-invoices]
 verify_jwt = false

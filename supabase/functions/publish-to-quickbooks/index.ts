@@ -15,18 +15,23 @@ Deno.serve(async (req) => {
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    // Autenticar usuario
+    // Autenticar usuario o validar service role
     const authHeader = req.headers.get("Authorization");
     if (!authHeader) {
       throw new Error("No authorization header");
     }
 
-    const { data: { user }, error: authError } = await supabase.auth.getUser(
-      authHeader.replace("Bearer ", "")
-    );
-
-    if (authError || !user) {
-      throw new Error("Authentication failed");
+    const token = authHeader.replace("Bearer ", "");
+    const isServiceRole = token === supabaseKey;
+    let userId: string | null = null;
+    
+    if (!isServiceRole) {
+      // Si no es service role, validar que sea un usuario autenticado
+      const { data: { user }, error: authError } = await supabase.auth.getUser(token);
+      if (authError || !user) {
+        throw new Error("Authentication failed");
+      }
+      userId = user.id;
     }
 
     const { organization_id, document_ids } = await req.json();
@@ -887,7 +892,7 @@ Deno.serve(async (req) => {
             qbo_entity_type: "Bill",
             status: "processed",
             processed_at: new Date().toISOString(),
-            processed_by: user.id,
+            processed_by: userId,
             error_message: null,
           })
           .eq("id", doc.id);
