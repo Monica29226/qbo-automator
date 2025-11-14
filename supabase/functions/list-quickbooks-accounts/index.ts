@@ -53,7 +53,7 @@ serve(async (req) => {
 
     const credentials = integration.credentials as any;
     let accessToken = credentials.access_token;
-    const realmId = credentials.realmId;
+    const realmId = credentials.realm_id; // Corregido: usar realm_id con guión bajo
 
     // Refresh token if expired
     if (credentials.expires_at && new Date(credentials.expires_at) <= new Date()) {
