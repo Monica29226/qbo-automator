@@ -182,6 +182,16 @@ Deno.serve(async (req) => {
 
       // Crear vendor si no existe - usar nombre normalizado para evitar errores de encoding
       console.log(`Creating vendor with normalized name: ${normalizedName}`);
+      
+      // Preparar body del vendor - solo incluir campos que tengan valor
+      const vendorBody: any = {
+        DisplayName: normalizedName,
+      };
+      
+      if (supplierTaxId) {
+        vendorBody.PrimaryTaxIdentifier = supplierTaxId;
+      }
+      
       const createResponse = await fetch(
         `https://quickbooks.api.intuit.com/v3/company/${realmId}/vendor`,
         {
@@ -189,12 +199,9 @@ Deno.serve(async (req) => {
           headers: {
             "Authorization": `Bearer ${accessToken}`,
             "Accept": "application/json",
-            "Content-Type": "application/json; charset=utf-8",
+            "Content-Type": "application/json",
           },
-          body: JSON.stringify({
-            DisplayName: normalizedName,
-            PrimaryTaxIdentifier: supplierTaxId || undefined,
-          }),
+          body: JSON.stringify(vendorBody),
         }
       );
 
