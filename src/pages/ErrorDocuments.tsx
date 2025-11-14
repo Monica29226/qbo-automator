@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ErrorDiagnostic } from "@/components/dashboard/ErrorDiagnostic";
+import { MigrateAndRetryButton } from "@/components/dashboard/MigrateAndRetryButton";
 
 interface ErrorDocument {
   id: string;
@@ -275,6 +276,7 @@ const ErrorDocuments = () => {
             </div>
             {documents.length > 0 && (
               <div className="flex gap-2">
+                <MigrateAndRetryButton />
                 <Button 
                   onClick={handleRepublishFromData}
                   variant="default"
@@ -297,7 +299,7 @@ const ErrorDocuments = () => {
                   className="gap-2"
                 >
                   <RefreshCw className="h-4 w-4" />
-                  Forzar Reintento
+                  Forzar Retry
                 </Button>
               </div>
             )}
