@@ -1,13 +1,22 @@
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { AlertCircle, ArrowLeft, RefreshCw } from "lucide-react";
+import { AlertCircle, ArrowLeft, RefreshCw, FileText } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { toast } from "sonner";
 import { PublishAllButton } from "@/components/PublishAllButton";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import { ScrollArea } from "@/components/ui/scroll-area";
 
 interface ErrorDocument {
   id: string;
@@ -268,6 +277,31 @@ const ErrorDocuments = () => {
                           <p className="text-sm text-muted-foreground">
                             {errorInfo.solution}
                           </p>
+                        </div>
+                        <div className="pt-2 border-t border-border">
+                          <Dialog>
+                            <DialogTrigger asChild>
+                              <Button variant="ghost" size="sm" className="gap-2">
+                                <FileText className="h-4 w-4" />
+                                Ver Error Completo
+                              </Button>
+                            </DialogTrigger>
+                            <DialogContent className="max-w-3xl">
+                              <DialogHeader>
+                                <DialogTitle>Mensaje de Error Completo</DialogTitle>
+                                <DialogDescription>
+                                  Factura #{doc.doc_number} - {doc.supplier_name}
+                                </DialogDescription>
+                              </DialogHeader>
+                              <ScrollArea className="max-h-[60vh] w-full">
+                                <div className="bg-muted/50 p-4 rounded-lg">
+                                  <pre className="text-xs font-mono whitespace-pre-wrap break-words">
+                                    {doc.error_message}
+                                  </pre>
+                                </div>
+                              </ScrollArea>
+                            </DialogContent>
+                          </Dialog>
                         </div>
                       </div>
 
