@@ -77,7 +77,15 @@ function parseLineItems(xml: string): any[] {
     const precioUnitario = parseFloat(parseXMLValue(lineXml, 'PrecioUnitario') || '0');
     const montoTotalLinea = parseFloat(parseXMLValue(lineXml, 'MontoTotalLinea') || '0');
     const montoDescuento = parseFloat(parseXMLValue(lineXml, 'MontoDescuento') || '0');
-    const subtotal = parseFloat(parseXMLValue(lineXml, 'SubTotal') || (cantidad * precioUnitario).toString());
+    
+    // CRITICAL: Capturar MontoTotal (antes de descuentos) y SubTotal (después de descuentos)
+    const montoTotal = parseFloat(parseXMLValue(lineXml, 'MontoTotal') || (cantidad * precioUnitario).toString());
+    const subtotal = parseFloat(parseXMLValue(lineXml, 'SubTotal') || montoTotal.toString());
+    
+    // Capturar BaseImponible (base para calcular impuestos) e ImpuestoNeto
+    const baseImponible = parseFloat(parseXMLValue(lineXml, 'BaseImponible') || subtotal.toString());
+    const impuestoNeto = parseFloat(parseXMLValue(lineXml, 'ImpuestoNeto') || '0');
+    const impuestoAsumidoEmisor = parseFloat(parseXMLValue(lineXml, 'ImpuestoAsumidoEmisorFabrica') || '0');
     
     // Extract ALL tax information per line (puede haber múltiples impuestos)
     const impuestosRegex = /<Impuesto>(.*?)<\/Impuesto>/gis;
@@ -115,8 +123,12 @@ function parseLineItems(xml: string): any[] {
       cantidad,
       unidadMedida,
       precioUnitario,
-      subtotal,
+      montoTotal, // Monto antes de descuentos (cantidad × precioUnitario)
       montoDescuento,
+      subtotal, // Monto después de descuentos
+      baseImponible, // Base para calcular impuestos (puede incluir otros cargos)
+      impuestoNeto, // Impuesto que efectivamente se cobra al receptor
+      impuestoAsumidoEmisor, // Impuesto asumido por el emisor (ej: IEBL)
       montoTotalLinea,
       impuesto: {
         tarifa, // Tasa de impuesto IVA (1, 2, 4, 8, 13, etc.)
@@ -189,6 +201,10 @@ Deno.serve(async (req) => {
     let total_discount = parseFloat(parseXMLValue(xmlContent, 'TotalDescuentos') || '0');
     let total_amount = parseFloat(parseXMLValue(xmlContent, 'TotalComprobante'));
     
+    // Capturar impuestos asumidos por el emisor y otros cargos
+    const totalImpuestoAsumidoEmisor = parseFloat(parseXMLValue(xmlContent, 'TotalImpAsumEmisorFabrica') || '0');
+    const totalOtrosCargos = parseFloat(parseXMLValue(xmlContent, 'TotalOtrosCargos') || '0');
+    
     const currency = parseXMLValue(xmlContent, 'CodigoMoneda') || 'CRC';
     const exchange_rate = parseFloat(parseXMLValue(xmlContent, 'TipoCambio') || '1');
     
@@ -232,7 +248,8 @@ Deno.serve(async (req) => {
     const aceptada = !estadoMensaje.toLowerCase().includes('rechazado');
     
     console.log("📊 Extracted:", { 
-      doc_number, supplier_name, supplier_tax_id, total_amount, 
+      doc_number, supplier_name, supplier_tax_id, total_amount,
+      total_tax, total_discount, totalImpuestoAsumidoEmisor, totalOtrosCargos,
       doc_type, esNotaCredito, aceptada, detalle: detalle.length 
     });
 
@@ -354,8 +371,10 @@ Deno.serve(async (req) => {
           fechaEmision: issue_date,
           detalle,
           subTotal: subtotal,
-          totalImpuesto: total_tax,
           totalDescuentos: total_discount,
+          totalImpuesto: total_tax,
+          totalImpuestoAsumidoEmisor, // Impuestos asumidos por emisor (ej: IEBL)
+          totalOtrosCargos, // Otros cargos adicionales
           totalComprobante: total_amount,
           moneda: currency,
           tipoCambio: exchange_rate,
