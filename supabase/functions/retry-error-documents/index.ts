@@ -418,11 +418,107 @@ Deno.serve(async (req) => {
           try {
             // Descargar el XML si no lo tenemos ya
             if (!xmlContent) {
-              const xmlResponse = await fetch(doc.xml_attachment_url);
-              if (!xmlResponse.ok) {
-                throw new Error(`Failed to fetch XML: ${xmlResponse.statusText}`);
+              try {
+                const xmlResponse = await fetch(doc.xml_attachment_url);
+                if (!xmlResponse.ok) {
+                  throw new Error(`Failed to fetch XML: ${xmlResponse.statusText}`);
+                }
+                xmlContent = await xmlResponse.text();
+              } catch (fetchError: any) {
+                console.log(`⚠️  Failed to fetch XML from URL: ${fetchError.message}`);
+                
+                // Si falla la descarga PERO tiene xml_data en formato antiguo, intentar migrarlo
+                if (doc.xml_data && needsReprocessing) {
+                  console.log(`🔄 Attempting to migrate old xml_data format for: ${doc.doc_number}`);
+                  
+                  // Migrar el formato antiguo agregando el array de impuestos a cada line item
+                  const migratedData = { ...doc.xml_data };
+                  if (migratedData.detalle && Array.isArray(migratedData.detalle)) {
+                    migratedData.detalle = migratedData.detalle.map((item: any) => {
+                      if (!item.impuestos || !Array.isArray(item.impuestos)) {
+                        // Extraer el impuesto desde el nivel superior si existe
+                        const taxRate = migratedData.resumen?.totalImpuestos / migratedData.resumen?.totalComprobante * 100 || 13;
+                        return {
+                          ...item,
+                          impuestos: [{
+                            codigo: "01",
+                            codigoTarifa: "08",
+                            tarifa: taxRate,
+                            monto: item.impuesto || (item.montoTotal * taxRate / 113) // Calcular impuesto si no está
+                          }]
+                        };
+                      }
+                      return item;
+                    });
+                  }
+                  
+                  // Actualizar con datos migrados e intentar publicar
+                  await supabase
+                    .from("processed_documents")
+                    .update({
+                      xml_data: migratedData,
+                      retry_count: (doc.retry_count || 0) + 1,
+                      status: "pending",
+                      error_message: null
+                    })
+                    .eq("id", doc.id);
+                  
+                  console.log(`✓ Data migrated, attempting to publish: ${doc.doc_number}`);
+                  
+                  // Intentar publicar con datos migrados
+                  const { data: publishData, error: publishError } = await supabase.functions.invoke(
+                    "publish-to-quickbooks",
+                    {
+                      body: {
+                        organization_id: organization_id,
+                        document_ids: [doc.id],
+                      },
+                      headers: {
+                        Authorization: authHeader,
+                      },
+                    }
+                  );
+                  
+                  if (publishError) {
+                    console.log(`✗ Publication failed after migration: ${publishError.message}`);
+                    await supabase
+                      .from("processed_documents")
+                      .update({
+                        status: "error",
+                        error_message: `Error tras migración: ${publishError.message}`,
+                      })
+                      .eq("id", doc.id);
+                    results.failed++;
+                    results.errors.push({
+                      doc_number: doc.doc_number,
+                      error: publishError.message,
+                    });
+                  } else if (publishData?.published > 0) {
+                    console.log(`✓ Published after migration: ${doc.doc_number}`);
+                    results.published++;
+                  } else {
+                    const errorMsg = publishData?.errors?.[0]?.error || "Unknown error";
+                    console.log(`✗ Failed after migration: ${errorMsg}`);
+                    await supabase
+                      .from("processed_documents")
+                      .update({
+                        status: "error",
+                        error_message: errorMsg,
+                      })
+                      .eq("id", doc.id);
+                    results.failed++;
+                    results.errors.push({
+                      doc_number: doc.doc_number,
+                      error: errorMsg,
+                    });
+                  }
+                  
+                  continue; // Pasar al siguiente documento
+                }
+                
+                // Si no tiene xml_data o no se pudo migrar, propagar el error
+                throw fetchError;
               }
-              xmlContent = await xmlResponse.text();
             }
 
             // Re-procesar con process-document-xml
