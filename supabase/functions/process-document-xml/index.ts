@@ -165,8 +165,8 @@ Deno.serve(async (req) => {
     
     // Parse amounts
     const subtotal = parseFloat(parseXMLValue(xmlContent, 'TotalGravado') || parseXMLValue(xmlContent, 'TotalVenta') || '0');
-    const total_tax = parseFloat(parseXMLValue(xmlContent, 'TotalImpuesto') || '0');
-    const total_discount = parseFloat(parseXMLValue(xmlContent, 'TotalDescuentos') || '0');
+    let total_tax = parseFloat(parseXMLValue(xmlContent, 'TotalImpuesto') || '0');
+    let total_discount = parseFloat(parseXMLValue(xmlContent, 'TotalDescuentos') || '0');
     let total_amount = parseFloat(parseXMLValue(xmlContent, 'TotalComprobante'));
     
     const currency = parseXMLValue(xmlContent, 'CodigoMoneda') || 'CRC';
@@ -182,10 +182,24 @@ Deno.serve(async (req) => {
     if (xmlContent.includes('NotaCreditoElectronica')) {
       doc_type = 'NotaCreditoElectronica';
       esNotaCredito = true;
+      // Convertir TODOS los montos a negativos para notas de crédito
       total_amount = -Math.abs(total_amount);
+      total_tax = -Math.abs(total_tax);
+      total_discount = -Math.abs(total_discount);
       detalle.forEach(item => {
         item.montoTotalLinea = -Math.abs(item.montoTotalLinea);
         item.precioUnitario = -Math.abs(item.precioUnitario);
+        if (item.impuesto) {
+          item.impuesto = -Math.abs(item.impuesto);
+        }
+        if (item.descuento) {
+          item.descuento = -Math.abs(item.descuento);
+        }
+      });
+      console.log('💳 NOTA DE CRÉDITO - Montos convertidos a negativos:', {
+        total_amount,
+        total_tax,
+        total_discount
       });
     } else if (xmlContent.includes('NotaDebitoElectronica')) {
       doc_type = 'NotaDebitoElectronica';
