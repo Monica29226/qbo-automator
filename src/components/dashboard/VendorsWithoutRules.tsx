@@ -2,16 +2,19 @@ import { useEffect, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { AlertCircle, FileSpreadsheet, ExternalLink } from "lucide-react";
+import { AlertCircle, FileSpreadsheet, ExternalLink, Download } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { Link } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
+import * as XLSX from "xlsx";
+import { toast } from "sonner";
 
 interface VendorError {
   supplier_name: string;
   supplier_tax_id: string | null;
   facturas_count: number;
   sample_doc_number: string;
+  error_type: string;
 }
 
 export const VendorsWithoutRules = () => {
@@ -39,20 +42,24 @@ export const VendorsWithoutRules = () => {
 
       if (error) throw error;
 
-      // Filtrar solo los que tienen error de cuenta contable
-      const accountErrors = errorDocs?.filter(
-        (doc) =>
-          doc.error_message?.includes("No se pudo determinar cuenta contable") ||
-          doc.error_message?.includes("account") ||
-          doc.error_message?.includes("classification")
-      );
-
-      // Agrupar por proveedor
+      // Agrupar por proveedor y tipo de error
       const vendorMap = new Map<string, VendorError>();
       
-      accountErrors?.forEach((doc) => {
+      errorDocs?.forEach((doc) => {
         const key = doc.supplier_name;
         const existing = vendorMap.get(key);
+        
+        // Determinar tipo de error
+        let errorType = "Otro";
+        if (doc.error_message?.includes("No se pudo determinar cuenta contable")) {
+          errorType = "Sin cuenta contable";
+        } else if (doc.error_message?.includes("Max retries reached")) {
+          errorType = "Reintentos agotados";
+        } else if (doc.error_message?.includes("Gmail")) {
+          errorType = "Error Gmail";
+        } else if (doc.error_message?.includes("QuickBooks") || doc.error_message?.includes("QBO")) {
+          errorType = "Error QuickBooks";
+        }
         
         if (existing) {
           existing.facturas_count++;
@@ -62,6 +69,7 @@ export const VendorsWithoutRules = () => {
             supplier_tax_id: doc.supplier_tax_id,
             facturas_count: 1,
             sample_doc_number: doc.doc_number,
+            error_type: errorType,
           });
         }
       });
@@ -72,6 +80,42 @@ export const VendorsWithoutRules = () => {
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const exportToExcel = () => {
+    if (vendors.length === 0) {
+      toast.error("No hay proveedores para exportar");
+      return;
+    }
+
+    // Crear datos para Excel
+    const excelData = vendors.map((vendor) => ({
+      "Proveedor": vendor.supplier_name,
+      "RUC": vendor.supplier_tax_id || "",
+      "Facturas Afectadas": vendor.facturas_count,
+      "Tipo de Error": vendor.error_type,
+      "Código Contable": "", // Vacío para que el usuario lo llene
+      "Descripción Cuenta": "", // Vacío para que el usuario lo llene
+    }));
+
+    // Crear workbook
+    const worksheet = XLSX.utils.json_to_sheet(excelData);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Proveedores");
+
+    // Ajustar anchos de columna
+    worksheet['!cols'] = [
+      { wch: 50 }, // Proveedor
+      { wch: 15 }, // RUC
+      { wch: 18 }, // Facturas Afectadas
+      { wch: 20 }, // Tipo de Error
+      { wch: 15 }, // Código Contable
+      { wch: 40 }, // Descripción Cuenta
+    ];
+
+    // Descargar
+    XLSX.writeFile(workbook, `proveedores-sin-reglas-${new Date().toISOString().split('T')[0]}.xlsx`);
+    toast.success(`Exportado ${vendors.length} proveedores a Excel`);
   };
 
   if (isLoading) {
@@ -105,14 +149,13 @@ export const VendorsWithoutRules = () => {
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2">
           <AlertCircle className="h-5 w-5 text-destructive" />
-          <h3 className="text-lg font-semibold">Proveedores sin Reglas de Clasificación</h3>
+          <h3 className="text-lg font-semibold">Proveedores con Errores</h3>
         </div>
         <Badge variant="destructive">{vendors.length}</Badge>
       </div>
 
       <p className="text-sm text-muted-foreground mb-4">
-        Estos proveedores tienen facturas que fallan porque no tienen una cuenta contable asignada.
-        Agrega reglas de clasificación para resolverlo.
+        Proveedores con facturas en error. Los que tienen "Sin cuenta contable" necesitan reglas de clasificación.
       </p>
 
       <div className="space-y-2 mb-4 max-h-64 overflow-y-auto">
@@ -123,9 +166,17 @@ export const VendorsWithoutRules = () => {
           >
             <div className="flex-1">
               <p className="font-medium text-sm">{vendor.supplier_name}</p>
-              {vendor.supplier_tax_id && (
-                <p className="text-xs text-muted-foreground">RUC: {vendor.supplier_tax_id}</p>
-              )}
+              <div className="flex items-center gap-2 mt-1">
+                {vendor.supplier_tax_id && (
+                  <p className="text-xs text-muted-foreground">RUC: {vendor.supplier_tax_id}</p>
+                )}
+                <Badge 
+                  variant={vendor.error_type === "Sin cuenta contable" ? "destructive" : "secondary"}
+                  className="text-xs"
+                >
+                  {vendor.error_type}
+                </Badge>
+              </div>
             </div>
             <Badge variant="outline" className="ml-2">
               {vendor.facturas_count} {vendor.facturas_count === 1 ? "factura" : "facturas"}
@@ -134,12 +185,16 @@ export const VendorsWithoutRules = () => {
         ))}
       </div>
 
-      <div className="flex gap-2">
+      <div className="flex gap-2 mb-4">
         <Button asChild className="flex-1">
           <Link to="/vendor-rules" className="flex items-center gap-2">
             <FileSpreadsheet className="h-4 w-4" />
             Configurar Reglas
           </Link>
+        </Button>
+        <Button variant="secondary" onClick={exportToExcel} className="flex items-center gap-2">
+          <Download className="h-4 w-4" />
+          Exportar Excel
         </Button>
         <Button variant="outline" onClick={fetchVendorsWithoutRules}>
           <ExternalLink className="h-4 w-4" />
@@ -148,7 +203,7 @@ export const VendorsWithoutRules = () => {
 
       <div className="mt-4 p-3 bg-muted/30 rounded-lg border border-dashed">
         <p className="text-xs text-muted-foreground">
-          <strong>Tip:</strong> Crea un Excel con columnas: Proveedor | Código Contable (ej: "5105: Alimentos")
+          <strong>Tip:</strong> Exporta a Excel, llena las columnas "Código Contable" y "Descripción", luego reimporta en /vendor-rules
         </p>
       </div>
     </Card>
