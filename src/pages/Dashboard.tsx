@@ -29,6 +29,9 @@ import { ErrorDiagnostic } from "@/components/dashboard/ErrorDiagnostic";
 import { MigrateAndRetryButton } from "@/components/dashboard/MigrateAndRetryButton";
 import { SmartRetryButton } from "@/components/dashboard/SmartRetryButton";
 import { TodayProcessingReport } from "@/components/dashboard/TodayProcessingReport";
+import { AutoProcessAllButton } from "@/components/dashboard/AutoProcessAllButton";
+import { TokenRenewalMonitor } from "@/components/dashboard/TokenRenewalMonitor";
+import { ProcessAllNowButton } from "@/components/dashboard/ProcessAllNowButton";
 import { useAuth } from "@/hooks/useAuth";
 import { Link, useNavigate } from "react-router-dom";
 import { useEffect, useState, useCallback, useMemo } from "react";
@@ -527,6 +530,7 @@ const Dashboard = () => {
               </Button>
               {stats.errors > 0 && (
                 <div className="space-y-2">
+                  <AutoProcessAllButton />
                   <SmartRetryButton />
                   <MigrateAndRetryButton />
                 </div>
@@ -628,6 +632,7 @@ const Dashboard = () => {
 
         <GmailTokenAlert />
         <QuickBooksTokenAlert />
+        <TokenRenewalMonitor />
         
         <TodayProcessingReport />
 
@@ -691,11 +696,22 @@ const Dashboard = () => {
             <RecentDocuments />
           </Card>
 
-          <Card className="p-6">
+          <Card className="p-6 space-y-4">
             <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
               <Database className="h-5 w-5 text-primary" />
-              Conexiones
+              Acciones Rápidas
             </h3>
+            
+            {(stats.errors > 0 || stats.review > 0) && (
+              <div className="space-y-3">
+                <ProcessAllNowButton />
+                <p className="text-xs text-muted-foreground text-center">
+                  Procesa automáticamente {stats.review} en revisión y {stats.errors} con error
+                </p>
+              </div>
+            )}
+            
+            <h3 className="text-sm font-semibold mt-6 mb-3">Conexiones</h3>
             <div className="space-y-4">
               <ConnectionStatus 
                 service="Gmail" 
