@@ -27,6 +27,8 @@ import { QuickBooksTokenAlert } from "@/components/dashboard/QuickBooksTokenAler
 import { VendorsWithoutRules } from "@/components/dashboard/VendorsWithoutRules";
 import { ErrorDiagnostic } from "@/components/dashboard/ErrorDiagnostic";
 import { MigrateAndRetryButton } from "@/components/dashboard/MigrateAndRetryButton";
+import { SmartRetryButton } from "@/components/dashboard/SmartRetryButton";
+import { TodayProcessingReport } from "@/components/dashboard/TodayProcessingReport";
 import { useAuth } from "@/hooks/useAuth";
 import { Link, useNavigate } from "react-router-dom";
 import { useEffect, useState, useCallback, useMemo } from "react";
@@ -523,7 +525,12 @@ const Dashboard = () => {
                 <AlertCircle className="h-4 w-4 mr-2 text-destructive" />
                 Ver Facturas con Errores
               </Button>
-              {stats.errors > 0 && <MigrateAndRetryButton />}
+              {stats.errors > 0 && (
+                <div className="space-y-2">
+                  <SmartRetryButton />
+                  <MigrateAndRetryButton />
+                </div>
+              )}
               <TestSingleInvoiceButton />
               <ExtractMissingVendors />
               <AssignVendorsToDocuments />
@@ -621,6 +628,8 @@ const Dashboard = () => {
 
         <GmailTokenAlert />
         <QuickBooksTokenAlert />
+        
+        <TodayProcessingReport />
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
           <StatsCard
