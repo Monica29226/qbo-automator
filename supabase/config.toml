@@ -3,6 +3,12 @@ project_id = "lqirqvvkjpunhtsvebot"
 [functions.smart-retry-errors]
 verify_jwt = false
 
+[functions.auto-renew-tokens]
+verify_jwt = false
+
+[functions.auto-process-all]
+verify_jwt = false
+
 [functions.check-sync-health]
 verify_jwt = false
 

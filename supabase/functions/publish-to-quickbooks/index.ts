@@ -527,11 +527,30 @@ Deno.serve(async (req) => {
           }
         }
         
-        // 5. Si no se pudo determinar ninguna cuenta, error descriptivo
+        // 5. NUEVO: Si no se pudo determinar ninguna cuenta, asignar cuenta por defecto 5105
         if (!accountCode) {
-          const errorMsg = `❌ No se pudo determinar cuenta contable para factura ${doc.doc_number} - Proveedor: ${doc.supplier_name} (Tax ID: ${doc.supplier_tax_id}). Opciones: 1) Agregar a vendor_categories, 2) Agregar regla de clasificación, 3) Verificar XML cuentaContable`;
-          console.error(errorMsg);
-          throw new Error(errorMsg);
+          accountCode = "5105";
+          console.log(`⚠️ No account found for ${doc.supplier_name}, using default: ${accountCode} (Costo de Ventas)`);
+          
+          // Crear regla de clasificación con cuenta por defecto para futuros documentos
+          try {
+            await supabase
+              .from("vendor_classification_rules")
+              .upsert({
+                organization_id,
+                vendor_name: doc.supplier_name,
+                account_code: accountCode,
+                account_description: "Auto-assigned default account (Costo de Ventas)",
+                is_active: true,
+              }, {
+                onConflict: "organization_id,vendor_name",
+              });
+            
+            console.log(`💡 Created classification rule with default account for ${doc.supplier_name}`);
+          } catch (ruleError) {
+            console.error(`Warning: Could not create classification rule:`, ruleError);
+            // Continue anyway - we still have the account code
+          }
         }
         
         // Obtener el ID real de QuickBooks para el código de cuenta
