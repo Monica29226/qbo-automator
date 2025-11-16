@@ -2,12 +2,13 @@ import { useEffect, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { AlertCircle, FileSpreadsheet, ExternalLink, Download } from "lucide-react";
+import { AlertCircle, FileSpreadsheet, ExternalLink, Download, Settings } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { Link } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import * as XLSX from "xlsx";
 import { toast } from "sonner";
+import { VendorConfigurationModal } from "./VendorConfigurationModal";
 
 interface VendorError {
   supplier_name: string;
@@ -15,12 +16,14 @@ interface VendorError {
   facturas_count: number;
   sample_doc_number: string;
   error_type: string;
+  document_ids?: string[];
 }
 
 export const VendorsWithoutRules = () => {
   const { activeOrganization } = useAuth();
   const [vendors, setVendors] = useState<VendorError[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [selectedVendor, setSelectedVendor] = useState<VendorError | null>(null);
 
   useEffect(() => {
     if (activeOrganization) {
@@ -33,12 +36,12 @@ export const VendorsWithoutRules = () => {
 
     setIsLoading(true);
     try {
-      // Obtener documentos en error
+      // Obtener documentos en error o pending_config
       const { data: errorDocs, error } = await supabase
         .from("processed_documents")
-        .select("supplier_name, supplier_tax_id, doc_number, error_message")
+        .select("id, supplier_name, supplier_tax_id, doc_number, error_message, status")
         .eq("organization_id", activeOrganization)
-        .eq("status", "error");
+        .in("status", ["error", "pending_config"]);
 
       if (error) throw error;
 
@@ -51,7 +54,9 @@ export const VendorsWithoutRules = () => {
         
         // Determinar tipo de error
         let errorType = "Otro";
-        if (doc.error_message?.includes("No se pudo determinar cuenta contable")) {
+        if (doc.status === "pending_config" || doc.error_message?.includes("sin cuenta contable")) {
+          errorType = "Sin cuenta contable";
+        } else if (doc.error_message?.includes("No se pudo determinar cuenta contable")) {
           errorType = "Sin cuenta contable";
         } else if (doc.error_message?.includes("Max retries reached")) {
           errorType = "Reintentos agotados";
@@ -63,6 +68,7 @@ export const VendorsWithoutRules = () => {
         
         if (existing) {
           existing.facturas_count++;
+          existing.document_ids?.push(doc.id);
         } else {
           vendorMap.set(key, {
             supplier_name: doc.supplier_name,
@@ -70,6 +76,7 @@ export const VendorsWithoutRules = () => {
             facturas_count: 1,
             sample_doc_number: doc.doc_number,
             error_type: errorType,
+            document_ids: [doc.id],
           });
         }
       });
@@ -178,9 +185,21 @@ export const VendorsWithoutRules = () => {
                 </Badge>
               </div>
             </div>
-            <Badge variant="outline" className="ml-2">
-              {vendor.facturas_count} {vendor.facturas_count === 1 ? "factura" : "facturas"}
-            </Badge>
+            <div className="flex items-center gap-2">
+              <Badge variant="outline" className="ml-2">
+                {vendor.facturas_count} {vendor.facturas_count === 1 ? "factura" : "facturas"}
+              </Badge>
+              {vendor.error_type === "Sin cuenta contable" && (
+                <Button
+                  variant="default"
+                  size="sm"
+                  onClick={() => setSelectedVendor(vendor)}
+                >
+                  <Settings className="h-4 w-4 mr-2" />
+                  Configurar
+                </Button>
+              )}
+            </div>
           </div>
         ))}
       </div>
@@ -203,9 +222,19 @@ export const VendorsWithoutRules = () => {
 
       <div className="mt-4 p-3 bg-muted/30 rounded-lg border border-dashed">
         <p className="text-xs text-muted-foreground">
-          <strong>Tip:</strong> Exporta a Excel, llena las columnas "Código Contable" y "Descripción", luego reimporta en /vendor-rules
+          <strong>Tip:</strong> Para proveedores sin cuenta contable, haga clic en "Configurar" para agregar 
+          la cuenta y publicar automáticamente en QuickBooks.
         </p>
       </div>
+
+      {selectedVendor && (
+        <VendorConfigurationModal
+          isOpen={!!selectedVendor}
+          onClose={() => setSelectedVendor(null)}
+          vendor={selectedVendor}
+          onConfigured={fetchVendorsWithoutRules}
+        />
+      )}
     </Card>
   );
 };
