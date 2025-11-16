@@ -90,28 +90,14 @@ Deno.serve(async (req) => {
 
           results.review_processed++;
         } else {
-          console.log(`⚠️ No vendor found, will create automatically on publish`);
+          console.log(`⚠️ No vendor found, marking as pending_config`);
           
-          // Crear regla de clasificación con cuenta por defecto
-          await supabase
-            .from("vendor_classification_rules")
-            .upsert({
-              organization_id,
-              vendor_name: doc.supplier_name,
-              account_code: DEFAULT_ACCOUNT_CODE,
-              account_description: "Auto-assigned default account (Costo de Ventas)",
-              is_active: true,
-            }, {
-              onConflict: "organization_id,vendor_name",
-            });
-
-          results.rules_created++;
-          
-          // Marcar como pending para procesamiento
+          // NO crear regla automática - requerir configuración manual
+          // Marcar como pending_config para que el usuario configure la cuenta
           await supabase
             .from("processed_documents")
             .update({
-              status: "pending",
+              status: "pending_config",
               retry_count: (doc.retry_count || 0) + 1,
             })
             .eq("id", doc.id);
@@ -165,29 +151,14 @@ Deno.serve(async (req) => {
 
           results.errors_fixed++;
         } else {
-          console.log(`⚠️ No previous success, assigning default account`);
+          console.log(`⚠️ No previous success, marking as pending_config`);
           
-          // Crear regla con cuenta por defecto
-          await supabase
-            .from("vendor_classification_rules")
-            .upsert({
-              organization_id,
-              vendor_name: doc.supplier_name,
-              account_code: DEFAULT_ACCOUNT_CODE,
-              account_description: "Auto-assigned default account (Costo de Ventas)",
-              is_active: true,
-            }, {
-              onConflict: "organization_id,vendor_name",
-            });
-
-          results.rules_created++;
-
-          // Marcar como pending
+          // NO asignar cuenta por defecto - requerir configuración manual
           await supabase
             .from("processed_documents")
             .update({
-              status: "pending",
-              error_message: null,
+              status: "pending_config",
+              error_message: "Proveedor sin cuenta contable configurada. Configure la cuenta para continuar.",
               retry_count: (doc.retry_count || 0) + 1,
             })
             .eq("id", doc.id);

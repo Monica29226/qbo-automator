@@ -527,30 +527,24 @@ Deno.serve(async (req) => {
           }
         }
         
-        // 5. NUEVO: Si no se pudo determinar ninguna cuenta, asignar cuenta por defecto 5105
+        // 5. Si no se pudo determinar ninguna cuenta, marcar como pending_config
         if (!accountCode) {
-          accountCode = "5105";
-          console.log(`⚠️ No account found for ${doc.supplier_name}, using default: ${accountCode} (Costo de Ventas)`);
+          console.log(`❌ No account code found for ${doc.supplier_name}, requires manual configuration`);
           
-          // Crear regla de clasificación con cuenta por defecto para futuros documentos
-          try {
-            await supabase
-              .from("vendor_classification_rules")
-              .upsert({
-                organization_id,
-                vendor_name: doc.supplier_name,
-                account_code: accountCode,
-                account_description: "Auto-assigned default account (Costo de Ventas)",
-                is_active: true,
-              }, {
-                onConflict: "organization_id,vendor_name",
-              });
-            
-            console.log(`💡 Created classification rule with default account for ${doc.supplier_name}`);
-          } catch (ruleError) {
-            console.error(`Warning: Could not create classification rule:`, ruleError);
-            // Continue anyway - we still have the account code
-          }
+          await supabase
+            .from("processed_documents")
+            .update({
+              status: "pending_config",
+              error_message: "Proveedor sin cuenta contable configurada. Configure la cuenta en 'Proveedores con Errores' para continuar.",
+            })
+            .eq("id", doc.id);
+
+          results.failed++;
+          results.errors.push({
+            doc_number: doc.doc_number,
+            error: "No account code configured for vendor",
+          });
+          continue; // Skip to next document
         }
         
         // Obtener el ID real de QuickBooks para el código de cuenta
