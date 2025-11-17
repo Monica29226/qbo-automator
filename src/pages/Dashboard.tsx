@@ -11,27 +11,18 @@ import { ErrorLogsViewer } from "@/components/dashboard/ErrorLogsViewer";
 import { ErrorDocumentsModal } from "@/components/dashboard/ErrorDocumentsModal";
 import { TotalsValidationTest } from "@/components/dashboard/TotalsValidationTest";
 import { VerifyBillButton } from "@/components/dashboard/VerifyBillButton";
-import { UpdateDocumentsWithVendors } from "@/components/dashboard/UpdateDocumentsWithVendors";
-import { ExtractMissingVendors } from "@/components/dashboard/ExtractMissingVendors";
-import { AssignVendorsToDocuments } from "@/components/dashboard/AssignVendorsToDocuments";
 import { TestAutoSyncFlow } from "@/components/dashboard/TestAutoSyncFlow";
 import { PendingDocumentsLog } from "@/components/dashboard/PendingDocumentsLog";
 import { OrganizationSwitcher } from "@/components/OrganizationSwitcher";
-import { PublishAllButton } from "@/components/PublishAllButton";
-import { PublishReviewButton } from "@/components/PublishReviewButton";
-import { PublishAllProcessedButton } from "@/components/PublishAllProcessedButton";
 import { SyncFromExcelDialog } from "@/components/SyncFromExcelDialog";
-import { TestSingleInvoiceButton } from "@/components/TestSingleInvoiceButton";
 import { GmailTokenAlert } from "@/components/dashboard/GmailTokenAlert";
 import { QuickBooksTokenAlert } from "@/components/dashboard/QuickBooksTokenAlert";
 import { VendorsWithoutRules } from "@/components/dashboard/VendorsWithoutRules";
 import { ErrorDiagnostic } from "@/components/dashboard/ErrorDiagnostic";
-import { MigrateAndRetryButton } from "@/components/dashboard/MigrateAndRetryButton";
-import { SmartRetryButton } from "@/components/dashboard/SmartRetryButton";
 import { TodayProcessingReport } from "@/components/dashboard/TodayProcessingReport";
-import { AutoProcessAllButton } from "@/components/dashboard/AutoProcessAllButton";
 import { TokenRenewalMonitor } from "@/components/dashboard/TokenRenewalMonitor";
 import { ProcessAllNowButton } from "@/components/dashboard/ProcessAllNowButton";
+import { CleanIrrecoverableErrorsButton } from "@/components/dashboard/CleanIrrecoverableErrorsButton";
 import { useAuth } from "@/hooks/useAuth";
 import { Link, useNavigate } from "react-router-dom";
 import { useEffect, useState, useCallback, useMemo } from "react";
@@ -529,16 +520,8 @@ const Dashboard = () => {
                 Ver Facturas con Errores
               </Button>
               {stats.errors > 0 && (
-                <div className="space-y-2">
-                  <AutoProcessAllButton />
-                  <SmartRetryButton />
-                  <MigrateAndRetryButton />
-                </div>
+                <CleanIrrecoverableErrorsButton />
               )}
-              <TestSingleInvoiceButton />
-              <ExtractMissingVendors />
-              <AssignVendorsToDocuments />
-              <UpdateDocumentsWithVendors />
             </div>
             <Button variant="outline" size="sm" asChild>
               <Link to="/review-queue">
@@ -546,12 +529,6 @@ const Dashboard = () => {
                 Revisión ({stats.review})
               </Link>
             </Button>
-            {stats.review > 0 && (
-              <div className="w-48">
-                <PublishReviewButton />
-              </div>
-            )}
-            <PublishAllProcessedButton />
             {isAdmin && (
               <Button variant="outline" size="sm" asChild>
                 <Link to="/integrations">

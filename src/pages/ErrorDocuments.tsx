@@ -7,7 +7,6 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { toast } from "sonner";
-import { PublishAllButton } from "@/components/PublishAllButton";
 import {
   Dialog,
   DialogContent,
@@ -18,7 +17,6 @@ import {
 } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ErrorDiagnostic } from "@/components/dashboard/ErrorDiagnostic";
-import { MigrateAndRetryButton } from "@/components/dashboard/MigrateAndRetryButton";
 
 interface ErrorDocument {
   id: string;
@@ -276,7 +274,6 @@ const ErrorDocuments = () => {
             </div>
             {documents.length > 0 && (
               <div className="flex gap-2">
-                <MigrateAndRetryButton />
                 <Button 
                   onClick={handleRepublishFromData}
                   variant="default"
@@ -320,9 +317,6 @@ const ErrorDocuments = () => {
             <div className="text-muted-foreground space-y-4">
               <p className="text-lg mb-2">¡No hay facturas con error! 🎉</p>
               <p className="text-sm">Todas las facturas se han procesado correctamente.</p>
-              <div className="mt-6">
-                <PublishAllButton />
-              </div>
             </div>
           </Card>
         ) : (
