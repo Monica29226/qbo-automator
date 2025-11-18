@@ -26,6 +26,14 @@ export const GmailFetchDialog = ({ onSuccess }: GmailFetchDialogProps) => {
   const [selectedMonth, setSelectedMonth] = useState<string>("");
   const [selectedYear, setSelectedYear] = useState<string>("");
 
+  const handleYearChange = (value: string) => {
+    setSelectedYear(value);
+    // Clear month when year is cleared
+    if (!value) {
+      setSelectedMonth("");
+    }
+  };
+
   const currentYear = new Date().getFullYear();
   const years = Array.from({ length: 3 }, (_, i) => currentYear - i);
   const months = [
@@ -100,12 +108,11 @@ export const GmailFetchDialog = ({ onSuccess }: GmailFetchDialogProps) => {
         <div className="space-y-4 py-4">
           <div className="space-y-2">
             <Label htmlFor="year">Año (opcional)</Label>
-            <Select value={selectedYear} onValueChange={setSelectedYear}>
+            <Select value={selectedYear} onValueChange={handleYearChange}>
               <SelectTrigger id="year">
-                <SelectValue placeholder="Seleccionar año" />
+                <SelectValue placeholder="Todos los años" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="">Todos los años</SelectItem>
                 {years.map((year) => (
                   <SelectItem key={year} value={year.toString()}>
                     {year}
@@ -119,10 +126,9 @@ export const GmailFetchDialog = ({ onSuccess }: GmailFetchDialogProps) => {
             <Label htmlFor="month">Mes (opcional)</Label>
             <Select value={selectedMonth} onValueChange={setSelectedMonth} disabled={!selectedYear}>
               <SelectTrigger id="month">
-                <SelectValue placeholder="Seleccionar mes" />
+                <SelectValue placeholder="Todos los meses" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="">Todos los meses</SelectItem>
                 {months.map((month) => (
                   <SelectItem key={month.value} value={month.value}>
                     {month.label}
@@ -146,6 +152,18 @@ export const GmailFetchDialog = ({ onSuccess }: GmailFetchDialogProps) => {
           <Button variant="outline" onClick={() => setOpen(false)} disabled={isProcessing}>
             Cancelar
           </Button>
+          {(selectedYear || selectedMonth) && (
+            <Button 
+              variant="ghost" 
+              onClick={() => {
+                setSelectedYear("");
+                setSelectedMonth("");
+              }} 
+              disabled={isProcessing}
+            >
+              Limpiar
+            </Button>
+          )}
           <Button onClick={handleFetch} disabled={isProcessing}>
             {isProcessing ? "Obteniendo..." : "Obtener Facturas"}
           </Button>
