@@ -20,6 +20,7 @@ import PublishedDocuments from "./pages/PublishedDocuments";
 import AcceptInvitation from "./pages/AcceptInvitation";
 import AuditReport from "./pages/AuditReport";
 import VendorCategories from "./pages/VendorCategories";
+import MultiTenantDocs from "./pages/MultiTenantDocs";
 import NotFound from "./pages/NotFound";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 
@@ -34,6 +35,8 @@ const App = () => (
         <Routes>
           <Route path="/" element={<Index />} />
           <Route path="/auth" element={<Auth />} />
+          <Route path="/multi-tenant" element={<MultiTenantDocs />} />
+          <Route path="/accept-invitation/:token" element={<AcceptInvitation />} />
           <Route
             path="/dashboard"
             element={

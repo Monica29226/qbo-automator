@@ -1,7 +1,7 @@
-import { Card } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { FileText, CheckCircle, AlertCircle, Clock, Settings, Database, LogOut, Users, Upload, Eye, Plug, FileSpreadsheet, Mail, RefreshCw, Send, Shield, FileCheck } from "lucide-react";
+import { FileText, CheckCircle, AlertCircle, Clock, Settings, Database, LogOut, Users, Upload, Eye, Plug, FileSpreadsheet, Mail, RefreshCw, Send, Shield, FileCheck, Building2 } from "lucide-react";
 import { StatsCard } from "@/components/dashboard/StatsCard";
 import { RecentDocuments } from "@/components/dashboard/RecentDocuments";
 import { CronMonitor } from "@/components/dashboard/CronMonitor";
@@ -375,9 +375,25 @@ const Dashboard = () => {
   if (!activeOrganization) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
-        <div className="text-center">
-          <p className="text-muted-foreground">Cargando organización...</p>
-        </div>
+        <Card className="w-full max-w-md">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Building2 className="h-6 w-6" />
+              Sistema Multi-Empresa
+            </CardTitle>
+            <CardDescription>
+              Selecciona una organización para continuar o crea una nueva
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="flex flex-col gap-4 items-center">
+              <OrganizationSwitcher />
+              <Button variant="outline" onClick={() => navigate("/multi-tenant")} className="w-full">
+                Ver Guía Multi-Empresa
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
       </div>
     );
   }
