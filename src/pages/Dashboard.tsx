@@ -20,7 +20,6 @@ import { QuickBooksTokenAlert } from "@/components/dashboard/QuickBooksTokenAler
 import { VendorsWithoutRules } from "@/components/dashboard/VendorsWithoutRules";
 import { ErrorDiagnostic } from "@/components/dashboard/ErrorDiagnostic";
 import { TodayProcessingReport } from "@/components/dashboard/TodayProcessingReport";
-import { TokenRenewalMonitor } from "@/components/dashboard/TokenRenewalMonitor";
 import { ProcessAllNowButton } from "@/components/dashboard/ProcessAllNowButton";
 import { CleanIrrecoverableErrorsButton } from "@/components/dashboard/CleanIrrecoverableErrorsButton";
 import { PendingVendorConfiguration } from "@/components/dashboard/PendingVendorConfiguration";
@@ -626,7 +625,6 @@ const Dashboard = () => {
 
         <GmailTokenAlert />
         <QuickBooksTokenAlert />
-        <TokenRenewalMonitor />
         
         <div className="mb-6">
           <PendingVendorConfiguration />

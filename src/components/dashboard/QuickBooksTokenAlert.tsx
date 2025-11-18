@@ -104,6 +104,11 @@ export const QuickBooksTokenAlert = () => {
       </AlertTitle>
       <AlertDescription className="mt-2">
         <p className="mb-3">{alert.message}</p>
+        {alert.type === "expiring" && (
+          <p className="text-xs text-muted-foreground">
+            La renovación se ejecuta automáticamente cada hora.
+          </p>
+        )}
         {alert.type === "failed" && (
           <Button 
             onClick={handleReconnect} 
