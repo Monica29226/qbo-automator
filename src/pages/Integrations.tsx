@@ -536,12 +536,21 @@ const Integrations = () => {
               {selectedService === "gmail" && (
                 <div className="bg-yellow-500/10 border border-yellow-500/30 p-4 rounded-lg">
                   <p className="text-sm font-semibold text-yellow-700 dark:text-yellow-400 mb-2">
-                    ⚠️ Importante: Selección de cuenta
+                    ⚠️ Importante: Información sobre la conexión
                   </p>
-                  <p className="text-xs text-yellow-700/90 dark:text-yellow-400/90">
-                    En la ventana de Google, asegúrate de <strong>seleccionar la cuenta de Gmail correcta</strong> para esta empresa. 
-                    Si ves una cuenta diferente preseleccionada, haz clic en "Usar otra cuenta" o cambia de cuenta.
-                  </p>
+                  <div className="space-y-2 text-xs text-yellow-700/90 dark:text-yellow-400/90">
+                    <p>
+                      <strong>1.</strong> La ventana de Google mostrará "facturascafeluna@gmail.com" como desarrollador de la aplicación. 
+                      Esto es <strong>normal y NO es la cuenta que se va a conectar</strong>.
+                    </p>
+                    <p>
+                      <strong>2.</strong> Debes <strong>seleccionar la cuenta de Gmail correcta</strong> para esta empresa cuando Google te lo pida. 
+                      Si aparece otra cuenta preseleccionada, haz clic en "Usar otra cuenta" para cambiarla.
+                    </p>
+                    <p>
+                      <strong>3.</strong> La cuenta que selecciones será exclusiva para <strong>{orgData && accounts.length > 0 ? "esta empresa" : "la empresa actual"}</strong>.
+                    </p>
+                  </div>
                 </div>
               )}
             </div>
