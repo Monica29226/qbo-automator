@@ -23,6 +23,7 @@ import { TodayProcessingReport } from "@/components/dashboard/TodayProcessingRep
 import { TokenRenewalMonitor } from "@/components/dashboard/TokenRenewalMonitor";
 import { ProcessAllNowButton } from "@/components/dashboard/ProcessAllNowButton";
 import { CleanIrrecoverableErrorsButton } from "@/components/dashboard/CleanIrrecoverableErrorsButton";
+import { PendingVendorConfiguration } from "@/components/dashboard/PendingVendorConfiguration";
 import { useAuth } from "@/hooks/useAuth";
 import { Link, useNavigate } from "react-router-dom";
 import { useEffect, useState, useCallback, useMemo } from "react";
@@ -626,6 +627,10 @@ const Dashboard = () => {
         <GmailTokenAlert />
         <QuickBooksTokenAlert />
         <TokenRenewalMonitor />
+        
+        <div className="mb-6">
+          <PendingVendorConfiguration />
+        </div>
         
         <TodayProcessingReport />
 
