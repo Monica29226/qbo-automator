@@ -4,6 +4,7 @@ import { FileText, ExternalLink, Loader2, AlertCircle } from "lucide-react";
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { useAuth } from "@/hooks/useAuth";
 
 interface Document {
   id: string;
@@ -29,8 +30,10 @@ const statusConfig: Record<string, { label: string; variant: "default" | "second
 export const RecentDocuments = () => {
   const [documents, setDocuments] = useState<Document[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const { activeOrganization } = useAuth();
 
   useEffect(() => {
+    if (!activeOrganization) return;
     fetchDocuments();
 
     // Subscribe to real-time updates
@@ -53,12 +56,18 @@ export const RecentDocuments = () => {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, []);
+  }, [activeOrganization]);
 
   const fetchDocuments = async () => {
+    if (!activeOrganization) {
+      setIsLoading(false);
+      return;
+    }
+
     const { data, error } = await supabase
       .from("processed_documents")
       .select("*")
+      .eq("organization_id", activeOrganization)
       .order("created_at", { ascending: false })
       .limit(5);
 
