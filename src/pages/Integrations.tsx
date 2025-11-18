@@ -532,6 +532,18 @@ const Integrations = () => {
                   ✓ Esta conexión será exclusiva para la empresa actual
                 </p>
               </div>
+              
+              {selectedService === "gmail" && (
+                <div className="bg-yellow-500/10 border border-yellow-500/30 p-4 rounded-lg">
+                  <p className="text-sm font-semibold text-yellow-700 dark:text-yellow-400 mb-2">
+                    ⚠️ Importante: Selección de cuenta
+                  </p>
+                  <p className="text-xs text-yellow-700/90 dark:text-yellow-400/90">
+                    En la ventana de Google, asegúrate de <strong>seleccionar la cuenta de Gmail correcta</strong> para esta empresa. 
+                    Si ves una cuenta diferente preseleccionada, haz clic en "Usar otra cuenta" o cambia de cuenta.
+                  </p>
+                </div>
+              )}
             </div>
           ) : (
             <div className="space-y-4">
