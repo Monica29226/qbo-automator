@@ -15,6 +15,7 @@ import { TestAutoSyncFlow } from "@/components/dashboard/TestAutoSyncFlow";
 import { PendingDocumentsLog } from "@/components/dashboard/PendingDocumentsLog";
 import { OrganizationSwitcher } from "@/components/OrganizationSwitcher";
 import { SyncFromExcelDialog } from "@/components/SyncFromExcelDialog";
+import { GmailFetchDialog } from "@/components/GmailFetchDialog";
 import { GmailTokenAlert } from "@/components/dashboard/GmailTokenAlert";
 import { QuickBooksTokenAlert } from "@/components/dashboard/QuickBooksTokenAlert";
 import { VendorsWithoutRules } from "@/components/dashboard/VendorsWithoutRules";
@@ -419,24 +420,14 @@ const Dashboard = () => {
                 Cargar XML
               </Link>
             </Button>
-            <Button 
-              variant="outline" 
-              size="sm" 
-              onClick={() => handleFetchGmailInvoices()}
-              disabled={isFetchingEmails}
-            >
-              {isFetchingEmails ? (
-                <>
-                  <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
-                  Obteniendo...
-                </>
-              ) : (
-                <>
-                  <Mail className="h-4 w-4 mr-2" />
-                  Obtener de Gmail
-                </>
-              )}
-            </Button>
+            <div className="w-full sm:w-auto">
+              <GmailFetchDialog 
+                onSuccess={() => {
+                  fetchStatsAndConnections();
+                  queryClient.invalidateQueries({ queryKey: ["recent-documents"] });
+                }}
+              />
+            </div>
             <Button 
               variant="default" 
               size="sm" 
