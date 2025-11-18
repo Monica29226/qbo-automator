@@ -46,16 +46,16 @@ export const QuickBooksTokenAlert = () => {
         const now = Date.now();
         const hoursUntilExpiration = (expiresAt - now) / (1000 * 60 * 60);
 
-        // Token expirado o próximo a expirar (menos de 48 horas)
+        // Token expirado o próximo a expirar (menos de 72 horas)
         if (hoursUntilExpiration < 0) {
           setAlert({
             type: "failed",
             message: "El token de QuickBooks ha expirado. Reconecta tu cuenta para continuar publicando facturas.",
           });
-        } else if (hoursUntilExpiration < 48) {
+        } else if (hoursUntilExpiration < 72) {
           setAlert({
             type: "expiring",
-            message: `El token de QuickBooks expirará en ${Math.floor(hoursUntilExpiration)} horas. Se renovará automáticamente en las próximas horas.`,
+            message: `El token de QuickBooks expirará en ${Math.floor(hoursUntilExpiration)} horas. Se renovará automáticamente cada hora hasta completar la renovación.`,
             expiresIn: Math.floor(hoursUntilExpiration),
           });
         } else {
