@@ -52,8 +52,9 @@ Deno.serve(async (req) => {
       console.log(`   Expires: ${expiresAt.toISOString()}`);
       console.log(`   Hours until expiry: ${hoursUntilExpiry.toFixed(2)}`);
 
-      // Renovar si expira en menos de 24 horas o ya expiró
-      if (hoursUntilExpiry < 24) {
+      // Renovar si expira en menos de 72 horas (3 días) o ya expiró
+      // Esto asegura renovación proactiva con suficiente margen
+      if (hoursUntilExpiry < 72) {
         console.log(`🔄 Token needs renewal for org ${account.organization_id}`);
         
         if (hoursUntilExpiry < 0) {
