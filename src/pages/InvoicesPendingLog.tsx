@@ -4,6 +4,14 @@ import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Table,
   TableBody,
@@ -16,6 +24,13 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Loader2, Search, Trash2, Upload } from "lucide-react";
 import { PublishValidationDialog } from "@/components/PublishValidationDialog";
 
+interface QBOAccount {
+  id: string;
+  name: string;
+  accountNumber: string;
+  accountType: string;
+}
+
 interface PendingInvoice {
   id: string;
   doc_number: string;
@@ -27,6 +42,7 @@ interface PendingInvoice {
   vendor_id: string | null;
   default_account_ref?: string;
   default_class_ref?: string | null;
+  uses_tax?: boolean;
 }
 
 const InvoicesPendingLog = () => {
@@ -38,6 +54,33 @@ const InvoicesPendingLog = () => {
   const [isPublishing, setIsPublishing] = useState(false);
   const [showPublishDialog, setShowPublishDialog] = useState(false);
   const [publishingIds, setPublishingIds] = useState<Set<string>>(new Set());
+  const [qboAccounts, setQboAccounts] = useState<QBOAccount[]>([]);
+  const [loadingAccounts, setLoadingAccounts] = useState(false);
+
+  const fetchQBOAccounts = async () => {
+    if (!activeOrganization) return;
+    
+    setLoadingAccounts(true);
+    try {
+      const { data, error } = await supabase.functions.invoke(
+        "list-quickbooks-accounts",
+        {
+          body: { organization_id: activeOrganization },
+        }
+      );
+
+      if (error) throw error;
+      
+      if (data?.accounts) {
+        setQboAccounts(data.accounts);
+      }
+    } catch (error: any) {
+      console.error("Error fetching QBO accounts:", error);
+      toast.error("Error al cargar cuentas de QuickBooks");
+    } finally {
+      setLoadingAccounts(false);
+    }
+  };
 
   const fetchPendingInvoices = async () => {
     if (!activeOrganization) return;
@@ -85,6 +128,7 @@ const InvoicesPendingLog = () => {
 
   useEffect(() => {
     fetchPendingInvoices();
+    fetchQBOAccounts();
   }, [activeOrganization]);
 
   useEffect(() => {
@@ -99,7 +143,7 @@ const InvoicesPendingLog = () => {
   const handleUpdateInvoice = async (
     id: string,
     field: string,
-    value: string
+    value: string | boolean
   ) => {
     try {
       // If updating account or class, update the vendor record
@@ -113,6 +157,16 @@ const InvoicesPendingLog = () => {
 
           if (error) throw error;
         }
+      }
+
+      // If updating uses_tax, update the document
+      if (field === "uses_tax") {
+        const { error } = await supabase
+          .from("processed_documents")
+          .update({ uses_tax: value as boolean })
+          .eq("id", id);
+
+        if (error) throw error;
       }
 
       // Update local state
@@ -275,6 +329,7 @@ const InvoicesPendingLog = () => {
                     <TableHead>Fecha</TableHead>
                     <TableHead>Cuenta Contable</TableHead>
                     <TableHead>Centro de Costo</TableHead>
+                    <TableHead>Usa IVA</TableHead>
                     <TableHead className="text-right">Acciones</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -301,18 +356,28 @@ const InvoicesPendingLog = () => {
                         {new Date(invoice.created_at).toLocaleDateString("es-CR")}
                       </TableCell>
                       <TableCell>
-                        <Input
-                          placeholder="Ej: 5105"
+                        <Select
                           value={invoice.default_account_ref || ""}
-                          onChange={(e) =>
+                          onValueChange={(value) =>
                             handleUpdateInvoice(
                               invoice.id,
                               "default_account_ref",
-                              e.target.value
+                              value
                             )
                           }
-                          className="w-32"
-                        />
+                          disabled={loadingAccounts}
+                        >
+                          <SelectTrigger className="w-[200px]">
+                            <SelectValue placeholder="Seleccionar cuenta" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {qboAccounts.map((account) => (
+                              <SelectItem key={account.id} value={account.id}>
+                                {account.accountNumber} - {account.name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
                       </TableCell>
                       <TableCell>
                         <Input
@@ -326,6 +391,18 @@ const InvoicesPendingLog = () => {
                             )
                           }
                           className="w-32"
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <Checkbox
+                          checked={invoice.uses_tax ?? true}
+                          onCheckedChange={(checked) =>
+                            handleUpdateInvoice(
+                              invoice.id,
+                              "uses_tax",
+                              checked as boolean
+                            )
+                          }
                         />
                       </TableCell>
                       <TableCell className="text-right">

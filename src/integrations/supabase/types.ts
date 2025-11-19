@@ -330,6 +330,7 @@ export type Database = {
           total_discount: number | null
           total_tax: number | null
           updated_at: string
+          uses_tax: boolean | null
           vendor_id: string | null
           xml_attachment_url: string | null
           xml_data: Json | null
@@ -360,6 +361,7 @@ export type Database = {
           total_discount?: number | null
           total_tax?: number | null
           updated_at?: string
+          uses_tax?: boolean | null
           vendor_id?: string | null
           xml_attachment_url?: string | null
           xml_data?: Json | null
@@ -390,6 +392,7 @@ export type Database = {
           total_discount?: number | null
           total_tax?: number | null
           updated_at?: string
+          uses_tax?: boolean | null
           vendor_id?: string | null
           xml_attachment_url?: string | null
           xml_data?: Json | null
