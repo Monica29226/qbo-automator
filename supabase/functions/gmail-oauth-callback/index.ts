@@ -74,25 +74,28 @@ serve(async (req) => {
     // Initialize Supabase client with service role
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-    // Store tokens in integration_accounts
-    const { error: insertError } = await supabase
+    // Store or update tokens in integration_accounts (upsert)
+    const { error: upsertError } = await supabase
       .from("integration_accounts")
-      .insert({
+      .upsert({
         organization_id,
         service_type: "gmail",
         account_email: userInfo.email,
         account_name: userInfo.name || userInfo.email,
         created_by: user_id,
+        is_active: true,
         credentials: {
           access_token: tokens.access_token,
           refresh_token: tokens.refresh_token,
           expires_at: Date.now() + (tokens.expires_in * 1000),
         },
+      }, {
+        onConflict: "organization_id,service_type,account_email"
       });
 
-    if (insertError) {
-      console.error("Error storing tokens:", insertError);
-      throw insertError;
+    if (upsertError) {
+      console.error("Error storing tokens:", upsertError);
+      throw upsertError;
     }
 
     // Update organization connection status
