@@ -21,6 +21,7 @@ import AcceptInvitation from "./pages/AcceptInvitation";
 import AuditReport from "./pages/AuditReport";
 import VendorCategories from "./pages/VendorCategories";
 import MultiTenantDocs from "./pages/MultiTenantDocs";
+import InvoicesPendingLog from "./pages/InvoicesPendingLog";
 import NotFound from "./pages/NotFound";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 
@@ -146,6 +147,14 @@ const App = () => (
             element={
               <ProtectedRoute>
                 <AuditReport />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/invoices-pending-log"
+            element={
+              <ProtectedRoute>
+                <InvoicesPendingLog />
               </ProtectedRoute>
             }
           />
