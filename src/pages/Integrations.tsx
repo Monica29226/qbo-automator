@@ -540,7 +540,7 @@ const Integrations = () => {
                   </p>
                   <div className="space-y-2 text-xs text-yellow-700/90 dark:text-yellow-400/90">
                     <p>
-                      <strong>1.</strong> La ventana de Google mostrará "facturascafeluna@gmail.com" como desarrollador de la aplicación. 
+                      <strong>1.</strong> La ventana de Google puede mostrar el nombre de otro desarrollador o aplicación. 
                       Esto es <strong>normal y NO es la cuenta que se va a conectar</strong>.
                     </p>
                     <p>
@@ -548,7 +548,7 @@ const Integrations = () => {
                       Si aparece otra cuenta preseleccionada, haz clic en "Usar otra cuenta" para cambiarla.
                     </p>
                     <p>
-                      <strong>3.</strong> La cuenta que selecciones será exclusiva para <strong>{orgData && accounts.length > 0 ? "esta empresa" : "la empresa actual"}</strong>.
+                      <strong>3.</strong> La cuenta que selecciones será exclusiva para <strong>esta empresa</strong>.
                     </p>
                   </div>
                 </div>
