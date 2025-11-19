@@ -21,14 +21,27 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Loader2, Search, Trash2, Upload } from "lucide-react";
+import { Loader2, Search, Trash2, Upload, Star } from "lucide-react";
 import { PublishValidationDialog } from "@/components/PublishValidationDialog";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 interface QBOAccount {
   id: string;
   name: string;
   accountNumber: string;
   accountType: string;
+}
+
+interface VendorDefault {
+  id: string;
+  vendor_name: string;
+  default_account_ref: string | null;
+  default_uses_tax: boolean;
 }
 
 interface PendingInvoice {
@@ -43,6 +56,7 @@ interface PendingInvoice {
   default_account_ref?: string;
   default_class_ref?: string | null;
   uses_tax?: boolean;
+  has_vendor_default?: boolean; // Para saber si usa config predeterminada
 }
 
 const InvoicesPendingLog = () => {
@@ -56,6 +70,28 @@ const InvoicesPendingLog = () => {
   const [publishingIds, setPublishingIds] = useState<Set<string>>(new Set());
   const [qboAccounts, setQboAccounts] = useState<QBOAccount[]>([]);
   const [loadingAccounts, setLoadingAccounts] = useState(false);
+  const [vendorDefaults, setVendorDefaults] = useState<Map<string, VendorDefault>>(new Map());
+
+  const fetchVendorDefaults = async () => {
+    if (!activeOrganization) return;
+
+    try {
+      const { data, error } = await supabase
+        .from("vendor_defaults")
+        .select("*")
+        .eq("organization_id", activeOrganization);
+
+      if (error) throw error;
+
+      const defaultsMap = new Map<string, VendorDefault>();
+      data?.forEach((def) => {
+        defaultsMap.set(def.vendor_name, def);
+      });
+      setVendorDefaults(defaultsMap);
+    } catch (error: any) {
+      console.error("Error fetching vendor defaults:", error);
+    }
+  };
 
   const fetchQBOAccounts = async () => {
     if (!activeOrganization) return;
@@ -96,9 +132,16 @@ const InvoicesPendingLog = () => {
 
       if (docsError) throw docsError;
 
-      // Get vendor info for each document
+      // Get vendor info for each document and apply defaults
       const invoicesWithVendors = await Promise.all(
         (docsData || []).map(async (doc) => {
+          let invoiceData: PendingInvoice = { 
+            ...doc,
+            default_account_ref: undefined,
+            default_class_ref: undefined,
+            has_vendor_default: false
+          };
+          
           if (doc.vendor_id) {
             const { data: vendorData } = await supabase
               .from("vendors")
@@ -106,13 +149,26 @@ const InvoicesPendingLog = () => {
               .eq("id", doc.vendor_id)
               .single();
 
-            return {
-              ...doc,
-              default_account_ref: vendorData?.default_account_ref,
-              default_class_ref: vendorData?.default_class_ref,
-            };
+            invoiceData.default_account_ref = vendorData?.default_account_ref;
+            invoiceData.default_class_ref = vendorData?.default_class_ref;
           }
-          return doc;
+
+          // Apply vendor defaults if available and fields are empty
+          const vendorDefault = vendorDefaults.get(doc.supplier_name);
+          if (vendorDefault) {
+            const hasDefaultApplied = !invoiceData.default_account_ref || !invoiceData.uses_tax;
+            
+            if (!invoiceData.default_account_ref && vendorDefault.default_account_ref) {
+              invoiceData.default_account_ref = vendorDefault.default_account_ref;
+            }
+            if (invoiceData.uses_tax === null || invoiceData.uses_tax === undefined) {
+              invoiceData.uses_tax = vendorDefault.default_uses_tax;
+            }
+            
+            invoiceData.has_vendor_default = hasDefaultApplied;
+          }
+          
+          return invoiceData;
         })
       );
 
@@ -127,8 +183,12 @@ const InvoicesPendingLog = () => {
   };
 
   useEffect(() => {
-    fetchPendingInvoices();
-    fetchQBOAccounts();
+    const loadData = async () => {
+      await fetchVendorDefaults();
+      await fetchPendingInvoices();
+      await fetchQBOAccounts();
+    };
+    loadData();
   }, [activeOrganization]);
 
   useEffect(() => {
@@ -140,22 +200,70 @@ const InvoicesPendingLog = () => {
     setFilteredInvoices(filtered);
   }, [searchTerm, invoices]);
 
+  const saveVendorDefault = async (
+    vendorName: string,
+    accountRef: string | null,
+    usesTax: boolean
+  ) => {
+    if (!activeOrganization) return;
+
+    try {
+      const { data, error } = await supabase
+        .from("vendor_defaults")
+        .upsert(
+          {
+            organization_id: activeOrganization,
+            vendor_name: vendorName,
+            default_account_ref: accountRef,
+            default_uses_tax: usesTax,
+          },
+          { onConflict: "organization_id,vendor_name" }
+        )
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      // Update local cache
+      if (data) {
+        setVendorDefaults((prev) => {
+          const newMap = new Map(prev);
+          newMap.set(vendorName, data);
+          return newMap;
+        });
+      }
+    } catch (error: any) {
+      console.error("Error saving vendor default:", error);
+    }
+  };
+
   const handleUpdateInvoice = async (
     id: string,
     field: string,
     value: string | boolean
   ) => {
     try {
+      const invoice = invoices.find((inv) => inv.id === id);
+      if (!invoice) return;
+
       // If updating account or class, update the vendor record
       if (field === "default_account_ref" || field === "default_class_ref") {
-        const invoice = invoices.find((inv) => inv.id === id);
-        if (invoice?.vendor_id) {
+        if (invoice.vendor_id) {
           const { error } = await supabase
             .from("vendors")
             .update({ [field]: value })
             .eq("id", invoice.vendor_id);
 
           if (error) throw error;
+        }
+
+        // Save as vendor default if updating account
+        if (field === "default_account_ref") {
+          await saveVendorDefault(
+            invoice.supplier_name,
+            value as string,
+            invoice.uses_tax ?? true
+          );
         }
       }
 
@@ -167,13 +275,20 @@ const InvoicesPendingLog = () => {
           .eq("id", id);
 
         if (error) throw error;
+
+        // Save as vendor default
+        await saveVendorDefault(
+          invoice.supplier_name,
+          invoice.default_account_ref || null,
+          value as boolean
+        );
       }
 
       // Update local state
       setInvoices((prev) =>
         prev.map((inv) => (inv.id === id ? { ...inv, [field]: value } : inv))
       );
-      toast.success("Actualizado correctamente");
+      toast.success("Actualizado y guardado como predeterminado");
     } catch (error: any) {
       console.error("Error updating invoice:", error);
       toast.error("Error al actualizar");
@@ -356,28 +471,42 @@ const InvoicesPendingLog = () => {
                         {new Date(invoice.created_at).toLocaleDateString("es-CR")}
                       </TableCell>
                       <TableCell>
-                        <Select
-                          value={invoice.default_account_ref || ""}
-                          onValueChange={(value) =>
-                            handleUpdateInvoice(
-                              invoice.id,
-                              "default_account_ref",
-                              value
-                            )
-                          }
-                          disabled={loadingAccounts}
-                        >
-                          <SelectTrigger className="w-[200px]">
-                            <SelectValue placeholder="Seleccionar cuenta" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {qboAccounts.map((account) => (
-                              <SelectItem key={account.id} value={account.id}>
-                                {account.accountNumber} - {account.name}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
+                        <div className="flex items-center gap-2">
+                          <Select
+                            value={invoice.default_account_ref || ""}
+                            onValueChange={(value) =>
+                              handleUpdateInvoice(
+                                invoice.id,
+                                "default_account_ref",
+                                value
+                              )
+                            }
+                            disabled={loadingAccounts}
+                          >
+                            <SelectTrigger className="w-[200px]">
+                              <SelectValue placeholder="Seleccionar cuenta" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {qboAccounts.map((account) => (
+                                <SelectItem key={account.id} value={account.id}>
+                                  {account.accountNumber} - {account.name}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          {invoice.has_vendor_default && (
+                            <TooltipProvider>
+                              <Tooltip>
+                                <TooltipTrigger>
+                                  <Star className="h-4 w-4 text-yellow-500 fill-yellow-500" />
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                  <p>Usando configuración predeterminada del proveedor</p>
+                                </TooltipContent>
+                              </Tooltip>
+                            </TooltipProvider>
+                          )}
+                        </div>
                       </TableCell>
                       <TableCell>
                         <Input
