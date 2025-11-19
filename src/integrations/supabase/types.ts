@@ -651,6 +651,44 @@ export type Database = {
         }
         Relationships: []
       }
+      vendor_defaults: {
+        Row: {
+          created_at: string
+          default_account_ref: string | null
+          default_uses_tax: boolean | null
+          id: string
+          organization_id: string
+          updated_at: string
+          vendor_name: string
+        }
+        Insert: {
+          created_at?: string
+          default_account_ref?: string | null
+          default_uses_tax?: boolean | null
+          id?: string
+          organization_id: string
+          updated_at?: string
+          vendor_name: string
+        }
+        Update: {
+          created_at?: string
+          default_account_ref?: string | null
+          default_uses_tax?: boolean | null
+          id?: string
+          organization_id?: string
+          updated_at?: string
+          vendor_name?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "vendor_defaults_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       vendors: {
         Row: {
           created_at: string
