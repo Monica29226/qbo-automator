@@ -564,6 +564,14 @@ const Dashboard = () => {
             )}
             {isAdmin && (
               <Button variant="outline" size="sm" asChild>
+                <Link to="/users-management">
+                  <Shield className="h-4 w-4 mr-2" />
+                  Usuarios
+                </Link>
+              </Button>
+            )}
+            {isAdmin && (
+              <Button variant="outline" size="sm" asChild>
                 <Link to="/settings">
                   <Settings className="h-4 w-4 mr-2" />
                   Configuración
