@@ -109,8 +109,7 @@ serve(async (req) => {
 
     console.log("Gmail account connected successfully");
 
-    return new Response(
-      `<!DOCTYPE html>
+    const successHtml = `<!DOCTYPE html>
       <html>
         <head>
           <meta charset="UTF-8">
@@ -131,14 +130,17 @@ serve(async (req) => {
             setTimeout(() => window.close(), 2000);
           </script>
         </body>
-      </html>`,
+      </html>`;
+
+    return new Response(
+      new TextEncoder().encode(successHtml),
       { headers: { "Content-Type": "text/html; charset=UTF-8" }, status: 200 }
     );
   } catch (error) {
     console.error("Error in gmail-oauth-callback:", error);
     const errorMessage = error instanceof Error ? error.message : "Unknown error";
-    return new Response(
-      `<!DOCTYPE html>
+    
+    const errorHtml = `<!DOCTYPE html>
       <html>
         <head>
           <meta charset="UTF-8">
@@ -150,7 +152,10 @@ serve(async (req) => {
           <p style="font-size: 12px; color: #666;">Verifica que las credenciales de Google estén correctas y que la URL de redirección esté autorizada en Google Cloud Console.</p>
           <script>setTimeout(() => window.close(), 5000);</script>
         </body>
-      </html>`,
+      </html>`;
+
+    return new Response(
+      new TextEncoder().encode(errorHtml),
       { headers: { "Content-Type": "text/html; charset=UTF-8" }, status: 500 }
     );
   }
