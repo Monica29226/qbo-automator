@@ -1,40 +1,54 @@
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { FileText, Zap, Shield, BarChart3, ArrowRight, CheckCircle, Tag } from "lucide-react";
+import { FileText, Zap, Shield, BarChart3, ArrowRight, CheckCircle, Tag, LogIn } from "lucide-react";
 import { Link } from "react-router-dom";
+import { useAuth } from "@/hooks/useAuth";
+import aclLogo from "@/assets/acl-logo.png";
 
 const Index = () => {
+  const { user } = useAuth();
+
   return (
     <div className="min-h-screen bg-background">
       {/* Quick Actions - Admin Only */}
       <section className="bg-muted/30 py-4 border-b">
         <div className="container mx-auto px-6">
-          <div className="flex gap-3 overflow-x-auto pb-2">
-            <Link to="/dashboard">
-              <Button variant="outline" size="sm">
-                <BarChart3 className="mr-2 h-4 w-4" />
-                Dashboard
-              </Button>
-            </Link>
-            <Link to="/vendor-categories">
-              <Button variant="outline" size="sm">
-                <Tag className="mr-2 h-4 w-4" />
-                Categorías de Proveedores
-              </Button>
-            </Link>
-            <Link to="/review-queue">
-              <Button variant="outline" size="sm">
-                <FileText className="mr-2 h-4 w-4" />
-                Cola de Revisión
-              </Button>
-            </Link>
-            <Link to="/integrations">
-              <Button variant="outline" size="sm">
-                <Zap className="mr-2 h-4 w-4" />
-                Integraciones
-              </Button>
-            </Link>
+          <div className="flex gap-3 overflow-x-auto pb-2 items-center justify-between">
+            <div className="flex gap-3 overflow-x-auto">
+              <Link to="/dashboard">
+                <Button variant="outline" size="sm">
+                  <BarChart3 className="mr-2 h-4 w-4" />
+                  Dashboard
+                </Button>
+              </Link>
+              <Link to="/vendor-categories">
+                <Button variant="outline" size="sm">
+                  <Tag className="mr-2 h-4 w-4" />
+                  Categorías de Proveedores
+                </Button>
+              </Link>
+              <Link to="/review-queue">
+                <Button variant="outline" size="sm">
+                  <FileText className="mr-2 h-4 w-4" />
+                  Cola de Revisión
+                </Button>
+              </Link>
+              <Link to="/integrations">
+                <Button variant="outline" size="sm">
+                  <Zap className="mr-2 h-4 w-4" />
+                  Integraciones
+                </Button>
+              </Link>
+            </div>
+            {!user && (
+              <Link to="/auth">
+                <Button variant="default" size="sm">
+                  <LogIn className="mr-2 h-4 w-4" />
+                  Iniciar Sesión
+                </Button>
+              </Link>
+            )}
           </div>
         </div>
       </section>
@@ -43,6 +57,10 @@ const Index = () => {
       <section className="relative overflow-hidden bg-gradient-to-br from-primary/5 via-background to-accent/5">
         <div className="container mx-auto px-6 py-20 lg:py-32">
           <div className="max-w-4xl mx-auto text-center">
+            {/* Logo ACL */}
+            <div className="mb-8 flex justify-center">
+              <img src={aclLogo} alt="ACL Logo" className="h-24 w-auto" />
+            </div>
             <Badge className="mb-6" variant="secondary">
               Procesamiento XML Directo - Sin IA
             </Badge>
