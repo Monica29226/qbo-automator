@@ -7,7 +7,8 @@ import { Card } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import { FileText, Loader2 } from "lucide-react";
+import { Loader2 } from "lucide-react";
+import aclLogo from "@/assets/acl-logo.png";
 
 const Auth = () => {
   const navigate = useNavigate();
@@ -100,14 +101,12 @@ const Auth = () => {
     <div className="min-h-screen bg-gradient-to-br from-primary/5 via-background to-accent/5 flex items-center justify-center p-6">
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
-          <div className="inline-flex items-center gap-3 mb-4">
-            <div className="h-12 w-12 rounded-lg bg-primary flex items-center justify-center">
-              <FileText className="h-7 w-7 text-primary-foreground" />
-            </div>
-            <h1 className="text-2xl font-bold text-foreground">FacturaFlow CR</h1>
+          <div className="mb-6 flex justify-center">
+            <img src={aclLogo} alt="ACL Logo" className="h-20 w-auto" />
           </div>
+          <h1 className="text-2xl font-bold text-foreground mb-2">FacturaFlow CR</h1>
           <p className="text-muted-foreground">
-            Automatización de Facturas a QuickBooks
+            Sistema de Gestión de Facturas Multi-Empresa
           </p>
         </div>
 

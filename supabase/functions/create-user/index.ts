@@ -22,7 +22,11 @@ Deno.serve(async (req) => {
       }
     );
 
-    const { email, password } = await req.json();
+    const { email, password, full_name, role = 'user', organization_id } = await req.json();
+
+    if (!email || !password) {
+      throw new Error('Email y contraseña son requeridos');
+    }
 
     console.log(`Creating user: ${email}`);
 
@@ -30,12 +34,73 @@ Deno.serve(async (req) => {
     const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
       email,
       password,
-      email_confirm: true, // Auto-confirm email
+      email_confirm: true,
+      user_metadata: {
+        full_name: full_name || '',
+      }
     });
 
     if (authError) {
       console.error('Error creating user:', authError);
       throw authError;
+    }
+
+    const userId = authData.user.id;
+
+    // Create profile
+    const { error: profileError } = await supabaseAdmin
+      .from('profiles')
+      .insert({
+        id: userId,
+        email: email,
+        full_name: full_name || null,
+      });
+
+    if (profileError) {
+      console.error('Error creating profile:', profileError);
+      throw profileError;
+    }
+
+    // Create user role
+    const { error: roleError } = await supabaseAdmin
+      .from('user_roles')
+      .insert({
+        user_id: userId,
+        role: role,
+      });
+
+    if (roleError) {
+      console.error('Error creating user role:', roleError);
+      throw roleError;
+    }
+
+    // Add user to organization if organization_id is provided
+    if (organization_id) {
+      const { error: memberError } = await supabaseAdmin
+        .from('organization_members')
+        .insert({
+          user_id: userId,
+          organization_id: organization_id,
+          role: 'member',
+          is_active: true,
+        });
+
+      if (memberError) {
+        console.error('Error adding user to organization:', memberError);
+        throw memberError;
+      }
+
+      // Set active organization
+      const { error: activeOrgError } = await supabaseAdmin
+        .from('user_active_organization')
+        .insert({
+          user_id: userId,
+          organization_id: organization_id,
+        });
+
+      if (activeOrgError) {
+        console.error('Error setting active organization:', activeOrgError);
+      }
     }
 
     console.log(`✅ User created successfully: ${email}`);
