@@ -521,6 +521,16 @@ const Dashboard = () => {
               <Button 
                 variant="outline" 
                 className="w-full"
+                asChild
+              >
+                <Link to="/quickbooks-status">
+                  <FileCheck className="h-4 w-4 mr-2 text-green-600" />
+                  Estado QuickBooks
+                </Link>
+              </Button>
+              <Button 
+                variant="outline" 
+                className="w-full"
                 onClick={() => setIsErrorModalOpen(true)}
               >
                 <AlertCircle className="h-4 w-4 mr-2 text-destructive" />
