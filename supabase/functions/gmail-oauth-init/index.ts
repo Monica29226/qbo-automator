@@ -32,11 +32,11 @@ serve(async (req) => {
     authUrl.searchParams.set("response_type", "code");
     authUrl.searchParams.set("scope", "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile");
     authUrl.searchParams.set("access_type", "offline");
-    authUrl.searchParams.set("prompt", "consent");
+    authUrl.searchParams.set("prompt", "consent select_account");
     authUrl.searchParams.set("state", state);
     
-    // Force a fresh consent by adding include_granted_scopes
-    authUrl.searchParams.set("include_granted_scopes", "false");
+    // Force fresh consent and incremental authorization
+    authUrl.searchParams.set("include_granted_scopes", "true");
 
     console.log("OAuth init successful, redirect URL generated");
 
