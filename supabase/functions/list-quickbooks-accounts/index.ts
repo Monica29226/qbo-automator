@@ -39,12 +39,13 @@ serve(async (req) => {
 
     console.log(`📋 Listing QuickBooks accounts for organization: ${organization_id}`);
 
-    // Get QuickBooks credentials
+    // Get QuickBooks credentials (only active integrations)
     const { data: integration, error: intError } = await supabase
       .from("integration_accounts")
       .select("credentials")
       .eq("organization_id", organization_id)
       .eq("service_type", "quickbooks")
+      .eq("is_active", true)
       .maybeSingle();
 
     if (intError || !integration) {
