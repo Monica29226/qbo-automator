@@ -45,12 +45,21 @@ interface Vendor {
   is_active: boolean;
 }
 
+interface QBOAccount {
+  id: string;
+  name: string;
+  accountNumber: string;
+  type: string;
+}
+
 const Vendors = () => {
   const { isAdmin, activeOrganization } = useAuth();
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingVendor, setEditingVendor] = useState<Vendor | null>(null);
+  const [qboAccounts, setQboAccounts] = useState<QBOAccount[]>([]);
+  const [isLoadingAccounts, setIsLoadingAccounts] = useState(false);
   const [formData, setFormData] = useState({
     vendor_name: "",
     vendor_tax_id: "",
@@ -132,6 +141,35 @@ const Vendors = () => {
     setIsLoading(false);
   };
 
+  const fetchQBOAccounts = async () => {
+    if (!activeOrganization) return;
+    
+    setIsLoadingAccounts(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) throw new Error("No session");
+
+      const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/list-quickbooks-accounts`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ organization_id: activeOrganization }),
+      });
+
+      if (!response.ok) throw new Error("Error al obtener cuentas");
+
+      const result = await response.json();
+      setQboAccounts(result.accounts || []);
+    } catch (error) {
+      console.error("Error fetching QBO accounts:", error);
+      toast.error("Error al cargar cuentas de QuickBooks");
+    } finally {
+      setIsLoadingAccounts(false);
+    }
+  };
+
   const openDialog = (vendor?: Vendor) => {
     if (vendor) {
       setEditingVendor(vendor);
@@ -157,6 +195,7 @@ const Vendors = () => {
       });
     }
     setIsDialogOpen(true);
+    fetchQBOAccounts();
   };
 
   return (
@@ -198,6 +237,7 @@ const Vendors = () => {
                   <TableHead>Nombre</TableHead>
                   <TableHead>Cédula</TableHead>
                   <TableHead>QBO Ref</TableHead>
+                  <TableHead>Cuenta a Registrar</TableHead>
                   <TableHead>Tratamiento IVA</TableHead>
                   <TableHead>Tasa (%)</TableHead>
                   <TableHead>Estado</TableHead>
@@ -207,7 +247,7 @@ const Vendors = () => {
               <TableBody>
                 {vendors.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
+                    <TableCell colSpan={8} className="text-center text-muted-foreground py-8">
                       No hay proveedores registrados
                     </TableCell>
                   </TableRow>
@@ -217,6 +257,9 @@ const Vendors = () => {
                       <TableCell className="font-medium">{vendor.vendor_name}</TableCell>
                       <TableCell>{vendor.vendor_tax_id || "-"}</TableCell>
                       <TableCell>{vendor.qbo_vendor_ref}</TableCell>
+                      <TableCell>
+                        <Badge variant="outline">{vendor.default_account_ref}</Badge>
+                      </TableCell>
                       <TableCell>
                         <Badge variant={vendor.tax_treatment === "gravado" ? "default" : "secondary"}>
                           {vendor.tax_treatment}
@@ -301,14 +344,24 @@ const Vendors = () => {
 
             <div className="space-y-2">
               <Label htmlFor="default_account_ref">
-                Cuenta Gasto ID <span className="text-destructive">*</span>
+                Cuenta a Registrar <span className="text-destructive">*</span>
               </Label>
-              <Input
-                id="default_account_ref"
+              <Select
                 value={formData.default_account_ref}
-                onChange={(e) => setFormData({ ...formData, default_account_ref: e.target.value })}
-                placeholder="456"
-              />
+                onValueChange={(value) => setFormData({ ...formData, default_account_ref: value })}
+                disabled={isLoadingAccounts}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder={isLoadingAccounts ? "Cargando cuentas..." : "Seleccionar cuenta"} />
+                </SelectTrigger>
+                <SelectContent className="max-h-[300px]">
+                  {qboAccounts.map((account) => (
+                    <SelectItem key={account.id} value={account.id}>
+                      {account.accountNumber ? `${account.accountNumber} - ` : ""}{account.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
 
             <div className="space-y-2">
