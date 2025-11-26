@@ -389,7 +389,22 @@ const InvoicesPendingLog = () => {
       const invoice = invoices.find((inv) => inv.id === id);
       if (!invoice) return;
 
-      // If updating account or class, update the vendor record
+      console.log('💾 Guardando campo:', field, 'valor:', value, 'para factura:', id);
+
+      // CRÍTICO: Actualizar processed_documents SIEMPRE que cambie un campo
+      const { error: docUpdateError } = await supabase
+        .from("processed_documents")
+        .update({ [field]: value })
+        .eq("id", id);
+
+      if (docUpdateError) {
+        console.error('❌ Error actualizando processed_documents:', docUpdateError);
+        throw docUpdateError;
+      }
+
+      console.log('✅ Campo actualizado en processed_documents');
+
+      // If updating account or class, also update the vendor record
       if (field === "default_account_ref" || field === "default_class_ref") {
         if (invoice.vendor_id) {
           const { error } = await supabase
@@ -397,7 +412,9 @@ const InvoicesPendingLog = () => {
             .update({ [field]: value })
             .eq("id", invoice.vendor_id);
 
-          if (error) throw error;
+          if (error) {
+            console.error('⚠️ Error actualizando vendor (no crítico):', error);
+          }
         }
 
         // Save as vendor default if updating account
@@ -435,16 +452,8 @@ const InvoicesPendingLog = () => {
         }
       }
 
-      // If updating uses_tax, update the document
+      // If updating uses_tax, also save as vendor default
       if (field === "uses_tax") {
-        const { error } = await supabase
-          .from("processed_documents")
-          .update({ uses_tax: value as boolean })
-          .eq("id", id);
-
-        if (error) throw error;
-
-        // Save as vendor default
         await saveVendorDefault(
           invoice.supplier_name,
           invoice.default_account_ref || null,
@@ -456,10 +465,13 @@ const InvoicesPendingLog = () => {
       setInvoices((prev) =>
         prev.map((inv) => (inv.id === id ? { ...inv, [field]: value } : inv))
       );
-      toast.success("Actualizado y guardado como predeterminado");
+      
+      if (field !== "default_account_ref") {
+        toast.success("Actualizado correctamente");
+      }
     } catch (error: any) {
       console.error("Error updating invoice:", error);
-      toast.error("Error al actualizar");
+      toast.error(`Error al actualizar: ${error.message || 'Error desconocido'}`);
     }
   };
 
