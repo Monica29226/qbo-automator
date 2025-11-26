@@ -635,7 +635,7 @@ const Dashboard = () => {
             change="+5"
             icon={Clock}
             variant="default"
-            onActionClick={() => navigate("/review-queue")}
+            onActionClick={() => navigate("/invoices-pending-log")}
             actionLabel="Ver Pendientes"
           />
           <StatsCard
