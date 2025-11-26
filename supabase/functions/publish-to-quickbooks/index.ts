@@ -233,12 +233,34 @@ Deno.serve(async (req) => {
       return null;
     };
 
-    // Procesar cada documento con mejor logging y manejo de errores
+    // PRE-CARGAR DATOS EN BATCH para evitar llamadas repetidas
     console.log(`⚙️ Iniciando procesamiento de ${documents.length} factura(s)...`);
+    const batchStartTime = Date.now();
     
-    for (let i = 0; i < documents.length; i++) {
-      const doc = documents[i];
-      const progress = `[${i + 1}/${documents.length}]`;
+    // Pre-cargar todos los vendors en una sola consulta
+    const uniqueVendorNames = [...new Set(documents.map(d => d.supplier_name))];
+    const { data: allVendors } = await supabase
+      .from("vendors")
+      .select("*")
+      .eq("organization_id", organization_id)
+      .in("vendor_name", uniqueVendorNames);
+    
+    const vendorsMap = new Map(allVendors?.map(v => [v.vendor_name, v]) || []);
+    
+    // Pre-cargar vendor defaults
+    const { data: allVendorDefaults } = await supabase
+      .from("vendor_defaults")
+      .select("*")
+      .eq("organization_id", organization_id)
+      .in("vendor_name", uniqueVendorNames);
+    
+    const vendorDefaultsMap = new Map(allVendorDefaults?.map(v => [v.vendor_name, v]) || []);
+    
+    console.log(`✓ Pre-cargados ${vendorsMap.size} vendors y ${vendorDefaultsMap.size} defaults en ${Date.now() - batchStartTime}ms`);
+    
+    // Función auxiliar para procesar un documento individual
+    const processDocument = async (doc: any, index: number, total: number) => {
+      const progress = `[${index + 1}/${total}]`;
       const startTime = Date.now();
       
       try {
@@ -265,12 +287,11 @@ Deno.serve(async (req) => {
             })
             .eq("id", doc.id);
           
-          results.failed++;
-          results.errors.push({
-            doc_number: doc.doc_number,
-            error: "Factura duplicada en la base de datos",
-          });
-          continue;
+          return {
+            success: false,
+            docNumber: doc.doc_number,
+            error: "Factura duplicada en la base de datos"
+          };
         }
         
         // VALIDACIÓN 2: Verificar duplicado en QBO
@@ -289,8 +310,10 @@ Deno.serve(async (req) => {
             })
             .eq("id", doc.id);
 
-          results.published++;
-          continue;
+          return {
+            success: true,
+            docNumber: doc.doc_number
+          };
         }
 
         // Obtener o crear vendor
@@ -554,16 +577,15 @@ Deno.serve(async (req) => {
             })
             .eq("id", doc.id);
 
-          results.failed++;
-          results.errors.push({
-            doc_number: doc.doc_number,
-            error: "No account code configured for vendor",
-          });
-          continue; // Skip to next document
+          return {
+            success: false,
+            docNumber: doc.doc_number,
+            error: "No account code configured for vendor"
+          };
         }
         
         // Obtener el ID real de QuickBooks para el código de cuenta
-        let accountRef = await getAccountIdByCode(accountCode);
+        let accountRef = await getAccountIdByCode(accountCode!);
         
         if (!accountRef) {
           console.error(`❌ CRITICAL: Account ${accountCode} not found for vendor ${doc.supplier_name}`);
@@ -847,12 +869,11 @@ Deno.serve(async (req) => {
             })
             .eq("id", doc.id);
 
-          results.failed++;
-          results.errors.push({
-            doc_number: doc.doc_number,
-            error: errorText.substring(0, 200),
-          });
-          continue;
+          return {
+            success: false,
+            docNumber: doc.doc_number,
+            error: errorText.substring(0, 200)
+          };
         }
 
         const billData = await billResponse.json();
@@ -991,7 +1012,7 @@ Deno.serve(async (req) => {
 
         const elapsedTime = Date.now() - startTime;
         console.log(`${progress} ✅ Factura ${doc.doc_number} publicada exitosamente en ${elapsedTime}ms`);
-        results.published++;
+        return { success: true, docNumber: doc.doc_number };
       } catch (error) {
         const elapsedTime = Date.now() - startTime;
         console.error(`${progress} ❌ Error procesando documento ${doc.doc_number} después de ${elapsedTime}ms:`, error);
@@ -1011,6 +1032,7 @@ Deno.serve(async (req) => {
           });
         }
         
+        // Guardar error en la BD
         await supabase
           .from("processed_documents")
           .update({
@@ -1019,13 +1041,37 @@ Deno.serve(async (req) => {
           })
           .eq("id", doc.id);
 
-        results.failed++;
-        results.errors.push({
-          doc_number: doc.doc_number,
-          error: enhancedMessage,
-        });
+        return {
+          success: false,
+          docNumber: doc.doc_number,
+          error: enhancedMessage
+        };
       }
+    };
+    
+    // PROCESAMIENTO EN PARALELO (3 facturas simultáneas máximo)
+    const BATCH_SIZE = 3;
+    const documentResults = [];
+    
+    for (let i = 0; i < documents.length; i += BATCH_SIZE) {
+      const batch = documents.slice(i, Math.min(i + BATCH_SIZE, documents.length));
+      const batchPromises = batch.map((doc, batchIndex) => 
+        processDocument(doc, i + batchIndex, documents.length)
+      );
+      
+      const batchResults = await Promise.all(batchPromises);
+      documentResults.push(...batchResults);
     }
+    
+    // Contar resultados
+    results.published = documentResults.filter(r => r.success).length;
+    results.failed = documentResults.filter(r => !r.success).length;
+    results.errors = documentResults
+      .filter(r => !r.success)
+      .map(r => ({ doc_number: r.docNumber, error: r.error }));
+    
+    const totalTime = Date.now() - batchStartTime;
+    console.log(`🏁 Procesamiento completado en ${totalTime}ms: ${results.published} exitosas, ${results.failed} fallidas`);
 
     console.log(`Publishing complete: ${results.published} published, ${results.failed} failed`);
 
