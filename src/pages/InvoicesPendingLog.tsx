@@ -1,3 +1,4 @@
+import { CheckCircle2, Eye, FileText, Loader2, Search, Star, Trash2, Upload } from "lucide-react";
 import { useState, useEffect, useMemo } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
@@ -22,7 +23,6 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Loader2, Search, Trash2, Upload, Star, Eye, FileText } from "lucide-react";
 import { PublishValidationDialog } from "@/components/PublishValidationDialog";
 import {
   Tooltip,
@@ -67,6 +67,8 @@ interface PendingInvoice {
   pdf_attachment_url?: string | null;
   xml_data?: any;
   issue_date?: string;
+  status?: string;
+  qbo_entity_id?: string | null;
 }
 
 const InvoicesPendingLog = () => {
@@ -135,13 +137,14 @@ const InvoicesPendingLog = () => {
 
     setIsLoading(true);
     try {
-      // Fetch documents
+      // Fetch documents - incluir tanto pending como published recientes (últimas 24h)
       const { data: docsData, error: docsError } = await supabase
         .from("processed_documents")
         .select("*")
         .eq("organization_id", activeOrganization)
-        .eq("status", "pending")
-        .order("created_at", { ascending: false });
+        .in("status", ["pending", "pending_config", "published"])
+        .order("created_at", { ascending: false })
+        .limit(100);
 
       if (docsError) throw docsError;
 
@@ -285,6 +288,45 @@ const InvoicesPendingLog = () => {
     return map;
   }, [qboAccounts]);
 
+  // OPTIMIZACIÓN: Memoizar map de cuentas por código para búsquedas rápidas
+  const accountsByCode = useMemo(() => {
+    const map = new Map<string, string>(); // código -> id
+    qboAccounts.forEach(account => {
+      // Indexar por número de cuenta
+      if (account.accountNumber) {
+        map.set(account.accountNumber, account.id);
+        map.set(account.accountNumber.split(' ')[0], account.id); // "6124-01" sin descripción
+      }
+      // Indexar también por el código al inicio del nombre
+      const match = account.name.match(/^(\d+[\-\d]*)/);
+      if (match) {
+        map.set(match[1], account.id);
+      }
+    });
+    return map;
+  }, [qboAccounts]);
+
+  // Helper para obtener el ID de cuenta desde el código
+  const getAccountIdFromCode = (accountCode: string | undefined): string => {
+    if (!accountCode) return "";
+    
+    // Extraer solo el código numérico (ej: "6124-01 Nombre" -> "6124-01")
+    const cleanCode = accountCode.split(' ')[0].trim();
+    
+    // Buscar en el map
+    const accountId = accountsByCode.get(cleanCode);
+    if (accountId) return accountId;
+    
+    // Si no encontró directo, buscar sin el sufijo (ej: "6124-01" -> "6124")
+    if (cleanCode.includes('-')) {
+      const baseCode = cleanCode.split('-')[0];
+      const fallbackId = accountsByCode.get(baseCode);
+      if (fallbackId) return fallbackId;
+    }
+    
+    return "";
+  };
+
   useEffect(() => {
     if (!searchTerm.trim()) {
       setFilteredInvoices(invoices);
@@ -391,10 +433,26 @@ const InvoicesPendingLog = () => {
 
       console.log('💾 Guardando campo:', field, 'valor:', value, 'para factura:', id);
 
+      // Si estamos actualizando default_account_ref, convertir el ID a código
+      let valueToSave = value;
+      if (field === "default_account_ref" && typeof value === "string") {
+        // Buscar la cuenta por ID para obtener su código
+        const account = qboAccounts.find(acc => acc.id === value);
+        if (account) {
+          // Guardar el código completo con descripción
+          valueToSave = account.accountNumber 
+            ? `${account.accountNumber} ${account.name}` 
+            : account.name;
+          console.log(`✓ Convertido ID ${value} a código: ${valueToSave}`);
+        } else {
+          console.warn(`⚠️ No se encontró la cuenta con ID: ${value}`);
+        }
+      }
+
       // CRÍTICO: Actualizar processed_documents SIEMPRE que cambie un campo
       const { error: docUpdateError } = await supabase
         .from("processed_documents")
-        .update({ [field]: value })
+        .update({ [field]: valueToSave })
         .eq("id", id);
 
       if (docUpdateError) {
@@ -409,7 +467,7 @@ const InvoicesPendingLog = () => {
         if (invoice.vendor_id) {
           const { error } = await supabase
             .from("vendors")
-            .update({ [field]: value })
+            .update({ [field]: valueToSave })
             .eq("id", invoice.vendor_id);
 
           if (error) {
@@ -421,14 +479,14 @@ const InvoicesPendingLog = () => {
         if (field === "default_account_ref") {
           await saveVendorDefault(
             invoice.supplier_name,
-            value as string,
+            valueToSave as string,
             invoice.uses_tax ?? true
           );
           
           toast.success(`✓ Configuración guardada para ${invoice.supplier_name}. Se aplicará a futuras facturas.`);
           
           // AUTO-PUBLICAR: Si se asignó una cuenta contable válida, publicar automáticamente
-          if (value && typeof value === 'string' && value.trim() !== '') {
+          if (valueToSave && typeof valueToSave === 'string' && valueToSave.trim() !== '') {
             toast.info("Publicando factura automáticamente a QuickBooks...");
             try {
               const { data, error: publishError } = await supabase.functions.invoke(
@@ -463,7 +521,7 @@ const InvoicesPendingLog = () => {
 
       // Update local state
       setInvoices((prev) =>
-        prev.map((inv) => (inv.id === id ? { ...inv, [field]: value } : inv))
+        prev.map((inv) => (inv.id === id ? { ...inv, [field]: valueToSave } : inv))
       );
       
       if (field !== "default_account_ref") {
@@ -725,31 +783,40 @@ const InvoicesPendingLog = () => {
                       </TableCell>
                       <TableCell>
                         <div className="flex items-center gap-2">
-                          <AccountCombobox
-                            accounts={qboAccounts}
-                            value={invoice.default_account_ref || ""}
-                            onValueChange={(value) =>
-                              handleUpdateInvoice(
-                                invoice.id,
-                                "default_account_ref",
-                                value
-                              )
-                            }
-                            disabled={loadingAccounts}
-                            className="w-[200px]"
-                            placeholder="Seleccionar cuenta"
-                          />
-                          {invoice.has_vendor_default && (
-                            <TooltipProvider>
-                              <Tooltip>
-                                <TooltipTrigger>
-                                  <Star className="h-4 w-4 text-yellow-500 fill-yellow-500" />
-                                </TooltipTrigger>
-                                <TooltipContent>
-                                  <p>Usando configuración predeterminada del proveedor</p>
-                                </TooltipContent>
-                              </Tooltip>
-                            </TooltipProvider>
+                          {invoice.status === "published" && invoice.qbo_entity_id ? (
+                            <div className="flex items-center gap-2">
+                              <CheckCircle2 className="h-5 w-5 text-green-600 flex-shrink-0" />
+                              <span className="text-xs text-green-600 font-medium">Publicado en QB</span>
+                            </div>
+                          ) : (
+                            <>
+                              <AccountCombobox
+                                accounts={qboAccounts}
+                                value={getAccountIdFromCode(invoice.default_account_ref)}
+                                onValueChange={(value) =>
+                                  handleUpdateInvoice(
+                                    invoice.id,
+                                    "default_account_ref",
+                                    value
+                                  )
+                                }
+                                disabled={loadingAccounts}
+                                className="w-[200px]"
+                                placeholder="Seleccionar cuenta"
+                              />
+                              {invoice.has_vendor_default && (
+                                <TooltipProvider>
+                                  <Tooltip>
+                                    <TooltipTrigger>
+                                      <Star className="h-4 w-4 text-yellow-500 fill-yellow-500" />
+                                    </TooltipTrigger>
+                                    <TooltipContent>
+                                      <p>Usando configuración predeterminada del proveedor</p>
+                                    </TooltipContent>
+                                  </Tooltip>
+                                </TooltipProvider>
+                              )}
+                            </>
                           )}
                         </div>
                       </TableCell>
