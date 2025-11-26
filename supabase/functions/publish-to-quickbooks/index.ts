@@ -233,10 +233,16 @@ Deno.serve(async (req) => {
       return null;
     };
 
-    // Procesar cada documento
-    for (const doc of documents) {
+    // Procesar cada documento con mejor logging y manejo de errores
+    console.log(`⚙️ Iniciando procesamiento de ${documents.length} factura(s)...`);
+    
+    for (let i = 0; i < documents.length; i++) {
+      const doc = documents[i];
+      const progress = `[${i + 1}/${documents.length}]`;
+      const startTime = Date.now();
+      
       try {
-        console.log(`Processing document ${doc.doc_number} (ID: ${doc.id})`);
+        console.log(`${progress} 📄 Procesando documento ${doc.doc_number} (ID: ${doc.id})`);
         
         // VALIDACIÓN 1: Verificar que no exista otro documento con el mismo número en la DB
         const { data: duplicateInDB, error: dbCheckError } = await supabase
@@ -983,9 +989,12 @@ Deno.serve(async (req) => {
           })
           .eq("id", doc.id);
 
+        const elapsedTime = Date.now() - startTime;
+        console.log(`${progress} ✅ Factura ${doc.doc_number} publicada exitosamente en ${elapsedTime}ms`);
         results.published++;
       } catch (error) {
-        console.error(`❌ Error processing document ${doc.doc_number}:`, error);
+        const elapsedTime = Date.now() - startTime;
+        console.error(`${progress} ❌ Error procesando documento ${doc.doc_number} después de ${elapsedTime}ms:`, error);
         
         const errorMessage = error instanceof Error ? error.message : "Unknown error";
         
