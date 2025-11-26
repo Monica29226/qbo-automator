@@ -1,6 +1,18 @@
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
 
+// HTML escape function to prevent XSS
+const escapeHtml = (str: string): string => {
+  const htmlEntities: Record<string, string> = {
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;'
+  };
+  return str.replace(/[&<>"']/g, (char) => htmlEntities[char]);
+};
+
 serve(async (req) => {
   try {
     const url = new URL(req.url);
@@ -11,8 +23,11 @@ serve(async (req) => {
     if (error) {
       console.error("OAuth error:", error);
       return new Response(
-        `<html><body><h1>Error</h1><p>OAuth failed: ${error}</p><script>setTimeout(() => window.close(), 3000);</script></body></html>`,
-        { headers: { "Content-Type": "text/html" }, status: 400 }
+        `<html><body><h1>Error</h1><p>OAuth failed: ${escapeHtml(error)}</p><script>setTimeout(() => window.close(), 3000);</script></body></html>`,
+        { headers: { 
+          "Content-Type": "text/html",
+          "Content-Security-Policy": "default-src 'self' 'unsafe-inline'"
+        }, status: 400 }
       );
     }
 
@@ -109,6 +124,9 @@ serve(async (req) => {
 
     console.log("Gmail account connected successfully");
 
+    const escapedEmail = escapeHtml(userInfo.email);
+    const allowedOrigin = new URL(SUPABASE_URL).origin;
+    
     const successHtml = `<!DOCTYPE html>
       <html>
         <head>
@@ -117,12 +135,12 @@ serve(async (req) => {
         </head>
         <body>
           <h1>¡Conexión Exitosa!</h1>
-          <p>Gmail conectado: ${userInfo.email}</p>
+          <p>Gmail conectado: ${escapedEmail}</p>
           <p>Puedes cerrar esta ventana.</p>
           <script>
             console.log('Sending Gmail postMessage to opener');
             if (window.opener) {
-              window.opener.postMessage({ type: 'gmail-connected', email: '${userInfo.email}' }, '*');
+              window.opener.postMessage({ type: 'gmail-connected', email: '${escapedEmail}' }, '${allowedOrigin}');
               console.log('Gmail message sent');
             } else {
               console.error('No window.opener found');
@@ -134,7 +152,10 @@ serve(async (req) => {
 
     return new Response(
       new TextEncoder().encode(successHtml),
-      { headers: { "Content-Type": "text/html; charset=UTF-8" }, status: 200 }
+      { headers: { 
+        "Content-Type": "text/html; charset=UTF-8",
+        "Content-Security-Policy": "default-src 'self' 'unsafe-inline'"
+      }, status: 200 }
     );
   } catch (error) {
     console.error("Error in gmail-oauth-callback:", error);
@@ -148,7 +169,7 @@ serve(async (req) => {
         </head>
         <body>
           <h1>Error de Conexión</h1>
-          <p>${errorMessage}</p>
+          <p>${escapeHtml(errorMessage)}</p>
           <p style="font-size: 12px; color: #666;">Verifica que las credenciales de Google estén correctas y que la URL de redirección esté autorizada en Google Cloud Console.</p>
           <script>setTimeout(() => window.close(), 5000);</script>
         </body>
@@ -156,7 +177,10 @@ serve(async (req) => {
 
     return new Response(
       new TextEncoder().encode(errorHtml),
-      { headers: { "Content-Type": "text/html; charset=UTF-8" }, status: 500 }
+      { headers: { 
+        "Content-Type": "text/html; charset=UTF-8",
+        "Content-Security-Policy": "default-src 'self' 'unsafe-inline'"
+      }, status: 500 }
     );
   }
 });

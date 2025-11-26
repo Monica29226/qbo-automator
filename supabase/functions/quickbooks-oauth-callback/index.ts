@@ -1,6 +1,18 @@
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
 
+// HTML escape function to prevent XSS
+const escapeHtml = (str: string): string => {
+  const htmlEntities: Record<string, string> = {
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;'
+  };
+  return str.replace(/[&<>"']/g, (char) => htmlEntities[char]);
+};
+
 serve(async (req) => {
   try {
     const url = new URL(req.url);
@@ -12,8 +24,11 @@ serve(async (req) => {
     if (error) {
       console.error("OAuth error:", error);
       return new Response(
-        `<html><body><h1>Error</h1><p>OAuth failed: ${error}</p><script>setTimeout(() => window.close(), 3000);</script></body></html>`,
-        { headers: { "Content-Type": "text/html" }, status: 400 }
+        `<html><body><h1>Error</h1><p>OAuth failed: ${escapeHtml(error)}</p><script>setTimeout(() => window.close(), 3000);</script></body></html>`,
+        { headers: { 
+          "Content-Type": "text/html",
+          "Content-Security-Policy": "default-src 'self' 'unsafe-inline'"
+        }, status: 400 }
       );
     }
 
@@ -85,7 +100,7 @@ serve(async (req) => {
               </head>
               <body>
                 <h1>Error de Conexión</h1>
-                <p>Esta cuenta de QuickBooks (Realm ${realmId}) ya está conectada a otra empresa.</p>
+                <p>Esta cuenta de QuickBooks (Realm ${escapeHtml(realmId)}) ya está conectada a otra empresa.</p>
                 <p style="font-size: 12px; color: #666;">Cada empresa debe tener su propia conexión de QuickBooks independiente.</p>
                 <script>setTimeout(() => window.close(), 5000);</script>
               </body>
@@ -93,7 +108,10 @@ serve(async (req) => {
           
           return new Response(
             new TextEncoder().encode(errorHtml),
-            { headers: { "Content-Type": "text/html; charset=utf-8" }, status: 400 }
+            { headers: { 
+              "Content-Type": "text/html; charset=utf-8",
+              "Content-Security-Policy": "default-src 'self' 'unsafe-inline'"
+            }, status: 400 }
           );
         }
       }
@@ -131,6 +149,9 @@ serve(async (req) => {
 
     console.log("QuickBooks connected successfully");
 
+    const escapedRealmId = escapeHtml(realmId);
+    const allowedOrigin = new URL(SUPABASE_URL).origin;
+    
     const html = `<!DOCTYPE html>
       <html>
         <head>
@@ -140,12 +161,12 @@ serve(async (req) => {
         <body>
           <h1>¡Conexión Exitosa!</h1>
           <p>QuickBooks conectado correctamente</p>
-          <p>Realm ID: ${realmId}</p>
+          <p>Realm ID: ${escapedRealmId}</p>
           <p>Puedes cerrar esta ventana.</p>
           <script>
             console.log('Sending postMessage to opener');
             if (window.opener) {
-              window.opener.postMessage({ type: 'quickbooks-connected', realmId: '${realmId}' }, '*');
+              window.opener.postMessage({ type: 'quickbooks-connected', realmId: '${escapedRealmId}' }, '${allowedOrigin}');
               console.log('Message sent');
             } else {
               console.error('No window.opener found');
@@ -157,14 +178,20 @@ serve(async (req) => {
     
     return new Response(
       new TextEncoder().encode(html),
-      { headers: { "Content-Type": "text/html; charset=utf-8" }, status: 200 }
+      { headers: { 
+        "Content-Type": "text/html; charset=utf-8",
+        "Content-Security-Policy": "default-src 'self' 'unsafe-inline'"
+      }, status: 200 }
     );
   } catch (error) {
     console.error("Error in quickbooks-oauth-callback:", error);
     const errorMessage = error instanceof Error ? error.message : "Unknown error";
     return new Response(
-      `<html><body><h1>Error</h1><p>${errorMessage}</p><script>setTimeout(() => window.close(), 3000);</script></body></html>`,
-      { headers: { "Content-Type": "text/html" }, status: 500 }
+      `<html><body><h1>Error</h1><p>${escapeHtml(errorMessage)}</p><script>setTimeout(() => window.close(), 3000);</script></body></html>`,
+      { headers: { 
+        "Content-Type": "text/html",
+        "Content-Security-Policy": "default-src 'self' 'unsafe-inline'"
+      }, status: 500 }
     );
   }
 });
