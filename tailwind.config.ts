@@ -71,6 +71,17 @@ export default {
           "4": "hsl(var(--chart-4))",
           "5": "hsl(var(--chart-5))",
         },
+        'calderon': {
+          'navy': '#15162C',
+          'dark-blue': '#272D60',
+          'midnight': '#1D1F3E',
+          'blue': '#052C76',
+          'cream': '#E8E2CD',
+        },
+      },
+      fontFamily: {
+        'heading': ['Libre Caslon Text', 'serif'],
+        'body': ['Montserrat', 'sans-serif'],
       },
       borderRadius: {
         lg: "var(--radius)",

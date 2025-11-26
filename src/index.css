@@ -8,26 +8,27 @@ All colors MUST be HSL.
 
 @layer base {
   :root {
-    --background: 40 25% 96%;
-    --foreground: 35 30% 20%;
+    /* Colores corporativos ACL Calderón */
+    --background: 44 31% 91%;
+    --foreground: 238 35% 13%;
 
-    --card: 40 15% 98%;
-    --card-foreground: 35 30% 20%;
+    --card: 44 31% 96%;
+    --card-foreground: 238 35% 13%;
 
-    --popover: 40 15% 98%;
-    --popover-foreground: 35 30% 20%;
+    --popover: 44 31% 96%;
+    --popover-foreground: 238 35% 13%;
 
-    --primary: 42 35% 58%;
-    --primary-foreground: 35 25% 15%;
+    --primary: 235 42% 26%;
+    --primary-foreground: 44 31% 91%;
 
-    --secondary: 42 25% 75%;
-    --secondary-foreground: 35 25% 15%;
+    --secondary: 217 96% 24%;
+    --secondary-foreground: 44 31% 91%;
 
-    --muted: 40 20% 92%;
-    --muted-foreground: 35 15% 45%;
+    --muted: 44 20% 85%;
+    --muted-foreground: 238 20% 40%;
 
-    --accent: 42 40% 65%;
-    --accent-foreground: 35 25% 15%;
+    --accent: 44 31% 86%;
+    --accent-foreground: 238 35% 13%;
 
     --success: 145 65% 45%;
     --success-foreground: 0 0% 100%;
@@ -38,48 +39,48 @@ All colors MUST be HSL.
     --destructive: 0 75% 55%;
     --destructive-foreground: 0 0% 100%;
 
-    --border: 42 20% 85%;
-    --input: 42 20% 90%;
-    --ring: 42 35% 58%;
+    --border: 44 20% 80%;
+    --input: 44 20% 80%;
+    --ring: 235 42% 26%;
 
     --radius: 0.5rem;
 
-    --sidebar: 35 30% 20%;
-    --sidebar-background: 35 30% 20%;
-    --sidebar-foreground: 42 30% 85%;
-    --sidebar-accent: 42 30% 65%;
-    --sidebar-accent-foreground: 35 25% 15%;
-    --sidebar-border: 35 25% 25%;
-    --sidebar-ring: 42 35% 58%;
+    --sidebar: 238 35% 13%;
+    --sidebar-background: 238 35% 13%;
+    --sidebar-foreground: 44 31% 91%;
+    --sidebar-accent: 235 42% 26%;
+    --sidebar-accent-foreground: 44 31% 91%;
+    --sidebar-border: 238 20% 20%;
+    --sidebar-ring: 235 42% 26%;
 
-    --chart-1: 42 35% 58%;
-    --chart-2: 180 60% 50%;
-    --chart-3: 145 65% 45%;
-    --chart-4: 40 95% 55%;
-    --chart-5: 270 65% 55%;
+    --chart-1: 235 42% 26%;
+    --chart-2: 217 96% 24%;
+    --chart-3: 238 35% 13%;
+    --chart-4: 44 31% 86%;
+    --chart-5: 238 20% 40%;
   }
 
   .dark {
-    --background: 35 25% 12%;
-    --foreground: 42 25% 90%;
+    --background: 238 35% 8%;
+    --foreground: 44 31% 91%;
 
-    --card: 35 20% 16%;
-    --card-foreground: 42 25% 90%;
+    --card: 238 35% 10%;
+    --card-foreground: 44 31% 91%;
 
-    --popover: 35 20% 16%;
-    --popover-foreground: 42 25% 90%;
+    --popover: 238 35% 10%;
+    --popover-foreground: 44 31% 91%;
 
-    --primary: 42 40% 65%;
-    --primary-foreground: 35 25% 12%;
+    --primary: 235 42% 26%;
+    --primary-foreground: 44 31% 91%;
 
-    --secondary: 42 25% 55%;
-    --secondary-foreground: 0 0% 100%;
+    --secondary: 217 96% 24%;
+    --secondary-foreground: 44 31% 91%;
 
-    --muted: 35 20% 22%;
-    --muted-foreground: 42 15% 65%;
+    --muted: 238 20% 20%;
+    --muted-foreground: 44 20% 60%;
 
-    --accent: 42 35% 60%;
-    --accent-foreground: 0 0% 100%;
+    --accent: 235 42% 35%;
+    --accent-foreground: 44 31% 91%;
 
     --success: 145 60% 45%;
     --success-foreground: 0 0% 100%;
@@ -90,23 +91,23 @@ All colors MUST be HSL.
     --destructive: 0 70% 50%;
     --destructive-foreground: 0 0% 100%;
 
-    --border: 35 20% 28%;
-    --input: 35 20% 28%;
-    --ring: 42 40% 65%;
+    --border: 238 20% 20%;
+    --input: 238 20% 20%;
+    --ring: 235 42% 26%;
 
-    --sidebar: 35 30% 15%;
-    --sidebar-background: 35 30% 15%;
-    --sidebar-foreground: 42 30% 85%;
-    --sidebar-accent: 42 30% 65%;
-    --sidebar-accent-foreground: 35 25% 12%;
-    --sidebar-border: 35 25% 20%;
-    --sidebar-ring: 42 40% 65%;
+    --sidebar: 238 35% 10%;
+    --sidebar-background: 238 35% 10%;
+    --sidebar-foreground: 44 31% 91%;
+    --sidebar-accent: 235 42% 35%;
+    --sidebar-accent-foreground: 44 31% 91%;
+    --sidebar-border: 238 20% 15%;
+    --sidebar-ring: 235 42% 26%;
 
-    --chart-1: 42 40% 65%;
-    --chart-2: 180 55% 45%;
-    --chart-3: 145 60% 45%;
-    --chart-4: 40 90% 55%;
-    --chart-5: 270 60% 55%;
+    --chart-1: 235 42% 26%;
+    --chart-2: 217 96% 24%;
+    --chart-3: 238 35% 13%;
+    --chart-4: 44 31% 86%;
+    --chart-5: 238 20% 40%;
   }
 }
 
@@ -116,6 +117,10 @@ All colors MUST be HSL.
   }
 
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground font-body;
+  }
+  
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-heading;
   }
 }
