@@ -85,7 +85,7 @@ export function AccountCombobox({
         </Button>
       </PopoverTrigger>
       <PopoverContent className="w-[400px] p-0 bg-popover z-50" align="start">
-        <Command>
+        <Command shouldFilter={false}>
           <CommandInput
             placeholder="Buscar cuenta..."
             value={searchQuery}
