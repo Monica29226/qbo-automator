@@ -13,18 +13,28 @@ export const useAuth = () => {
   const navigate = useNavigate();
 
   useEffect(() => {
+    let isMounted = true;
+
     // Establecer listener primero
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (event, session) => {
+      async (event, session) => {
+        if (!isMounted) return;
+        
+        console.log('🔐 Auth state changed:', event, session?.user?.email);
         setSession(session);
         setUser(session?.user ?? null);
         
-        // Cargar datos de organización
+        // Cargar datos de organización y rol
         if (session?.user) {
-          setTimeout(() => {
-            loadUserOrganizations(session.user.id);
-            checkAdminRole(session.user.id);
-          }, 0);
+          // Usar Promise.all para cargar en paralelo
+          try {
+            await Promise.all([
+              loadUserOrganizations(session.user.id),
+              checkAdminRole(session.user.id)
+            ]);
+          } catch (error) {
+            console.error('Error loading user data:', error);
+          }
         } else {
           setIsAdmin(false);
           setActiveOrganization(null);
@@ -36,19 +46,32 @@ export const useAuth = () => {
     );
 
     // Luego verificar sesión existente
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
+      if (!isMounted) return;
+      
+      console.log('📱 Initial session check:', session?.user?.email);
       setSession(session);
       setUser(session?.user ?? null);
       
       if (session?.user) {
-        loadUserOrganizations(session.user.id);
-        checkAdminRole(session.user.id);
+        try {
+          // Cargar en paralelo y esperar a que ambos terminen
+          await Promise.all([
+            loadUserOrganizations(session.user.id),
+            checkAdminRole(session.user.id)
+          ]);
+        } catch (error) {
+          console.error('Error loading initial user data:', error);
+        }
       }
       
       setIsLoading(false);
     });
 
-    return () => subscription.unsubscribe();
+    return () => {
+      isMounted = false;
+      subscription.unsubscribe();
+    };
   }, []);
 
   const loadUserOrganizations = async (userId: string) => {
@@ -92,6 +115,7 @@ export const useAuth = () => {
 
   const checkAdminRole = async (userId: string) => {
     try {
+      console.log('🔍 Checking admin role for user:', userId);
       const { data, error } = await supabase
         .from("user_roles")
         .select("role")
@@ -99,13 +123,17 @@ export const useAuth = () => {
         .eq("role", "admin")
         .maybeSingle();
 
+      console.log('📊 Admin role check result:', { data, error });
+
       if (!error && data) {
+        console.log('✅ User IS admin');
         setIsAdmin(true);
       } else {
+        console.log('❌ User is NOT admin');
         setIsAdmin(false);
       }
     } catch (error) {
-      console.error("Error checking admin role:", error);
+      console.error("❌ Error checking admin role:", error);
       setIsAdmin(false);
     }
   };
