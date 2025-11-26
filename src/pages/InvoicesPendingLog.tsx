@@ -310,22 +310,36 @@ const InvoicesPendingLog = () => {
 
   // Helper para obtener el ID de cuenta desde el código
   const getAccountIdFromCode = (accountCode: string | undefined): string => {
-    if (!accountCode) return "";
+    if (!accountCode) {
+      console.log('🔍 getAccountIdFromCode: No hay código de cuenta');
+      return "";
+    }
+    
+    console.log('🔍 Buscando cuenta para código:', accountCode);
     
     // Extraer solo el código numérico (ej: "6124-01 Nombre" -> "6124-01")
     const cleanCode = accountCode.split(' ')[0].trim();
+    console.log('   Código limpio:', cleanCode);
     
     // Buscar en el map
     const accountId = accountsByCode.get(cleanCode);
-    if (accountId) return accountId;
+    if (accountId) {
+      console.log('   ✅ Encontrado directo - ID:', accountId);
+      return accountId;
+    }
     
     // Si no encontró directo, buscar sin el sufijo (ej: "6124-01" -> "6124")
     if (cleanCode.includes('-')) {
       const baseCode = cleanCode.split('-')[0];
       const fallbackId = accountsByCode.get(baseCode);
-      if (fallbackId) return fallbackId;
+      if (fallbackId) {
+        console.log('   ✅ Encontrado sin sufijo - Base:', baseCode, 'ID:', fallbackId);
+        return fallbackId;
+      }
     }
     
+    console.warn('   ❌ No se encontró cuenta para código:', cleanCode);
+    console.log('   📋 Códigos disponibles:', Array.from(accountsByCode.keys()).slice(0, 10));
     return "";
   };
 
@@ -658,6 +672,7 @@ const InvoicesPendingLog = () => {
       }
       
       console.log("📂 Path extraído:", pdfPath);
+      console.log("🔐 Descargando PDF desde storage con autenticación...");
       
       // Descargar el archivo como blob a través del cliente autenticado de Supabase
       // Esto evita bloqueadores que impiden acceso directo a URLs de Supabase
@@ -667,6 +682,8 @@ const InvoicesPendingLog = () => {
 
       if (error) {
         console.error("❌ Error de storage:", error);
+        console.error("   Path intentado:", pdfPath);
+        console.error("   Bucket:", 'company-documents');
         throw new Error(`Error al acceder al archivo: ${error.message}`);
       }
 
@@ -941,15 +958,17 @@ const InvoicesPendingLog = () => {
                               <AccountCombobox
                                 accounts={qboAccounts}
                                 value={getAccountIdFromCode(invoice.default_account_ref)}
-                                onValueChange={(value) =>
+                                onValueChange={(value) => {
+                                  console.log('🔄 Cuenta seleccionada - ID:', value);
+                                  console.log('📋 Cuenta actual antes de cambio:', invoice.default_account_ref);
                                   handleUpdateInvoice(
                                     invoice.id,
                                     "default_account_ref",
                                     value
-                                  )
-                                }
+                                  );
+                                }}
                                 disabled={loadingAccounts}
-                                className="w-[200px]"
+                                className="w-[280px]"
                                 placeholder="Seleccionar cuenta"
                               />
                               {invoice.has_vendor_default && (
