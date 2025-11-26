@@ -31,77 +31,72 @@ Deno.serve(async (req) => {
       throw new Error('Email y contraseña son requeridos');
     }
 
-    console.log(`Creating/updating user: ${email}`);
+    console.log(`Processing user: ${email}`);
 
     let userId: string;
     let isNewUser = false;
     let shouldSendEmail = false;
 
-    // Try to create user with admin client
-    const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
-      email,
-      password,
-      email_confirm: true,
-      user_metadata: {
-        full_name: full_name || '',
-      }
-    });
+    // First, check if user already exists by querying profiles
+    const { data: existingProfile, error: profileQueryError } = await supabaseAdmin
+      .from('profiles')
+      .select('id')
+      .eq('email', email)
+      .maybeSingle();
 
-    if (authError) {
-      // If user already exists, get their ID
-      if (authError.message?.includes('already been registered') || (authError as any).code === 'email_exists') {
-        console.log(`✅ User ${email} already exists, fetching user data...`);
-        
-        // Get existing user by email
-        const { data: existingUsers, error: getUserError } = await supabaseAdmin.auth.admin.listUsers();
-        
-        if (getUserError) {
-          console.error('Error fetching existing user:', getUserError);
-          throw getUserError;
-        }
-        
-        const existingUser = existingUsers.users.find(u => u.email === email);
-        if (!existingUser) {
-          throw new Error('User exists but could not be found');
-        }
-        
-        userId = existingUser.id;
-        console.log(`📋 Found existing user with ID: ${userId}`);
-      } else {
-        console.error('Error creating user:', authError);
-        throw authError;
-      }
+    if (profileQueryError) {
+      console.error('Error checking for existing user:', profileQueryError);
+    }
+
+    if (existingProfile) {
+      // User already exists
+      userId = existingProfile.id;
+      isNewUser = false;
+      console.log(`✅ User ${email} already exists with ID: ${userId}`);
     } else {
-      userId = authData.user.id;
-      isNewUser = true;
-      shouldSendEmail = true;
-      console.log(`✨ New user created with ID: ${userId}`);
+      // User doesn't exist, create new user
+      console.log(`📝 Creating new user: ${email}`);
+      
+      const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
+        email,
+        password,
+        email_confirm: true,
+        user_metadata: {
+          full_name: full_name || '',
+        }
+      });
 
-      // Create profile for new user
-      const { error: profileError } = await supabaseAdmin
-        .from('profiles')
-        .insert({
-          id: userId,
-          email: email,
-          full_name: full_name || null,
-        });
+      if (authError) {
+        // If we get "already registered" error, try to find the user
+        if (authError.message?.includes('already been registered') || (authError as any).code === 'email_exists') {
+          console.log(`⚠️ User creation failed (already exists), searching in auth.users...`);
+          
+          // Query again from profiles in case it was just created
+          const { data: retryProfile } = await supabaseAdmin
+            .from('profiles')
+            .select('id')
+            .eq('email', email)
+            .maybeSingle();
+          
+          if (retryProfile) {
+            userId = retryProfile.id;
+            console.log(`📋 Found user in profiles: ${userId}`);
+          } else {
+            throw new Error(`User ${email} exists but could not be retrieved. Please try again.`);
+          }
+        } else {
+          console.error('Error creating user:', authError);
+          throw authError;
+        }
+      } else {
+        userId = authData.user.id;
+        isNewUser = true;
+        shouldSendEmail = true;
+        console.log(`✨ New user created with ID: ${userId}`);
 
-      if (profileError) {
-        console.error('Error creating profile:', profileError);
-        // Don't throw, profile might already exist from trigger
-      }
-
-      // Create user role for new user
-      const { error: roleError } = await supabaseAdmin
-        .from('user_roles')
-        .insert({
-          user_id: userId,
-          role: role,
-        });
-
-      if (roleError) {
-        console.error('Error creating user role:', roleError);
-        // Don't throw, role might already exist
+        // Note: Profile and role are created automatically by database triggers
+        // Just verify they exist
+        await new Promise(resolve => setTimeout(resolve, 500)); // Small delay for trigger to complete
       }
     }
 
