@@ -8,26 +8,26 @@ All colors MUST be HSL.
 
 @layer base {
   :root {
-    --background: 210 20% 98%;
-    --foreground: 215 25% 15%;
+    --background: 40 25% 96%;
+    --foreground: 35 30% 20%;
 
-    --card: 0 0% 100%;
-    --card-foreground: 215 25% 15%;
+    --card: 40 15% 98%;
+    --card-foreground: 35 30% 20%;
 
-    --popover: 0 0% 100%;
-    --popover-foreground: 215 25% 15%;
+    --popover: 40 15% 98%;
+    --popover-foreground: 35 30% 20%;
 
-    --primary: 210 85% 45%;
-    --primary-foreground: 0 0% 100%;
+    --primary: 42 35% 58%;
+    --primary-foreground: 35 25% 15%;
 
-    --secondary: 180 60% 50%;
-    --secondary-foreground: 0 0% 100%;
+    --secondary: 42 25% 75%;
+    --secondary-foreground: 35 25% 15%;
 
-    --muted: 210 20% 95%;
-    --muted-foreground: 215 15% 45%;
+    --muted: 40 20% 92%;
+    --muted-foreground: 35 15% 45%;
 
-    --accent: 180 80% 45%;
-    --accent-foreground: 0 0% 100%;
+    --accent: 42 40% 65%;
+    --accent-foreground: 35 25% 15%;
 
     --success: 145 65% 45%;
     --success-foreground: 0 0% 100%;
@@ -38,13 +38,21 @@ All colors MUST be HSL.
     --destructive: 0 75% 55%;
     --destructive-foreground: 0 0% 100%;
 
-    --border: 215 15% 88%;
-    --input: 215 15% 88%;
-    --ring: 210 85% 45%;
+    --border: 42 20% 85%;
+    --input: 42 20% 90%;
+    --ring: 42 35% 58%;
 
     --radius: 0.5rem;
 
-    --chart-1: 210 85% 45%;
+    --sidebar: 35 30% 20%;
+    --sidebar-background: 35 30% 20%;
+    --sidebar-foreground: 42 30% 85%;
+    --sidebar-accent: 42 30% 65%;
+    --sidebar-accent-foreground: 35 25% 15%;
+    --sidebar-border: 35 25% 25%;
+    --sidebar-ring: 42 35% 58%;
+
+    --chart-1: 42 35% 58%;
     --chart-2: 180 60% 50%;
     --chart-3: 145 65% 45%;
     --chart-4: 40 95% 55%;
@@ -52,25 +60,25 @@ All colors MUST be HSL.
   }
 
   .dark {
-    --background: 215 30% 8%;
-    --foreground: 210 20% 95%;
+    --background: 35 25% 12%;
+    --foreground: 42 25% 90%;
 
-    --card: 215 25% 12%;
-    --card-foreground: 210 20% 95%;
+    --card: 35 20% 16%;
+    --card-foreground: 42 25% 90%;
 
-    --popover: 215 25% 12%;
-    --popover-foreground: 210 20% 95%;
+    --popover: 35 20% 16%;
+    --popover-foreground: 42 25% 90%;
 
-    --primary: 210 90% 55%;
-    --primary-foreground: 215 30% 8%;
+    --primary: 42 40% 65%;
+    --primary-foreground: 35 25% 12%;
 
-    --secondary: 180 55% 45%;
+    --secondary: 42 25% 55%;
     --secondary-foreground: 0 0% 100%;
 
-    --muted: 215 20% 18%;
-    --muted-foreground: 215 15% 60%;
+    --muted: 35 20% 22%;
+    --muted-foreground: 42 15% 65%;
 
-    --accent: 180 70% 40%;
+    --accent: 42 35% 60%;
     --accent-foreground: 0 0% 100%;
 
     --success: 145 60% 45%;
@@ -82,11 +90,19 @@ All colors MUST be HSL.
     --destructive: 0 70% 50%;
     --destructive-foreground: 0 0% 100%;
 
-    --border: 215 20% 22%;
-    --input: 215 20% 22%;
-    --ring: 210 90% 55%;
+    --border: 35 20% 28%;
+    --input: 35 20% 28%;
+    --ring: 42 40% 65%;
 
-    --chart-1: 210 90% 55%;
+    --sidebar: 35 30% 15%;
+    --sidebar-background: 35 30% 15%;
+    --sidebar-foreground: 42 30% 85%;
+    --sidebar-accent: 42 30% 65%;
+    --sidebar-accent-foreground: 35 25% 12%;
+    --sidebar-border: 35 25% 20%;
+    --sidebar-ring: 42 40% 65%;
+
+    --chart-1: 42 40% 65%;
     --chart-2: 180 55% 45%;
     --chart-3: 145 60% 45%;
     --chart-4: 40 90% 55%;

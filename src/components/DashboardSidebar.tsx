@@ -1,17 +1,16 @@
 import { Link, useLocation } from "react-router-dom";
 import {
   Building2,
-  Database,
   Eye,
   FileCheck,
   FileSpreadsheet,
-  FileText,
   LogOut,
   Plug,
   Settings,
   Shield,
   Users,
 } from "lucide-react";
+import calderonLogo from "@/assets/calderon-logo-new.png";
 import {
   Sidebar,
   SidebarContent,
@@ -116,14 +115,14 @@ export function DashboardSidebar({ isAdmin, reviewCount, onSignOut }: DashboardS
           <SidebarMenuButton asChild isActive={isActive(item.path)}>
             <Link
               to={item.path}
-              className="flex items-center gap-3 hover:bg-accent hover:text-accent-foreground transition-colors"
+              className="flex items-center gap-3 text-sidebar-foreground hover:bg-sidebar-accent/20 hover:text-sidebar-foreground data-[active=true]:bg-sidebar-accent/30 data-[active=true]:text-sidebar-foreground transition-colors"
             >
               <item.icon className="h-4 w-4" />
               {!collapsed && (
                 <>
                   <span className="flex-1">{item.title}</span>
                   {item.badge && (
-                    <Badge variant="secondary" className="ml-auto">
+                    <Badge variant="secondary" className="ml-auto bg-sidebar-accent/40 text-sidebar-foreground">
                       {item.badge}
                     </Badge>
                   )}
@@ -136,26 +135,30 @@ export function DashboardSidebar({ isAdmin, reviewCount, onSignOut }: DashboardS
   };
 
   return (
-    <Sidebar collapsible="icon" className="border-r">
+    <Sidebar collapsible="icon" className="border-r bg-sidebar-background">
       <SidebarContent>
         {/* Logo/Brand */}
         <SidebarGroup>
-          <div className="flex items-center gap-3 px-4 py-6">
-            <div className="h-10 w-10 rounded-lg bg-primary flex items-center justify-center flex-shrink-0">
-              <FileText className="h-6 w-6 text-primary-foreground" />
+          <div className="flex items-center gap-3 px-4 py-6 border-b border-sidebar-accent/20">
+            <div className="h-12 w-12 flex items-center justify-center flex-shrink-0 bg-card rounded-lg p-1.5">
+              <img 
+                src={calderonLogo} 
+                alt="Calderón Logo" 
+                className="w-full h-full object-contain"
+              />
             </div>
             {!collapsed && (
               <div>
-                <h2 className="text-lg font-bold text-foreground">FacturaFlow CR</h2>
-                <p className="text-xs text-muted-foreground">Calderón</p>
+                <h2 className="text-base font-bold text-sidebar-foreground">FacturaFlow CR</h2>
+                <p className="text-xs text-sidebar-foreground/70">Sistema de Facturación</p>
               </div>
             )}
           </div>
         </SidebarGroup>
 
         {/* Navigation */}
-        <SidebarGroup>
-          <SidebarGroupLabel>Navegación</SidebarGroupLabel>
+        <SidebarGroup className="text-sidebar-foreground">
+          <SidebarGroupLabel className="text-sidebar-foreground/60">Navegación</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>{renderMenuItems(navigationItems)}</SidebarMenu>
           </SidebarGroupContent>
@@ -163,8 +166,8 @@ export function DashboardSidebar({ isAdmin, reviewCount, onSignOut }: DashboardS
 
         {/* Management */}
         {isAdmin && (
-          <SidebarGroup>
-            <SidebarGroupLabel>Gestión</SidebarGroupLabel>
+          <SidebarGroup className="text-sidebar-foreground">
+            <SidebarGroupLabel className="text-sidebar-foreground/60">Gestión</SidebarGroupLabel>
             <SidebarGroupContent>
               <SidebarMenu>{renderMenuItems(managementItems)}</SidebarMenu>
             </SidebarGroupContent>
@@ -173,8 +176,8 @@ export function DashboardSidebar({ isAdmin, reviewCount, onSignOut }: DashboardS
 
         {/* Rules */}
         {isAdmin && (
-          <SidebarGroup>
-            <SidebarGroupLabel>Reglas</SidebarGroupLabel>
+          <SidebarGroup className="text-sidebar-foreground">
+            <SidebarGroupLabel className="text-sidebar-foreground/60">Reglas</SidebarGroupLabel>
             <SidebarGroupContent>
               <SidebarMenu>{renderMenuItems(rulesItems)}</SidebarMenu>
             </SidebarGroupContent>
@@ -186,7 +189,7 @@ export function DashboardSidebar({ isAdmin, reviewCount, onSignOut }: DashboardS
           <SidebarGroupContent>
             <SidebarMenu>
               <SidebarMenuItem>
-                <SidebarMenuButton onClick={onSignOut}>
+                <SidebarMenuButton onClick={onSignOut} className="text-sidebar-foreground hover:bg-sidebar-accent/20 hover:text-sidebar-foreground">
                   <LogOut className="h-4 w-4" />
                   {!collapsed && <span>Salir</span>}
                 </SidebarMenuButton>
