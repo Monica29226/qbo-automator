@@ -1,7 +1,7 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { FileText, CheckCircle, AlertCircle, Clock, Settings, Database, LogOut, Users, Upload, Eye, Plug, FileSpreadsheet, Mail, RefreshCw, Send, Shield, FileCheck, Building2 } from "lucide-react";
+import { FileText, CheckCircle, AlertCircle, Clock, Upload, Mail, RefreshCw, Send, FileCheck, Building2, Database } from "lucide-react";
 import { StatsCard } from "@/components/dashboard/StatsCard";
 import { RecentDocuments } from "@/components/dashboard/RecentDocuments";
 import { CronMonitor } from "@/components/dashboard/CronMonitor";
@@ -24,6 +24,8 @@ import { TodayProcessingReport } from "@/components/dashboard/TodayProcessingRep
 import { ProcessAllNowButton } from "@/components/dashboard/ProcessAllNowButton";
 import { CleanIrrecoverableErrorsButton } from "@/components/dashboard/CleanIrrecoverableErrorsButton";
 import { PendingVendorConfiguration } from "@/components/dashboard/PendingVendorConfiguration";
+import { DashboardSidebar } from "@/components/DashboardSidebar";
+import { SidebarProvider, SidebarTrigger, SidebarInset } from "@/components/ui/sidebar";
 import { useAuth } from "@/hooks/useAuth";
 import { Link, useNavigate } from "react-router-dom";
 import { useEffect, useState, useCallback, useMemo } from "react";
@@ -400,224 +402,140 @@ const Dashboard = () => {
   }
 
   return (
-    <div className="min-h-screen bg-background">
-      <header className="border-b bg-card">
-        <div className="container mx-auto px-6 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="h-10 w-10 rounded-lg bg-primary flex items-center justify-center">
-              <FileText className="h-6 w-6 text-primary-foreground" />
-            </div>
-            <div>
-              <h1 className="text-xl font-bold text-foreground">FacturaFlow CR</h1>
-              <p className="text-xs text-muted-foreground">Automatización de Facturas → QuickBooks</p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2 flex-wrap">
-            <OrganizationSwitcher />
-            <Button variant="outline" size="sm" asChild>
-              <Link to="/upload">
-                <Upload className="h-4 w-4 mr-2" />
-                Cargar XML
-              </Link>
-            </Button>
-            <div className="w-full sm:w-auto">
-              <GmailFetchDialog 
-                onSuccess={() => {
-                  fetchStatsAndConnections();
-                  queryClient.invalidateQueries({ queryKey: ["recent-documents"] });
-                }}
-              />
-            </div>
-            <Button 
-              variant="default" 
-              size="sm" 
-              onClick={handlePublishToQuickBooks}
-              disabled={isFetchingEmails}
-            >
-              {isFetchingEmails ? (
-                <>
-                  <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
-                  Publicando...
-                </>
-              ) : (
-                <>
-                  <Send className="h-4 w-4 mr-2" />
-                  Publicar a QuickBooks
-                </>
-              )}
-            </Button>
-            {stats.errors > 0 && (
-              <Button 
-                variant="destructive" 
-                size="sm" 
-                onClick={handleRetryAllErrors}
-                disabled={isRetryingErrors}
-                className="bg-red-600 hover:bg-red-700"
-              >
-                {isRetryingErrors ? (
-                  <>
-                    <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
-                    Reintentando...
-                  </>
-                ) : (
-                  <>
-                    <AlertCircle className="h-4 w-4 mr-2" />
-                    Reintentar Errores ({stats.errors})
-                  </>
+    <SidebarProvider>
+      <div className="min-h-screen flex w-full bg-background">
+        <DashboardSidebar 
+          isAdmin={isAdmin} 
+          reviewCount={stats.review} 
+          onSignOut={signOut}
+        />
+        
+        <SidebarInset className="flex-1">
+          <header className="sticky top-0 z-10 border-b bg-card">
+            <div className="flex h-16 items-center gap-4 px-6">
+              <SidebarTrigger className="-ml-2" />
+              
+              <div className="flex items-center gap-2 ml-auto flex-wrap">
+                <OrganizationSwitcher />
+                <Button variant="outline" size="sm" asChild>
+                  <Link to="/upload">
+                    <Upload className="h-4 w-4 mr-2" />
+                    Cargar XML
+                  </Link>
+                </Button>
+                <GmailFetchDialog 
+                  onSuccess={() => {
+                    fetchStatsAndConnections();
+                    queryClient.invalidateQueries({ queryKey: ["recent-documents"] });
+                  }}
+                />
+                <Button 
+                  variant="default" 
+                  size="sm" 
+                  onClick={handlePublishToQuickBooks}
+                  disabled={isFetchingEmails}
+                >
+                  {isFetchingEmails ? (
+                    <>
+                      <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                      Publicando...
+                    </>
+                  ) : (
+                    <>
+                      <Send className="h-4 w-4 mr-2" />
+                      Publicar a QB
+                    </>
+                  )}
+                </Button>
+                {stats.errors > 0 && (
+                  <Button 
+                    variant="destructive" 
+                    size="sm" 
+                    onClick={handleRetryAllErrors}
+                    disabled={isRetryingErrors}
+                  >
+                    {isRetryingErrors ? (
+                      <>
+                        <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                        Reintentando...
+                      </>
+                    ) : (
+                      <>
+                        <AlertCircle className="h-4 w-4 mr-2" />
+                        Reintentar ({stats.errors})
+                      </>
+                    )}
+                  </Button>
                 )}
-              </Button>
-            )}
-            {isAdmin && stats.errors > 0 && (
-              <ErrorLogsViewer />
-            )}
-            {isAdmin && (
-              <QBOAccountsDiagnostic />
-            )}
-            {isAdmin && (
-              <VerifyBillButton />
-            )}
-            <Button 
-              variant="secondary" 
-              size="sm" 
-              onClick={handleAutoSync}
-              disabled={isAutoSyncing}
-              className="bg-green-600 hover:bg-green-700 text-white"
-            >
-              {isAutoSyncing ? (
-                <>
-                  <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
-                  Sincronizando...
-                </>
-              ) : (
-                <>
-                  <RefreshCw className="h-4 w-4 mr-2" />
-                  Sincronizar Ahora
-                </>
-              )}
-            </Button>
-            <Button 
-              variant="outline" 
-              size="sm" 
-              onClick={handleForceResync}
-              disabled={isFetchingEmails}
-              className="border-orange-500 text-orange-600 hover:bg-orange-50 dark:hover:bg-orange-950"
-            >
-              {isFetchingEmails ? (
-                <>
-                  <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
-                  Reprocesando...
-                </>
-              ) : (
-                <>
-                  <RefreshCw className="h-4 w-4 mr-2" />
-                  Forzar Resincronización Hoy
-                </>
-              )}
-            </Button>
-            <SyncFromExcelDialog />
-            <div className="w-full space-y-2">
-              <TestAutoSyncFlow />
-              <PendingDocumentsLog />
-              <Button 
-                variant="outline" 
-                className="w-full"
-                asChild
-              >
-                <Link to="/quickbooks-status">
-                  <FileCheck className="h-4 w-4 mr-2 text-green-600" />
-                  Estado QuickBooks
-                </Link>
-              </Button>
-              <Button 
-                variant="outline" 
-                className="w-full"
-                onClick={() => setIsErrorModalOpen(true)}
-              >
-                <AlertCircle className="h-4 w-4 mr-2 text-destructive" />
-                Ver Facturas con Errores
-              </Button>
-              {stats.errors > 0 && (
-                <CleanIrrecoverableErrorsButton />
-              )}
+                {isAdmin && stats.errors > 0 && (
+                  <ErrorLogsViewer />
+                )}
+                {isAdmin && (
+                  <QBOAccountsDiagnostic />
+                )}
+                {isAdmin && (
+                  <VerifyBillButton />
+                )}
+                <Button 
+                  variant="secondary" 
+                  size="sm" 
+                  onClick={handleAutoSync}
+                  disabled={isAutoSyncing}
+                  className="bg-green-600 hover:bg-green-700 text-white"
+                >
+                  {isAutoSyncing ? (
+                    <>
+                      <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                      Sincronizando...
+                    </>
+                  ) : (
+                    <>
+                      <RefreshCw className="h-4 w-4 mr-2" />
+                      Sincronizar Ahora
+                    </>
+                  )}
+                </Button>
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  onClick={handleForceResync}
+                  disabled={isFetchingEmails}
+                  className="border-orange-500 text-orange-600 hover:bg-orange-50 dark:hover:bg-orange-950"
+                >
+                  {isFetchingEmails ? (
+                    <>
+                      <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                      Reprocesando...
+                    </>
+                  ) : (
+                    <>
+                      <RefreshCw className="h-4 w-4 mr-2" />
+                      Forzar Resync Hoy
+                    </>
+                  )}
+                </Button>
+                <SyncFromExcelDialog />
+                <div className="flex flex-col gap-2">
+                  <TestAutoSyncFlow />
+                  <PendingDocumentsLog />
+                  <Button 
+                    variant="outline" 
+                    size="sm"
+                    onClick={() => setIsErrorModalOpen(true)}
+                  >
+                    <AlertCircle className="h-4 w-4 mr-2 text-destructive" />
+                    Ver Errores
+                  </Button>
+                  {stats.errors > 0 && (
+                    <CleanIrrecoverableErrorsButton />
+                  )}
+                </div>
+              </div>
             </div>
-            <Button variant="outline" size="sm" asChild>
-              <Link to="/review-queue">
-                <Eye className="h-4 w-4 mr-2" />
-                Revisión ({stats.review})
-              </Link>
-            </Button>
-            {isAdmin && (
-              <Button variant="outline" size="sm" asChild>
-                <Link to="/integrations">
-                  <Plug className="h-4 w-4 mr-2" />
-                  Integraciones
-                </Link>
-              </Button>
-            )}
-            {isAdmin && (
-              <Button variant="outline" size="sm" asChild>
-                <Link to="/vendors">
-                  <Users className="h-4 w-4 mr-2" />
-                  Proveedores
-                </Link>
-              </Button>
-            )}
-            {isAdmin && (
-              <Button variant="outline" size="sm" asChild>
-                <Link to="/users-management">
-                  <Shield className="h-4 w-4 mr-2" />
-                  Usuarios
-                </Link>
-              </Button>
-            )}
-            {isAdmin && (
-              <Button variant="outline" size="sm" asChild>
-                <Link to="/settings">
-                  <Settings className="h-4 w-4 mr-2" />
-                  Configuración
-                </Link>
-              </Button>
-            )}
-            {isAdmin && (
-              <Button variant="outline" size="sm" asChild>
-                <Link to="/organization">
-                  <Database className="h-4 w-4 mr-2" />
-                  Empresa
-                </Link>
-              </Button>
-            )}
-            {isAdmin && (
-              <Button variant="outline" size="sm" asChild>
-                <Link to="/vendor-rules">
-                  <FileSpreadsheet className="h-4 w-4 mr-2" />
-                  Reglas Proveedores
-                </Link>
-              </Button>
-            )}
-            {isAdmin && (
-              <Button variant="outline" size="sm" asChild>
-                <Link to="/validation-rules">
-                  <Shield className="h-4 w-4 mr-2" />
-                  Validaciones
-                </Link>
-              </Button>
-            )}
-            <Button variant="outline" size="sm" asChild>
-              <Link to="/audit-report">
-                <FileCheck className="h-4 w-4 mr-2" />
-                Reporte Auditoría
-              </Link>
-            </Button>
-            <Button variant="outline" size="sm" onClick={signOut}>
-              <LogOut className="h-4 w-4 mr-2" />
-              Salir
-            </Button>
-          </div>
-        </div>
-      </header>
+          </header>
 
-      <main className="container mx-auto px-6 py-8">
-        <AICreditsMonitor organizationId={activeOrganization} />
+          <main className="p-6">
+            <AICreditsMonitor organizationId={activeOrganization} />
         
         <div className="mb-8">
           <div className="flex items-center justify-between">
@@ -747,13 +665,15 @@ const Dashboard = () => {
           <TotalsValidationTest />
         </div>
 
-      </main>
+        </main>
 
-      <ErrorDocumentsModal
-        open={isErrorModalOpen} 
-        onOpenChange={setIsErrorModalOpen} 
-      />
+        <ErrorDocumentsModal
+          open={isErrorModalOpen} 
+          onOpenChange={setIsErrorModalOpen} 
+        />
+      </SidebarInset>
     </div>
+  </SidebarProvider>
   );
 };
 
