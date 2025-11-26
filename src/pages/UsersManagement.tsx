@@ -59,7 +59,7 @@ interface Organization {
 
 const UsersManagement = () => {
   const navigate = useNavigate();
-  const { isAdmin } = useAuth();
+  const { isAdmin, activeOrganization, isLoading: authLoading } = useAuth();
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [pendingInvitations, setPendingInvitations] = useState<PendingInvitation[]>([]);
   const [organizations, setOrganizations] = useState<Organization[]>([]);
@@ -81,13 +81,22 @@ const UsersManagement = () => {
   });
 
   useEffect(() => {
+    if (authLoading) return;
+    
     if (!isAdmin) {
       toast.error("Acceso denegado. Solo administradores pueden acceder.");
       navigate("/dashboard");
       return;
     }
+    
+    if (!activeOrganization) {
+      toast.error("Por favor selecciona una empresa primero.");
+      navigate("/select-company");
+      return;
+    }
+    
     fetchData();
-  }, [isAdmin, navigate]);
+  }, [isAdmin, activeOrganization, authLoading, navigate]);
 
   const fetchData = async () => {
     setIsLoading(true);
