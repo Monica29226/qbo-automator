@@ -20,7 +20,8 @@ const handler = async (req: Request): Promise<Response> => {
   }
 
   try {
-    const supabaseClient = createClient(
+    // Create client for user authentication check
+    const supabaseAuth = createClient(
       Deno.env.get("SUPABASE_URL") ?? "",
       Deno.env.get("SUPABASE_ANON_KEY") ?? "",
       {
@@ -30,18 +31,26 @@ const handler = async (req: Request): Promise<Response> => {
       }
     );
 
-    // Verificar autenticación
+    // Verificar autenticación del usuario
     const {
       data: { user },
       error: authError,
-    } = await supabaseClient.auth.getUser();
+    } = await supabaseAuth.auth.getUser();
+
+    console.log("Auth check - User:", user?.id, "Error:", authError?.message);
 
     if (authError || !user) {
       return new Response(
-        JSON.stringify({ error: "No autenticado" }),
+        JSON.stringify({ error: "No autenticado", details: authError?.message }),
         { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
+
+    // Create admin client for database operations
+    const supabaseClient = createClient(
+      Deno.env.get("SUPABASE_URL") ?? "",
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
+    );
 
     const { email, role, organizationId }: InvitationRequest = await req.json();
 
