@@ -81,20 +81,28 @@ const UsersManagement = () => {
   });
 
   useEffect(() => {
-    if (authLoading) return;
+    console.log('🎯 UsersManagement - Auth state:', { authLoading, isAdmin, activeOrganization });
+    
+    if (authLoading) {
+      console.log('⏳ Still loading auth...');
+      return;
+    }
     
     if (!isAdmin) {
+      console.log('❌ Not admin, redirecting to dashboard');
       toast.error("Acceso denegado. Solo administradores pueden acceder.");
       navigate("/dashboard");
       return;
     }
     
     if (!activeOrganization) {
+      console.log('⚠️ No active organization, redirecting to select-company');
       toast.error("Por favor selecciona una empresa primero.");
       navigate("/select-company");
       return;
     }
     
+    console.log('✅ All checks passed, fetching data...');
     fetchData();
   }, [isAdmin, activeOrganization, authLoading, navigate]);
 
