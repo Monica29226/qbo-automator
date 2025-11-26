@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
+import { AccountCombobox } from "@/components/AccountCombobox";
 import {
   Select,
   SelectContent,
@@ -472,7 +473,8 @@ const InvoicesPendingLog = () => {
                       </TableCell>
                       <TableCell>
                         <div className="flex items-center gap-2">
-                          <Select
+                          <AccountCombobox
+                            accounts={qboAccounts}
                             value={invoice.default_account_ref || ""}
                             onValueChange={(value) =>
                               handleUpdateInvoice(
@@ -482,18 +484,9 @@ const InvoicesPendingLog = () => {
                               )
                             }
                             disabled={loadingAccounts}
-                          >
-                            <SelectTrigger className="w-[200px]">
-                              <SelectValue placeholder="Seleccionar cuenta" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {qboAccounts.map((account) => (
-                                <SelectItem key={account.id} value={account.id}>
-                                  {account.accountNumber} - {account.name}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
+                            className="w-[200px]"
+                            placeholder="Seleccionar cuenta"
+                          />
                           {invoice.has_vendor_default && (
                             <TooltipProvider>
                               <Tooltip>

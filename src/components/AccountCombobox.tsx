@@ -1,0 +1,114 @@
+import * as React from "react";
+import { Check, ChevronsUpDown } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+
+interface Account {
+  id: string;
+  name: string;
+  accountNumber?: string | null;
+}
+
+interface AccountComboboxProps {
+  accounts: Account[];
+  value: string;
+  onValueChange: (value: string) => void;
+  placeholder?: string;
+  disabled?: boolean;
+  className?: string;
+}
+
+export function AccountCombobox({
+  accounts,
+  value,
+  onValueChange,
+  placeholder = "Seleccionar cuenta",
+  disabled = false,
+  className,
+}: AccountComboboxProps) {
+  const [open, setOpen] = React.useState(false);
+  const [searchQuery, setSearchQuery] = React.useState("");
+
+  const selectedAccount = accounts.find((account) => account.id === value);
+
+  const getDisplayText = (account: Account) => {
+    return account.accountNumber
+      ? `${account.accountNumber} - ${account.name}`
+      : account.name;
+  };
+
+  const filteredAccounts = React.useMemo(() => {
+    if (!searchQuery) return accounts;
+    
+    const query = searchQuery.toLowerCase();
+    return accounts.filter((account) => {
+      const displayText = getDisplayText(account).toLowerCase();
+      return displayText.includes(query);
+    });
+  }, [accounts, searchQuery]);
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          variant="outline"
+          role="combobox"
+          aria-expanded={open}
+          className={cn("justify-between", className)}
+          disabled={disabled}
+        >
+          <span className="truncate">
+            {selectedAccount ? getDisplayText(selectedAccount) : placeholder}
+          </span>
+          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-[400px] p-0 bg-popover z-50" align="start">
+        <Command>
+          <CommandInput
+            placeholder="Buscar cuenta..."
+            value={searchQuery}
+            onValueChange={setSearchQuery}
+          />
+          <CommandList>
+            <CommandEmpty>No se encontraron cuentas.</CommandEmpty>
+            <CommandGroup>
+              {filteredAccounts.map((account) => (
+                <CommandItem
+                  key={account.id}
+                  value={account.id}
+                  onSelect={(currentValue) => {
+                    onValueChange(currentValue === value ? "" : currentValue);
+                    setOpen(false);
+                    setSearchQuery("");
+                  }}
+                >
+                  <Check
+                    className={cn(
+                      "mr-2 h-4 w-4",
+                      value === account.id ? "opacity-100" : "opacity-0"
+                    )}
+                  />
+                  <span className="flex-1 truncate">{getDisplayText(account)}</span>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  );
+}
