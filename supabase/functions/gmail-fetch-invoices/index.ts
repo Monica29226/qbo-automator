@@ -388,6 +388,33 @@ serve(async (req) => {
                 account_code: processResult.account_code,
               });
 
+              // Upload to Google Drive if connected
+              try {
+                const uploadResponse = await fetch(
+                  `${supabaseUrl}/functions/v1/upload-to-google-drive`,
+                  {
+                    method: "POST",
+                    headers: {
+                      Authorization: `Bearer ${supabaseKey}`,
+                      "Content-Type": "application/json",
+                    },
+                    body: JSON.stringify({
+                      document_id: processResult.doc_id,
+                      organization_id,
+                    }),
+                  }
+                );
+
+                if (uploadResponse.ok) {
+                  console.log(`Uploaded to Google Drive: ${part.filename}`);
+                } else {
+                  const errorText = await uploadResponse.text();
+                  console.log(`Google Drive upload skipped or failed: ${errorText}`);
+                }
+              } catch (driveError) {
+                console.log(`Google Drive upload error (non-critical): ${driveError}`);
+              }
+
               // La función process-document-xml ya manejó todo el procesamiento
               // No necesitamos guardar nada adicional aquí
             } catch (xmlError) {
