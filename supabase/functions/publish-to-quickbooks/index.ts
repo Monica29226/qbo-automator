@@ -711,9 +711,17 @@ Deno.serve(async (req) => {
           console.log(`✓ Created fallback line with subtotal: ${subtotal}`);
         }
         
-        // Calcular el IVA para agregarlo al bill (no como línea sino como TxnTaxDetail)
+        // CRÍTICO: Verificar si el documento usa IVA según configuración del usuario
+        const documentUsesTax = doc.uses_tax !== false; // Default true si no está definido
+        console.log(`📊 Documento usa IVA según configuración: ${documentUsesTax} (uses_tax=${doc.uses_tax})`);
+        
+        // Calcular el IVA SOLO si el documento está configurado para usar IVA
         // Los valores YA vienen con el signo correcto (negativo para notas de crédito)
-        const totalTax = parseFloat(doc.total_tax as any) || 0;
+        const totalTax = documentUsesTax ? (parseFloat(doc.total_tax as any) || 0) : 0;
+        
+        if (!documentUsesTax && doc.total_tax) {
+          console.log(`⚠️ Factura tiene IVA en XML (${doc.total_tax}) pero está marcada como SIN IVA - Ignorando impuesto`);
+        }
         
         const subtotalLines = lines.reduce((sum, l) => sum + l.Amount, 0);
         console.log(`✓ Final line count for ${doc.doc_number}: ${lines.length} line(s), subtotal: ${subtotalLines}, tax: ${totalTax}, total: ${subtotalLines + totalTax}`);
@@ -737,6 +745,8 @@ Deno.serve(async (req) => {
 
         // Logging para debug (sin validación - publicar exactamente lo que dice el XML)
         console.log("=== DATOS PARA PUBLICACIÓN ===");
+        console.log(`Documento: ${doc.doc_number}, Proveedor: ${doc.supplier_name}`);
+        console.log(`Usa IVA según configuración: ${documentUsesTax} (campo uses_tax=${doc.uses_tax})`);
         const xmlSubtotal = Math.abs(parseFloat(xmlData?.subTotal || String(doc.total_amount - (doc.total_tax || 0))));
         const xmlTotalImpuesto = Math.abs(parseFloat(xmlData?.totalImpuesto || String(doc.total_tax || 0)));
         const xmlTotalDescuentos = Math.abs(parseFloat(xmlData?.totalDescuentos || '0'));
@@ -781,14 +791,18 @@ Deno.serve(async (req) => {
           console.log(`💰 Currency set to USD for invoice ${doc.doc_number}`);
         }
 
-        // Agregar TxnTaxDetail explícitamente con el total de impuestos
-        if (totalTax > 0) {
+        // Agregar TxnTaxDetail SOLO si el documento usa IVA y el total de impuestos es mayor a 0
+        if (documentUsesTax && totalTax > 0) {
           billPayload.TxnTaxDetail = {
             TotalTax: totalTax
           };
           console.log(`✓ Added TxnTaxDetail with TotalTax: ${totalTax.toFixed(2)} - GlobalTaxCalculation: TaxExcluded`);
         } else {
-          console.log(`✓ No tax to add (totalTax: ${totalTax})`);
+          if (!documentUsesTax) {
+            console.log(`✓ Factura marcada como SIN IVA - No se agregará TxnTaxDetail`);
+          } else {
+            console.log(`✓ No tax to add (totalTax: ${totalTax})`);
+          }
         }
 
         console.log(`Creating bill in QuickBooks for ${doc.doc_number} with ${lines.length} line(s)`);
@@ -834,19 +848,24 @@ Deno.serve(async (req) => {
         // Adjuntar PDF si existe
         if (doc.pdf_attachment_url) {
           try {
-            console.log(`Attempting to attach PDF for bill ${doc.doc_number}, URL: ${doc.pdf_attachment_url}`);
+            console.log(`📎 Attempting to attach PDF for bill ${doc.doc_number}`);
+            console.log(`   PDF URL: ${doc.pdf_attachment_url}`);
             
             // Extraer el path correcto del storage - manejar múltiples formatos de URL
             let pdfPath = doc.pdf_attachment_url;
             if (pdfPath.includes('/object/public/company-documents/')) {
               pdfPath = pdfPath.split('/object/public/company-documents/')[1];
-            } else if (pdfPath.includes('/company-documents/')) {
-              pdfPath = pdfPath.split('/company-documents/').pop() || pdfPath;
+            } else if (pdfPath.includes('company-documents/')) {
+              pdfPath = pdfPath.split('company-documents/').pop() || pdfPath;
+            } else if (pdfPath.startsWith('http')) {
+              // Si es una URL completa, extraer el path después del bucket
+              const urlParts = pdfPath.split('company-documents/');
+              if (urlParts.length > 1) {
+                pdfPath = urlParts[1];
+              }
             }
             
-            console.log(`Extracted PDF path: ${pdfPath}`);
-            
-            console.log(`Downloading PDF from path: ${pdfPath}`);
+            console.log(`   Extracted path: ${pdfPath}`);
             
             // Descargar el PDF del storage
             const { data: pdfData, error: downloadError } = await supabase.storage
@@ -854,11 +873,19 @@ Deno.serve(async (req) => {
               .download(pdfPath);
 
             if (downloadError) {
-              console.error(`Failed to download PDF: ${downloadError.message}`);
+              console.error(`❌ Failed to download PDF from storage: ${downloadError.message}`);
               throw downloadError;
             }
 
+            if (!pdfData) {
+              console.error(`❌ No PDF data retrieved from storage`);
+              throw new Error('No PDF data returned from storage');
+            }
+
+            console.log(`✓ PDF downloaded successfully, size: ${pdfData.size} bytes`);
+
             if (pdfData) {
+              console.log(`🔄 Converting PDF to base64...`);
               // Convertir blob a base64
               const arrayBuffer = await pdfData.arrayBuffer();
               const base64Pdf = btoa(
@@ -867,6 +894,8 @@ Deno.serve(async (req) => {
                   ""
                 )
               );
+              
+              console.log(`✓ PDF converted to base64, length: ${base64Pdf.length} chars`);
 
               // Crear attachment en QuickBooks
               const boundary = "----WebKitFormBoundary" + Math.random().toString(36).substring(2);
@@ -898,6 +927,7 @@ Deno.serve(async (req) => {
                 `--${boundary}--`,
               ].join("\r\n");
 
+              console.log(`📤 Uploading PDF to QuickBooks...`);
               const attachResponse = await fetch(
                 `https://quickbooks.api.intuit.com/v3/company/${realmId}/upload`,
                 {
@@ -912,7 +942,9 @@ Deno.serve(async (req) => {
               );
 
               if (attachResponse.ok) {
-                console.log(`✓ PDF attached successfully to bill ${doc.doc_number}`);
+                const attachResult = await attachResponse.json();
+                console.log(`✅ PDF attached successfully to bill ${doc.doc_number}`);
+                console.log(`   Attachment ID: ${attachResult.AttachableResponse?.[0]?.Attachable?.Id || 'N/A'}`);
               } else {
                 const errorText = await attachResponse.text();
                 console.error(`❌ Failed to attach PDF (HTTP ${attachResponse.status}): ${errorText}`);
@@ -920,12 +952,13 @@ Deno.serve(async (req) => {
             } else {
               console.warn(`⚠️ No PDF data retrieved for ${doc.doc_number}`);
             }
-          } catch (pdfError) {
+          } catch (pdfError: any) {
             console.error(`❌ Error attaching PDF for ${doc.doc_number}:`, pdfError);
+            console.error(`   Error details: ${pdfError.message || 'Unknown error'}`);
             // No fallar la publicación si falla el adjunto
           }
         } else {
-          console.log(`No PDF attachment URL for ${doc.doc_number}, skipping PDF upload`);
+          console.log(`ℹ️ No PDF attachment URL for ${doc.doc_number}, skipping PDF upload`);
         }
 
         // Actualizar documento con QBO ID
