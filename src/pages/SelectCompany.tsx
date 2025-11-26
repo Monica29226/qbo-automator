@@ -15,11 +15,15 @@ const SelectCompany = () => {
   const [selectedOrg, setSelectedOrg] = useState<string | null>(null);
 
   useEffect(() => {
+    console.log('🏢 SelectCompany: Estado actual', { authLoading, userExists: !!user, orgCount: organizations.length });
+    
     if (!authLoading && !user) {
+      console.log('⚠️ SelectCompany: No hay usuario, redirigiendo a login');
       navigate("/");
     }
     
-    if (!authLoading && organizations.length === 0) {
+    if (!authLoading && user && organizations.length === 0) {
+      console.log('⚠️ SelectCompany: Usuario sin organizaciones');
       toast.error("No tienes acceso a ninguna empresa");
       supabase.auth.signOut();
       navigate("/");
