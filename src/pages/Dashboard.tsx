@@ -24,6 +24,7 @@ import { TodayProcessingReport } from "@/components/dashboard/TodayProcessingRep
 import { ProcessAllNowButton } from "@/components/dashboard/ProcessAllNowButton";
 import { CleanIrrecoverableErrorsButton } from "@/components/dashboard/CleanIrrecoverableErrorsButton";
 import { PendingVendorConfiguration } from "@/components/dashboard/PendingVendorConfiguration";
+import { BatchUploadToDriveButton } from "@/components/dashboard/BatchUploadToDriveButton";
 import { DashboardSidebar } from "@/components/DashboardSidebar";
 import { SidebarProvider, SidebarTrigger, SidebarInset } from "@/components/ui/sidebar";
 import { useAuth } from "@/hooks/useAuth";
@@ -568,6 +569,7 @@ const Dashboard = () => {
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 mt-3">
                   <TestAutoSyncFlow />
                   <PendingDocumentsLog />
+                  <BatchUploadToDriveButton />
                   <Button 
                     variant="outline" 
                     size="sm"

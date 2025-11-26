@@ -108,6 +108,12 @@ const Integrations = () => {
       return;
     }
 
+    // Google Drive requires OAuth flow
+    if (selectedService === "google_drive") {
+      handleGoogleDriveOAuth();
+      return;
+    }
+
     // For other services, keep the manual flow
     if (!accountEmail) {
       toast.error("Complete todos los campos");
@@ -241,6 +247,95 @@ const Integrations = () => {
     }
   };
 
+  const handleGoogleDriveOAuth = async () => {
+    console.log("handleGoogleDriveOAuth called");
+    
+    if (!activeOrganization) {
+      console.error("No active organization");
+      toast.error("No hay organización activa");
+      return;
+    }
+
+    try {
+      console.log("Getting current user...");
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        console.error("No user found");
+        toast.error("Usuario no autenticado");
+        return;
+      }
+
+      console.log("User found, showing toast...");
+      toast.info("Iniciando conexión con Google Drive...");
+
+      const state = btoa(JSON.stringify({
+        organization_id: activeOrganization,
+        user_id: user.id,
+      }));
+
+      console.log("Calling google-drive-oauth-init function...");
+      const { data, error } = await supabase.functions.invoke("google-drive-oauth-init", {
+        body: { state },
+      });
+
+      console.log("Response from google-drive-oauth-init:", { data, error });
+
+      if (error) {
+        console.error("Error from google-drive-oauth-init:", error);
+        toast.error(`Error de función: ${JSON.stringify(error)}`);
+        throw error;
+      }
+
+      if (!data?.authUrl) {
+        console.error("No authUrl in response:", data);
+        throw new Error("No se recibió URL de autenticación");
+      }
+
+      console.log("Opening OAuth popup with URL:", data.authUrl);
+      const width = 500;
+      const height = 600;
+      const left = window.screen.width / 2 - width / 2;
+      const top = window.screen.height / 2 - height / 2;
+
+      const popup = window.open(
+        data.authUrl,
+        "Google Drive OAuth",
+        `width=${width},height=${height},left=${left},top=${top}`
+      );
+
+      if (!popup) {
+        console.error("Popup blocked");
+        toast.error("Bloqueador de ventanas emergentes detectado. Por favor permite ventanas emergentes.");
+        return;
+      }
+
+      console.log("Popup opened successfully");
+
+      const messageHandler = (event: MessageEvent) => {
+        console.log("Message received:", event.data);
+        if (event.data.type === "google-drive-connected") {
+          toast.success(`Google Drive conectado: ${event.data.email}`);
+          setIsDialogOpen(false);
+          fetchData();
+          window.removeEventListener("message", messageHandler);
+        }
+      };
+
+      window.addEventListener("message", messageHandler);
+
+      const checkPopup = setInterval(() => {
+        if (popup?.closed) {
+          console.log("Popup closed");
+          clearInterval(checkPopup);
+          window.removeEventListener("message", messageHandler);
+        }
+      }, 500);
+    } catch (error) {
+      console.error("Error starting Google Drive OAuth:", error);
+      toast.error("Error al iniciar conexión con Google Drive: " + (error instanceof Error ? error.message : "Error desconocido"));
+    }
+  };
+
   const handleQuickBooksOAuth = async () => {
     console.log("handleQuickBooksOAuth called");
     
@@ -252,7 +347,6 @@ const Integrations = () => {
 
     try {
       console.log("Getting current user...");
-      // Get current user
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) {
         console.error("No user found");
@@ -263,14 +357,12 @@ const Integrations = () => {
       console.log("User found, showing toast...");
       toast.info("Iniciando conexión con QuickBooks...");
 
-      // Create state with organization and user info
       const state = btoa(JSON.stringify({
         organization_id: activeOrganization,
         user_id: user.id,
       }));
 
       console.log("Calling quickbooks-oauth-init function...");
-      // Call init function to get OAuth URL
       const { data, error } = await supabase.functions.invoke("quickbooks-oauth-init", {
         body: { state },
       });
@@ -289,7 +381,6 @@ const Integrations = () => {
       }
 
       console.log("Opening OAuth popup with URL:", data.authUrl);
-      // Open OAuth window
       const width = 800;
       const height = 700;
       const left = window.screen.width / 2 - width / 2;
@@ -309,7 +400,6 @@ const Integrations = () => {
 
       console.log("Popup opened successfully");
 
-      // Listen for OAuth completion
       const messageHandler = (event: MessageEvent) => {
         console.log("🟢 Message received from popup:", event.data);
         if (event.data.type === "quickbooks-connected") {
@@ -323,13 +413,11 @@ const Integrations = () => {
 
       window.addEventListener("message", messageHandler);
 
-      // Check if popup was closed
       const checkPopup = setInterval(() => {
         if (popup?.closed) {
           console.log("Popup closed - refreshing data");
           clearInterval(checkPopup);
           window.removeEventListener("message", messageHandler);
-          // Refresh data when popup closes as fallback
           setTimeout(() => {
             fetchData();
             setIsDialogOpen(false);
