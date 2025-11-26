@@ -138,11 +138,13 @@ const InvoicesPendingLog = () => {
     setIsLoading(true);
     try {
       // Fetch documents - incluir tanto pending como published recientes (últimas 24h)
+      // FILTRO: Solo facturas de noviembre 2025 en adelante
       const { data: docsData, error: docsError } = await supabase
         .from("processed_documents")
         .select("*")
         .eq("organization_id", activeOrganization)
         .in("status", ["pending", "pending_config", "published"])
+        .gte("issue_date", "2025-11-01")
         .order("created_at", { ascending: false })
         .limit(100);
 

@@ -99,12 +99,14 @@ Deno.serve(async (req) => {
     }
 
     // Obtener documentos a publicar (pending o processed que no tengan qbo_entity_id)
+    // FILTRO: Solo facturas de noviembre 2025 en adelante
     let query = supabase
       .from("processed_documents")
       .select("*")
       .eq("organization_id", organization_id)
       .is("qbo_entity_id", null)
-      .in("status", ["pending", "processed"]);
+      .in("status", ["pending", "processed"])
+      .gte("issue_date", "2025-11-01");
 
     if (document_ids && document_ids.length > 0) {
       query = query.in("id", document_ids);
