@@ -884,6 +884,7 @@ const InvoicesPendingLog = () => {
                     <TableHead>Cuenta Contable</TableHead>
                     <TableHead>Centro de Costo</TableHead>
                     <TableHead>Usa IVA</TableHead>
+                    <TableHead className="text-center">Estado QB</TableHead>
                     <TableHead className="text-right">Acciones</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -1012,6 +1013,27 @@ const InvoicesPendingLog = () => {
                             )
                           }
                         />
+                      </TableCell>
+                      <TableCell className="text-center">
+                        {invoice.qbo_entity_id ? (
+                          <TooltipProvider>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <div className="flex justify-center">
+                                  <CheckCircle2 className="h-5 w-5 text-green-600" />
+                                </div>
+                              </TooltipTrigger>
+                              <TooltipContent>
+                                <p>Publicado en QuickBooks</p>
+                                <p className="text-xs text-muted-foreground">ID: {invoice.qbo_entity_id}</p>
+                              </TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
+                        ) : (
+                          <div className="flex justify-center">
+                            <span className="text-muted-foreground text-xs">Pendiente</span>
+                          </div>
+                        )}
                       </TableCell>
                       <TableCell className="text-right">
                         <div className="flex gap-2 justify-end">
