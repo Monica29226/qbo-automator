@@ -1,4 +1,4 @@
-import { CheckCircle2, Eye, FileText, Loader2, Search, Star, Trash2, Upload } from "lucide-react";
+import { CheckCircle2, Eye, FileText, Loader2, RefreshCw, Search, Star, Trash2, Upload } from "lucide-react";
 import { useState, useEffect, useMemo } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
@@ -695,6 +695,72 @@ const InvoicesPendingLog = () => {
     setShowDetailDialog(true);
   };
 
+  const handleVerifyQBOBill = async (invoice: PendingInvoice) => {
+    if (!invoice.qbo_entity_id || !activeOrganization) {
+      toast.error("No hay ID de QuickBooks para verificar");
+      return;
+    }
+
+    console.log(`🔍 Verificando Bill ${invoice.qbo_entity_id} en QuickBooks...`);
+    const loadingToast = toast.loading("Verificando en QuickBooks...");
+
+    try {
+      const { data, error } = await supabase.functions.invoke('verify-qbo-bill-exists', {
+        body: {
+          organization_id: activeOrganization,
+          bill_id: invoice.qbo_entity_id
+        }
+      });
+
+      if (error) throw error;
+
+      toast.dismiss(loadingToast);
+
+      if (data.exists) {
+        toast.success(
+          `✅ El Bill ${invoice.qbo_entity_id} SÍ existe en QuickBooks` +
+          (data.vendor_ref ? ` - ${data.vendor_ref}` : ''),
+          { duration: 5000 }
+        );
+        console.log("✅ Bill verificado:", data);
+      } else {
+        // El bill no existe - actualizar el estado en la base de datos
+        toast.error(
+          `❌ El Bill ${invoice.qbo_entity_id} NO existe en QuickBooks. ` +
+          `Se actualizará el estado a "pendiente".`,
+          { duration: 7000 }
+        );
+        
+        console.warn("❌ Bill no encontrado en QuickBooks:", data);
+
+        // Actualizar el estado a pending y limpiar el qbo_entity_id
+        const { error: updateError } = await supabase
+          .from('processed_documents')
+          .update({ 
+            status: 'pending',
+            qbo_entity_id: null,
+            qbo_entity_type: null,
+            error_message: `Bill ${invoice.qbo_entity_id} no encontrado en QuickBooks al verificar`
+          })
+          .eq('id', invoice.id);
+
+        if (updateError) {
+          console.error("Error al actualizar estado:", updateError);
+          toast.error("Error al actualizar el estado de la factura");
+        } else {
+          // Refrescar la lista
+          await fetchPendingInvoices();
+          toast.success("Estado actualizado correctamente");
+        }
+      }
+
+    } catch (error: any) {
+      toast.dismiss(loadingToast);
+      console.error("❌ Error al verificar:", error);
+      toast.error(`Error al verificar: ${error.message}`);
+    }
+  };
+
   // OPTIMIZACIÓN: Memoizar totales por proveedor
   const totalsBySupplier = useMemo(() => {
     return filteredInvoices.reduce((acc, inv) => {
@@ -823,8 +889,27 @@ const InvoicesPendingLog = () => {
                         <div className="flex items-center gap-2">
                           {invoice.status === "published" && invoice.qbo_entity_id ? (
                             <div className="flex items-center gap-2">
-                              <CheckCircle2 className="h-5 w-5 text-green-600 flex-shrink-0" />
-                              <span className="text-xs text-green-600 font-medium">Publicado en QB</span>
+                              <div className="flex items-center gap-1">
+                                <CheckCircle2 className="h-5 w-5 text-green-600 flex-shrink-0" />
+                                <span className="text-xs text-green-600 font-medium">Publicado en QB</span>
+                              </div>
+                              <TooltipProvider>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      onClick={() => handleVerifyQBOBill(invoice)}
+                                      className="h-6 w-6 p-0"
+                                    >
+                                      <RefreshCw className="h-3 w-3" />
+                                    </Button>
+                                  </TooltipTrigger>
+                                  <TooltipContent>
+                                    <p>Verificar en QuickBooks</p>
+                                  </TooltipContent>
+                                </Tooltip>
+                              </TooltipProvider>
                             </div>
                           ) : (
                             <>

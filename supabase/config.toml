@@ -101,3 +101,6 @@ verify_jwt = true
 
 [functions.republish-from-extracted-data]
 verify_jwt = true
+
+[functions.verify-qbo-bill-exists]
+verify_jwt = true
