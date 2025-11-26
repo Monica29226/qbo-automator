@@ -27,12 +27,35 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
   useEffect(() => {
     let isMounted = true;
+    let isInitialized = false;
 
+    // Solo cargar sesión inicial una vez
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
+      if (!isMounted) return;
+      
+      setSession(session);
+      setUser(session?.user ?? null);
+      
+      if (session?.user) {
+        try {
+          await Promise.all([
+            loadUserOrganizations(session.user.id),
+            checkAdminRole(session.user.id)
+          ]);
+        } catch (error) {
+          console.error('Error loading user data:', error);
+        }
+      }
+      
+      isInitialized = true;
+      setIsLoading(false);
+    });
+
+    // Escuchar cambios solo después de inicialización
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
-        if (!isMounted) return;
+        if (!isMounted || !isInitialized) return;
         
-        console.log('🔐 Auth state changed:', event, session?.user?.email);
         setSession(session);
         setUser(session?.user ?? null);
         
@@ -50,31 +73,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
           setActiveOrganization(null);
           setOrganizations([]);
         }
-        
-        setIsLoading(false);
       }
     );
-
-    supabase.auth.getSession().then(async ({ data: { session } }) => {
-      if (!isMounted) return;
-      
-      console.log('📱 Initial session check:', session?.user?.email);
-      setSession(session);
-      setUser(session?.user ?? null);
-      
-      if (session?.user) {
-        try {
-          await Promise.all([
-            loadUserOrganizations(session.user.id),
-            checkAdminRole(session.user.id)
-          ]);
-        } catch (error) {
-          console.error('Error loading initial user data:', error);
-        }
-      }
-      
-      setIsLoading(false);
-    });
 
     return () => {
       isMounted = false;

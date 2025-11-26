@@ -16,14 +16,7 @@ const Auth = () => {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
-  useEffect(() => {
-    // Redirigir a selección de empresa si ya está autenticado
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session) {
-        navigate("/select-company");
-      }
-    });
-  }, [navigate]);
+  // AuthContext ya maneja la verificación de sesión, no duplicar aquí
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
