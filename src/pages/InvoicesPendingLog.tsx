@@ -190,6 +190,60 @@ const InvoicesPendingLog = () => {
       await fetchQBOAccounts();
     };
     loadData();
+
+    // Suscripción realtime para actualizaciones automáticas
+    if (!activeOrganization) return;
+
+    const channel = supabase
+      .channel('pending_invoices_changes')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'processed_documents',
+          filter: `organization_id=eq.${activeOrganization}`
+        },
+        (payload) => {
+          console.log('📡 Realtime: Documento actualizado', payload);
+          fetchPendingInvoices();
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'vendor_defaults',
+          filter: `organization_id=eq.${activeOrganization}`
+        },
+        (payload) => {
+          console.log('📡 Realtime: Vendor default actualizado', payload);
+          fetchVendorDefaults();
+          fetchPendingInvoices();
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'vendor_classification_rules',
+          filter: `organization_id=eq.${activeOrganization}`
+        },
+        (payload) => {
+          console.log('📡 Realtime: Regla de clasificación actualizada', payload);
+          fetchPendingInvoices();
+        }
+      )
+      .subscribe((status) => {
+        console.log('📡 Realtime subscription status:', status);
+      });
+
+    return () => {
+      console.log('📡 Cerrando suscripción realtime');
+      supabase.removeChannel(channel);
+    };
   }, [activeOrganization]);
 
   useEffect(() => {
