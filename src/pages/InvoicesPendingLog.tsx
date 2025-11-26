@@ -896,7 +896,7 @@ const InvoicesPendingLog = () => {
                     >
                       <TableCell 
                         className="font-medium cursor-pointer hover:underline hover:text-primary"
-                        onDoubleClick={(e) => {
+                        onClick={(e) => {
                           e.stopPropagation();
                           handleOpenPDF(invoice);
                         }}
@@ -904,10 +904,13 @@ const InvoicesPendingLog = () => {
                         <TooltipProvider>
                           <Tooltip>
                             <TooltipTrigger asChild>
-                              <span>{invoice.doc_number}</span>
+                              <span className="flex items-center gap-1">
+                                <FileText className="h-3 w-3" />
+                                {invoice.doc_number}
+                              </span>
                             </TooltipTrigger>
                             <TooltipContent>
-                              <p>Doble click para ver PDF</p>
+                              <p>Click para ver PDF</p>
                             </TooltipContent>
                           </Tooltip>
                         </TooltipProvider>
