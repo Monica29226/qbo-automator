@@ -110,19 +110,23 @@ export function DashboardSidebar({ isAdmin, reviewCount, onSignOut }: DashboardS
   const renderMenuItems = (items: typeof navigationItems) => {
     return items
       .filter((item) => item.show)
-      .map((item) => (
-        <SidebarMenuItem key={item.path}>
+      .map((item, index) => (
+        <SidebarMenuItem 
+          key={item.path}
+          style={{ animationDelay: `${index * 50}ms` }}
+          className="animate-fade-in-subtle"
+        >
           <SidebarMenuButton asChild isActive={isActive(item.path)}>
             <Link
               to={item.path}
-              className="flex items-center gap-3 text-sidebar-foreground hover:bg-sidebar-accent/20 hover:text-sidebar-foreground data-[active=true]:bg-sidebar-accent/30 data-[active=true]:text-sidebar-foreground transition-colors"
+              className="flex items-center gap-3 text-sidebar-foreground hover:bg-sidebar-accent/20 hover:text-sidebar-foreground data-[active=true]:bg-sidebar-accent/30 data-[active=true]:text-sidebar-foreground transition-all duration-200 hover:translate-x-1"
             >
-              <item.icon className="h-4 w-4" />
+              <item.icon className="h-4 w-4 transition-transform duration-200 group-hover:scale-110" />
               {!collapsed && (
                 <>
                   <span className="flex-1">{item.title}</span>
                   {item.badge && (
-                    <Badge variant="secondary" className="ml-auto bg-sidebar-accent/40 text-sidebar-foreground">
+                    <Badge variant="secondary" className="ml-auto bg-sidebar-accent/40 text-sidebar-foreground animate-scale-in">
                       {item.badge}
                     </Badge>
                   )}
@@ -135,12 +139,12 @@ export function DashboardSidebar({ isAdmin, reviewCount, onSignOut }: DashboardS
   };
 
   return (
-    <Sidebar collapsible="icon" className="border-r bg-sidebar-background">
+    <Sidebar collapsible="icon" className="border-r bg-sidebar-background animate-slide-in-left">
       <SidebarContent>
         {/* Logo/Brand */}
         <SidebarGroup>
           <div className="flex items-center gap-3 px-4 py-6 border-b border-sidebar-accent/20">
-            <div className="h-12 w-12 flex items-center justify-center flex-shrink-0 bg-card rounded-lg p-1.5">
+            <div className="h-12 w-12 flex items-center justify-center flex-shrink-0 bg-card rounded-lg p-1.5 transition-transform duration-300 hover:scale-105">
               <img 
                 src={calderonLogo} 
                 alt="Calderón Logo" 
@@ -148,8 +152,8 @@ export function DashboardSidebar({ isAdmin, reviewCount, onSignOut }: DashboardS
               />
             </div>
             {!collapsed && (
-              <div>
-                <h2 className="text-base font-bold text-sidebar-foreground">FacturaFlow CR</h2>
+              <div className="animate-fade-in-subtle">
+                <h2 className="text-base font-heading font-bold text-sidebar-foreground">FacturaFlow CR</h2>
                 <p className="text-xs text-sidebar-foreground/70">Sistema de Facturación</p>
               </div>
             )}
@@ -189,8 +193,11 @@ export function DashboardSidebar({ isAdmin, reviewCount, onSignOut }: DashboardS
           <SidebarGroupContent>
             <SidebarMenu>
               <SidebarMenuItem>
-                <SidebarMenuButton onClick={onSignOut} className="text-sidebar-foreground hover:bg-sidebar-accent/20 hover:text-sidebar-foreground">
-                  <LogOut className="h-4 w-4" />
+                <SidebarMenuButton 
+                  onClick={onSignOut} 
+                  className="text-sidebar-foreground hover:bg-sidebar-accent/20 hover:text-sidebar-foreground transition-all duration-200 hover:translate-x-1"
+                >
+                  <LogOut className="h-4 w-4 transition-transform duration-200 hover:scale-110" />
                   {!collapsed && <span>Salir</span>}
                 </SidebarMenuButton>
               </SidebarMenuItem>
