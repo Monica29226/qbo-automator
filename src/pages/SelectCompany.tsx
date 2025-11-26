@@ -5,7 +5,7 @@ import { Card } from "@/components/ui/card";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { Loader2, Building2 } from "lucide-react";
-import aclLogo from "@/assets/acl-logo.png";
+import calderonLogo from "@/assets/calderon-logo.png";
 
 const SelectCompany = () => {
   const navigate = useNavigate();
@@ -97,7 +97,7 @@ const SelectCompany = () => {
       <div className="w-full max-w-2xl">
         <div className="text-center mb-8">
           <div className="mb-6 flex justify-center">
-            <img src={aclLogo} alt="ACL Logo" className="h-20 w-auto" />
+            <img src={calderonLogo} alt="Calderón Logo" className="h-24 w-auto" />
           </div>
           <h1 className="text-2xl font-bold text-foreground mb-2">Selecciona tu Empresa</h1>
           <p className="text-muted-foreground">
