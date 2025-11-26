@@ -50,13 +50,21 @@ export function AccountCombobox({
       : account.name;
   };
 
+  const normalizeText = (text: string) => {
+    return text
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '');
+  };
+
   const filteredAccounts = React.useMemo(() => {
     if (!searchQuery) return accounts;
     
-    const query = searchQuery.toLowerCase();
+    const normalizedQuery = normalizeText(searchQuery);
     return accounts.filter((account) => {
-      const displayText = getDisplayText(account).toLowerCase();
-      return displayText.includes(query);
+      const displayText = getDisplayText(account);
+      const normalizedDisplay = normalizeText(displayText);
+      return normalizedDisplay.includes(normalizedQuery);
     });
   }, [accounts, searchQuery]);
 
