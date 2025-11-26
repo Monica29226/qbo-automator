@@ -231,6 +231,8 @@ const UsersManagement = () => {
   };
 
   const handleCreateUser = async () => {
+    console.log("🚀 Iniciando creación de usuario...", createFormData);
+    
     if (!createFormData.email || !createFormData.password) {
       toast.error("Ingrese el correo y contraseña");
       return;
@@ -254,11 +256,13 @@ const UsersManagement = () => {
     }
 
     setIsSending(true);
+    console.log("✅ Validaciones pasadas, enviando solicitud...");
 
     try {
       // Create user for each selected organization
-      const promises = createFormData.organization_ids.map((orgId) =>
-        supabase.functions.invoke("create-user", {
+      const promises = createFormData.organization_ids.map((orgId) => {
+        console.log(`📤 Invocando create-user para organización: ${orgId}`);
+        return supabase.functions.invoke("create-user", {
           body: {
             email: createFormData.email,
             password: createFormData.password,
@@ -266,17 +270,23 @@ const UsersManagement = () => {
             role: createFormData.role,
             organization_id: orgId,
           },
-        })
-      );
+        });
+      });
 
+      console.log(`⏳ Esperando respuesta de ${promises.length} solicitud(es)...`);
       const results = await Promise.all(promises);
+      console.log("📥 Resultados recibidos:", results);
 
       // Check for errors
       const errors = results.filter((r) => r.error || r.data?.error);
       if (errors.length > 0) {
-        toast.error(`Error al crear usuario en ${errors.length} empresa(s)`);
-        console.error("Errors:", errors);
+        console.error("❌ Errores encontrados:", errors);
+        const errorMessages = errors.map((e) => 
+          e.error?.message || e.data?.error || "Error desconocido"
+        ).join(", ");
+        toast.error(`Error al crear usuario: ${errorMessages}`);
       } else {
+        console.log("✅ Usuario creado exitosamente");
         toast.success(
           `Usuario ${createFormData.email} creado exitosamente con acceso a ${createFormData.organization_ids.length} empresa(s)`
         );
@@ -291,10 +301,11 @@ const UsersManagement = () => {
         fetchData();
       }
     } catch (error: any) {
-      console.error("Error creating user:", error);
-      toast.error("Error al crear usuario");
+      console.error("❌ Error crítico creando usuario:", error);
+      toast.error(`Error al crear usuario: ${error.message || "Error desconocido"}`);
     } finally {
       setIsSending(false);
+      console.log("🏁 Proceso de creación finalizado");
     }
   };
 
