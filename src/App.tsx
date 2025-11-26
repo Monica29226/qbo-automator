@@ -7,6 +7,7 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import Index from "./pages/Index";
 import Dashboard from "./pages/Dashboard";
 import Auth from "./pages/Auth";
+import SelectCompany from "./pages/SelectCompany";
 import Vendors from "./pages/Vendors";
 import Settings from "./pages/Settings";
 import ReviewQueue from "./pages/ReviewQueue";
@@ -39,6 +40,7 @@ const App = () => (
         <Routes>
           <Route path="/" element={<Index />} />
           <Route path="/auth" element={<Auth />} />
+          <Route path="/select-company" element={<SelectCompany />} />
           <Route path="/multi-tenant" element={<MultiTenantDocs />} />
           <Route
             path="/accept-invitation"
