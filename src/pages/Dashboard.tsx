@@ -411,11 +411,11 @@ const Dashboard = () => {
         />
         
         <SidebarInset className="flex-1">
-          <header className="sticky top-0 z-10 border-b bg-card">
-            <div className="flex h-16 items-center gap-4 px-6">
+          <header className="sticky top-0 z-10 border-b bg-card shadow-sm">
+            <div className="flex h-14 items-center gap-4 px-6">
               <SidebarTrigger className="-ml-2" />
               
-              <div className="flex items-center gap-2 ml-auto flex-wrap">
+              <div className="flex items-center gap-2 ml-auto">
                 <OrganizationSwitcher />
                 <Button variant="outline" size="sm" asChild>
                   <Link to="/upload">
@@ -443,7 +443,7 @@ const Dashboard = () => {
                   ) : (
                     <>
                       <Send className="h-4 w-4 mr-2" />
-                      Publicar a QB
+                      Publicar a QuickBooks
                     </>
                   )}
                 </Button>
@@ -467,69 +467,6 @@ const Dashboard = () => {
                     )}
                   </Button>
                 )}
-                {isAdmin && stats.errors > 0 && (
-                  <ErrorLogsViewer />
-                )}
-                {isAdmin && (
-                  <QBOAccountsDiagnostic />
-                )}
-                {isAdmin && (
-                  <VerifyBillButton />
-                )}
-                <Button 
-                  variant="secondary" 
-                  size="sm" 
-                  onClick={handleAutoSync}
-                  disabled={isAutoSyncing}
-                  className="bg-green-600 hover:bg-green-700 text-white"
-                >
-                  {isAutoSyncing ? (
-                    <>
-                      <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
-                      Sincronizando...
-                    </>
-                  ) : (
-                    <>
-                      <RefreshCw className="h-4 w-4 mr-2" />
-                      Sincronizar Ahora
-                    </>
-                  )}
-                </Button>
-                <Button 
-                  variant="outline" 
-                  size="sm" 
-                  onClick={handleForceResync}
-                  disabled={isFetchingEmails}
-                  className="border-orange-500 text-orange-600 hover:bg-orange-50 dark:hover:bg-orange-950"
-                >
-                  {isFetchingEmails ? (
-                    <>
-                      <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
-                      Reprocesando...
-                    </>
-                  ) : (
-                    <>
-                      <RefreshCw className="h-4 w-4 mr-2" />
-                      Forzar Resync Hoy
-                    </>
-                  )}
-                </Button>
-                <SyncFromExcelDialog />
-                <div className="flex flex-col gap-2">
-                  <TestAutoSyncFlow />
-                  <PendingDocumentsLog />
-                  <Button 
-                    variant="outline" 
-                    size="sm"
-                    onClick={() => setIsErrorModalOpen(true)}
-                  >
-                    <AlertCircle className="h-4 w-4 mr-2 text-destructive" />
-                    Ver Errores
-                  </Button>
-                  {stats.errors > 0 && (
-                    <CleanIrrecoverableErrorsButton />
-                  )}
-                </div>
               </div>
             </div>
           </header>
@@ -537,27 +474,104 @@ const Dashboard = () => {
           <main className="p-6">
             <AICreditsMonitor organizationId={activeOrganization} />
         
-        <div className="mb-8">
-          <div className="flex items-center justify-between">
-            <div>
-              <h2 className="text-2xl font-bold text-foreground mb-2">Panel de Control</h2>
-              <p className="text-muted-foreground">Monitoreo en tiempo real del procesamiento de facturas</p>
+            <div className="mb-6">
+              <div className="flex items-center justify-between mb-4">
+                <div>
+                  <h2 className="text-2xl font-bold text-foreground">Panel de Control</h2>
+                  <p className="text-sm text-muted-foreground">Monitoreo en tiempo real del procesamiento de facturas</p>
+                </div>
+                <Badge variant="default" className="h-fit">
+                  <Clock className="h-3 w-3 mr-1" />
+                  Sincronización Automática Activa (cada 30 min)
+                </Badge>
+              </div>
             </div>
-            <Badge variant="default" className="h-fit">
-              <Clock className="h-3 w-3 mr-1" />
-              Sincronización Automática Activa (cada 30 min)
-            </Badge>
-          </div>
-        </div>
 
-        <GmailTokenAlert />
-        <QuickBooksTokenAlert />
+            <GmailTokenAlert />
+            <QuickBooksTokenAlert />
+
+            {/* Quick Actions Section */}
+            <Card className="mb-6">
+              <CardHeader>
+                <CardTitle className="text-lg">Acciones Rápidas</CardTitle>
+                <CardDescription>Gestión y sincronización de facturas</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+                  {isAdmin && (
+                    <VerifyBillButton />
+                  )}
+                  <Button 
+                    variant="secondary" 
+                    size="sm" 
+                    onClick={handleAutoSync}
+                    disabled={isAutoSyncing}
+                    className="bg-green-600 hover:bg-green-700 text-white w-full"
+                  >
+                    {isAutoSyncing ? (
+                      <>
+                        <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                        Sincronizando...
+                      </>
+                    ) : (
+                      <>
+                        <RefreshCw className="h-4 w-4 mr-2" />
+                        Sincronizar Ahora
+                      </>
+                    )}
+                  </Button>
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    onClick={handleForceResync}
+                    disabled={isFetchingEmails}
+                    className="border-orange-500 text-orange-600 hover:bg-orange-50 dark:hover:bg-orange-950 w-full"
+                  >
+                    {isFetchingEmails ? (
+                      <>
+                        <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                        Reprocesando...
+                      </>
+                    ) : (
+                      <>
+                        <RefreshCw className="h-4 w-4 mr-2" />
+                        Forzar Resync Hoy
+                      </>
+                    )}
+                  </Button>
+                  <SyncFromExcelDialog />
+                </div>
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 mt-3">
+                  <TestAutoSyncFlow />
+                  <PendingDocumentsLog />
+                  <Button 
+                    variant="outline" 
+                    size="sm"
+                    onClick={() => setIsErrorModalOpen(true)}
+                    className="w-full"
+                  >
+                    <AlertCircle className="h-4 w-4 mr-2 text-destructive" />
+                    Ver Facturas con Errores
+                  </Button>
+                  {stats.errors > 0 && (
+                    <CleanIrrecoverableErrorsButton />
+                  )}
+                  {isAdmin && stats.errors > 0 && (
+                    <ErrorLogsViewer />
+                  )}
+                  {isAdmin && (
+                    <QBOAccountsDiagnostic />
+                  )}
+                </div>
+              </CardContent>
+            </Card>
         
-        <div className="mb-6">
-          <PendingVendorConfiguration />
-        </div>
-        
-        <TodayProcessingReport />
+            <div className="mb-6">
+              <PendingVendorConfiguration />
+            </div>
+            
+            <TodayProcessingReport />
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
           <StatsCard
