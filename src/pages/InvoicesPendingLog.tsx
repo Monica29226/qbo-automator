@@ -22,7 +22,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Loader2, Search, Trash2, Upload, Star } from "lucide-react";
+import { Loader2, Search, Trash2, Upload, Star, Eye, FileText } from "lucide-react";
 import { PublishValidationDialog } from "@/components/PublishValidationDialog";
 import {
   Tooltip,
@@ -30,6 +30,12 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 interface QBOAccount {
   id: string;
@@ -57,8 +63,10 @@ interface PendingInvoice {
   default_account_ref?: string;
   default_class_ref?: string | null;
   uses_tax?: boolean;
-  has_vendor_default?: boolean; // Para saber si usa config predeterminada
+  has_vendor_default?: boolean;
   pdf_attachment_url?: string | null;
+  xml_data?: any;
+  issue_date?: string;
 }
 
 const InvoicesPendingLog = () => {
@@ -73,6 +81,8 @@ const InvoicesPendingLog = () => {
   const [qboAccounts, setQboAccounts] = useState<QBOAccount[]>([]);
   const [loadingAccounts, setLoadingAccounts] = useState(false);
   const [vendorDefaults, setVendorDefaults] = useState<Map<string, VendorDefault>>(new Map());
+  const [selectedInvoice, setSelectedInvoice] = useState<PendingInvoice | null>(null);
+  const [showDetailDialog, setShowDetailDialog] = useState(false);
 
   const fetchVendorDefaults = async () => {
     if (!activeOrganization) return;
@@ -500,6 +510,11 @@ const InvoicesPendingLog = () => {
     }
   };
 
+  const handleShowDetail = (invoice: PendingInvoice) => {
+    setSelectedInvoice(invoice);
+    setShowDetailDialog(true);
+  };
+
   const totalsBySupplier = filteredInvoices.reduce((acc, inv) => {
     if (!acc[inv.supplier_name]) {
       acc[inv.supplier_name] = 0;
@@ -674,6 +689,40 @@ const InvoicesPendingLog = () => {
                       </TableCell>
                       <TableCell className="text-right">
                         <div className="flex gap-2 justify-end">
+                          <TooltipProvider>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  onClick={() => handleShowDetail(invoice)}
+                                >
+                                  <Eye className="h-4 w-4" />
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>
+                                <p>Ver detalle</p>
+                              </TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
+                          {invoice.pdf_attachment_url && (
+                            <TooltipProvider>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    onClick={() => handleOpenPDF(invoice)}
+                                  >
+                                    <FileText className="h-4 w-4" />
+                                  </Button>
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                  <p>Ver PDF</p>
+                                </TooltipContent>
+                              </Tooltip>
+                            </TooltipProvider>
+                          )}
                           <Button
                             size="sm"
                             variant="outline"
@@ -739,6 +788,105 @@ const InvoicesPendingLog = () => {
         onConfirm={handlePublishAll}
         documentIds={filteredInvoices.map((inv) => inv.id)}
       />
+
+      <Dialog open={showDetailDialog} onOpenChange={setShowDetailDialog}>
+        <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>
+              Detalle de Factura {selectedInvoice?.doc_number}
+            </DialogTitle>
+          </DialogHeader>
+          {selectedInvoice && (
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-4 p-4 bg-muted rounded-lg">
+                <div>
+                  <p className="text-sm text-muted-foreground">Proveedor</p>
+                  <p className="font-medium">{selectedInvoice.supplier_name}</p>
+                </div>
+                <div>
+                  <p className="text-sm text-muted-foreground">Cédula</p>
+                  <p className="font-medium">{selectedInvoice.supplier_tax_id || "N/A"}</p>
+                </div>
+                <div>
+                  <p className="text-sm text-muted-foreground">Fecha de Emisión</p>
+                  <p className="font-medium">
+                    {selectedInvoice.issue_date 
+                      ? new Date(selectedInvoice.issue_date).toLocaleDateString("es-CR")
+                      : "N/A"}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-sm text-muted-foreground">Total</p>
+                  <p className="font-medium text-lg">
+                    {formatCurrency(selectedInvoice.total_amount, selectedInvoice.currency)}
+                  </p>
+                </div>
+              </div>
+
+              {selectedInvoice.xml_data?.detalle && (
+                <div>
+                  <h3 className="font-semibold mb-3">Líneas de Detalle</h3>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Código</TableHead>
+                        <TableHead>Descripción</TableHead>
+                        <TableHead className="text-right">Cantidad</TableHead>
+                        <TableHead className="text-right">Precio Unit.</TableHead>
+                        <TableHead className="text-right">Descuento</TableHead>
+                        <TableHead className="text-right">Impuesto</TableHead>
+                        <TableHead className="text-right">Total Línea</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {selectedInvoice.xml_data.detalle.map((linea: any, index: number) => (
+                        <TableRow key={index}>
+                          <TableCell>{linea.codigoProducto || "N/A"}</TableCell>
+                          <TableCell className="max-w-xs truncate">
+                            {linea.descripcion}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            {linea.cantidad} {linea.unidadMedida}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            {formatCurrency(linea.precioUnitario, selectedInvoice.currency)}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            {formatCurrency(linea.montoDescuento || 0, selectedInvoice.currency)}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            {formatCurrency(linea.montoImpuesto || 0, selectedInvoice.currency)}
+                          </TableCell>
+                          <TableCell className="text-right font-medium">
+                            {formatCurrency(linea.montoTotalLinea, selectedInvoice.currency)}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+
+              <div className="flex justify-between items-center p-4 bg-muted rounded-lg font-semibold">
+                <span>Subtotal:</span>
+                <span>{formatCurrency(selectedInvoice.xml_data?.subTotal || 0, selectedInvoice.currency)}</span>
+              </div>
+              <div className="flex justify-between items-center p-4 bg-muted rounded-lg font-semibold">
+                <span>Descuentos:</span>
+                <span>{formatCurrency(selectedInvoice.xml_data?.totalDescuentos || 0, selectedInvoice.currency)}</span>
+              </div>
+              <div className="flex justify-between items-center p-4 bg-muted rounded-lg font-semibold">
+                <span>Impuestos:</span>
+                <span>{formatCurrency(selectedInvoice.xml_data?.totalImpuesto || 0, selectedInvoice.currency)}</span>
+              </div>
+              <div className="flex justify-between items-center p-4 bg-primary text-primary-foreground rounded-lg font-bold text-lg">
+                <span>Total:</span>
+                <span>{formatCurrency(selectedInvoice.xml_data?.totalComprobante || selectedInvoice.total_amount, selectedInvoice.currency)}</span>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
