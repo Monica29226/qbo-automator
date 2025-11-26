@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
   Table,
   TableBody,
@@ -30,7 +31,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, Users, Loader2, Plus, Trash2, Mail, Building2, CheckSquare, Square } from "lucide-react";
+import { ArrowLeft, Users, Loader2, Plus, Trash2, Mail, Building2, CheckSquare, Square, AlertCircle } from "lucide-react";
 import { toast } from "sonner";
 
 interface UserProfile {
@@ -199,31 +200,56 @@ const UsersManagement = () => {
     setIsSending(true);
 
     try {
-      const promises = organizations.map((org) =>
-        supabase.functions.invoke("send-invitation", {
-          body: {
-            email: formData.email,
-            role: formData.role,
-            organizationId: org.id,
-          },
-        })
-      );
+      // Send invitations sequentially with delay to avoid rate limits
+      const results = [];
+      let successCount = 0;
+      let errorCount = 0;
 
-      const results = await Promise.all(promises);
-      const errors = results.filter((r) => r.error || r.data?.error);
-      
-      if (errors.length > 0) {
-        const errorMessages = errors.map((e) => 
-          e.error?.message || e.data?.error || "Error desconocido"
-        ).join(", ");
-        toast.error(`Error: ${errorMessages}`);
-      } else {
+      for (let i = 0; i < organizations.length; i++) {
+        const org = organizations[i];
+        
+        try {
+          const result = await supabase.functions.invoke("send-invitation", {
+            body: {
+              email: formData.email,
+              role: formData.role,
+              organizationId: org.id,
+            },
+          });
+
+          results.push(result);
+          
+          if (result.error || result.data?.error) {
+            errorCount++;
+            console.error(`Error inviting to ${org.name}:`, result.error || result.data?.error);
+          } else {
+            successCount++;
+          }
+
+          // Add delay between requests to avoid rate limits (500ms = 2 requests/second max)
+          if (i < organizations.length - 1) {
+            await new Promise(resolve => setTimeout(resolve, 600));
+          }
+        } catch (err) {
+          errorCount++;
+          console.error(`Exception inviting to ${org.name}:`, err);
+        }
+      }
+
+      if (errorCount === 0) {
         toast.success(
           `Usuario invitado a todas las ${organizations.length} empresas. Recibirá un correo para establecer su contraseña.`
         );
         setIsInviteDialogOpen(false);
         setFormData({ email: "", role: "member" });
         fetchData();
+      } else if (successCount > 0) {
+        toast.warning(
+          `Invitaciones enviadas a ${successCount} de ${organizations.length} empresas. ${errorCount} fallaron.`
+        );
+        fetchData();
+      } else {
+        toast.error("No se pudo enviar ninguna invitación. Verifica tus permisos y la configuración de Resend.");
       }
     } catch (error: any) {
       toast.error(`Error al enviar invitaciones: ${error.message || "Error desconocido"}`);
@@ -306,6 +332,27 @@ const UsersManagement = () => {
           </div>
         ) : (
           <div className="space-y-6">
+            {/* Email Configuration Alert */}
+            <Alert>
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>
+                <p className="font-medium mb-1">Configuración de correos requerida</p>
+                <p className="text-sm">
+                  Para enviar invitaciones a otros usuarios, necesitas verificar un dominio en{" "}
+                  <a 
+                    href="https://resend.com/domains" 
+                    target="_blank" 
+                    rel="noopener noreferrer"
+                    className="underline hover:text-primary"
+                  >
+                    Resend
+                  </a>
+                  {" "}y actualizar el campo "from" en el código a un email usando ese dominio verificado.
+                  Actualmente solo puedes enviar emails de prueba a: monicalderon.2910@gmail.com
+                </p>
+              </AlertDescription>
+            </Alert>
+
             {/* Pending Invitations */}
             {pendingInvitations.length > 0 && (
               <Card>

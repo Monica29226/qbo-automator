@@ -52,20 +52,31 @@ const handler = async (req: Request): Promise<Response> => {
 
     console.log("Sending invitation to:", email, "for organization:", organizationId);
 
-    // Validar que el usuario es admin de la organización
-    const { data: membership, error: memberError } = await supabaseClient
-      .from("organization_members")
+    // Validar que el usuario tiene permisos globales o es admin de la organización
+    const { data: userRole } = await supabaseClient
+      .from("user_roles")
       .select("role")
-      .eq("organization_id", organizationId)
       .eq("user_id", user.id)
-      .eq("is_active", true)
-      .single();
+      .maybeSingle();
 
-    if (memberError || !membership || !["owner", "admin"].includes(membership.role)) {
-      return new Response(
-        JSON.stringify({ error: "No tiene permisos para invitar usuarios" }),
-        { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+    const isGlobalAdmin = userRole?.role === "admin";
+
+    if (!isGlobalAdmin) {
+      // Si no es admin global, verificar que sea admin de la organización
+      const { data: membership, error: memberError } = await supabaseClient
+        .from("organization_members")
+        .select("role")
+        .eq("organization_id", organizationId)
+        .eq("user_id", user.id)
+        .eq("is_active", true)
+        .single();
+
+      if (memberError || !membership || !["owner", "admin"].includes(membership.role)) {
+        return new Response(
+          JSON.stringify({ error: "No tiene permisos para invitar usuarios a esta organización" }),
+          { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
     }
 
     // Obtener nombre de la organización
