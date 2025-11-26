@@ -248,6 +248,30 @@ serve(async (req) => {
 
     console.log(`Uploaded ${uploadedFiles.length} files to Google Drive for document ${document_id}`);
 
+    // Update document with Google Drive file IDs
+    const updateData: any = {
+      google_drive_uploaded_at: new Date().toISOString(),
+    };
+
+    const pdfFile = uploadedFiles.find(f => f.type === 'pdf');
+    const xmlFile = uploadedFiles.find(f => f.type === 'xml');
+
+    if (pdfFile) {
+      updateData.google_drive_pdf_id = pdfFile.id;
+    }
+    if (xmlFile) {
+      updateData.google_drive_xml_id = xmlFile.id;
+    }
+
+    const { error: updateError } = await supabase
+      .from("processed_documents")
+      .update(updateData)
+      .eq("id", document_id);
+
+    if (updateError) {
+      console.error("Failed to update document with Drive IDs:", updateError);
+    }
+
     return new Response(
       JSON.stringify({ 
         success: true, 

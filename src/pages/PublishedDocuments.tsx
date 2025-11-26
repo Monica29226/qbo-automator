@@ -1,7 +1,7 @@
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { CheckCircle, ArrowLeft, FileText, AlertTriangle } from "lucide-react";
+import { CheckCircle, ArrowLeft, FileText, AlertTriangle, ExternalLink, HardDrive } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
@@ -16,6 +16,8 @@ interface PublishedDocument {
   total_amount: number;
   qbo_entity_id: string;
   pdf_attachment_url: string | null;
+  google_drive_pdf_id: string | null;
+  google_drive_xml_id: string | null;
   created_at: string;
 }
 
@@ -36,7 +38,7 @@ const PublishedDocuments = () => {
     setIsLoading(true);
     const { data, error } = await supabase
       .from("processed_documents")
-      .select("id, doc_number, supplier_name, issue_date, total_amount, qbo_entity_id, pdf_attachment_url, created_at")
+      .select("id, doc_number, supplier_name, issue_date, total_amount, qbo_entity_id, pdf_attachment_url, google_drive_pdf_id, google_drive_xml_id, created_at")
       .eq("organization_id", activeOrganization)
       .in("status", ["processed", "duplicate"])
       .not("qbo_entity_id", "is", null) // Only show documents that are actually in QuickBooks
@@ -62,10 +64,17 @@ const PublishedDocuments = () => {
     // Aquí se puede implementar lógica de reintento
   };
 
+  const openInGoogleDrive = (fileId: string, fileName: string) => {
+    const driveUrl = `https://drive.google.com/file/d/${fileId}/view`;
+    window.open(driveUrl, '_blank');
+    toast.success(`Abriendo ${fileName} en Google Drive`);
+  };
+
   const stats = {
     total: documents.length,
     withPdf: documents.filter(d => d.pdf_attachment_url).length,
     withoutPdf: documents.filter(d => !d.pdf_attachment_url).length,
+    inDrive: documents.filter(d => d.google_drive_pdf_id || d.google_drive_xml_id).length,
   };
 
   if (isLoading) {
@@ -102,7 +111,7 @@ const PublishedDocuments = () => {
 
       <main className="container mx-auto px-6 py-8">
         {/* Stats Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
           <Card className="p-6">
             <div className="flex items-center gap-3">
               <CheckCircle className="h-8 w-8 text-green-500" />
@@ -119,6 +128,16 @@ const PublishedDocuments = () => {
               <div>
                 <p className="text-2xl font-bold">{stats.withPdf}</p>
                 <p className="text-sm text-muted-foreground">Con PDF Adjunto</p>
+              </div>
+            </div>
+          </Card>
+          
+          <Card className="p-6">
+            <div className="flex items-center gap-3">
+              <HardDrive className="h-8 w-8 text-purple-500" />
+              <div>
+                <p className="text-2xl font-bold">{stats.inDrive}</p>
+                <p className="text-sm text-muted-foreground">En Google Drive</p>
               </div>
             </div>
           </Card>
@@ -178,6 +197,42 @@ const PublishedDocuments = () => {
                         <p className="text-xs text-muted-foreground">
                           <span className="font-medium">Publicada:</span> {new Date(doc.created_at).toLocaleString('es-CR')}
                         </p>
+                        
+                        {/* Google Drive Links */}
+                        {(doc.google_drive_pdf_id || doc.google_drive_xml_id) && (
+                          <div className="mt-3 pt-3 border-t border-border">
+                            <p className="text-xs font-medium text-muted-foreground mb-2 flex items-center gap-1">
+                              <HardDrive className="h-3 w-3" />
+                              Disponible en Google Drive:
+                            </p>
+                            <div className="flex gap-2">
+                              {doc.google_drive_pdf_id && (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => openInGoogleDrive(doc.google_drive_pdf_id!, 'PDF')}
+                                  className="text-xs"
+                                >
+                                  <FileText className="h-3 w-3 mr-1" />
+                                  Ver PDF
+                                  <ExternalLink className="h-3 w-3 ml-1" />
+                                </Button>
+                              )}
+                              {doc.google_drive_xml_id && (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => openInGoogleDrive(doc.google_drive_xml_id!, 'XML')}
+                                  className="text-xs"
+                                >
+                                  <FileText className="h-3 w-3 mr-1" />
+                                  Ver XML
+                                  <ExternalLink className="h-3 w-3 ml-1" />
+                                </Button>
+                              )}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     </div>
 
