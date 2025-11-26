@@ -503,9 +503,22 @@ const InvoicesPendingLog = () => {
   };
 
   const handleOpenPDF = (invoice: PendingInvoice) => {
+    console.log("🔍 handleOpenPDF llamado para:", invoice.doc_number);
+    console.log("📎 PDF URL:", invoice.pdf_attachment_url);
+    
     if (invoice.pdf_attachment_url) {
-      window.open(invoice.pdf_attachment_url, '_blank');
+      console.log("✅ Abriendo PDF en nueva pestaña");
+      const opened = window.open(invoice.pdf_attachment_url, '_blank', 'noopener,noreferrer');
+      
+      if (!opened) {
+        console.error("❌ window.open fue bloqueado por el navegador");
+        toast.error("El navegador bloqueó la ventana emergente. Por favor, permite ventanas emergentes para este sitio.");
+      } else {
+        console.log("✅ PDF abierto exitosamente");
+        toast.success("Abriendo PDF...");
+      }
     } else {
+      console.warn("⚠️ PDF no disponible para:", invoice.doc_number);
       toast.error("PDF no disponible para esta factura");
     }
   };
@@ -600,10 +613,15 @@ const InvoicesPendingLog = () => {
                   {filteredInvoices.map((invoice) => (
                     <TableRow 
                       key={invoice.id}
-                      onDoubleClick={() => handleOpenPDF(invoice)}
-                      className="cursor-pointer hover:bg-muted/50"
+                      className="hover:bg-muted/50"
                     >
-                      <TableCell className="font-medium">
+                      <TableCell 
+                        className="font-medium cursor-pointer hover:underline hover:text-primary"
+                        onDoubleClick={(e) => {
+                          e.stopPropagation();
+                          handleOpenPDF(invoice);
+                        }}
+                      >
                         <TooltipProvider>
                           <Tooltip>
                             <TooltipTrigger asChild>
