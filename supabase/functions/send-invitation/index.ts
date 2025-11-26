@@ -93,7 +93,7 @@ const handler = async (req: Request): Promise<Response> => {
       );
     }
 
-    // Verificar si ya existe una invitación pendiente
+    // Verificar si ya existe una invitación pendiente y eliminarla para permitir re-invitación
     const { data: existingInvitation } = await supabaseClient
       .from("organization_invitations")
       .select("id")
@@ -104,10 +104,11 @@ const handler = async (req: Request): Promise<Response> => {
       .maybeSingle();
 
     if (existingInvitation) {
-      return new Response(
-        JSON.stringify({ error: "Ya existe una invitación pendiente para este correo" }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+      console.log("Deleting existing invitation for re-invitation:", existingInvitation.id);
+      await supabaseClient
+        .from("organization_invitations")
+        .delete()
+        .eq("id", existingInvitation.id);
     }
 
     // Generar token único
