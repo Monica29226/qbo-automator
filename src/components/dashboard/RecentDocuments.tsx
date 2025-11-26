@@ -84,6 +84,20 @@ export const RecentDocuments = () => {
   const fetchQBOAccounts = async () => {
     if (!activeOrganization) return;
     
+    // Check if QuickBooks is connected first
+    const { data: qbIntegration } = await supabase
+      .from("integration_accounts")
+      .select("id")
+      .eq("organization_id", activeOrganization)
+      .eq("service_type", "quickbooks")
+      .eq("is_active", true)
+      .maybeSingle();
+
+    if (!qbIntegration) {
+      console.log("QuickBooks not connected, skipping account fetch");
+      return;
+    }
+    
     setLoadingAccounts(true);
     try {
       const { data, error } = await supabase.functions.invoke(
