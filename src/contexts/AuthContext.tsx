@@ -30,25 +30,32 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     let isInitialized = false;
 
     // Solo cargar sesión inicial una vez
+    const startTime = performance.now();
+    console.log('🚀 AuthContext: Iniciando carga de sesión');
+    
     supabase.auth.getSession().then(async ({ data: { session } }) => {
       if (!isMounted) return;
       
+      console.log('⏱️ AuthContext: Sesión obtenida en', performance.now() - startTime, 'ms');
       setSession(session);
       setUser(session?.user ?? null);
       
       if (session?.user) {
         try {
+          const orgStart = performance.now();
           await Promise.all([
             loadUserOrganizations(session.user.id),
             checkAdminRole(session.user.id)
           ]);
+          console.log('⏱️ AuthContext: Datos de usuario cargados en', performance.now() - orgStart, 'ms');
         } catch (error) {
-          console.error('Error loading user data:', error);
+          console.error('❌ Error loading user data:', error);
         }
       }
       
       isInitialized = true;
       setIsLoading(false);
+      console.log('✅ AuthContext: Inicialización completa en', performance.now() - startTime, 'ms');
     });
 
     // Escuchar cambios solo después de inicialización
@@ -56,6 +63,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       async (event, session) => {
         if (!isMounted || !isInitialized) return;
         
+        console.log('🔄 AuthContext: Cambio de estado de auth:', event);
         setSession(session);
         setUser(session?.user ?? null);
         
@@ -66,7 +74,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
               checkAdminRole(session.user.id)
             ]);
           } catch (error) {
-            console.error('Error loading user data:', error);
+            console.error('❌ Error loading user data:', error);
           }
         } else {
           setIsAdmin(false);
@@ -84,11 +92,16 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
   const loadUserOrganizations = async (userId: string) => {
     try {
+      console.log('📊 Cargando organizaciones para usuario:', userId);
+      const orgStart = performance.now();
+      
       const { data: memberships, error: membershipsError } = await supabase
         .from("organization_members")
         .select("organization_id, role, organizations(*)")
         .eq("user_id", userId)
         .eq("is_active", true);
+
+      console.log('⏱️ Query organizaciones:', performance.now() - orgStart, 'ms');
 
       if (!membershipsError && memberships) {
         const orgs = memberships.map((m: any) => ({
@@ -97,30 +110,38 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
           role: m.role,
         }));
         setOrganizations(orgs);
+        console.log('✅ Organizaciones cargadas:', orgs.length);
 
+        const activeOrgStart = performance.now();
         const { data: activeOrg, error: activeOrgError } = await supabase
           .from("user_active_organization")
           .select("organization_id")
           .eq("user_id", userId)
           .maybeSingle();
 
+        console.log('⏱️ Query org activa:', performance.now() - activeOrgStart, 'ms');
+
         if (!activeOrgError && activeOrg) {
           setActiveOrganization(activeOrg.organization_id);
+          console.log('✅ Organización activa:', activeOrg.organization_id);
         } else if (orgs.length > 0) {
           setActiveOrganization(orgs[0].id);
           await supabase
             .from("user_active_organization")
             .upsert({ user_id: userId, organization_id: orgs[0].id });
+          console.log('✅ Primera organización establecida como activa');
         }
       }
     } catch (error) {
-      console.error("Error loading organizations:", error);
+      console.error("❌ Error loading organizations:", error);
     }
   };
 
   const checkAdminRole = async (userId: string) => {
     try {
-      console.log('🔍 Checking admin role for user:', userId);
+      console.log('🔍 Verificando rol admin para usuario:', userId);
+      const adminStart = performance.now();
+      
       const { data, error } = await supabase
         .from("user_roles")
         .select("role")
@@ -128,17 +149,17 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         .eq("role", "admin")
         .maybeSingle();
 
-      console.log('📊 Admin role check result:', { data, error });
+      console.log('⏱️ Query rol admin:', performance.now() - adminStart, 'ms');
 
       if (!error && data) {
-        console.log('✅ User IS admin');
+        console.log('✅ Usuario ES admin');
         setIsAdmin(true);
       } else {
-        console.log('❌ User is NOT admin');
+        console.log('ℹ️ Usuario NO es admin');
         setIsAdmin(false);
       }
     } catch (error) {
-      console.error("❌ Error checking admin role:", error);
+      console.error("❌ Error verificando rol admin:", error);
       setIsAdmin(false);
     }
   };
