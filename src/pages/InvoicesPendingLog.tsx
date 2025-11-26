@@ -535,13 +535,38 @@ const InvoicesPendingLog = () => {
     }
   };
 
-  const handleOpenPDF = (invoice: PendingInvoice) => {
+  const handleOpenPDF = async (invoice: PendingInvoice) => {
     console.log("🔍 handleOpenPDF llamado para:", invoice.doc_number);
     console.log("📎 PDF URL:", invoice.pdf_attachment_url);
     
-    if (invoice.pdf_attachment_url) {
-      console.log("✅ Abriendo PDF en nueva pestaña");
-      const opened = window.open(invoice.pdf_attachment_url, '_blank', 'noopener,noreferrer');
+    if (!invoice.pdf_attachment_url) {
+      console.warn("⚠️ PDF no disponible para:", invoice.doc_number);
+      toast.error("PDF no disponible para esta factura");
+      return;
+    }
+
+    try {
+      toast.loading("Generando enlace de descarga...");
+      
+      // Extraer el path del storage de la URL
+      let pdfPath = invoice.pdf_attachment_url;
+      if (pdfPath.includes('/object/public/company-documents/')) {
+        pdfPath = pdfPath.split('/object/public/company-documents/')[1];
+      } else if (pdfPath.includes('company-documents/')) {
+        pdfPath = pdfPath.split('company-documents/')[1];
+      }
+      
+      // Generar URL firmada con 1 hora de validez
+      const { data, error } = await supabase.storage
+        .from('company-documents')
+        .createSignedUrl(pdfPath, 3600);
+
+      if (error) throw error;
+
+      toast.dismiss();
+      console.log("✅ URL firmada generada");
+      
+      const opened = window.open(data.signedUrl, '_blank', 'noopener,noreferrer');
       
       if (!opened) {
         console.error("❌ window.open fue bloqueado por el navegador");
@@ -550,9 +575,10 @@ const InvoicesPendingLog = () => {
         console.log("✅ PDF abierto exitosamente");
         toast.success("Abriendo PDF...");
       }
-    } else {
-      console.warn("⚠️ PDF no disponible para:", invoice.doc_number);
-      toast.error("PDF no disponible para esta factura");
+    } catch (error: any) {
+      toast.dismiss();
+      console.error("❌ Error al abrir PDF:", error);
+      toast.error(`Error al abrir PDF: ${error.message}`);
     }
   };
 
