@@ -661,7 +661,7 @@ const InvoicesPendingLog = () => {
     try {
       const loadingToast = toast.loading("Descargando PDF...");
       
-      // Extraer el path del storage de la URL - probar múltiples formatos
+      // Extraer el path del storage de la URL
       let pdfPath = invoice.pdf_attachment_url;
       
       // Si es una URL completa, extraer solo el path
@@ -686,18 +686,15 @@ const InvoicesPendingLog = () => {
       }
       
       console.log("📂 Path extraído:", pdfPath);
-      console.log("🔐 Descargando PDF desde storage con autenticación...");
+      console.log("🔐 Descargando PDF desde storage...");
       
-      // Descargar el archivo como blob a través del cliente autenticado de Supabase
-      // Esto evita bloqueadores que impiden acceso directo a URLs de Supabase
+      // Descargar el archivo como blob
       const { data: blobData, error } = await supabase.storage
         .from('company-documents')
         .download(pdfPath);
 
       if (error) {
         console.error("❌ Error de storage:", error);
-        console.error("   Path intentado:", pdfPath);
-        console.error("   Bucket:", 'company-documents');
         throw new Error(`Error al acceder al archivo: ${error.message}`);
       }
 
@@ -705,35 +702,34 @@ const InvoicesPendingLog = () => {
         throw new Error("No se pudo descargar el archivo");
       }
 
-      toast.dismiss(loadingToast);
       console.log("✅ PDF descargado exitosamente");
       
-      // Crear URL blob local (no será bloqueada por extensiones de seguridad)
+      // Crear URL blob local
       const blobUrl = URL.createObjectURL(blobData);
       
-      // Abrir en nueva pestaña
-      const opened = window.open(blobUrl, '_blank', 'noopener,noreferrer');
+      // Crear elemento <a> temporal para descargar el archivo
+      // Esto evita problemas con bloqueadores de popups y extensiones de seguridad
+      const link = document.createElement('a');
+      link.href = blobUrl;
+      link.download = `Factura_${invoice.doc_number}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
       
-      if (!opened) {
-        console.error("❌ window.open fue bloqueado por el navegador");
-        toast.error("El navegador bloqueó la ventana emergente. Por favor, permite ventanas emergentes para este sitio.");
-        URL.revokeObjectURL(blobUrl); // Limpiar si no se pudo abrir
-      } else {
-        console.log("✅ PDF abierto exitosamente");
-        toast.success("PDF abierto correctamente");
-        
-        // Limpiar la URL blob después de 1 minuto (dar tiempo a que cargue)
-        setTimeout(() => {
-          URL.revokeObjectURL(blobUrl);
-        }, 60000);
-      }
+      // Limpiar la URL blob después de un momento
+      setTimeout(() => {
+        URL.revokeObjectURL(blobUrl);
+      }, 1000);
+      
+      toast.dismiss(loadingToast);
+      toast.success("PDF descargado correctamente");
+      console.log("✅ PDF descargado como archivo");
+      
     } catch (error: any) {
       toast.dismiss();
-      console.error("❌ Error completo al abrir PDF:", error);
-      console.error("📋 Stack trace:", error.stack);
+      console.error("❌ Error completo al descargar PDF:", error);
       
-      // Mensaje de error más descriptivo
-      let errorMessage = "Error al abrir el PDF";
+      let errorMessage = "Error al descargar el PDF";
       if (error.message.includes("not found")) {
         errorMessage = "El archivo PDF no existe en el almacenamiento";
       } else if (error.message.includes("Bucket")) {
