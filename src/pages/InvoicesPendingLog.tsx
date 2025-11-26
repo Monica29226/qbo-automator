@@ -248,13 +248,29 @@ const InvoicesPendingLog = () => {
   }, [activeOrganization]);
 
   useEffect(() => {
-    const filtered = invoices.filter(
-      (inv) =>
-        inv.doc_number.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        inv.supplier_name.toLowerCase().includes(searchTerm.toLowerCase())
-    );
+    const filtered = invoices.filter((inv) => {
+      const searchLower = searchTerm.toLowerCase();
+      
+      // Buscar por número de documento
+      if (inv.doc_number.toLowerCase().includes(searchLower)) return true;
+      
+      // Buscar por nombre de proveedor
+      if (inv.supplier_name.toLowerCase().includes(searchLower)) return true;
+      
+      // Buscar por cuenta contable
+      if (inv.default_account_ref && inv.default_account_ref.toLowerCase().includes(searchLower)) return true;
+      
+      // Buscar en la descripción de la cuenta (si existe en qboAccounts)
+      if (inv.default_account_ref) {
+        const account = qboAccounts.find(acc => acc.id === inv.default_account_ref);
+        if (account && account.name.toLowerCase().includes(searchLower)) return true;
+        if (account && account.accountNumber.toLowerCase().includes(searchLower)) return true;
+      }
+      
+      return false;
+    });
     setFilteredInvoices(filtered);
-  }, [searchTerm, invoices]);
+  }, [searchTerm, invoices, qboAccounts]);
 
   const saveVendorDefault = async (
     vendorName: string,
@@ -533,7 +549,7 @@ const InvoicesPendingLog = () => {
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
-                placeholder="Buscar por número de factura o proveedor..."
+                placeholder="Buscar por número de factura, proveedor o cuenta contable..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="pl-10"
