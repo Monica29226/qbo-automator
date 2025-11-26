@@ -171,8 +171,9 @@ serve(async (req) => {
     }
 
     // Buscar mensajes en Gmail con reintentos en caso de error de autenticación
+    // Aumentado a 200 para procesar más facturas
     let searchResponse = await fetch(
-      `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(mailQuery)}&maxResults=50`,
+      `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(mailQuery)}&maxResults=200`,
       {
         headers: { Authorization: `Bearer ${accessToken}` },
       }
@@ -187,7 +188,7 @@ serve(async (req) => {
         
         // Reintentar la búsqueda con el nuevo token
         searchResponse = await fetch(
-          `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(mailQuery)}&maxResults=50`,
+          `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(mailQuery)}&maxResults=200`,
           {
             headers: { Authorization: `Bearer ${accessToken}` },
           }
@@ -240,7 +241,7 @@ serve(async (req) => {
     };
 
     // Procesar mensajes - límite aumentado para procesamiento completo
-    const messageLimit = force_resync ? 50 : 50;
+    const messageLimit = force_resync ? 200 : 200;
     console.log(`Processing up to ${messageLimit} messages`);
     
     for (const message of messages.slice(0, messageLimit)) {
