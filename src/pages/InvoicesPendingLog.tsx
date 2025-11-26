@@ -482,12 +482,17 @@ const InvoicesPendingLog = () => {
             valueToSave as string,
             invoice.uses_tax ?? true
           );
-          
           toast.success(`✓ Configuración guardada para ${invoice.supplier_name}. Se aplicará a futuras facturas.`);
           
           // AUTO-PUBLICAR: Si se asignó una cuenta contable válida, publicar automáticamente
           if (valueToSave && typeof valueToSave === 'string' && valueToSave.trim() !== '') {
-            toast.info("Publicando factura automáticamente a QuickBooks...");
+            const publishToast = toast.loading("Publicando factura automáticamente a QuickBooks...");
+            
+            // Marcar como "publishing" temporalmente
+            setInvoices((prev) =>
+              prev.map((inv) => (inv.id === id ? { ...inv, [field]: valueToSave, _isPublishing: true } : inv))
+            );
+            
             try {
               const { data, error: publishError } = await supabase.functions.invoke(
                 "publish-to-quickbooks",
@@ -498,13 +503,21 @@ const InvoicesPendingLog = () => {
 
               if (publishError) throw publishError;
 
+              toast.dismiss(publishToast);
               toast.success("✓ Factura publicada exitosamente a QuickBooks");
+              
               // Refrescar la lista para que desaparezca de pendientes
               await fetchPendingInvoices();
               return; // Exit early since we refreshed the list
             } catch (publishError: any) {
               console.error("Error publishing invoice:", publishError);
+              toast.dismiss(publishToast);
               toast.error("Cuenta guardada pero error al publicar: " + (publishError.message || "Error desconocido"));
+              
+              // Quitar el estado de publishing
+              setInvoices((prev) =>
+                prev.map((inv) => (inv.id === id ? { ...inv, _isPublishing: false } : inv))
+              );
             }
           }
         }
@@ -883,7 +896,7 @@ const InvoicesPendingLog = () => {
                         {formatCurrency(invoice.total_amount, invoice.currency)}
                       </TableCell>
                       <TableCell>
-                        {new Date(invoice.created_at).toLocaleDateString("es-CR")}
+                        {new Date(invoice.issue_date).toLocaleDateString("es-CR")}
                       </TableCell>
                       <TableCell>
                         <div className="flex items-center gap-2">
