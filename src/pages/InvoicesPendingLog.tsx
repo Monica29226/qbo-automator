@@ -58,6 +58,7 @@ interface PendingInvoice {
   default_class_ref?: string | null;
   uses_tax?: boolean;
   has_vendor_default?: boolean; // Para saber si usa config predeterminada
+  pdf_attachment_url?: string | null;
 }
 
 const InvoicesPendingLog = () => {
@@ -475,6 +476,14 @@ const InvoicesPendingLog = () => {
     }
   };
 
+  const handleOpenPDF = (invoice: PendingInvoice) => {
+    if (invoice.pdf_attachment_url) {
+      window.open(invoice.pdf_attachment_url, '_blank');
+    } else {
+      toast.error("PDF no disponible para esta factura");
+    }
+  };
+
   const totalsBySupplier = filteredInvoices.reduce((acc, inv) => {
     if (!acc[inv.supplier_name]) {
       acc[inv.supplier_name] = 0;
@@ -558,9 +567,22 @@ const InvoicesPendingLog = () => {
                 </TableHeader>
                 <TableBody>
                   {filteredInvoices.map((invoice) => (
-                    <TableRow key={invoice.id}>
+                    <TableRow 
+                      key={invoice.id}
+                      onDoubleClick={() => handleOpenPDF(invoice)}
+                      className="cursor-pointer hover:bg-muted/50"
+                    >
                       <TableCell className="font-medium">
-                        {invoice.doc_number}
+                        <TooltipProvider>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span>{invoice.doc_number}</span>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              <p>Doble click para ver PDF</p>
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
                       </TableCell>
                       <TableCell>
                         <div>
