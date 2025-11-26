@@ -39,13 +39,16 @@ export const StatsCard = ({
   };
 
   return (
-    <Card className={cn("p-6 transition-all hover:shadow-md", variantStyles[variant])}>
+    <Card className={cn(
+      "p-6 transition-all duration-300 hover:shadow-lg hover:-translate-y-1 animate-fade-in-subtle",
+      variantStyles[variant]
+    )}>
       <div className="flex items-center justify-between mb-4">
         <p className="text-sm font-medium text-muted-foreground">{title}</p>
-        <Icon className={cn("h-5 w-5", iconStyles[variant])} />
+        <Icon className={cn("h-5 w-5 transition-transform duration-300 group-hover:scale-110", iconStyles[variant])} />
       </div>
       <div className="space-y-1">
-        <p className="text-3xl font-bold text-foreground">{value}</p>
+        <p className="text-3xl font-bold text-foreground font-heading">{value}</p>
         <p className={cn(
           "text-xs font-medium",
           isPositive ? "text-success" : "text-muted-foreground"
@@ -58,7 +61,7 @@ export const StatsCard = ({
           onClick={onActionClick}
           variant="outline"
           size="sm"
-          className="mt-4 w-full"
+          className="mt-4 w-full transition-all duration-200 hover:scale-[1.02]"
         >
           {actionLabel}
         </Button>
