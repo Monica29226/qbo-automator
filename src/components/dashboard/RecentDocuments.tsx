@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useAuth } from "@/hooks/useAuth";
+import { AccountCombobox } from "@/components/AccountCombobox";
 import {
   Select,
   SelectContent,
@@ -348,22 +349,14 @@ export const RecentDocuments = () => {
                 Cuenta Contable:
               </span>
               <div className="flex items-center gap-2 flex-1">
-                <Select
+                <AccountCombobox
+                  accounts={qboAccounts}
                   value={doc.default_account_ref || ""}
                   onValueChange={(value) => handleUpdateAccount(doc.id, value)}
                   disabled={loadingAccounts}
-                >
-                  <SelectTrigger className="w-[280px]">
-                    <SelectValue placeholder="Seleccionar cuenta" />
-                  </SelectTrigger>
-                  <SelectContent className="bg-background z-50">
-                    {qboAccounts.map((account) => (
-                      <SelectItem key={account.id} value={account.id}>
-                        {account.accountNumber} - {account.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                  className="w-[280px]"
+                  placeholder="Seleccionar cuenta"
+                />
                 {doc.has_vendor_default && (
                   <TooltipProvider>
                     <Tooltip>

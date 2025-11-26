@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { AccountCombobox } from "@/components/AccountCombobox";
 import {
   Table,
   TableBody,
@@ -346,22 +347,14 @@ const Vendors = () => {
               <Label htmlFor="default_account_ref">
                 Cuenta a Registrar <span className="text-destructive">*</span>
               </Label>
-              <Select
+              <AccountCombobox
+                accounts={qboAccounts}
                 value={formData.default_account_ref}
                 onValueChange={(value) => setFormData({ ...formData, default_account_ref: value })}
                 disabled={isLoadingAccounts}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder={isLoadingAccounts ? "Cargando cuentas..." : "Seleccionar cuenta"} />
-                </SelectTrigger>
-                <SelectContent className="max-h-[300px]">
-                  {qboAccounts.map((account) => (
-                    <SelectItem key={account.id} value={account.id}>
-                      {account.accountNumber ? `${account.accountNumber} - ` : ""}{account.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                className="w-full"
+                placeholder={isLoadingAccounts ? "Cargando cuentas..." : "Seleccionar cuenta"}
+              />
             </div>
 
             <div className="space-y-2">
