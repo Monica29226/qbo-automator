@@ -80,15 +80,15 @@ export function DashboardSidebar({ isAdmin, reviewCount, onSignOut }: DashboardS
       show: isAdmin,
     },
     {
+      title: "Mi Empresa",
+      icon: Building2,
+      path: "/my-company",
+      show: true,
+    },
+    {
       title: "Configuración",
       icon: Settings,
       path: "/settings",
-      show: isAdmin,
-    },
-    {
-      title: "Mi Empresa",
-      icon: Building2,
-      path: "/organization",
       show: isAdmin,
     },
   ];

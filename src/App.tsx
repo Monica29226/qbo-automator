@@ -24,6 +24,7 @@ import MultiTenantDocs from "./pages/MultiTenantDocs";
 import InvoicesPendingLog from "./pages/InvoicesPendingLog";
 import QuickBooksStatus from "./pages/QuickBooksStatus";
 import UsersManagement from "./pages/UsersManagement";
+import MyCompany from "./pages/MyCompany";
 import NotFound from "./pages/NotFound";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 
@@ -85,6 +86,14 @@ const App = () => (
             element={
               <ProtectedRoute requireAdmin>
                 <Organizations />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/my-company"
+            element={
+              <ProtectedRoute>
+                <MyCompany />
               </ProtectedRoute>
             }
           />
