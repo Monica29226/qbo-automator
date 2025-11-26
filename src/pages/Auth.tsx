@@ -17,7 +17,7 @@ const Auth = () => {
   const [password, setPassword] = useState("");
 
   useEffect(() => {
-    // Redirigir si ya está autenticado
+    // Redirigir a selección de empresa si ya está autenticado
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session) {
         navigate("/select-company");
