@@ -209,6 +209,7 @@ const InvoicesPendingLog = () => {
     if (!activeOrganization) return;
 
     try {
+      // 1. Guardar en vendor_defaults
       const { data, error } = await supabase
         .from("vendor_defaults")
         .upsert(
@@ -225,7 +226,34 @@ const InvoicesPendingLog = () => {
 
       if (error) throw error;
 
-      // Update local cache
+      // 2. Crear/actualizar regla de clasificación para futuras facturas
+      if (accountRef) {
+        const accountInfo = qboAccounts.find(acc => 
+          `${acc.accountNumber} - ${acc.name}` === accountRef || 
+          acc.accountNumber === accountRef
+        );
+        
+        const { error: ruleError } = await supabase
+          .from("vendor_classification_rules")
+          .upsert(
+            {
+              organization_id: activeOrganization,
+              vendor_name: vendorName,
+              account_code: accountInfo?.accountNumber || accountRef,
+              account_description: accountInfo?.name || "Cuenta configurada desde Log Pendientes",
+              is_active: true,
+            },
+            { onConflict: "organization_id,vendor_name" }
+          );
+
+        if (ruleError) {
+          console.error("Error creating classification rule:", ruleError);
+        } else {
+          console.log(`✓ Regla de clasificación creada para ${vendorName}: ${accountRef}`);
+        }
+      }
+
+      // 3. Update local cache
       if (data) {
         setVendorDefaults((prev) => {
           const newMap = new Map(prev);
@@ -266,6 +294,8 @@ const InvoicesPendingLog = () => {
             invoice.uses_tax ?? true
           );
           
+          toast.success(`✓ Configuración guardada para ${invoice.supplier_name}. Se aplicará a futuras facturas.`);
+          
           // AUTO-PUBLICAR: Si se asignó una cuenta contable válida, publicar automáticamente
           if (value && typeof value === 'string' && value.trim() !== '') {
             toast.info("Publicando factura automáticamente a QuickBooks...");
@@ -279,7 +309,7 @@ const InvoicesPendingLog = () => {
 
               if (publishError) throw publishError;
 
-              toast.success("✓ Factura guardada y publicada a QuickBooks");
+              toast.success("✓ Factura publicada exitosamente a QuickBooks");
               // Refrescar la lista para que desaparezca de pendientes
               await fetchPendingInvoices();
               return; // Exit early since we refreshed the list

@@ -44,7 +44,21 @@ export const VendorConfigurationModal = ({
 
     setIsSubmitting(true);
     try {
-      // 1. Crear regla de clasificación
+      // 1. Guardar en vendor_defaults para futuras facturas
+      const { error: defaultsError } = await supabase
+        .from("vendor_defaults")
+        .upsert({
+          organization_id: activeOrganization,
+          vendor_name: vendor.supplier_name,
+          default_account_ref: accountCode.trim(),
+          default_uses_tax: true,
+        }, {
+          onConflict: "organization_id,vendor_name",
+        });
+
+      if (defaultsError) throw defaultsError;
+
+      // 2. Crear regla de clasificación para aplicar automáticamente
       const { error: ruleError } = await supabase
         .from("vendor_classification_rules")
         .upsert({
@@ -59,7 +73,7 @@ export const VendorConfigurationModal = ({
 
       if (ruleError) throw ruleError;
 
-      // 2. Actualizar documentos de pending_config a pending
+      // 3. Actualizar documentos de pending_config a pending
       const { error: updateError } = await supabase
         .from("processed_documents")
         .update({
@@ -72,7 +86,7 @@ export const VendorConfigurationModal = ({
 
       if (updateError) throw updateError;
 
-      // 3. Invocar función de publicación automática
+      // 4. Invocar función de publicación automática
       const { error: publishError } = await supabase.functions.invoke("publish-to-quickbooks", {
         body: {
           organization_id: activeOrganization,
@@ -81,7 +95,7 @@ export const VendorConfigurationModal = ({
 
       if (publishError) {
         console.error("Error publishing:", publishError);
-        toast.warning("Regla guardada, pero hubo un error al publicar. Intente de nuevo.");
+        toast.warning("Regla creada exitosamente, pero hubo un error al publicar. Intente de nuevo desde el Log de Pendientes.");
       } else {
         toast.success(
           <div className="flex items-center gap-2">
@@ -89,10 +103,11 @@ export const VendorConfigurationModal = ({
             <div>
               <p className="font-semibold">¡Configuración exitosa!</p>
               <p className="text-sm">
-                {vendor.facturas_count} factura(s) se están publicando en QuickBooks
+                Regla creada para "{vendor.supplier_name}". Se aplicará automáticamente a futuras facturas.
               </p>
             </div>
-          </div>
+          </div>,
+          { duration: 5000 }
         );
       }
 
