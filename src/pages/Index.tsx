@@ -4,7 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { FileText, Zap, Shield, BarChart3, ArrowRight, CheckCircle, Tag, LogIn } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
-import calderonLogo from "@/assets/calderon-logo.png";
+import calderonLogo from "@/assets/acl-logo-new.png";
 
 const Index = () => {
   const { user } = useAuth();

@@ -10,7 +10,7 @@ import {
   Shield,
   Users,
 } from "lucide-react";
-import calderonLogo from "@/assets/calderon-logo-new.png";
+import calderonLogo from "@/assets/acl-logo-new.png";
 import {
   Sidebar,
   SidebarContent,
