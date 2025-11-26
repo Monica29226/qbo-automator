@@ -265,6 +265,29 @@ const InvoicesPendingLog = () => {
             value as string,
             invoice.uses_tax ?? true
           );
+          
+          // AUTO-PUBLICAR: Si se asignó una cuenta contable válida, publicar automáticamente
+          if (value && typeof value === 'string' && value.trim() !== '') {
+            toast.info("Publicando factura automáticamente a QuickBooks...");
+            try {
+              const { data, error: publishError } = await supabase.functions.invoke(
+                "publish-to-quickbooks",
+                {
+                  body: { organization_id: activeOrganization, document_ids: [id] },
+                }
+              );
+
+              if (publishError) throw publishError;
+
+              toast.success("✓ Factura guardada y publicada a QuickBooks");
+              // Refrescar la lista para que desaparezca de pendientes
+              await fetchPendingInvoices();
+              return; // Exit early since we refreshed the list
+            } catch (publishError: any) {
+              console.error("Error publishing invoice:", publishError);
+              toast.error("Cuenta guardada pero error al publicar: " + (publishError.message || "Error desconocido"));
+            }
+          }
         }
       }
 
