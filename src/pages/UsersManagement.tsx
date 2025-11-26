@@ -65,19 +65,10 @@ const UsersManagement = () => {
   const [organizations, setOrganizations] = useState<Organization[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isInviteDialogOpen, setIsInviteDialogOpen] = useState(false);
-  const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [isSending, setIsSending] = useState(false);
-  const [inviteFormData, setInviteFormData] = useState({
+  const [formData, setFormData] = useState({
     email: "",
     role: "member",
-    organization_ids: [] as string[],
-  });
-  const [createFormData, setCreateFormData] = useState({
-    email: "",
-    password: "",
-    full_name: "",
-    role: "user",
-    organization_ids: [] as string[],
   });
 
   useEffect(() => {
@@ -188,15 +179,14 @@ const UsersManagement = () => {
     setIsLoading(false);
   };
 
-  const handleSendInvitations = async () => {
-    if (!inviteFormData.email) {
+  const handleSendInvitation = async () => {
+    if (!formData.email) {
       toast.error("Ingrese el correo del usuario");
       return;
     }
 
-    // Validar email
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(inviteFormData.email)) {
+    if (!emailRegex.test(formData.email)) {
       toast.error("Ingrese un correo válido");
       return;
     }
@@ -209,114 +199,36 @@ const UsersManagement = () => {
     setIsSending(true);
 
     try {
-      // Send invitation for ALL organizations
       const promises = organizations.map((org) =>
         supabase.functions.invoke("send-invitation", {
           body: {
-            email: inviteFormData.email,
-            role: inviteFormData.role,
+            email: formData.email,
+            role: formData.role,
             organizationId: org.id,
           },
         })
       );
 
       const results = await Promise.all(promises);
-
-      // Check for errors
       const errors = results.filter((r) => r.error || r.data?.error);
+      
       if (errors.length > 0) {
-        toast.error(`Error al enviar ${errors.length} invitación(es)`);
-        console.error("Errors:", errors);
-      } else {
-        toast.success(
-          `Usuario invitado a todas las ${organizations.length} empresas exitosamente`
-        );
-        setIsInviteDialogOpen(false);
-        setInviteFormData({
-          email: "",
-          role: "member",
-          organization_ids: [],
-        });
-        fetchData();
-      }
-    } catch (error: any) {
-      console.error("Error sending invitations:", error);
-      toast.error("Error al enviar invitaciones");
-    } finally {
-      setIsSending(false);
-    }
-  };
-
-  const handleCreateUser = async () => {
-    console.log("🚀 Iniciando creación de usuario vía invitación...", createFormData);
-    
-    if (!createFormData.email) {
-      toast.error("Ingrese el correo del usuario");
-      return;
-    }
-
-    // Validar email
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(createFormData.email)) {
-      toast.error("Ingrese un correo válido");
-      return;
-    }
-
-    if (organizations.length === 0) {
-      toast.error("No hay empresas disponibles");
-      return;
-    }
-
-    setIsSending(true);
-    console.log("✅ Validaciones pasadas, enviando invitaciones a TODAS las empresas...");
-
-    try {
-      // Send invitation for ALL organizations
-      // This will allow the user to set their own password
-      const promises = organizations.map((org) => {
-        console.log(`📤 Invocando send-invitation para organización: ${org.name} (${org.id})`);
-        return supabase.functions.invoke("send-invitation", {
-          body: {
-            email: createFormData.email,
-            role: createFormData.role === 'user' ? 'member' : createFormData.role, // Convert 'user' to 'member'
-            organizationId: org.id,
-          },
-        });
-      });
-
-      console.log(`⏳ Esperando respuesta de ${promises.length} solicitud(es)...`);
-      const results = await Promise.all(promises);
-      console.log("📥 Resultados recibidos:", results);
-
-      // Check for errors
-      const errors = results.filter((r) => r.error || r.data?.error);
-      if (errors.length > 0) {
-        console.error("❌ Errores encontrados:", errors);
         const errorMessages = errors.map((e) => 
           e.error?.message || e.data?.error || "Error desconocido"
         ).join(", ");
-        toast.error(`Error al enviar invitaciones: ${errorMessages}`);
+        toast.error(`Error: ${errorMessages}`);
       } else {
-        console.log("✅ Invitaciones enviadas exitosamente a todas las empresas");
         toast.success(
           `Usuario invitado a todas las ${organizations.length} empresas. Recibirá un correo para establecer su contraseña.`
         );
-        setIsCreateDialogOpen(false);
-        setCreateFormData({
-          email: "",
-          password: "",
-          full_name: "",
-          role: "user",
-          organization_ids: [],
-        });
+        setIsInviteDialogOpen(false);
+        setFormData({ email: "", role: "member" });
         fetchData();
       }
     } catch (error: any) {
-      console.error("❌ Error crítico enviando invitaciones:", error);
       toast.error(`Error al enviar invitaciones: ${error.message || "Error desconocido"}`);
     } finally {
       setIsSending(false);
-      console.log("🏁 Proceso de invitación finalizado");
     }
   };
 
@@ -337,45 +249,6 @@ const UsersManagement = () => {
     }
   };
 
-  const toggleOrganization = (orgId: string, isInvite: boolean) => {
-    if (isInvite) {
-      setInviteFormData((prev) => ({
-        ...prev,
-        organization_ids: prev.organization_ids.includes(orgId)
-          ? prev.organization_ids.filter((id) => id !== orgId)
-          : [...prev.organization_ids, orgId],
-      }));
-    } else {
-      setCreateFormData((prev) => ({
-        ...prev,
-        organization_ids: prev.organization_ids.includes(orgId)
-          ? prev.organization_ids.filter((id) => id !== orgId)
-          : [...prev.organization_ids, orgId],
-      }));
-    }
-  };
-
-  const selectAllOrganizations = (isInvite: boolean) => {
-    if (isInvite) {
-      if (inviteFormData.organization_ids.length === organizations.length) {
-        setInviteFormData((prev) => ({ ...prev, organization_ids: [] }));
-      } else {
-        setInviteFormData((prev) => ({
-          ...prev,
-          organization_ids: organizations.map((org) => org.id),
-        }));
-      }
-    } else {
-      if (createFormData.organization_ids.length === organizations.length) {
-        setCreateFormData((prev) => ({ ...prev, organization_ids: [] }));
-      } else {
-        setCreateFormData((prev) => ({
-          ...prev,
-          organization_ids: organizations.map((org) => org.id),
-        }));
-      }
-    }
-  };
 
   const roleLabels: Record<string, string> = {
     admin: "Administrador Global",
@@ -419,16 +292,10 @@ const UsersManagement = () => {
               </p>
             </div>
           </div>
-          <div className="flex gap-2">
-            <Button variant="secondary" onClick={() => setIsInviteDialogOpen(true)}>
-              <Mail className="h-4 w-4 mr-2" />
-              Invitar Usuario
-            </Button>
-            <Button onClick={() => setIsCreateDialogOpen(true)}>
-              <Plus className="h-4 w-4 mr-2" />
-              Crear Usuario
-            </Button>
-          </div>
+          <Button onClick={() => setIsInviteDialogOpen(true)}>
+            <Plus className="h-4 w-4 mr-2" />
+            Invitar Usuario
+          </Button>
         </div>
       </header>
 
@@ -561,25 +428,25 @@ const UsersManagement = () => {
 
       {/* Invitation Dialog */}
       <Dialog open={isInviteDialogOpen} onOpenChange={setIsInviteDialogOpen}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Invitar Usuario de ACL</DialogTitle>
             <DialogDescription>
               El usuario será invitado automáticamente a TODAS las empresas del sistema.
-              Recibirá un correo para aceptar la invitación.
+              Recibirá un correo para establecer su contraseña.
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4">
             <div>
-              <Label htmlFor="invite-email">Correo Electrónico *</Label>
+              <Label htmlFor="email">Correo Electrónico *</Label>
               <Input
-                id="invite-email"
+                id="email"
                 type="email"
                 placeholder="usuario@ejemplo.com"
-                value={inviteFormData.email}
+                value={formData.email}
                 onChange={(e) =>
-                  setInviteFormData((prev) => ({ ...prev, email: e.target.value }))
+                  setFormData((prev) => ({ ...prev, email: e.target.value }))
                 }
               />
               <p className="text-xs text-muted-foreground mt-1">
@@ -588,15 +455,15 @@ const UsersManagement = () => {
             </div>
 
             <div>
-              <Label htmlFor="invite-role">Rol en las Empresas *</Label>
+              <Label htmlFor="role">Rol en las Empresas *</Label>
               <Select
-                value={inviteFormData.role}
+                value={formData.role}
                 onValueChange={(value) =>
-                  setInviteFormData((prev) => ({ ...prev, role: value }))
+                  setFormData((prev) => ({ ...prev, role: value }))
                 }
               >
                 <SelectTrigger>
-                  <SelectValue />
+                  <SelectValue placeholder="Seleccione un rol" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="admin">Administrador</SelectItem>
@@ -605,11 +472,11 @@ const UsersManagement = () => {
                 </SelectContent>
               </Select>
               <p className="text-xs text-muted-foreground mt-1">
-                {roleDescriptions[inviteFormData.role]}
+                {roleDescriptions[formData.role]}
               </p>
             </div>
 
-            <div className="border rounded-lg p-4 bg-muted/30">
+            <div className="border rounded-lg p-3 bg-muted/30">
               <div className="flex items-center gap-2 text-sm">
                 <Building2 className="h-4 w-4 text-primary" />
                 <span className="font-medium">Empresas con acceso:</span>
@@ -626,132 +493,19 @@ const UsersManagement = () => {
               variant="outline"
               onClick={() => {
                 setIsInviteDialogOpen(false);
-                setInviteFormData({ email: "", role: "member", organization_ids: [] });
+                setFormData({ email: "", role: "member" });
               }}
             >
               Cancelar
             </Button>
-            <Button onClick={handleSendInvitations} disabled={isSending}>
+            <Button onClick={handleSendInvitation} disabled={isSending}>
               {isSending ? (
                 <>
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                   Enviando...
                 </>
               ) : (
-                <>
-                  <Mail className="h-4 w-4 mr-2" />
-                  Enviar Invitaciones
-                </>
-              )}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Create User Dialog */}
-      <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Invitar Nuevo Usuario</DialogTitle>
-            <DialogDescription>
-              El usuario será invitado automáticamente a TODAS las empresas del sistema.
-              Recibirá un correo para establecer su contraseña.
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-4">
-            <div>
-              <Label htmlFor="create-email">Correo Electrónico *</Label>
-              <Input
-                id="create-email"
-                type="email"
-                placeholder="usuario@ejemplo.com"
-                value={createFormData.email}
-                onChange={(e) =>
-                  setCreateFormData((prev) => ({ ...prev, email: e.target.value }))
-                }
-              />
-            </div>
-
-            <div>
-              <Label htmlFor="create-global-role">Rol *</Label>
-              <Select
-                value={createFormData.role}
-                onValueChange={(value) =>
-                  setCreateFormData((prev) => ({ ...prev, role: value }))
-                }
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="admin">
-                    <div>
-                      <p className="font-medium">Administrador</p>
-                      <p className="text-xs text-muted-foreground">
-                        Puede gestionar configuración y miembros
-                      </p>
-                    </div>
-                  </SelectItem>
-                  <SelectItem value="member">
-                    <div>
-                      <p className="font-medium">Miembro</p>
-                      <p className="text-xs text-muted-foreground">
-                        Puede crear y editar documentos
-                      </p>
-                    </div>
-                  </SelectItem>
-                  <SelectItem value="viewer">
-                    <div>
-                      <p className="font-medium">Observador</p>
-                      <p className="text-xs text-muted-foreground">
-                        Solo puede ver información
-                      </p>
-                    </div>
-                  </SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="border rounded-lg p-4 bg-muted/30">
-              <div className="flex items-center gap-2 text-sm">
-                <Building2 className="h-4 w-4 text-primary" />
-                <span className="font-medium">Empresas con acceso:</span>
-                <Badge variant="default">Todas ({organizations.length})</Badge>
-              </div>
-              <p className="text-xs text-muted-foreground mt-2">
-                El usuario tendrá acceso a todas las empresas del sistema automáticamente
-              </p>
-            </div>
-          </div>
-
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => {
-                setIsCreateDialogOpen(false);
-                setCreateFormData({ 
-                  email: "", 
-                  password: "",
-                  full_name: "",
-                  role: "user", 
-                  organization_ids: [] 
-                });
-              }}
-            >
-              Cancelar
-            </Button>
-            <Button onClick={handleCreateUser} disabled={isSending}>
-              {isSending ? (
-                <>
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  Enviando...
-                </>
-              ) : (
-                <>
-                  <Mail className="h-4 w-4 mr-2" />
-                  Enviar Invitación
-                </>
+                "Enviar Invitación"
               )}
             </Button>
           </DialogFooter>
