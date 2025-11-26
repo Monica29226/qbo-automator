@@ -14,7 +14,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { ArrowLeft, Search, CheckCircle2, XCircle, Clock, FileText } from "lucide-react";
+import { ArrowLeft, Search, CheckCircle2, XCircle, Clock, FileText, HardDrive, ExternalLink } from "lucide-react";
 import { toast } from "sonner";
 
 interface ProcessedDocument {
@@ -29,6 +29,8 @@ interface ProcessedDocument {
   status: string;
   xml_data: any;
   currency: string;
+  google_drive_pdf_id: string | null;
+  google_drive_xml_id: string | null;
 }
 
 const QuickBooksStatus = () => {
@@ -155,6 +157,12 @@ const QuickBooksStatus = () => {
     }
   };
 
+  const openInGoogleDrive = (fileId: string, fileName: string) => {
+    const driveUrl = `https://drive.google.com/file/d/${fileId}/view`;
+    window.open(driveUrl, '_blank');
+    toast.success(`Abriendo ${fileName} en Google Drive`);
+  };
+
   return (
     <div className="min-h-screen bg-background">
       <header className="border-b bg-card sticky top-0 z-10">
@@ -219,8 +227,8 @@ const QuickBooksStatus = () => {
               </div>
             ) : (
               <div className="overflow-x-auto">
-                <Table>
-                  <TableHeader>
+                  <Table>
+                   <TableHeader>
                     <TableRow>
                       <TableHead>No. Consecutivo</TableHead>
                       <TableHead>Fecha Registro</TableHead>
@@ -231,6 +239,7 @@ const QuickBooksStatus = () => {
                       <TableHead>Respuesta Receptor</TableHead>
                       <TableHead>QB</TableHead>
                       <TableHead>R.Hacienda</TableHead>
+                      <TableHead>Google Drive</TableHead>
                       <TableHead className="text-right">Acciones</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -264,6 +273,36 @@ const QuickBooksStatus = () => {
                             <Badge variant="outline">
                               {getHaciendaStatus(doc.xml_data)}
                             </Badge>
+                          </TableCell>
+                          <TableCell>
+                            {(doc.google_drive_pdf_id || doc.google_drive_xml_id) ? (
+                              <div className="flex gap-1">
+                                {doc.google_drive_pdf_id && (
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => openInGoogleDrive(doc.google_drive_pdf_id!, 'PDF')}
+                                    className="h-8 w-8 p-0"
+                                    title="Ver PDF en Drive"
+                                  >
+                                    <FileText className="h-4 w-4" />
+                                  </Button>
+                                )}
+                                {doc.google_drive_xml_id && (
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => openInGoogleDrive(doc.google_drive_xml_id!, 'XML')}
+                                    className="h-8 w-8 p-0"
+                                    title="Ver XML en Drive"
+                                  >
+                                    <HardDrive className="h-4 w-4" />
+                                  </Button>
+                                )}
+                              </div>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">-</span>
+                            )}
                           </TableCell>
                           <TableCell className="text-right">
                             <Button

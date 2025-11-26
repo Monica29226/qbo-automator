@@ -313,6 +313,9 @@ export type Database = {
           error_message: string | null
           exchange_rate: number | null
           file_path: string | null
+          google_drive_pdf_id: string | null
+          google_drive_uploaded_at: string | null
+          google_drive_xml_id: string | null
           id: string
           issue_date: string
           organization_id: string | null
@@ -344,6 +347,9 @@ export type Database = {
           error_message?: string | null
           exchange_rate?: number | null
           file_path?: string | null
+          google_drive_pdf_id?: string | null
+          google_drive_uploaded_at?: string | null
+          google_drive_xml_id?: string | null
           id?: string
           issue_date: string
           organization_id?: string | null
@@ -375,6 +381,9 @@ export type Database = {
           error_message?: string | null
           exchange_rate?: number | null
           file_path?: string | null
+          google_drive_pdf_id?: string | null
+          google_drive_uploaded_at?: string | null
+          google_drive_xml_id?: string | null
           id?: string
           issue_date?: string
           organization_id?: string | null
