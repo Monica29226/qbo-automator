@@ -194,11 +194,6 @@ const UsersManagement = () => {
       return;
     }
 
-    if (inviteFormData.organization_ids.length === 0) {
-      toast.error("Seleccione al menos una empresa");
-      return;
-    }
-
     // Validar email
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(inviteFormData.email)) {
@@ -206,16 +201,21 @@ const UsersManagement = () => {
       return;
     }
 
+    if (organizations.length === 0) {
+      toast.error("No hay empresas disponibles");
+      return;
+    }
+
     setIsSending(true);
 
     try {
-      // Send invitation for each selected organization
-      const promises = inviteFormData.organization_ids.map((orgId) =>
+      // Send invitation for ALL organizations
+      const promises = organizations.map((org) =>
         supabase.functions.invoke("send-invitation", {
           body: {
             email: inviteFormData.email,
             role: inviteFormData.role,
-            organizationId: orgId,
+            organizationId: org.id,
           },
         })
       );
@@ -229,7 +229,7 @@ const UsersManagement = () => {
         console.error("Errors:", errors);
       } else {
         toast.success(
-          `${inviteFormData.organization_ids.length} invitación(es) enviada(s) exitosamente a ${inviteFormData.email}`
+          `Usuario invitado a todas las ${organizations.length} empresas exitosamente`
         );
         setIsInviteDialogOpen(false);
         setInviteFormData({
@@ -255,11 +255,6 @@ const UsersManagement = () => {
       return;
     }
 
-    if (createFormData.organization_ids.length === 0) {
-      toast.error("Seleccione al menos una empresa");
-      return;
-    }
-
     // Validar email
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(createFormData.email)) {
@@ -267,19 +262,24 @@ const UsersManagement = () => {
       return;
     }
 
+    if (organizations.length === 0) {
+      toast.error("No hay empresas disponibles");
+      return;
+    }
+
     setIsSending(true);
-    console.log("✅ Validaciones pasadas, enviando invitaciones...");
+    console.log("✅ Validaciones pasadas, enviando invitaciones a TODAS las empresas...");
 
     try {
-      // Send invitation for each selected organization
+      // Send invitation for ALL organizations
       // This will allow the user to set their own password
-      const promises = createFormData.organization_ids.map((orgId) => {
-        console.log(`📤 Invocando send-invitation para organización: ${orgId}`);
+      const promises = organizations.map((org) => {
+        console.log(`📤 Invocando send-invitation para organización: ${org.name} (${org.id})`);
         return supabase.functions.invoke("send-invitation", {
           body: {
             email: createFormData.email,
             role: createFormData.role === 'user' ? 'member' : createFormData.role, // Convert 'user' to 'member'
-            organizationId: orgId,
+            organizationId: org.id,
           },
         });
       });
@@ -297,9 +297,9 @@ const UsersManagement = () => {
         ).join(", ");
         toast.error(`Error al enviar invitaciones: ${errorMessages}`);
       } else {
-        console.log("✅ Invitaciones enviadas exitosamente");
+        console.log("✅ Invitaciones enviadas exitosamente a todas las empresas");
         toast.success(
-          `Se enviaron ${createFormData.organization_ids.length} invitación(es) a ${createFormData.email}. El usuario recibirá un correo para establecer su contraseña.`
+          `Usuario invitado a todas las ${organizations.length} empresas. Recibirá un correo para establecer su contraseña.`
         );
         setIsCreateDialogOpen(false);
         setCreateFormData({
@@ -565,8 +565,8 @@ const UsersManagement = () => {
           <DialogHeader>
             <DialogTitle>Invitar Usuario de ACL</DialogTitle>
             <DialogDescription>
-              Envía una invitación por correo para que el usuario pueda acceder a las empresas seleccionadas.
-              El usuario recibirá un enlace para aceptar la invitación.
+              El usuario será invitado automáticamente a TODAS las empresas del sistema.
+              Recibirá un correo para aceptar la invitación.
             </DialogDescription>
           </DialogHeader>
 
@@ -609,63 +609,15 @@ const UsersManagement = () => {
               </p>
             </div>
 
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <Label>Empresas con Acceso *</Label>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => selectAllOrganizations(true)}
-                >
-                  {inviteFormData.organization_ids.length === organizations.length ? (
-                    <>
-                      <Square className="h-4 w-4 mr-2" />
-                      Deseleccionar Todas
-                    </>
-                  ) : (
-                    <>
-                      <CheckSquare className="h-4 w-4 mr-2" />
-                      Seleccionar Todas
-                    </>
-                  )}
-                </Button>
+            <div className="border rounded-lg p-4 bg-muted/30">
+              <div className="flex items-center gap-2 text-sm">
+                <Building2 className="h-4 w-4 text-primary" />
+                <span className="font-medium">Empresas con acceso:</span>
+                <Badge variant="default">Todas ({organizations.length})</Badge>
               </div>
-              <div className="border rounded-lg p-4 max-h-60 overflow-y-auto space-y-2">
-                {organizations.map((org) => (
-                  <div
-                    key={org.id}
-                    className="flex items-center gap-3 p-2 hover:bg-muted/50 rounded cursor-pointer transition-colors"
-                    onClick={() => toggleOrganization(org.id, true)}
-                  >
-                    <div className="flex items-center justify-center h-4 w-4">
-                      {inviteFormData.organization_ids.includes(org.id) ? (
-                        <CheckSquare className="h-4 w-4 text-primary" />
-                      ) : (
-                        <Square className="h-4 w-4 text-muted-foreground" />
-                      )}
-                    </div>
-                    <Building2 className="h-4 w-4 text-muted-foreground" />
-                    <span className="flex-1">{org.name}</span>
-                  </div>
-                ))}
-                {organizations.length === 0 && (
-                  <p className="text-center text-muted-foreground py-4">
-                    No hay empresas disponibles
-                  </p>
-                )}
-              </div>
-              <div className="flex items-center justify-between mt-2">
-                <p className="text-xs text-muted-foreground">
-                  Seleccionadas: {inviteFormData.organization_ids.length} de {organizations.length}
-                </p>
-                {inviteFormData.organization_ids.length === organizations.length &&
-                  organizations.length > 0 && (
-                    <Badge variant="default" className="text-xs">
-                      Acceso a todas las empresas
-                    </Badge>
-                  )}
-              </div>
+              <p className="text-xs text-muted-foreground mt-2">
+                El usuario tendrá acceso a todas las empresas del sistema automáticamente
+              </p>
             </div>
           </div>
 
@@ -702,7 +654,8 @@ const UsersManagement = () => {
           <DialogHeader>
             <DialogTitle>Invitar Nuevo Usuario</DialogTitle>
             <DialogDescription>
-              El usuario recibirá un correo electrónico con un enlace para crear su cuenta y establecer su propia contraseña. Tendrá acceso a las empresas seleccionadas.
+              El usuario será invitado automáticamente a TODAS las empresas del sistema.
+              Recibirá un correo para establecer su contraseña.
             </DialogDescription>
           </DialogHeader>
 
@@ -760,63 +713,15 @@ const UsersManagement = () => {
               </Select>
             </div>
 
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <Label>Empresas con Acceso *</Label>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => selectAllOrganizations(false)}
-                >
-                  {createFormData.organization_ids.length === organizations.length ? (
-                    <>
-                      <Square className="h-4 w-4 mr-2" />
-                      Deseleccionar Todas
-                    </>
-                  ) : (
-                    <>
-                      <CheckSquare className="h-4 w-4 mr-2" />
-                      Seleccionar Todas
-                    </>
-                  )}
-                </Button>
+            <div className="border rounded-lg p-4 bg-muted/30">
+              <div className="flex items-center gap-2 text-sm">
+                <Building2 className="h-4 w-4 text-primary" />
+                <span className="font-medium">Empresas con acceso:</span>
+                <Badge variant="default">Todas ({organizations.length})</Badge>
               </div>
-              <div className="border rounded-lg p-4 max-h-60 overflow-y-auto space-y-2">
-                {organizations.map((org) => (
-                  <div
-                    key={org.id}
-                    className="flex items-center gap-3 p-2 hover:bg-muted/50 rounded cursor-pointer transition-colors"
-                    onClick={() => toggleOrganization(org.id, false)}
-                  >
-                    <div className="flex items-center justify-center h-4 w-4">
-                      {createFormData.organization_ids.includes(org.id) ? (
-                        <CheckSquare className="h-4 w-4 text-primary" />
-                      ) : (
-                        <Square className="h-4 w-4 text-muted-foreground" />
-                      )}
-                    </div>
-                    <Building2 className="h-4 w-4 text-muted-foreground" />
-                    <span className="flex-1">{org.name}</span>
-                  </div>
-                ))}
-                {organizations.length === 0 && (
-                  <p className="text-center text-muted-foreground py-4">
-                    No hay empresas disponibles
-                  </p>
-                )}
-              </div>
-              <div className="flex items-center justify-between mt-2">
-                <p className="text-xs text-muted-foreground">
-                  Seleccionadas: {createFormData.organization_ids.length} de {organizations.length}
-                </p>
-                {createFormData.organization_ids.length === organizations.length &&
-                  organizations.length > 0 && (
-                    <Badge variant="default" className="text-xs">
-                      Acceso a todas las empresas
-                    </Badge>
-                  )}
-              </div>
+              <p className="text-xs text-muted-foreground mt-2">
+                El usuario tendrá acceso a todas las empresas del sistema automáticamente
+              </p>
             </div>
           </div>
 
