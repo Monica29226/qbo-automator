@@ -174,31 +174,31 @@ const InvoicesPendingLog = () => {
       const invoicesWithVendors = docsData.map((doc) => {
         let invoiceData: PendingInvoice = { 
           ...doc,
-          default_account_ref: undefined,
-          default_class_ref: undefined,
+          // IMPORTANTE: Usar los valores ya guardados en el documento primero
+          default_account_ref: doc.default_account_ref || undefined,
+          default_class_ref: doc.default_class_ref || undefined,
           has_vendor_default: false
         };
         
-        // Apply vendor data from batch fetch
-        if (doc.vendor_id && vendorsMap.has(doc.vendor_id)) {
+        // Si no hay cuenta en el documento, usar del vendor
+        if (!invoiceData.default_account_ref && doc.vendor_id && vendorsMap.has(doc.vendor_id)) {
           const vendorData = vendorsMap.get(doc.vendor_id);
           invoiceData.default_account_ref = vendorData.default_account_ref;
           invoiceData.default_class_ref = vendorData.default_class_ref;
         }
 
-        // Apply vendor defaults if available
+        // Si tampoco hay en vendor, aplicar vendor defaults
         const vendorDefault = vendorDefaults.get(doc.supplier_name);
         if (vendorDefault) {
           const hasDefaultApplied = !invoiceData.default_account_ref || !invoiceData.uses_tax;
           
           if (!invoiceData.default_account_ref && vendorDefault.default_account_ref) {
             invoiceData.default_account_ref = vendorDefault.default_account_ref;
+            invoiceData.has_vendor_default = true;
           }
           if (invoiceData.uses_tax === null || invoiceData.uses_tax === undefined) {
             invoiceData.uses_tax = vendorDefault.default_uses_tax;
           }
-          
-          invoiceData.has_vendor_default = hasDefaultApplied;
         }
         
         return invoiceData;
