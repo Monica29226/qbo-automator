@@ -377,27 +377,50 @@ const Dashboard = () => {
 
   if (!activeOrganization) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-background">
-        <Card className="w-full max-w-md">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Building2 className="h-6 w-6" />
-              Sistema Multi-Empresa
-            </CardTitle>
-            <CardDescription>
-              Selecciona una organización para continuar o crea una nueva
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="flex flex-col gap-4 items-center">
-              <OrganizationSwitcher />
-              <Button variant="outline" onClick={() => navigate("/multi-tenant")} className="w-full">
-                Ver Guía Multi-Empresa
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+      <SidebarProvider>
+        <div className="min-h-screen flex w-full bg-background">
+          <DashboardSidebar 
+            isAdmin={isAdmin} 
+            reviewCount={0} 
+            onSignOut={signOut}
+          />
+          
+          <SidebarInset className="flex-1">
+            <header className="sticky top-0 z-10 border-b bg-card shadow-sm">
+              <div className="flex h-14 items-center gap-4 px-6">
+                <SidebarTrigger className="-ml-2" />
+                <div className="flex items-center gap-2 ml-auto">
+                  <OrganizationSwitcher />
+                </div>
+              </div>
+            </header>
+
+            <main className="flex-1 overflow-auto p-6">
+              <div className="max-w-4xl mx-auto">
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2">
+                      <Building2 className="h-6 w-6" />
+                      Sistema Multi-Empresa
+                    </CardTitle>
+                    <CardDescription>
+                      Selecciona una organización para continuar o crea una nueva
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="flex flex-col gap-4 items-center">
+                      <OrganizationSwitcher />
+                      <Button variant="outline" onClick={() => navigate("/multi-tenant")} className="w-full">
+                        Ver Guía Multi-Empresa
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+            </main>
+          </SidebarInset>
+        </div>
+      </SidebarProvider>
     );
   }
 
