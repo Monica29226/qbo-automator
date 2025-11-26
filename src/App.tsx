@@ -40,7 +40,14 @@ const App = () => (
           <Route path="/" element={<Index />} />
           <Route path="/auth" element={<Auth />} />
           <Route path="/multi-tenant" element={<MultiTenantDocs />} />
-          <Route path="/accept-invitation/:token" element={<AcceptInvitation />} />
+          <Route
+            path="/accept-invitation"
+            element={
+              <ProtectedRoute>
+                <AcceptInvitation />
+              </ProtectedRoute>
+            }
+          />
           <Route
             path="/dashboard"
             element={
@@ -142,14 +149,6 @@ const App = () => (
             element={
               <ProtectedRoute>
                 <PublishedDocuments />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/accept-invitation"
-            element={
-              <ProtectedRoute>
-                <AcceptInvitation />
               </ProtectedRoute>
             }
           />
