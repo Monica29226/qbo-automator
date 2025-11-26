@@ -631,7 +631,7 @@ const InvoicesPendingLog = () => {
     }
 
     try {
-      const loadingToast = toast.loading("Generando enlace de descarga...");
+      const loadingToast = toast.loading("Descargando PDF...");
       
       // Extraer el path del storage de la URL - probar múltiples formatos
       let pdfPath = invoice.pdf_attachment_url;
@@ -659,32 +659,42 @@ const InvoicesPendingLog = () => {
       
       console.log("📂 Path extraído:", pdfPath);
       
-      // Generar URL firmada con 1 hora de validez
-      const { data, error } = await supabase.storage
+      // Descargar el archivo como blob a través del cliente autenticado de Supabase
+      // Esto evita bloqueadores que impiden acceso directo a URLs de Supabase
+      const { data: blobData, error } = await supabase.storage
         .from('company-documents')
-        .createSignedUrl(pdfPath, 3600);
+        .download(pdfPath);
 
       if (error) {
         console.error("❌ Error de storage:", error);
         throw new Error(`Error al acceder al archivo: ${error.message}`);
       }
 
-      if (!data?.signedUrl) {
-        throw new Error("No se pudo generar la URL del archivo");
+      if (!blobData) {
+        throw new Error("No se pudo descargar el archivo");
       }
 
       toast.dismiss(loadingToast);
-      console.log("✅ URL firmada generada exitosamente");
+      console.log("✅ PDF descargado exitosamente");
+      
+      // Crear URL blob local (no será bloqueada por extensiones de seguridad)
+      const blobUrl = URL.createObjectURL(blobData);
       
       // Abrir en nueva pestaña
-      const opened = window.open(data.signedUrl, '_blank', 'noopener,noreferrer');
+      const opened = window.open(blobUrl, '_blank', 'noopener,noreferrer');
       
       if (!opened) {
         console.error("❌ window.open fue bloqueado por el navegador");
         toast.error("El navegador bloqueó la ventana emergente. Por favor, permite ventanas emergentes para este sitio.");
+        URL.revokeObjectURL(blobUrl); // Limpiar si no se pudo abrir
       } else {
         console.log("✅ PDF abierto exitosamente");
         toast.success("PDF abierto correctamente");
+        
+        // Limpiar la URL blob después de 1 minuto (dar tiempo a que cargue)
+        setTimeout(() => {
+          URL.revokeObjectURL(blobUrl);
+        }, 60000);
       }
     } catch (error: any) {
       toast.dismiss();
