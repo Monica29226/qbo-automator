@@ -307,6 +307,8 @@ export type Database = {
         Row: {
           created_at: string
           currency: string
+          default_account_ref: string | null
+          default_class_ref: string | null
           doc_key: string
           doc_number: string
           doc_type: string
@@ -341,6 +343,8 @@ export type Database = {
         Insert: {
           created_at?: string
           currency?: string
+          default_account_ref?: string | null
+          default_class_ref?: string | null
           doc_key: string
           doc_number: string
           doc_type: string
@@ -375,6 +379,8 @@ export type Database = {
         Update: {
           created_at?: string
           currency?: string
+          default_account_ref?: string | null
+          default_class_ref?: string | null
           doc_key?: string
           doc_number?: string
           doc_type?: string

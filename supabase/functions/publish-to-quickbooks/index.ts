@@ -464,8 +464,17 @@ Deno.serve(async (req) => {
         // Buscar cuenta contable del vendor o de las reglas de clasificación
         let accountCode: string | null = null;
         
-        // 1. Primero intentar desde el vendor
-        if (doc.vendor_id) {
+        // 1. PRIORIDAD MÁXIMA: Cuenta configurada específicamente en el documento
+        if (doc.default_account_ref) {
+          // Extraer solo el código (antes del primer espacio)
+          // Ej: "6124-01 Alimentación y hoteles" → "6124-01"
+          const rawCode = doc.default_account_ref;
+          accountCode = rawCode.split(' ')[0].trim();
+          console.log(`✓✓ PRIORITY: Account code from document: ${accountCode} (raw: ${rawCode})`);
+        }
+        
+        // 2. Si no hay cuenta en el documento, intentar desde el vendor
+        if (!accountCode && doc.vendor_id) {
           const { data: vendorData } = await supabase
             .from("vendors")
             .select("default_account_ref")
@@ -481,7 +490,7 @@ Deno.serve(async (req) => {
           }
         }
         
-        // 2. Si no hay cuenta del vendor, buscar en vendor_categories por tax_id
+        // 3. Si no hay cuenta del vendor, buscar en vendor_categories por tax_id
         if (!accountCode && doc.supplier_tax_id) {
           const { data: vendorCategory } = await supabase
             .from("vendor_categories")
@@ -497,7 +506,7 @@ Deno.serve(async (req) => {
           }
         }
         
-        // 3. Si no hay cuenta, buscar en las reglas de clasificación por nombre
+        // 4. Si aún no hay cuenta, buscar en las reglas de clasificación por nombre
         if (!accountCode) {
           const { data: classificationRule } = await supabase
             .from("vendor_classification_rules")
@@ -514,7 +523,7 @@ Deno.serve(async (req) => {
           }
         }
         
-        // 4. Si aún no hay cuenta, buscar en xml_data.cuentaContable
+        // 5. Si aún no hay cuenta, buscar en xml_data.cuentaContable
         if (!accountCode && doc.xml_data?.cuentaContable) {
           // Extraer solo el código, ignorando descripción adicional
           // Formato: "6130-03 Gasto de operacion:Utencilios cafeteria" -> "6130-03"
@@ -527,7 +536,7 @@ Deno.serve(async (req) => {
           }
         }
         
-        // 5. Si no se pudo determinar ninguna cuenta, marcar como pending_config
+        // 6. Si no se pudo determinar ninguna cuenta, marcar como pending_config
         if (!accountCode) {
           console.log(`❌ No account code found for ${doc.supplier_name}, requires manual configuration`);
           
