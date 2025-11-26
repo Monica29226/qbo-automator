@@ -23,7 +23,7 @@ const SelectCompany = () => {
       const { data: { session } } = await supabase.auth.getSession();
       
       if (!session?.user) {
-        navigate("/auth");
+        navigate("/");
         return;
       }
 
@@ -48,7 +48,7 @@ const SelectCompany = () => {
       } else {
         toast.error("No tienes acceso a ninguna empresa");
         await supabase.auth.signOut();
-        navigate("/auth");
+        navigate("/");
       }
     } catch (error) {
       console.error("Error loading organizations:", error);

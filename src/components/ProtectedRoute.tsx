@@ -15,7 +15,7 @@ export const ProtectedRoute = ({ children, requireAdmin = false }: ProtectedRout
   useEffect(() => {
     if (!isLoading) {
       if (!user) {
-        navigate("/auth");
+        navigate("/");
       } else if (requireAdmin && !isAdmin) {
         navigate("/dashboard");
       }
