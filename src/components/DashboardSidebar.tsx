@@ -147,7 +147,7 @@ export function DashboardSidebar({ isAdmin, reviewCount, onSignOut }: DashboardS
             {!collapsed && (
               <div>
                 <h2 className="text-lg font-bold text-foreground">FacturaFlow CR</h2>
-                <p className="text-xs text-muted-foreground">ACL Automation</p>
+                <p className="text-xs text-muted-foreground">Calderón</p>
               </div>
             )}
           </div>
