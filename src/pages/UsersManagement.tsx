@@ -64,11 +64,19 @@ const UsersManagement = () => {
   const [pendingInvitations, setPendingInvitations] = useState<PendingInvitation[]>([]);
   const [organizations, setOrganizations] = useState<Organization[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [isInviteDialogOpen, setIsInviteDialogOpen] = useState(false);
+  const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [isSending, setIsSending] = useState(false);
-  const [formData, setFormData] = useState({
+  const [inviteFormData, setInviteFormData] = useState({
     email: "",
     role: "member",
+    organization_ids: [] as string[],
+  });
+  const [createFormData, setCreateFormData] = useState({
+    email: "",
+    password: "",
+    full_name: "",
+    role: "user",
     organization_ids: [] as string[],
   });
 
@@ -164,19 +172,19 @@ const UsersManagement = () => {
   };
 
   const handleSendInvitations = async () => {
-    if (!formData.email) {
+    if (!inviteFormData.email) {
       toast.error("Ingrese el correo del usuario");
       return;
     }
 
-    if (formData.organization_ids.length === 0) {
+    if (inviteFormData.organization_ids.length === 0) {
       toast.error("Seleccione al menos una empresa");
       return;
     }
 
     // Validar email
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(formData.email)) {
+    if (!emailRegex.test(inviteFormData.email)) {
       toast.error("Ingrese un correo válido");
       return;
     }
@@ -185,11 +193,11 @@ const UsersManagement = () => {
 
     try {
       // Send invitation for each selected organization
-      const promises = formData.organization_ids.map((orgId) =>
+      const promises = inviteFormData.organization_ids.map((orgId) =>
         supabase.functions.invoke("send-invitation", {
           body: {
-            email: formData.email,
-            role: formData.role,
+            email: inviteFormData.email,
+            role: inviteFormData.role,
             organizationId: orgId,
           },
         })
@@ -204,10 +212,10 @@ const UsersManagement = () => {
         console.error("Errors:", errors);
       } else {
         toast.success(
-          `${formData.organization_ids.length} invitación(es) enviada(s) exitosamente a ${formData.email}`
+          `${inviteFormData.organization_ids.length} invitación(es) enviada(s) exitosamente a ${inviteFormData.email}`
         );
-        setIsDialogOpen(false);
-        setFormData({
+        setIsInviteDialogOpen(false);
+        setInviteFormData({
           email: "",
           role: "member",
           organization_ids: [],
@@ -217,6 +225,74 @@ const UsersManagement = () => {
     } catch (error: any) {
       console.error("Error sending invitations:", error);
       toast.error("Error al enviar invitaciones");
+    } finally {
+      setIsSending(false);
+    }
+  };
+
+  const handleCreateUser = async () => {
+    if (!createFormData.email || !createFormData.password) {
+      toast.error("Ingrese el correo y contraseña");
+      return;
+    }
+
+    if (createFormData.organization_ids.length === 0) {
+      toast.error("Seleccione al menos una empresa");
+      return;
+    }
+
+    if (createFormData.password.length < 6) {
+      toast.error("La contraseña debe tener al menos 6 caracteres");
+      return;
+    }
+
+    // Validar email
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(createFormData.email)) {
+      toast.error("Ingrese un correo válido");
+      return;
+    }
+
+    setIsSending(true);
+
+    try {
+      // Create user for each selected organization
+      const promises = createFormData.organization_ids.map((orgId) =>
+        supabase.functions.invoke("create-user", {
+          body: {
+            email: createFormData.email,
+            password: createFormData.password,
+            full_name: createFormData.full_name,
+            role: createFormData.role,
+            organization_id: orgId,
+          },
+        })
+      );
+
+      const results = await Promise.all(promises);
+
+      // Check for errors
+      const errors = results.filter((r) => r.error || r.data?.error);
+      if (errors.length > 0) {
+        toast.error(`Error al crear usuario en ${errors.length} empresa(s)`);
+        console.error("Errors:", errors);
+      } else {
+        toast.success(
+          `Usuario ${createFormData.email} creado exitosamente con acceso a ${createFormData.organization_ids.length} empresa(s)`
+        );
+        setIsCreateDialogOpen(false);
+        setCreateFormData({
+          email: "",
+          password: "",
+          full_name: "",
+          role: "user",
+          organization_ids: [],
+        });
+        fetchData();
+      }
+    } catch (error: any) {
+      console.error("Error creating user:", error);
+      toast.error("Error al crear usuario");
     } finally {
       setIsSending(false);
     }
@@ -239,28 +315,43 @@ const UsersManagement = () => {
     }
   };
 
-  const toggleOrganization = (orgId: string) => {
-    setFormData((prev) => ({
-      ...prev,
-      organization_ids: prev.organization_ids.includes(orgId)
-        ? prev.organization_ids.filter((id) => id !== orgId)
-        : [...prev.organization_ids, orgId],
-    }));
-  };
-
-  const selectAllOrganizations = () => {
-    if (formData.organization_ids.length === organizations.length) {
-      // Deselect all
-      setFormData((prev) => ({
+  const toggleOrganization = (orgId: string, isInvite: boolean) => {
+    if (isInvite) {
+      setInviteFormData((prev) => ({
         ...prev,
-        organization_ids: [],
+        organization_ids: prev.organization_ids.includes(orgId)
+          ? prev.organization_ids.filter((id) => id !== orgId)
+          : [...prev.organization_ids, orgId],
       }));
     } else {
-      // Select all
-      setFormData((prev) => ({
+      setCreateFormData((prev) => ({
         ...prev,
-        organization_ids: organizations.map((org) => org.id),
+        organization_ids: prev.organization_ids.includes(orgId)
+          ? prev.organization_ids.filter((id) => id !== orgId)
+          : [...prev.organization_ids, orgId],
       }));
+    }
+  };
+
+  const selectAllOrganizations = (isInvite: boolean) => {
+    if (isInvite) {
+      if (inviteFormData.organization_ids.length === organizations.length) {
+        setInviteFormData((prev) => ({ ...prev, organization_ids: [] }));
+      } else {
+        setInviteFormData((prev) => ({
+          ...prev,
+          organization_ids: organizations.map((org) => org.id),
+        }));
+      }
+    } else {
+      if (createFormData.organization_ids.length === organizations.length) {
+        setCreateFormData((prev) => ({ ...prev, organization_ids: [] }));
+      } else {
+        setCreateFormData((prev) => ({
+          ...prev,
+          organization_ids: organizations.map((org) => org.id),
+        }));
+      }
     }
   };
 
@@ -306,10 +397,16 @@ const UsersManagement = () => {
               </p>
             </div>
           </div>
-          <Button onClick={() => setIsDialogOpen(true)}>
-            <Plus className="h-4 w-4 mr-2" />
-            Invitar Usuario
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="secondary" onClick={() => setIsInviteDialogOpen(true)}>
+              <Mail className="h-4 w-4 mr-2" />
+              Invitar Usuario
+            </Button>
+            <Button onClick={() => setIsCreateDialogOpen(true)}>
+              <Plus className="h-4 w-4 mr-2" />
+              Crear Usuario
+            </Button>
+          </div>
         </div>
       </header>
 
@@ -441,7 +538,7 @@ const UsersManagement = () => {
       </main>
 
       {/* Invitation Dialog */}
-      <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+      <Dialog open={isInviteDialogOpen} onOpenChange={setIsInviteDialogOpen}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Invitar Usuario de ACL</DialogTitle>
@@ -453,14 +550,14 @@ const UsersManagement = () => {
 
           <div className="space-y-4">
             <div>
-              <Label htmlFor="email">Correo Electrónico *</Label>
+              <Label htmlFor="invite-email">Correo Electrónico *</Label>
               <Input
-                id="email"
+                id="invite-email"
                 type="email"
                 placeholder="usuario@ejemplo.com"
-                value={formData.email}
+                value={inviteFormData.email}
                 onChange={(e) =>
-                  setFormData((prev) => ({ ...prev, email: e.target.value }))
+                  setInviteFormData((prev) => ({ ...prev, email: e.target.value }))
                 }
               />
               <p className="text-xs text-muted-foreground mt-1">
@@ -469,11 +566,11 @@ const UsersManagement = () => {
             </div>
 
             <div>
-              <Label htmlFor="role">Rol en las Empresas *</Label>
+              <Label htmlFor="invite-role">Rol en las Empresas *</Label>
               <Select
-                value={formData.role}
+                value={inviteFormData.role}
                 onValueChange={(value) =>
-                  setFormData((prev) => ({ ...prev, role: value }))
+                  setInviteFormData((prev) => ({ ...prev, role: value }))
                 }
               >
                 <SelectTrigger>
@@ -486,7 +583,7 @@ const UsersManagement = () => {
                 </SelectContent>
               </Select>
               <p className="text-xs text-muted-foreground mt-1">
-                {roleDescriptions[formData.role]}
+                {roleDescriptions[inviteFormData.role]}
               </p>
             </div>
 
@@ -497,9 +594,9 @@ const UsersManagement = () => {
                   type="button"
                   variant="outline"
                   size="sm"
-                  onClick={selectAllOrganizations}
+                  onClick={() => selectAllOrganizations(true)}
                 >
-                  {formData.organization_ids.length === organizations.length ? (
+                  {inviteFormData.organization_ids.length === organizations.length ? (
                     <>
                       <Square className="h-4 w-4 mr-2" />
                       Deseleccionar Todas
@@ -517,10 +614,10 @@ const UsersManagement = () => {
                   <div
                     key={org.id}
                     className="flex items-center gap-3 p-2 hover:bg-muted/50 rounded cursor-pointer transition-colors"
-                    onClick={() => toggleOrganization(org.id)}
+                    onClick={() => toggleOrganization(org.id, true)}
                   >
                     <div className="flex items-center justify-center h-4 w-4">
-                      {formData.organization_ids.includes(org.id) ? (
+                      {inviteFormData.organization_ids.includes(org.id) ? (
                         <CheckSquare className="h-4 w-4 text-primary" />
                       ) : (
                         <Square className="h-4 w-4 text-muted-foreground" />
@@ -538,9 +635,9 @@ const UsersManagement = () => {
               </div>
               <div className="flex items-center justify-between mt-2">
                 <p className="text-xs text-muted-foreground">
-                  Seleccionadas: {formData.organization_ids.length} de {organizations.length}
+                  Seleccionadas: {inviteFormData.organization_ids.length} de {organizations.length}
                 </p>
-                {formData.organization_ids.length === organizations.length &&
+                {inviteFormData.organization_ids.length === organizations.length &&
                   organizations.length > 0 && (
                     <Badge variant="default" className="text-xs">
                       Acceso a todas las empresas
@@ -554,8 +651,8 @@ const UsersManagement = () => {
             <Button
               variant="outline"
               onClick={() => {
-                setIsDialogOpen(false);
-                setFormData({ email: "", role: "member", organization_ids: [] });
+                setIsInviteDialogOpen(false);
+                setInviteFormData({ email: "", role: "member", organization_ids: [] });
               }}
             >
               Cancelar
@@ -570,6 +667,176 @@ const UsersManagement = () => {
                 <>
                   <Mail className="h-4 w-4 mr-2" />
                   Enviar Invitaciones
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Create User Dialog */}
+      <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Crear Usuario de ACL</DialogTitle>
+            <DialogDescription>
+              Crea un nuevo usuario con acceso inmediato a las empresas seleccionadas.
+              El usuario podrá iniciar sesión inmediatamente con las credenciales proporcionadas.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div>
+              <Label htmlFor="create-email">Correo Electrónico *</Label>
+              <Input
+                id="create-email"
+                type="email"
+                placeholder="usuario@ejemplo.com"
+                value={createFormData.email}
+                onChange={(e) =>
+                  setCreateFormData((prev) => ({ ...prev, email: e.target.value }))
+                }
+              />
+            </div>
+
+            <div>
+              <Label htmlFor="create-password">Contraseña *</Label>
+              <Input
+                id="create-password"
+                type="password"
+                placeholder="Mínimo 6 caracteres"
+                value={createFormData.password}
+                onChange={(e) =>
+                  setCreateFormData((prev) => ({ ...prev, password: e.target.value }))
+                }
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                La contraseña debe tener al menos 6 caracteres
+              </p>
+            </div>
+
+            <div>
+              <Label htmlFor="create-full-name">Nombre Completo</Label>
+              <Input
+                id="create-full-name"
+                type="text"
+                placeholder="Juan Pérez"
+                value={createFormData.full_name}
+                onChange={(e) =>
+                  setCreateFormData((prev) => ({ ...prev, full_name: e.target.value }))
+                }
+              />
+            </div>
+
+            <div>
+              <Label htmlFor="create-global-role">Rol Global *</Label>
+              <Select
+                value={createFormData.role}
+                onValueChange={(value) =>
+                  setCreateFormData((prev) => ({ ...prev, role: value }))
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="admin">Administrador Global</SelectItem>
+                  <SelectItem value="user">Usuario</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground mt-1">
+                {createFormData.role === "admin" 
+                  ? "Acceso completo a todas las funcionalidades del sistema"
+                  : "Acceso limitado según permisos de cada empresa"}
+              </p>
+            </div>
+
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <Label>Empresas con Acceso *</Label>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => selectAllOrganizations(false)}
+                >
+                  {createFormData.organization_ids.length === organizations.length ? (
+                    <>
+                      <Square className="h-4 w-4 mr-2" />
+                      Deseleccionar Todas
+                    </>
+                  ) : (
+                    <>
+                      <CheckSquare className="h-4 w-4 mr-2" />
+                      Seleccionar Todas
+                    </>
+                  )}
+                </Button>
+              </div>
+              <div className="border rounded-lg p-4 max-h-60 overflow-y-auto space-y-2">
+                {organizations.map((org) => (
+                  <div
+                    key={org.id}
+                    className="flex items-center gap-3 p-2 hover:bg-muted/50 rounded cursor-pointer transition-colors"
+                    onClick={() => toggleOrganization(org.id, false)}
+                  >
+                    <div className="flex items-center justify-center h-4 w-4">
+                      {createFormData.organization_ids.includes(org.id) ? (
+                        <CheckSquare className="h-4 w-4 text-primary" />
+                      ) : (
+                        <Square className="h-4 w-4 text-muted-foreground" />
+                      )}
+                    </div>
+                    <Building2 className="h-4 w-4 text-muted-foreground" />
+                    <span className="flex-1">{org.name}</span>
+                  </div>
+                ))}
+                {organizations.length === 0 && (
+                  <p className="text-center text-muted-foreground py-4">
+                    No hay empresas disponibles
+                  </p>
+                )}
+              </div>
+              <div className="flex items-center justify-between mt-2">
+                <p className="text-xs text-muted-foreground">
+                  Seleccionadas: {createFormData.organization_ids.length} de {organizations.length}
+                </p>
+                {createFormData.organization_ids.length === organizations.length &&
+                  organizations.length > 0 && (
+                    <Badge variant="default" className="text-xs">
+                      Acceso a todas las empresas
+                    </Badge>
+                  )}
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setIsCreateDialogOpen(false);
+                setCreateFormData({ 
+                  email: "", 
+                  password: "",
+                  full_name: "",
+                  role: "user", 
+                  organization_ids: [] 
+                });
+              }}
+            >
+              Cancelar
+            </Button>
+            <Button onClick={handleCreateUser} disabled={isSending}>
+              {isSending ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Creando...
+                </>
+              ) : (
+                <>
+                  <Plus className="h-4 w-4 mr-2" />
+                  Crear Usuario
                 </>
               )}
             </Button>
