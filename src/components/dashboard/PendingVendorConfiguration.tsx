@@ -24,6 +24,51 @@ export const PendingVendorConfiguration = () => {
   useEffect(() => {
     if (activeOrganization) {
       fetchPendingVendors();
+
+      // Suscripción realtime para actualizaciones automáticas
+      const channel = supabase
+        .channel('pending_vendors_changes')
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'processed_documents',
+            filter: `organization_id=eq.${activeOrganization}`
+          },
+          (payload) => {
+            console.log('📡 Realtime: Documento de proveedor pendiente actualizado', payload);
+            // Actualizar solo si el status es pending_config o cambió a/desde pending_config
+            const newStatus = (payload.new as any)?.status;
+            const oldStatus = (payload.old as any)?.status;
+            
+            if (newStatus === 'pending_config' || oldStatus === 'pending_config') {
+              fetchPendingVendors();
+            }
+          }
+        )
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'vendor_classification_rules',
+            filter: `organization_id=eq.${activeOrganization}`
+          },
+          (payload) => {
+            console.log('📡 Realtime: Regla de clasificación actualizada', payload);
+            // Una regla nueva puede hacer que documentos pending_config se procesen
+            fetchPendingVendors();
+          }
+        )
+        .subscribe((status) => {
+          console.log('📡 Realtime subscription status (Pending Vendors):', status);
+        });
+
+      return () => {
+        console.log('📡 Cerrando suscripción realtime (Pending Vendors)');
+        supabase.removeChannel(channel);
+      };
     }
   }, [activeOrganization]);
 
