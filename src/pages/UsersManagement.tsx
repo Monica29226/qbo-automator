@@ -30,31 +30,46 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, UserPlus, Pencil, Trash2, Shield, User } from "lucide-react";
+import { ArrowLeft, Users, Loader2, Plus, Trash2, Mail, Building2, CheckSquare, Square } from "lucide-react";
 import { toast } from "sonner";
 
 interface UserProfile {
   id: string;
   email: string;
   full_name: string | null;
-  role: "admin" | "user";
+  role: string;
   created_at: string;
-  organizations: string[];
+  organizations: { name: string }[];
+}
+
+interface PendingInvitation {
+  id: string;
+  email: string;
+  role: string;
+  created_at: string;
+  expires_at: string;
+  organization_id: string;
+  organization_name?: string;
+}
+
+interface Organization {
+  id: string;
+  name: string;
 }
 
 const UsersManagement = () => {
   const navigate = useNavigate();
-  const { isAdmin, activeOrganization } = useAuth();
+  const { isAdmin } = useAuth();
   const [users, setUsers] = useState<UserProfile[]>([]);
+  const [pendingInvitations, setPendingInvitations] = useState<PendingInvitation[]>([]);
+  const [organizations, setOrganizations] = useState<Organization[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
-  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
-  const [selectedUser, setSelectedUser] = useState<UserProfile | null>(null);
+  const [isSending, setIsSending] = useState(false);
   const [formData, setFormData] = useState({
     email: "",
-    password: "",
-    full_name: "",
-    role: "user" as "admin" | "user",
+    role: "member",
+    organization_ids: [] as string[],
   });
 
   useEffect(() => {
@@ -63,147 +78,203 @@ const UsersManagement = () => {
       navigate("/dashboard");
       return;
     }
-    fetchUsers();
+    fetchData();
   }, [isAdmin, navigate]);
 
-  const fetchUsers = async () => {
+  const fetchData = async () => {
     setIsLoading(true);
-    try {
-      // Obtener todos los perfiles
-      const { data: profiles, error: profilesError } = await supabase
-        .from("profiles")
-        .select("*")
-        .order("created_at", { ascending: false });
 
-      if (profilesError) throw profilesError;
+    // Fetch all users with their roles and organizations
+    const { data: usersData, error: usersError } = await supabase
+      .from("profiles")
+      .select(`
+        id,
+        email,
+        full_name,
+        created_at,
+        user_roles(role),
+        organization_members!inner(
+          organization_id,
+          role,
+          is_active,
+          organizations(name)
+        )
+      `)
+      .order("created_at", { ascending: false });
 
-      // Obtener roles de usuarios
-      const { data: roles, error: rolesError } = await supabase
-        .from("user_roles")
-        .select("user_id, role");
-
-      if (rolesError) throw rolesError;
-
-      // Obtener organizaciones de usuarios
-      const { data: memberships, error: membershipsError } = await supabase
-        .from("organization_members")
-        .select("user_id, organization_id, organizations(name)");
-
-      if (membershipsError) throw membershipsError;
-
-      // Combinar datos
-      const usersData: UserProfile[] = profiles.map((profile) => {
-        const userRole = roles?.find((r) => r.user_id === profile.id);
-        const userOrgs = memberships?.filter((m) => m.user_id === profile.id) || [];
-        
-        return {
-          id: profile.id,
-          email: profile.email,
-          full_name: profile.full_name,
-          role: (userRole?.role || "user") as "admin" | "user",
-          created_at: profile.created_at,
-          organizations: userOrgs.map((org: any) => org.organizations?.name || "Sin nombre"),
-        };
-      });
-
-      setUsers(usersData);
-    } catch (error) {
-      console.error("Error fetching users:", error);
+    if (usersError) {
       toast.error("Error al cargar usuarios");
-    } finally {
-      setIsLoading(false);
+      console.error(usersError);
+    } else {
+      // Transform the data
+      const transformedUsers: UserProfile[] = (usersData || []).map((user: any) => ({
+        id: user.id,
+        email: user.email,
+        full_name: user.full_name,
+        role: user.user_roles?.[0]?.role || "user",
+        created_at: user.created_at,
+        organizations: user.organization_members
+          ?.filter((m: any) => m.is_active)
+          ?.map((m: any) => ({ name: m.organizations?.name })) || [],
+      }));
+      setUsers(transformedUsers);
     }
+
+    // Fetch all organizations
+    const { data: orgsData, error: orgsError } = await supabase
+      .from("organizations")
+      .select("id, name")
+      .eq("is_active", true)
+      .order("name");
+
+    if (orgsError) {
+      console.error("Error loading organizations:", orgsError);
+    } else {
+      setOrganizations(orgsData || []);
+    }
+
+    // Fetch all pending invitations with organization names
+    const { data: invitationsData, error: invitationsError } = await supabase
+      .from("organization_invitations")
+      .select(`
+        id,
+        email,
+        role,
+        created_at,
+        expires_at,
+        organization_id,
+        organizations(name)
+      `)
+      .is("accepted_at", null)
+      .gt("expires_at", new Date().toISOString())
+      .order("created_at", { ascending: false });
+
+    if (invitationsError) {
+      console.error("Error loading invitations:", invitationsError);
+    } else {
+      setPendingInvitations(
+        (invitationsData || []).map((inv: any) => ({
+          ...inv,
+          organization_name: inv.organizations?.name,
+        }))
+      );
+    }
+
+    setIsLoading(false);
   };
 
-  const handleCreateUser = async () => {
-    if (!formData.email || !formData.password || !formData.full_name) {
-      toast.error("Por favor completa todos los campos");
+  const handleSendInvitations = async () => {
+    if (!formData.email) {
+      toast.error("Ingrese el correo del usuario");
       return;
     }
 
+    if (formData.organization_ids.length === 0) {
+      toast.error("Seleccione al menos una empresa");
+      return;
+    }
+
+    // Validar email
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(formData.email)) {
+      toast.error("Ingrese un correo válido");
+      return;
+    }
+
+    setIsSending(true);
+
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) throw new Error("No session");
+      // Send invitation for each selected organization
+      const promises = formData.organization_ids.map((orgId) =>
+        supabase.functions.invoke("send-invitation", {
+          body: {
+            email: formData.email,
+            role: formData.role,
+            organizationId: orgId,
+          },
+        })
+      );
 
-      // Crear usuario usando edge function
-      const { data, error } = await supabase.functions.invoke("create-user", {
-        body: {
-          email: formData.email,
-          password: formData.password,
-          full_name: formData.full_name,
-          role: formData.role,
-          organization_id: activeOrganization,
-        },
-      });
+      const results = await Promise.all(promises);
 
-      if (error) throw error;
-
-      toast.success("Usuario creado exitosamente");
-      setIsDialogOpen(false);
-      setFormData({ email: "", password: "", full_name: "", role: "user" });
-      fetchUsers();
+      // Check for errors
+      const errors = results.filter((r) => r.error || r.data?.error);
+      if (errors.length > 0) {
+        toast.error(`Error al enviar ${errors.length} invitación(es)`);
+        console.error("Errors:", errors);
+      } else {
+        toast.success(
+          `${formData.organization_ids.length} invitación(es) enviada(s) exitosamente a ${formData.email}`
+        );
+        setIsDialogOpen(false);
+        setFormData({
+          email: "",
+          role: "member",
+          organization_ids: [],
+        });
+        fetchData();
+      }
     } catch (error: any) {
-      console.error("Error creating user:", error);
-      toast.error(error.message || "Error al crear usuario");
+      console.error("Error sending invitations:", error);
+      toast.error("Error al enviar invitaciones");
+    } finally {
+      setIsSending(false);
     }
   };
 
-  const handleUpdateRole = async (userId: string, newRole: "admin" | "user") => {
-    try {
-      // Eliminar rol anterior
-      await supabase.from("user_roles").delete().eq("user_id", userId);
+  const handleDeleteInvitation = async (invitationId: string) => {
+    if (!confirm("¿Está seguro de eliminar esta invitación?")) return;
 
-      // Insertar nuevo rol
-      const { error } = await supabase.from("user_roles").insert({
-        user_id: userId,
-        role: newRole,
-      });
+    const { error } = await supabase
+      .from("organization_invitations")
+      .delete()
+      .eq("id", invitationId);
 
-      if (error) throw error;
-
-      toast.success("Rol actualizado exitosamente");
-      fetchUsers();
-    } catch (error) {
-      console.error("Error updating role:", error);
-      toast.error("Error al actualizar rol");
+    if (error) {
+      toast.error("Error al eliminar invitación");
+      console.error(error);
+    } else {
+      toast.success("Invitación eliminada");
+      fetchData();
     }
   };
 
-  const handleDeleteUser = async () => {
-    if (!selectedUser) return;
+  const toggleOrganization = (orgId: string) => {
+    setFormData((prev) => ({
+      ...prev,
+      organization_ids: prev.organization_ids.includes(orgId)
+        ? prev.organization_ids.filter((id) => id !== orgId)
+        : [...prev.organization_ids, orgId],
+    }));
+  };
 
-    try {
-      // Eliminar membresías de organizaciones
-      await supabase
-        .from("organization_members")
-        .delete()
-        .eq("user_id", selectedUser.id);
-
-      // Eliminar roles
-      await supabase.from("user_roles").delete().eq("user_id", selectedUser.id);
-
-      // Eliminar perfil
-      await supabase.from("profiles").delete().eq("id", selectedUser.id);
-
-      toast.success("Usuario eliminado exitosamente");
-      setIsDeleteDialogOpen(false);
-      setSelectedUser(null);
-      fetchUsers();
-    } catch (error) {
-      console.error("Error deleting user:", error);
-      toast.error("Error al eliminar usuario");
+  const selectAllOrganizations = () => {
+    if (formData.organization_ids.length === organizations.length) {
+      // Deselect all
+      setFormData((prev) => ({
+        ...prev,
+        organization_ids: [],
+      }));
+    } else {
+      // Select all
+      setFormData((prev) => ({
+        ...prev,
+        organization_ids: organizations.map((org) => org.id),
+      }));
     }
   };
 
-  const openCreateDialog = () => {
-    setSelectedUser(null);
-    setFormData({ email: "", password: "", full_name: "", role: "user" });
-    setIsDialogOpen(true);
+  const roleLabels: Record<string, string> = {
+    admin: "Administrador Global",
+    owner: "Propietario",
+    member: "Miembro",
+    viewer: "Observador",
   };
 
-  const openDeleteDialog = (user: UserProfile) => {
-    setSelectedUser(user);
-    setIsDeleteDialogOpen(true);
+  const roleDescriptions: Record<string, string> = {
+    admin: "Puede gestionar configuración y miembros de las empresas",
+    member: "Puede crear y editar documentos y proveedores",
+    viewer: "Solo puede ver información, sin editar",
   };
 
   const formatDate = (dateString: string) => {
@@ -211,232 +282,296 @@ const UsersManagement = () => {
       year: "numeric",
       month: "short",
       day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
     });
   };
 
   return (
     <div className="min-h-screen bg-background">
-      <header className="border-b bg-card sticky top-0 z-10">
-        <div className="container mx-auto px-6 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <Button variant="ghost" size="sm" onClick={() => navigate("/dashboard")}>
-                <ArrowLeft className="h-4 w-4 mr-2" />
-                Volver
-              </Button>
-              <div>
-                <h1 className="text-2xl font-bold text-foreground">Gestión de Usuarios</h1>
-                <p className="text-sm text-muted-foreground">
-                  Administrar usuarios y permisos del sistema
-                </p>
-              </div>
-            </div>
-            <Button onClick={openCreateDialog}>
-              <UserPlus className="h-4 w-4 mr-2" />
-              Crear Usuario
+      <header className="border-b bg-card">
+        <div className="container mx-auto px-6 py-4 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <Button variant="ghost" size="sm" onClick={() => navigate("/dashboard")}>
+              <ArrowLeft className="h-4 w-4 mr-2" />
+              Volver
             </Button>
+            <div className="h-10 w-10 rounded-lg bg-primary flex items-center justify-center">
+              <Users className="h-6 w-6 text-primary-foreground" />
+            </div>
+            <div>
+              <h1 className="text-xl font-bold text-foreground">Gestión de Usuarios ACL</h1>
+              <p className="text-xs text-muted-foreground">
+                Invitar usuarios con acceso a múltiples empresas
+              </p>
+            </div>
           </div>
+          <Button onClick={() => setIsDialogOpen(true)}>
+            <Plus className="h-4 w-4 mr-2" />
+            Invitar Usuario
+          </Button>
         </div>
       </header>
 
       <main className="container mx-auto px-6 py-8">
-        <Card>
-          <CardHeader>
-            <CardTitle>Usuarios del Sistema</CardTitle>
-            <CardDescription>
-              Total de usuarios registrados: {users.length}
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            {isLoading ? (
-              <div className="text-center py-12">
-                <p className="text-muted-foreground">Cargando usuarios...</p>
-              </div>
-            ) : users.length === 0 ? (
-              <div className="text-center py-12">
-                <User className="h-12 w-12 mx-auto mb-4 text-muted-foreground" />
-                <h3 className="text-lg font-semibold mb-2">No hay usuarios</h3>
-                <p className="text-sm text-muted-foreground mb-4">
-                  Crea el primer usuario del sistema
-                </p>
-                <Button onClick={openCreateDialog}>
-                  <UserPlus className="h-4 w-4 mr-2" />
-                  Crear Usuario
-                </Button>
-              </div>
-            ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Nombre</TableHead>
-                    <TableHead>Email</TableHead>
-                    <TableHead>Rol</TableHead>
-                    <TableHead>Organizaciones</TableHead>
-                    <TableHead>Fecha de Registro</TableHead>
-                    <TableHead className="text-right">Acciones</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {users.map((user) => (
-                    <TableRow key={user.id}>
-                      <TableCell className="font-medium">
-                        {user.full_name || "Sin nombre"}
-                      </TableCell>
-                      <TableCell>{user.email}</TableCell>
-                      <TableCell>
-                        <Select
-                          value={user.role}
-                          onValueChange={(value: "admin" | "user") =>
-                            handleUpdateRole(user.id, value)
-                          }
-                        >
-                          <SelectTrigger className="w-32">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="admin">
-                              <div className="flex items-center gap-2">
-                                <Shield className="h-4 w-4" />
-                                Admin
-                              </div>
-                            </SelectItem>
-                            <SelectItem value="user">
-                              <div className="flex items-center gap-2">
-                                <User className="h-4 w-4" />
-                                Usuario
-                              </div>
-                            </SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex flex-wrap gap-1">
-                          {user.organizations.length > 0 ? (
-                            user.organizations.map((org, idx) => (
-                              <Badge key={idx} variant="outline">
-                                {org}
-                              </Badge>
-                            ))
-                          ) : (
-                            <Badge variant="secondary">Sin organización</Badge>
-                          )}
+        {isLoading ? (
+          <div className="flex justify-center py-12">
+            <Loader2 className="h-8 w-8 animate-spin text-primary" />
+          </div>
+        ) : (
+          <div className="space-y-6">
+            {/* Pending Invitations */}
+            {pendingInvitations.length > 0 && (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Mail className="h-5 w-5" />
+                    Invitaciones Pendientes ({pendingInvitations.length})
+                  </CardTitle>
+                  <CardDescription>
+                    Invitaciones enviadas que aún no han sido aceptadas
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-2">
+                    {pendingInvitations.map((invitation) => (
+                      <div
+                        key={invitation.id}
+                        className="flex items-center justify-between p-4 border rounded-lg bg-muted/30"
+                      >
+                        <div className="flex-1">
+                          <p className="font-medium">{invitation.email}</p>
+                          <div className="flex items-center gap-2 mt-1">
+                            <Badge variant="outline">{invitation.organization_name}</Badge>
+                            <span className="text-sm text-muted-foreground">•</span>
+                            <span className="text-sm text-muted-foreground">
+                              {roleLabels[invitation.role]}
+                            </span>
+                          </div>
+                          <p className="text-xs text-muted-foreground mt-1">
+                            Expira: {formatDate(invitation.expires_at)}
+                          </p>
                         </div>
-                      </TableCell>
-                      <TableCell>{formatDate(user.created_at)}</TableCell>
-                      <TableCell className="text-right">
                         <Button
                           variant="ghost"
                           size="sm"
-                          onClick={() => openDeleteDialog(user)}
+                          onClick={() => handleDeleteInvitation(invitation.id)}
                         >
                           <Trash2 className="h-4 w-4 text-destructive" />
                         </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
             )}
-          </CardContent>
-        </Card>
+
+            {/* Active Users */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Users className="h-5 w-5" />
+                  Usuarios Activos ({users.length})
+                </CardTitle>
+                <CardDescription>
+                  Usuarios registrados en el sistema y sus empresas asignadas
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Usuario</TableHead>
+                      <TableHead>Correo</TableHead>
+                      <TableHead>Rol Global</TableHead>
+                      <TableHead>Empresas con Acceso</TableHead>
+                      <TableHead>Fecha de Registro</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {users.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={5} className="text-center text-muted-foreground py-8">
+                          No hay usuarios registrados
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      users.map((user) => (
+                        <TableRow key={user.id}>
+                          <TableCell className="font-medium">
+                            {user.full_name || "Sin nombre"}
+                          </TableCell>
+                          <TableCell>{user.email}</TableCell>
+                          <TableCell>
+                            <Badge variant={user.role === "admin" ? "default" : "secondary"}>
+                              {roleLabels[user.role] || user.role}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex flex-wrap gap-1">
+                              {user.organizations.slice(0, 3).map((org, idx) => (
+                                <Badge key={idx} variant="outline" className="text-xs">
+                                  {org.name}
+                                </Badge>
+                              ))}
+                              {user.organizations.length > 3 && (
+                                <Badge variant="outline" className="text-xs">
+                                  +{user.organizations.length - 3} más
+                                </Badge>
+                              )}
+                              {user.organizations.length === 0 && (
+                                <Badge variant="secondary" className="text-xs">
+                                  Sin empresas
+                                </Badge>
+                              )}
+                            </div>
+                          </TableCell>
+                          <TableCell className="text-sm text-muted-foreground">
+                            {formatDate(user.created_at)}
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+          </div>
+        )}
       </main>
 
-      {/* Create User Dialog */}
+      {/* Invitation Dialog */}
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-        <DialogContent>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Crear Nuevo Usuario</DialogTitle>
+            <DialogTitle>Invitar Usuario de ACL</DialogTitle>
             <DialogDescription>
-              Complete los datos para crear un nuevo usuario en el sistema
+              Envía una invitación por correo para que el usuario pueda acceder a las empresas seleccionadas.
+              El usuario recibirá un enlace para aceptar la invitación.
             </DialogDescription>
           </DialogHeader>
+
           <div className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="full_name">Nombre Completo</Label>
-              <Input
-                id="full_name"
-                value={formData.full_name}
-                onChange={(e) =>
-                  setFormData({ ...formData, full_name: e.target.value })
-                }
-                placeholder="Juan Pérez"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="email">Email</Label>
+            <div>
+              <Label htmlFor="email">Correo Electrónico *</Label>
               <Input
                 id="email"
                 type="email"
+                placeholder="usuario@ejemplo.com"
                 value={formData.email}
-                onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                placeholder="usuario@empresa.cr"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="password">Contraseña</Label>
-              <Input
-                id="password"
-                type="password"
-                value={formData.password}
                 onChange={(e) =>
-                  setFormData({ ...formData, password: e.target.value })
+                  setFormData((prev) => ({ ...prev, email: e.target.value }))
                 }
-                placeholder="Mínimo 6 caracteres"
-                minLength={6}
               />
+              <p className="text-xs text-muted-foreground mt-1">
+                El usuario recibirá un correo con un enlace de invitación válido por 7 días
+              </p>
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="role">Rol</Label>
+
+            <div>
+              <Label htmlFor="role">Rol en las Empresas *</Label>
               <Select
                 value={formData.role}
-                onValueChange={(value: "admin" | "user") =>
-                  setFormData({ ...formData, role: value })
+                onValueChange={(value) =>
+                  setFormData((prev) => ({ ...prev, role: value }))
                 }
               >
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="user">
-                    <div className="flex items-center gap-2">
-                      <User className="h-4 w-4" />
-                      Usuario
-                    </div>
-                  </SelectItem>
-                  <SelectItem value="admin">
-                    <div className="flex items-center gap-2">
-                      <Shield className="h-4 w-4" />
-                      Administrador
-                    </div>
-                  </SelectItem>
+                  <SelectItem value="admin">Administrador</SelectItem>
+                  <SelectItem value="member">Miembro</SelectItem>
+                  <SelectItem value="viewer">Observador</SelectItem>
                 </SelectContent>
               </Select>
+              <p className="text-xs text-muted-foreground mt-1">
+                {roleDescriptions[formData.role]}
+              </p>
+            </div>
+
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <Label>Empresas con Acceso *</Label>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={selectAllOrganizations}
+                >
+                  {formData.organization_ids.length === organizations.length ? (
+                    <>
+                      <Square className="h-4 w-4 mr-2" />
+                      Deseleccionar Todas
+                    </>
+                  ) : (
+                    <>
+                      <CheckSquare className="h-4 w-4 mr-2" />
+                      Seleccionar Todas
+                    </>
+                  )}
+                </Button>
+              </div>
+              <div className="border rounded-lg p-4 max-h-60 overflow-y-auto space-y-2">
+                {organizations.map((org) => (
+                  <div
+                    key={org.id}
+                    className="flex items-center gap-3 p-2 hover:bg-muted/50 rounded cursor-pointer transition-colors"
+                    onClick={() => toggleOrganization(org.id)}
+                  >
+                    <div className="flex items-center justify-center h-4 w-4">
+                      {formData.organization_ids.includes(org.id) ? (
+                        <CheckSquare className="h-4 w-4 text-primary" />
+                      ) : (
+                        <Square className="h-4 w-4 text-muted-foreground" />
+                      )}
+                    </div>
+                    <Building2 className="h-4 w-4 text-muted-foreground" />
+                    <span className="flex-1">{org.name}</span>
+                  </div>
+                ))}
+                {organizations.length === 0 && (
+                  <p className="text-center text-muted-foreground py-4">
+                    No hay empresas disponibles
+                  </p>
+                )}
+              </div>
+              <div className="flex items-center justify-between mt-2">
+                <p className="text-xs text-muted-foreground">
+                  Seleccionadas: {formData.organization_ids.length} de {organizations.length}
+                </p>
+                {formData.organization_ids.length === organizations.length &&
+                  organizations.length > 0 && (
+                    <Badge variant="default" className="text-xs">
+                      Acceso a todas las empresas
+                    </Badge>
+                  )}
+              </div>
             </div>
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setIsDialogOpen(false)}>
-              Cancelar
-            </Button>
-            <Button onClick={handleCreateUser}>Crear Usuario</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
-      {/* Delete User Dialog */}
-      <Dialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Eliminar Usuario</DialogTitle>
-            <DialogDescription>
-              ¿Estás seguro de que deseas eliminar a {selectedUser?.full_name || selectedUser?.email}? Esta acción no se puede deshacer.
-            </DialogDescription>
-          </DialogHeader>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setIsDeleteDialogOpen(false)}>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setIsDialogOpen(false);
+                setFormData({ email: "", role: "member", organization_ids: [] });
+              }}
+            >
               Cancelar
             </Button>
-            <Button variant="destructive" onClick={handleDeleteUser}>
-              Eliminar
+            <Button onClick={handleSendInvitations} disabled={isSending}>
+              {isSending ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Enviando...
+                </>
+              ) : (
+                <>
+                  <Mail className="h-4 w-4 mr-2" />
+                  Enviar Invitaciones
+                </>
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>
