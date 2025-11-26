@@ -248,20 +248,15 @@ const UsersManagement = () => {
   };
 
   const handleCreateUser = async () => {
-    console.log("🚀 Iniciando creación de usuario...", createFormData);
+    console.log("🚀 Iniciando creación de usuario vía invitación...", createFormData);
     
-    if (!createFormData.email || !createFormData.password) {
-      toast.error("Ingrese el correo y contraseña");
+    if (!createFormData.email) {
+      toast.error("Ingrese el correo del usuario");
       return;
     }
 
     if (createFormData.organization_ids.length === 0) {
       toast.error("Seleccione al menos una empresa");
-      return;
-    }
-
-    if (createFormData.password.length < 6) {
-      toast.error("La contraseña debe tener al menos 6 caracteres");
       return;
     }
 
@@ -273,19 +268,18 @@ const UsersManagement = () => {
     }
 
     setIsSending(true);
-    console.log("✅ Validaciones pasadas, enviando solicitud...");
+    console.log("✅ Validaciones pasadas, enviando invitaciones...");
 
     try {
-      // Create user for each selected organization
+      // Send invitation for each selected organization
+      // This will allow the user to set their own password
       const promises = createFormData.organization_ids.map((orgId) => {
-        console.log(`📤 Invocando create-user para organización: ${orgId}`);
-        return supabase.functions.invoke("create-user", {
+        console.log(`📤 Invocando send-invitation para organización: ${orgId}`);
+        return supabase.functions.invoke("send-invitation", {
           body: {
             email: createFormData.email,
-            password: createFormData.password,
-            full_name: createFormData.full_name,
-            role: createFormData.role,
-            organization_id: orgId,
+            role: createFormData.role === 'user' ? 'member' : createFormData.role, // Convert 'user' to 'member'
+            organizationId: orgId,
           },
         });
       });
@@ -301,11 +295,11 @@ const UsersManagement = () => {
         const errorMessages = errors.map((e) => 
           e.error?.message || e.data?.error || "Error desconocido"
         ).join(", ");
-        toast.error(`Error al crear usuario: ${errorMessages}`);
+        toast.error(`Error al enviar invitaciones: ${errorMessages}`);
       } else {
-        console.log("✅ Usuario creado exitosamente");
+        console.log("✅ Invitaciones enviadas exitosamente");
         toast.success(
-          `Usuario ${createFormData.email} creado exitosamente con acceso a ${createFormData.organization_ids.length} empresa(s)`
+          `Se enviaron ${createFormData.organization_ids.length} invitación(es) a ${createFormData.email}. El usuario recibirá un correo para establecer su contraseña.`
         );
         setIsCreateDialogOpen(false);
         setCreateFormData({
@@ -318,11 +312,11 @@ const UsersManagement = () => {
         fetchData();
       }
     } catch (error: any) {
-      console.error("❌ Error crítico creando usuario:", error);
-      toast.error(`Error al crear usuario: ${error.message || "Error desconocido"}`);
+      console.error("❌ Error crítico enviando invitaciones:", error);
+      toast.error(`Error al enviar invitaciones: ${error.message || "Error desconocido"}`);
     } finally {
       setIsSending(false);
-      console.log("🏁 Proceso de creación finalizado");
+      console.log("🏁 Proceso de invitación finalizado");
     }
   };
 
@@ -706,10 +700,9 @@ const UsersManagement = () => {
       <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Crear Usuario de ACL</DialogTitle>
+            <DialogTitle>Invitar Nuevo Usuario</DialogTitle>
             <DialogDescription>
-              Crea un nuevo usuario con acceso inmediato a las empresas seleccionadas.
-              El usuario podrá iniciar sesión inmediatamente con las credenciales proporcionadas.
+              El usuario recibirá un correo electrónico con un enlace para crear su cuenta y establecer su propia contraseña. Tendrá acceso a las empresas seleccionadas.
             </DialogDescription>
           </DialogHeader>
 
@@ -728,36 +721,7 @@ const UsersManagement = () => {
             </div>
 
             <div>
-              <Label htmlFor="create-password">Contraseña *</Label>
-              <Input
-                id="create-password"
-                type="password"
-                placeholder="Mínimo 6 caracteres"
-                value={createFormData.password}
-                onChange={(e) =>
-                  setCreateFormData((prev) => ({ ...prev, password: e.target.value }))
-                }
-              />
-              <p className="text-xs text-muted-foreground mt-1">
-                La contraseña debe tener al menos 6 caracteres
-              </p>
-            </div>
-
-            <div>
-              <Label htmlFor="create-full-name">Nombre Completo</Label>
-              <Input
-                id="create-full-name"
-                type="text"
-                placeholder="Juan Pérez"
-                value={createFormData.full_name}
-                onChange={(e) =>
-                  setCreateFormData((prev) => ({ ...prev, full_name: e.target.value }))
-                }
-              />
-            </div>
-
-            <div>
-              <Label htmlFor="create-global-role">Rol Global *</Label>
+              <Label htmlFor="create-global-role">Rol *</Label>
               <Select
                 value={createFormData.role}
                 onValueChange={(value) =>
@@ -768,15 +732,32 @@ const UsersManagement = () => {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="admin">Administrador Global</SelectItem>
-                  <SelectItem value="user">Usuario</SelectItem>
+                  <SelectItem value="admin">
+                    <div>
+                      <p className="font-medium">Administrador</p>
+                      <p className="text-xs text-muted-foreground">
+                        Puede gestionar configuración y miembros
+                      </p>
+                    </div>
+                  </SelectItem>
+                  <SelectItem value="member">
+                    <div>
+                      <p className="font-medium">Miembro</p>
+                      <p className="text-xs text-muted-foreground">
+                        Puede crear y editar documentos
+                      </p>
+                    </div>
+                  </SelectItem>
+                  <SelectItem value="viewer">
+                    <div>
+                      <p className="font-medium">Observador</p>
+                      <p className="text-xs text-muted-foreground">
+                        Solo puede ver información
+                      </p>
+                    </div>
+                  </SelectItem>
                 </SelectContent>
               </Select>
-              <p className="text-xs text-muted-foreground mt-1">
-                {createFormData.role === "admin" 
-                  ? "Acceso completo a todas las funcionalidades del sistema"
-                  : "Acceso limitado según permisos de cada empresa"}
-              </p>
             </div>
 
             <div>
@@ -859,12 +840,12 @@ const UsersManagement = () => {
               {isSending ? (
                 <>
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  Creando...
+                  Enviando...
                 </>
               ) : (
                 <>
-                  <Plus className="h-4 w-4 mr-2" />
-                  Crear Usuario
+                  <Mail className="h-4 w-4 mr-2" />
+                  Enviar Invitación
                 </>
               )}
             </Button>
