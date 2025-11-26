@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -135,6 +135,7 @@ const InvoicesPendingLog = () => {
 
     setIsLoading(true);
     try {
+      // Fetch documents
       const { data: docsData, error: docsError } = await supabase
         .from("processed_documents")
         .select("*")
@@ -144,45 +145,61 @@ const InvoicesPendingLog = () => {
 
       if (docsError) throw docsError;
 
-      // Get vendor info for each document and apply defaults
-      const invoicesWithVendors = await Promise.all(
-        (docsData || []).map(async (doc) => {
-          let invoiceData: PendingInvoice = { 
-            ...doc,
-            default_account_ref: undefined,
-            default_class_ref: undefined,
-            has_vendor_default: false
-          };
-          
-          if (doc.vendor_id) {
-            const { data: vendorData } = await supabase
-              .from("vendors")
-              .select("default_account_ref, default_class_ref")
-              .eq("id", doc.vendor_id)
-              .single();
+      if (!docsData || docsData.length === 0) {
+        setInvoices([]);
+        setFilteredInvoices([]);
+        return;
+      }
 
-            invoiceData.default_account_ref = vendorData?.default_account_ref;
-            invoiceData.default_class_ref = vendorData?.default_class_ref;
-          }
+      // Get unique vendor IDs (filter out nulls)
+      const vendorIds = [...new Set(docsData.map(doc => doc.vendor_id).filter(Boolean))];
+      
+      // Batch fetch all vendors at once (OPTIMIZACIÓN: Una sola query en lugar de N queries)
+      let vendorsMap = new Map();
+      if (vendorIds.length > 0) {
+        const { data: vendorsData } = await supabase
+          .from("vendors")
+          .select("id, default_account_ref, default_class_ref")
+          .in("id", vendorIds);
 
-          // Apply vendor defaults if available and fields are empty
-          const vendorDefault = vendorDefaults.get(doc.supplier_name);
-          if (vendorDefault) {
-            const hasDefaultApplied = !invoiceData.default_account_ref || !invoiceData.uses_tax;
-            
-            if (!invoiceData.default_account_ref && vendorDefault.default_account_ref) {
-              invoiceData.default_account_ref = vendorDefault.default_account_ref;
-            }
-            if (invoiceData.uses_tax === null || invoiceData.uses_tax === undefined) {
-              invoiceData.uses_tax = vendorDefault.default_uses_tax;
-            }
-            
-            invoiceData.has_vendor_default = hasDefaultApplied;
+        vendorsData?.forEach(vendor => {
+          vendorsMap.set(vendor.id, vendor);
+        });
+      }
+
+      // Apply vendor data and defaults in memory (OPTIMIZACIÓN: Sin queries adicionales)
+      const invoicesWithVendors = docsData.map((doc) => {
+        let invoiceData: PendingInvoice = { 
+          ...doc,
+          default_account_ref: undefined,
+          default_class_ref: undefined,
+          has_vendor_default: false
+        };
+        
+        // Apply vendor data from batch fetch
+        if (doc.vendor_id && vendorsMap.has(doc.vendor_id)) {
+          const vendorData = vendorsMap.get(doc.vendor_id);
+          invoiceData.default_account_ref = vendorData.default_account_ref;
+          invoiceData.default_class_ref = vendorData.default_class_ref;
+        }
+
+        // Apply vendor defaults if available
+        const vendorDefault = vendorDefaults.get(doc.supplier_name);
+        if (vendorDefault) {
+          const hasDefaultApplied = !invoiceData.default_account_ref || !invoiceData.uses_tax;
+          
+          if (!invoiceData.default_account_ref && vendorDefault.default_account_ref) {
+            invoiceData.default_account_ref = vendorDefault.default_account_ref;
+          }
+          if (invoiceData.uses_tax === null || invoiceData.uses_tax === undefined) {
+            invoiceData.uses_tax = vendorDefault.default_uses_tax;
           }
           
-          return invoiceData;
-        })
-      );
+          invoiceData.has_vendor_default = hasDefaultApplied;
+        }
+        
+        return invoiceData;
+      });
 
       setInvoices(invoicesWithVendors);
       setFilteredInvoices(invoicesWithVendors);
@@ -196,9 +213,13 @@ const InvoicesPendingLog = () => {
 
   useEffect(() => {
     const loadData = async () => {
-      await fetchVendorDefaults();
+      // OPTIMIZACIÓN: Cargar todo en paralelo en lugar de secuencial
+      await Promise.all([
+        fetchVendorDefaults(),
+        fetchQBOAccounts(),
+      ]);
+      // Fetch invoices después de tener los defaults para aplicarlos correctamente
       await fetchPendingInvoices();
-      await fetchQBOAccounts();
     };
     loadData();
 
@@ -257,10 +278,22 @@ const InvoicesPendingLog = () => {
     };
   }, [activeOrganization]);
 
+  // OPTIMIZACIÓN: Memoizar el mapa de accounts para búsquedas rápidas
+  const accountsMap = useMemo(() => {
+    const map = new Map();
+    qboAccounts.forEach(acc => map.set(acc.id, acc));
+    return map;
+  }, [qboAccounts]);
+
   useEffect(() => {
+    if (!searchTerm.trim()) {
+      setFilteredInvoices(invoices);
+      return;
+    }
+
+    const searchLower = searchTerm.toLowerCase();
+    
     const filtered = invoices.filter((inv) => {
-      const searchLower = searchTerm.toLowerCase();
-      
       // Buscar por número de documento
       if (inv.doc_number.toLowerCase().includes(searchLower)) return true;
       
@@ -270,17 +303,17 @@ const InvoicesPendingLog = () => {
       // Buscar por cuenta contable
       if (inv.default_account_ref && inv.default_account_ref.toLowerCase().includes(searchLower)) return true;
       
-      // Buscar en la descripción de la cuenta (si existe en qboAccounts)
-      if (inv.default_account_ref) {
-        const account = qboAccounts.find(acc => acc.id === inv.default_account_ref);
-        if (account && account.name.toLowerCase().includes(searchLower)) return true;
-        if (account && account.accountNumber.toLowerCase().includes(searchLower)) return true;
+      // Buscar en la descripción de la cuenta (OPTIMIZACIÓN: uso de Map en lugar de find)
+      if (inv.default_account_ref && accountsMap.has(inv.default_account_ref)) {
+        const account = accountsMap.get(inv.default_account_ref);
+        if (account.name.toLowerCase().includes(searchLower)) return true;
+        if (account.accountNumber && account.accountNumber.toLowerCase().includes(searchLower)) return true;
       }
       
       return false;
     });
     setFilteredInvoices(filtered);
-  }, [searchTerm, invoices, qboAccounts]);
+  }, [searchTerm, invoices, accountsMap]);
 
   const saveVendorDefault = async (
     vendorName: string,
@@ -528,13 +561,16 @@ const InvoicesPendingLog = () => {
     setShowDetailDialog(true);
   };
 
-  const totalsBySupplier = filteredInvoices.reduce((acc, inv) => {
-    if (!acc[inv.supplier_name]) {
-      acc[inv.supplier_name] = 0;
-    }
-    acc[inv.supplier_name] += inv.total_amount;
-    return acc;
-  }, {} as Record<string, number>);
+  // OPTIMIZACIÓN: Memoizar totales por proveedor
+  const totalsBySupplier = useMemo(() => {
+    return filteredInvoices.reduce((acc, inv) => {
+      if (!acc[inv.supplier_name]) {
+        acc[inv.supplier_name] = 0;
+      }
+      acc[inv.supplier_name] += inv.total_amount;
+      return acc;
+    }, {} as Record<string, number>);
+  }, [filteredInvoices]);
 
   const formatCurrency = (amount: number, currency: string) => {
     return new Intl.NumberFormat("es-CR", {
