@@ -6,65 +6,32 @@ import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { Loader2, Building2 } from "lucide-react";
 import calderonLogo from "@/assets/calderon-logo.png";
+import { useAuth } from "@/hooks/useAuth";
 
 const SelectCompany = () => {
   const navigate = useNavigate();
-  const [isLoading, setIsLoading] = useState(true);
-  const [organizations, setOrganizations] = useState<any[]>([]);
+  const { user, organizations, isLoading: authLoading } = useAuth();
+  const [isSelecting, setIsSelecting] = useState(false);
   const [selectedOrg, setSelectedOrg] = useState<string | null>(null);
-  const [user, setUser] = useState<any>(null);
 
   useEffect(() => {
-    loadUserAndOrganizations();
-  }, []);
-
-  const loadUserAndOrganizations = async () => {
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      
-      if (!session?.user) {
-        navigate("/");
-        return;
-      }
-
-      setUser(session.user);
-
-      // Obtener organizaciones del usuario
-      const { data: memberships, error } = await supabase
-        .from("organization_members")
-        .select("organization_id, role, organizations(*)")
-        .eq("user_id", session.user.id)
-        .eq("is_active", true);
-
-      if (error) throw error;
-
-      if (memberships && memberships.length > 0) {
-        const orgs = memberships.map((m: any) => ({
-          id: m.organization_id,
-          name: m.organizations.name,
-          role: m.role,
-        }));
-        setOrganizations(orgs);
-      } else {
-        toast.error("No tienes acceso a ninguna empresa");
-        await supabase.auth.signOut();
-        navigate("/");
-      }
-    } catch (error) {
-      console.error("Error loading organizations:", error);
-      toast.error("Error al cargar las empresas");
-    } finally {
-      setIsLoading(false);
+    if (!authLoading && !user) {
+      navigate("/");
     }
-  };
+    
+    if (!authLoading && organizations.length === 0) {
+      toast.error("No tienes acceso a ninguna empresa");
+      supabase.auth.signOut();
+      navigate("/");
+    }
+  }, [authLoading, user, organizations, navigate]);
 
   const handleSelectCompany = async () => {
     if (!selectedOrg || !user) return;
 
     try {
-      setIsLoading(true);
+      setIsSelecting(true);
       
-      // Establecer la organización activa
       const { error } = await supabase
         .from("user_active_organization")
         .upsert({ 
@@ -80,11 +47,11 @@ const SelectCompany = () => {
       console.error("Error selecting company:", error);
       toast.error("Error al seleccionar la empresa");
     } finally {
-      setIsLoading(false);
+      setIsSelecting(false);
     }
   };
 
-  if (isLoading) {
+  if (authLoading) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-primary/5 via-background to-accent/5 flex items-center justify-center">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
@@ -145,10 +112,10 @@ const SelectCompany = () => {
 
           <Button
             onClick={handleSelectCompany}
-            disabled={!selectedOrg || isLoading}
+            disabled={!selectedOrg || isSelecting}
             className="w-full mt-6"
           >
-            {isLoading ? (
+            {isSelecting ? (
               <>
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                 Cargando...
