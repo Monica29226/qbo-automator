@@ -607,7 +607,7 @@ const InvoicesPendingLog = () => {
 
   const handleOpenPDF = async (invoice: PendingInvoice) => {
     console.log("🔍 handleOpenPDF llamado para:", invoice.doc_number);
-    console.log("📎 PDF URL:", invoice.pdf_attachment_url);
+    console.log("📎 PDF URL original:", invoice.pdf_attachment_url);
     
     if (!invoice.pdf_attachment_url) {
       console.warn("⚠️ PDF no disponible para:", invoice.doc_number);
@@ -616,26 +616,52 @@ const InvoicesPendingLog = () => {
     }
 
     try {
-      toast.loading("Generando enlace de descarga...");
+      const loadingToast = toast.loading("Generando enlace de descarga...");
       
-      // Extraer el path del storage de la URL
+      // Extraer el path del storage de la URL - probar múltiples formatos
       let pdfPath = invoice.pdf_attachment_url;
-      if (pdfPath.includes('/object/public/company-documents/')) {
-        pdfPath = pdfPath.split('/object/public/company-documents/')[1];
-      } else if (pdfPath.includes('company-documents/')) {
-        pdfPath = pdfPath.split('company-documents/')[1];
+      
+      // Si es una URL completa, extraer solo el path
+      if (pdfPath.startsWith('http')) {
+        const url = new URL(pdfPath);
+        pdfPath = url.pathname;
       }
+      
+      // Remover prefijos comunes
+      const prefixesToRemove = [
+        '/storage/v1/object/public/company-documents/',
+        '/object/public/company-documents/',
+        'company-documents/',
+        '/company-documents/'
+      ];
+      
+      for (const prefix of prefixesToRemove) {
+        if (pdfPath.includes(prefix)) {
+          pdfPath = pdfPath.split(prefix)[1];
+          break;
+        }
+      }
+      
+      console.log("📂 Path extraído:", pdfPath);
       
       // Generar URL firmada con 1 hora de validez
       const { data, error } = await supabase.storage
         .from('company-documents')
         .createSignedUrl(pdfPath, 3600);
 
-      if (error) throw error;
+      if (error) {
+        console.error("❌ Error de storage:", error);
+        throw new Error(`Error al acceder al archivo: ${error.message}`);
+      }
 
-      toast.dismiss();
-      console.log("✅ URL firmada generada");
+      if (!data?.signedUrl) {
+        throw new Error("No se pudo generar la URL del archivo");
+      }
+
+      toast.dismiss(loadingToast);
+      console.log("✅ URL firmada generada exitosamente");
       
+      // Abrir en nueva pestaña
       const opened = window.open(data.signedUrl, '_blank', 'noopener,noreferrer');
       
       if (!opened) {
@@ -643,12 +669,24 @@ const InvoicesPendingLog = () => {
         toast.error("El navegador bloqueó la ventana emergente. Por favor, permite ventanas emergentes para este sitio.");
       } else {
         console.log("✅ PDF abierto exitosamente");
-        toast.success("Abriendo PDF...");
+        toast.success("PDF abierto correctamente");
       }
     } catch (error: any) {
       toast.dismiss();
-      console.error("❌ Error al abrir PDF:", error);
-      toast.error(`Error al abrir PDF: ${error.message}`);
+      console.error("❌ Error completo al abrir PDF:", error);
+      console.error("📋 Stack trace:", error.stack);
+      
+      // Mensaje de error más descriptivo
+      let errorMessage = "Error al abrir el PDF";
+      if (error.message.includes("not found")) {
+        errorMessage = "El archivo PDF no existe en el almacenamiento";
+      } else if (error.message.includes("Bucket")) {
+        errorMessage = "Error de configuración del almacenamiento";
+      } else if (error.message) {
+        errorMessage = error.message;
+      }
+      
+      toast.error(errorMessage, { duration: 5000 });
     }
   };
 
