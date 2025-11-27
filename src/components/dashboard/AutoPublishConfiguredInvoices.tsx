@@ -1,120 +1,164 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
-import { Loader2, CheckCircle, Send } from "lucide-react";
+import { Loader2, CheckCircle, Send, X } from "lucide-react";
+import { Progress } from "@/components/ui/progress";
 
 export const AutoPublishConfiguredInvoices = () => {
   const { activeOrganization } = useAuth();
   const queryClient = useQueryClient();
   const [isPublishing, setIsPublishing] = useState(false);
-  const [lastPublished, setLastPublished] = useState<number | null>(null);
+  const [progress, setProgress] = useState({ current: 0, total: 0 });
+  const [dismissed, setDismissed] = useState(false);
   const hasCheckedRef = useRef(false);
+  const isCheckingRef = useRef(false);
 
-  useEffect(() => {
-    if (!activeOrganization || hasCheckedRef.current) return;
-    
-    // Check and auto-publish on mount
-    checkAndAutoPublish();
-    hasCheckedRef.current = true;
+  const checkAndAutoPublish = useCallback(async () => {
+    if (!activeOrganization || isPublishing || isCheckingRef.current) return;
 
-    // Also set up a periodic check every 60 seconds
-    const interval = setInterval(() => {
-      checkAndAutoPublish();
-    }, 60000);
-
-    return () => clearInterval(interval);
-  }, [activeOrganization]);
-
-  const checkAndAutoPublish = async () => {
-    if (!activeOrganization || isPublishing) return;
+    isCheckingRef.current = true;
 
     try {
-      // Check for pending invoices with accounts assigned
-      const { data: pendingWithAccounts, error } = await supabase
+      // Quick check for pending invoices with accounts assigned
+      const { count, error } = await supabase
         .from("processed_documents")
-        .select("id, doc_number, supplier_name")
+        .select("id", { count: "exact", head: true })
+        .eq("organization_id", activeOrganization)
+        .eq("status", "pending")
+        .not("default_account_ref", "is", null)
+        .is("qbo_entity_id", null);
+
+      if (error || !count || count === 0) {
+        isCheckingRef.current = false;
+        return;
+      }
+
+      console.log(`📤 Found ${count} invoices ready for auto-publish`);
+      setProgress({ current: 0, total: count });
+      setIsPublishing(true);
+      setDismissed(false);
+
+      // Get document IDs
+      const { data: pendingDocs } = await supabase
+        .from("processed_documents")
+        .select("id")
         .eq("organization_id", activeOrganization)
         .eq("status", "pending")
         .not("default_account_ref", "is", null)
         .is("qbo_entity_id", null)
         .limit(50);
 
-      if (error) {
-        console.error("Error checking pending invoices:", error);
+      if (!pendingDocs || pendingDocs.length === 0) {
+        setIsPublishing(false);
+        isCheckingRef.current = false;
         return;
       }
 
-      if (!pendingWithAccounts || pendingWithAccounts.length === 0) {
-        return; // No invoices to publish
-      }
+      // Publish in background - don't await, use fire-and-forget pattern
+      supabase.functions.invoke("publish-to-quickbooks", {
+        body: {
+          organization_id: activeOrganization,
+          document_ids: pendingDocs.map(d => d.id),
+        },
+      }).then(({ data: publishResult, error: publishError }) => {
+        if (publishError) {
+          console.error("Error auto-publishing:", publishError);
+          toast.error("Error al auto-publicar facturas");
+        } else {
+          const published = publishResult?.published || 0;
+          const failed = publishResult?.failed || 0;
 
-      console.log(`📤 Auto-publishing ${pendingWithAccounts.length} invoices with configured accounts...`);
-      setIsPublishing(true);
-
-      // Show toast notification
-      toast.info(
-        <div className="flex items-center gap-2">
-          <Loader2 className="h-4 w-4 animate-spin" />
-          <span>Auto-publicando {pendingWithAccounts.length} factura(s) con cuenta asignada...</span>
-        </div>,
-        { duration: 10000 }
-      );
-
-      // Publish to QuickBooks
-      const { data: publishResult, error: publishError } = await supabase.functions.invoke(
-        "publish-to-quickbooks",
-        {
-          body: {
-            organization_id: activeOrganization,
-            document_ids: pendingWithAccounts.map(d => d.id),
-          },
+          if (published > 0) {
+            toast.success(
+              `✅ ${published} factura(s) publicadas a QuickBooks${failed > 0 ? ` (${failed} fallidas)` : ''}`,
+              { duration: 5000 }
+            );
+            queryClient.invalidateQueries({ queryKey: ["recent-documents"] });
+            queryClient.invalidateQueries({ queryKey: ["pending-invoices"] });
+          }
         }
-      );
+        setIsPublishing(false);
+        setProgress({ current: 0, total: 0 });
+      }).catch(err => {
+        console.error("Auto-publish error:", err);
+        setIsPublishing(false);
+      });
 
-      if (publishError) {
-        console.error("Error auto-publishing:", publishError);
-        toast.error("Error al auto-publicar facturas");
-        return;
-      }
-
-      const published = publishResult?.published || 0;
-      const failed = publishResult?.failed || 0;
-
-      if (published > 0) {
-        setLastPublished(published);
-        toast.success(
-          <div className="flex items-center gap-2">
-            <CheckCircle className="h-4 w-4 text-green-500" />
-            <div>
-              <p className="font-semibold">Auto-publicación completada</p>
-              <p className="text-sm">{published} factura(s) enviadas a QuickBooks{failed > 0 ? ` (${failed} fallidas)` : ''}</p>
-            </div>
-          </div>,
-          { duration: 5000 }
-        );
-
-        // Refresh queries
-        queryClient.invalidateQueries({ queryKey: ["recent-documents"] });
-        queryClient.invalidateQueries({ queryKey: ["pending-invoices"] });
-      }
     } catch (err) {
       console.error("Error in auto-publish check:", err);
     } finally {
-      setIsPublishing(false);
+      isCheckingRef.current = false;
     }
-  };
+  }, [activeOrganization, isPublishing, queryClient]);
 
-  // This component doesn't render anything visible, it just runs the auto-publish logic
-  if (isPublishing) {
-    return (
-      <div className="fixed bottom-4 right-4 bg-primary text-primary-foreground px-4 py-2 rounded-lg shadow-lg flex items-center gap-2 z-50">
-        <Loader2 className="h-4 w-4 animate-spin" />
-        <span className="text-sm">Publicando facturas...</span>
+  useEffect(() => {
+    if (!activeOrganization || hasCheckedRef.current) return;
+    
+    // Delay initial check to let dashboard load first
+    const initialTimeout = setTimeout(() => {
+      checkAndAutoPublish();
+      hasCheckedRef.current = true;
+    }, 2000);
+
+    return () => clearTimeout(initialTimeout);
+  }, [activeOrganization, checkAndAutoPublish]);
+
+  // Subscribe to realtime changes to update progress
+  useEffect(() => {
+    if (!activeOrganization || !isPublishing) return;
+
+    const channel = supabase
+      .channel('auto-publish-progress')
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'processed_documents',
+          filter: `organization_id=eq.${activeOrganization}`
+        },
+        (payload) => {
+          if (payload.new.status === 'published' && payload.old.status === 'pending') {
+            setProgress(prev => ({
+              ...prev,
+              current: Math.min(prev.current + 1, prev.total)
+            }));
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [activeOrganization, isPublishing]);
+
+  if (!isPublishing || dismissed) return null;
+
+  const progressPercent = progress.total > 0 
+    ? Math.round((progress.current / progress.total) * 100) 
+    : 0;
+
+  return (
+    <div className="fixed bottom-4 right-4 bg-card border shadow-lg rounded-lg p-4 z-50 min-w-[280px]">
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-2">
+          <Loader2 className="h-4 w-4 animate-spin text-primary" />
+          <span className="text-sm font-medium">Publicando a QuickBooks</span>
+        </div>
+        <button 
+          onClick={() => setDismissed(true)}
+          className="text-muted-foreground hover:text-foreground"
+        >
+          <X className="h-4 w-4" />
+        </button>
       </div>
-    );
-  }
-
-  return null;
+      <Progress value={progressPercent} className="h-2 mb-2" />
+      <p className="text-xs text-muted-foreground">
+        {progress.current} de {progress.total} facturas procesadas
+      </p>
+    </div>
+  );
 };
