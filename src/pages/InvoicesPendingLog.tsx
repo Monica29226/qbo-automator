@@ -1,5 +1,5 @@
 import { CheckCircle2, Eye, FileText, Loader2, RefreshCw, Search, Star, Trash2, Upload, X, Filter, CalendarIcon } from "lucide-react";
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback, memo } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -47,6 +47,8 @@ import { es } from "date-fns/locale";
 import { cn } from "@/lib/utils";
 import type { DateRange } from "react-day-picker";
 import { PdfViewer } from "@/components/PdfViewer";
+import { useQBOAccounts } from "@/hooks/useQBOAccounts";
+import { useDebounce } from "@/hooks/useDebounce";
 
 interface QBOAccount {
   id: string;
@@ -84,6 +86,20 @@ interface PendingInvoice {
 
 const InvoicesPendingLog = () => {
   const { activeOrganization } = useAuth();
+  
+  // ===== HOOKS OPTIMIZADOS =====
+  const {
+    accounts: qboAccounts,
+    isLoading: loadingAccounts,
+    isConnected: qboConnected,
+    refetch: refetchQBOAccounts,
+    getAccountIdFromCode,
+    getAccountById,
+  } = useQBOAccounts();
+  
+  const qboNotConnected = !qboConnected && !loadingAccounts;
+  
+  // Estados locales
   const [invoices, setInvoices] = useState<PendingInvoice[]>([]);
   const [filteredInvoices, setFilteredInvoices] = useState<PendingInvoice[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -91,9 +107,6 @@ const InvoicesPendingLog = () => {
   const [isPublishing, setIsPublishing] = useState(false);
   const [showPublishDialog, setShowPublishDialog] = useState(false);
   const [publishingIds, setPublishingIds] = useState<Set<string>>(new Set());
-  const [qboAccounts, setQboAccounts] = useState<QBOAccount[]>([]);
-  const [loadingAccounts, setLoadingAccounts] = useState(false);
-  const [qboNotConnected, setQboNotConnected] = useState(false);
   const [vendorDefaults, setVendorDefaults] = useState<Map<string, VendorDefault>>(new Map());
   const [selectedInvoice, setSelectedInvoice] = useState<PendingInvoice | null>(null);
   const [showDetailDialog, setShowDetailDialog] = useState(false);
@@ -106,6 +119,11 @@ const InvoicesPendingLog = () => {
   const [filterSupplier, setFilterSupplier] = useState("");
   const [dateRange, setDateRange] = useState<DateRange | undefined>();
   const [filterQBStatus, setFilterQBStatus] = useState<"all" | "published" | "pending">("all");
+  
+  // ===== DEBOUNCE PARA FILTROS (300ms delay) =====
+  const debouncedDocNumber = useDebounce(filterDocNumber, 300);
+  const debouncedSupplier = useDebounce(filterSupplier, 300);
+  const debouncedSearchTerm = useDebounce(searchTerm, 300);
 
   const fetchVendorDefaults = async () => {
     if (!activeOrganization) return;
@@ -125,52 +143,6 @@ const InvoicesPendingLog = () => {
       setVendorDefaults(defaultsMap);
     } catch (error: any) {
       console.error("Error fetching vendor defaults:", error);
-    }
-  };
-
-  const fetchQBOAccounts = async (): Promise<QBOAccount[]> => {
-    if (!activeOrganization) return [];
-    
-    // Check if QuickBooks is connected first
-    const { data: qbIntegration } = await supabase
-      .from("integration_accounts")
-      .select("id")
-      .eq("organization_id", activeOrganization)
-      .eq("service_type", "quickbooks")
-      .eq("is_active", true)
-      .maybeSingle();
-
-    if (!qbIntegration) {
-      console.log("⚠️ QuickBooks not connected, skipping account fetch");
-      setQboNotConnected(true);
-      setLoadingAccounts(false);
-      return [];
-    }
-    
-    setQboNotConnected(false);
-    setLoadingAccounts(true);
-    try {
-      const { data, error } = await supabase.functions.invoke(
-        "list-quickbooks-accounts",
-        {
-          body: { organization_id: activeOrganization },
-        }
-      );
-
-      if (error) throw error;
-      
-      if (data?.accounts) {
-        console.log(`✅ Cargadas ${data.accounts.length} cuentas de QuickBooks`);
-        setQboAccounts(data.accounts);
-        return data.accounts;
-      }
-      return [];
-    } catch (error: any) {
-      console.error("❌ Error fetching QBO accounts:", error);
-      toast.error("Error al cargar cuentas de QuickBooks");
-      return [];
-    } finally {
-      setLoadingAccounts(false);
     }
   };
 
@@ -262,12 +234,8 @@ const InvoicesPendingLog = () => {
 
   useEffect(() => {
     const loadData = async () => {
-      // OPTIMIZACIÓN: Cargar todo en paralelo en lugar de secuencial
-      await Promise.all([
-        fetchVendorDefaults(),
-        fetchQBOAccounts(),
-      ]);
-      // Fetch invoices después de tener los defaults para aplicarlos correctamente
+      // OPTIMIZACIÓN: Solo cargar vendor defaults, las cuentas se cargan via React Query
+      await fetchVendorDefaults();
       await fetchPendingInvoices();
     };
     loadData();
@@ -322,86 +290,25 @@ const InvoicesPendingLog = () => {
       });
 
     return () => {
-      console.log('📡 Cerrando suscripción realtime');
       supabase.removeChannel(channel);
     };
   }, [activeOrganization]);
 
-  // OPTIMIZACIÓN: Memoizar el mapa de accounts para búsquedas rápidas
-  const accountsMap = useMemo(() => {
-    const map = new Map();
-    qboAccounts.forEach(acc => map.set(acc.id, acc));
-    return map;
-  }, [qboAccounts]);
-
-  // OPTIMIZACIÓN: Memoizar map de cuentas por código para búsquedas rápidas
-  const accountsByCode = useMemo(() => {
-    const map = new Map<string, string>(); // código -> id
-    qboAccounts.forEach(account => {
-      // Indexar por número de cuenta
-      if (account.accountNumber) {
-        map.set(account.accountNumber, account.id);
-        map.set(account.accountNumber.split(' ')[0], account.id); // "6124-01" sin descripción
-      }
-      // Indexar también por el código al inicio del nombre
-      const match = account.name.match(/^(\d+[\-\d]*)/);
-      if (match) {
-        map.set(match[1], account.id);
-      }
-    });
-    return map;
-  }, [qboAccounts]);
-
-  // Helper para obtener el ID de cuenta desde el código
-  const getAccountIdFromCode = (accountCode: string | undefined): string => {
-    if (!accountCode) {
-      console.log('🔍 getAccountIdFromCode: No hay código de cuenta');
-      return "";
-    }
-    
-    console.log('🔍 Buscando cuenta para código:', accountCode);
-    
-    // Extraer solo el código numérico (ej: "6124-01 Nombre" -> "6124-01")
-    const cleanCode = accountCode.split(' ')[0].trim();
-    console.log('   Código limpio:', cleanCode);
-    
-    // Buscar en el map
-    const accountId = accountsByCode.get(cleanCode);
-    if (accountId) {
-      console.log('   ✅ Encontrado directo - ID:', accountId);
-      return accountId;
-    }
-    
-    // Si no encontró directo, buscar sin el sufijo (ej: "6124-01" -> "6124")
-    if (cleanCode.includes('-')) {
-      const baseCode = cleanCode.split('-')[0];
-      const fallbackId = accountsByCode.get(baseCode);
-      if (fallbackId) {
-        console.log('   ✅ Encontrado sin sufijo - Base:', baseCode, 'ID:', fallbackId);
-        return fallbackId;
-      }
-    }
-    
-    console.warn('   ❌ No se encontró cuenta para código:', cleanCode);
-    console.log('   📋 Códigos disponibles:', Array.from(accountsByCode.keys()).slice(0, 10));
-    return "";
-  };
-
   useEffect(() => {
-    // Aplicar todos los filtros combinados
+    // Aplicar todos los filtros combinados (usando valores debounced para evitar re-renders)
     let filtered = [...invoices];
 
-    // Filtro por número de documento
-    if (filterDocNumber.trim()) {
-      const searchLower = filterDocNumber.toLowerCase();
+    // Filtro por número de documento (debounced)
+    if (debouncedDocNumber.trim()) {
+      const searchLower = debouncedDocNumber.toLowerCase();
       filtered = filtered.filter((inv) => 
         inv.doc_number.toLowerCase().includes(searchLower)
       );
     }
 
-    // Filtro por proveedor
-    if (filterSupplier.trim()) {
-      const searchLower = filterSupplier.toLowerCase();
+    // Filtro por proveedor (debounced)
+    if (debouncedSupplier.trim()) {
+      const searchLower = debouncedSupplier.toLowerCase();
       filtered = filtered.filter((inv) => 
         inv.supplier_name.toLowerCase().includes(searchLower) ||
         (inv.supplier_tax_id && inv.supplier_tax_id.toLowerCase().includes(searchLower))
@@ -438,9 +345,9 @@ const InvoicesPendingLog = () => {
       });
     }
 
-    // Búsqueda general (searchTerm) - se aplica sobre los filtros anteriores
-    if (searchTerm.trim()) {
-      const searchLower = searchTerm.toLowerCase();
+    // Búsqueda general (debouncedSearchTerm) - se aplica sobre los filtros anteriores
+    if (debouncedSearchTerm.trim()) {
+      const searchLower = debouncedSearchTerm.toLowerCase();
       filtered = filtered.filter((inv) => {
         // Buscar por número de documento
         if (inv.doc_number.toLowerCase().includes(searchLower)) return true;
@@ -451,11 +358,14 @@ const InvoicesPendingLog = () => {
         // Buscar por cuenta contable
         if (inv.default_account_ref && inv.default_account_ref.toLowerCase().includes(searchLower)) return true;
         
-        // Buscar en la descripción de la cuenta
-        if (inv.default_account_ref && accountsMap.has(inv.default_account_ref)) {
-          const account = accountsMap.get(inv.default_account_ref);
-          if (account.name.toLowerCase().includes(searchLower)) return true;
-          if (account.accountNumber && account.accountNumber.toLowerCase().includes(searchLower)) return true;
+        // Buscar en la descripción de la cuenta usando el hook
+        if (inv.default_account_ref) {
+          const accountId = getAccountIdFromCode(inv.default_account_ref);
+          const account = getAccountById(accountId);
+          if (account) {
+            if (account.name.toLowerCase().includes(searchLower)) return true;
+            if (account.accountNumber && account.accountNumber.toLowerCase().includes(searchLower)) return true;
+          }
         }
         
         return false;
@@ -463,7 +373,7 @@ const InvoicesPendingLog = () => {
     }
 
     setFilteredInvoices(filtered);
-  }, [searchTerm, invoices, accountsMap, filterDocNumber, filterSupplier, dateRange, filterQBStatus]);
+  }, [debouncedSearchTerm, invoices, getAccountById, getAccountIdFromCode, debouncedDocNumber, debouncedSupplier, dateRange, filterQBStatus]);
 
   // Función para limpiar todos los filtros
   const clearAllFilters = () => {
@@ -556,25 +466,19 @@ const InvoicesPendingLog = () => {
       // Si estamos actualizando default_account_ref, convertir el ID a código
       let valueToSave = value;
       if (field === "default_account_ref" && typeof value === "string") {
-        console.log(`🔍 Estado qboAccounts: ${qboAccounts.length} cuentas cargadas`);
-        console.log(`🔍 Buscando cuenta ID: "${value}"`);
-        
         // VALIDACIÓN: Si no hay cuentas cargadas, intentar recargar
         let accountsList = qboAccounts;
         if (accountsList.length === 0) {
-          console.warn('⚠️ qboAccounts está vacío - intentando recargar...');
           toast.loading("Cargando cuentas...", { id: "loading-accounts" });
-          accountsList = await fetchQBOAccounts();
+          const result = await refetchQBOAccounts();
           toast.dismiss("loading-accounts");
+          accountsList = result.data || [];
           
           if (accountsList.length === 0) {
-            console.error('❌ No se pudieron cargar las cuentas de QuickBooks');
             toast.error("Las cuentas de QuickBooks no se han cargado. Verifique la conexión.");
             return;
           }
         }
-        
-        console.log(`🔍 IDs disponibles (primeros 10):`, accountsList.slice(0, 10).map(a => `${a.id}: ${a.name}`));
         
         // Buscar la cuenta por ID para obtener su código
         let account = accountsList.find(acc => acc.id === value);
@@ -584,10 +488,7 @@ const InvoicesPendingLog = () => {
           valueToSave = account.accountNumber 
             ? `${account.accountNumber} - ${account.name}` 
             : account.name;
-          console.log(`✓ Convertido ID ${value} a código: "${valueToSave}"`);
         } else {
-          console.error(`❌ No se encontró cuenta con ID: ${value}`);
-          console.error(`❌ Cuentas disponibles (${accountsList.length}):`, accountsList.map(a => `${a.id}: ${a.name}`).join(', '));
           toast.error("No se pudo encontrar la cuenta seleccionada. Intente de nuevo.");
           return;
         }
