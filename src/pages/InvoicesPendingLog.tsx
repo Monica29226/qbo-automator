@@ -738,7 +738,7 @@ const InvoicesPendingLog = () => {
     }
 
     try {
-      const loadingToast = toast.loading("Abriendo visor PDF...");
+      const loadingToast = toast.loading("Cargando PDF...");
       
       let pdfPath = invoice.pdf_attachment_url;
       
@@ -766,38 +766,45 @@ const InvoicesPendingLog = () => {
       }
       
       console.log("📂 Path final para storage:", pdfPath);
-      console.log("🔐 Generando URL temporal para bucket privado...");
       
-      // Limpiar URL anterior si existe
-      if (currentPdfUrl) {
-        setCurrentPdfUrl(null);
+      // Limpiar URL anterior si existe (revocar blob URL)
+      if (currentPdfUrl && currentPdfUrl.startsWith('blob:')) {
+        URL.revokeObjectURL(currentPdfUrl);
       }
+      setCurrentPdfUrl(null);
       
-      // IMPORTANTE: El bucket company-documents es PRIVADO
-      // Siempre crear signed URL temporal (válida por 5 minutos)
-      const { data: signedUrlData, error } = await supabase.storage
+      console.log("📥 Descargando PDF como blob...");
+      
+      // OPTIMIZACIÓN: Descargar el PDF como blob para mejor rendimiento en iframe
+      const { data: blobData, error: downloadError } = await supabase.storage
         .from('company-documents')
-        .createSignedUrl(pdfPath, 300); // 300 segundos = 5 minutos
+        .download(pdfPath);
 
-      if (error) {
-        console.error("❌ Error de storage:", error);
-        throw new Error(`Error al acceder al archivo: ${error.message}`);
+      if (downloadError) {
+        console.error("❌ Error descargando PDF:", downloadError);
+        throw new Error(`Error al descargar el PDF: ${downloadError.message}`);
       }
 
-      if (!signedUrlData?.signedUrl) {
-        throw new Error("No se pudo generar la URL temporal");
+      if (!blobData) {
+        throw new Error("No se pudo descargar el archivo");
       }
 
-      console.log("✅ URL temporal generada para bucket privado");
+      console.log("✅ PDF descargado como blob:", {
+        size: blobData.size,
+        type: blobData.type
+      });
       
-      // Usar la signed URL
-      setCurrentPdfUrl(signedUrlData.signedUrl);
+      // Crear blob URL para el iframe (mejor rendimiento y no expira)
+      const blobUrl = URL.createObjectURL(blobData);
+      console.log("🔗 Blob URL creado para iframe");
+      
+      setCurrentPdfUrl(blobUrl);
       setCurrentPdfName(`Factura ${invoice.doc_number}`);
       setPdfViewerOpen(true);
       
       toast.dismiss(loadingToast);
-      toast.success("Visor de PDF abierto");
-      console.log("✅ PDF abierto con signed URL");
+      toast.success("PDF cargado correctamente");
+      console.log("✅ PDF listo en visor");
       
     } catch (error: any) {
       toast.dismiss();
@@ -818,7 +825,13 @@ const InvoicesPendingLog = () => {
 
   const handleClosePdfViewer = () => {
     setPdfViewerOpen(false);
-    // Limpiar la URL cuando se cierra el modal
+    
+    // IMPORTANTE: Liberar el blob URL para evitar memory leaks
+    if (currentPdfUrl && currentPdfUrl.startsWith('blob:')) {
+      URL.revokeObjectURL(currentPdfUrl);
+      console.log("🧹 Blob URL liberado");
+    }
+    
     setCurrentPdfUrl(null);
   };
 
