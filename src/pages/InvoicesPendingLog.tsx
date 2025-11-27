@@ -798,69 +798,45 @@ const InvoicesPendingLog = () => {
       let pdfPath = invoice.pdf_attachment_url;
       
       // Extraer el path relativo del storage desde cualquier formato de URL
-      if (pdfPath.startsWith('http')) {
-        const url = new URL(pdfPath);
-        const pathMatch = url.pathname.match(/\/storage\/v1\/object\/(?:public|sign|authenticated)\/company-documents\/(.+)/);
-        if (pathMatch) {
-          pdfPath = pathMatch[1];
-          console.log("🔄 Extraído path desde URL completa:", pdfPath);
-        }
+      if (pdfPath.includes('storage/v1/object/public/company-documents/')) {
+        pdfPath = pdfPath.split('storage/v1/object/public/company-documents/')[1];
+      } else if (pdfPath.includes('company-documents/')) {
+        pdfPath = pdfPath.split('company-documents/').pop() || pdfPath;
       }
       
       // Remover prefijos si los tiene
-      const prefixesToRemove = ['company-documents/', '/company-documents/'];
-      for (const prefix of prefixesToRemove) {
-        if (pdfPath.startsWith(prefix)) {
-          pdfPath = pdfPath.replace(prefix, '');
-          break;
-        }
+      if (pdfPath.startsWith('company-documents/')) {
+        pdfPath = pdfPath.replace('company-documents/', '');
       }
       
       console.log("📂 Path final para storage:", pdfPath);
       
-      // Limpiar URL anterior si existe
-      if (currentPdfUrl && currentPdfUrl.startsWith('blob:')) {
+      // Revocar URL anterior si existe
+      if (currentPdfUrl) {
         URL.revokeObjectURL(currentPdfUrl);
       }
       
-      console.log("🔐 Método 1: Intentando con signed URL...");
+      console.log("📥 Descargando PDF...");
       
-      // MÉTODO 1: Intentar con signed URL (más rápido)
-      const { data: signedData, error: signedError } = await supabase.storage
-        .from('company-documents')
-        .createSignedUrl(pdfPath, 7200); // 2 horas
-
-      if (!signedError && signedData?.signedUrl) {
-        console.log("✅ Signed URL creada exitosamente");
-        setCurrentPdfUrl(signedData.signedUrl);
-        setCurrentPdfName(`Factura ${invoice.doc_number}`);
-        setPdfViewerOpen(true);
-        toast.dismiss(loadingToast);
-        toast.success("PDF cargado");
-        return;
-      }
-
-      console.warn("⚠️ Signed URL falló, intentando con blob download...");
-      
-      // MÉTODO 2: Fallback - descargar blob
+      // Descargar como blob (método más confiable para iframes)
       const { data: blobData, error: downloadError } = await supabase.storage
         .from('company-documents')
         .download(pdfPath);
 
       if (downloadError) {
-        console.error("❌ Blob download falló:", downloadError);
-        throw new Error(`No se pudo acceder al PDF: ${downloadError.message}`);
+        console.error("❌ Error descargando:", downloadError);
+        throw new Error(`No se pudo cargar el PDF: ${downloadError.message}`);
       }
 
       if (!blobData) {
         throw new Error("El archivo PDF está vacío");
       }
 
-      console.log("✅ PDF descargado como blob:", { size: blobData.size, type: blobData.type });
+      console.log("✅ PDF descargado:", { size: blobData.size, type: blobData.type });
       
       // Crear blob URL local
       const blobUrl = URL.createObjectURL(new Blob([blobData], { type: 'application/pdf' }));
-      console.log("🔗 Blob URL creado:", blobUrl);
+      console.log("🔗 Blob URL creado");
       
       setCurrentPdfUrl(blobUrl);
       setCurrentPdfName(`Factura ${invoice.doc_number}`);
@@ -868,22 +844,11 @@ const InvoicesPendingLog = () => {
       
       toast.dismiss(loadingToast);
       toast.success("PDF cargado");
-      console.log("✅ PDF listo en visor");
       
     } catch (error: any) {
       toast.dismiss(loadingToast);
-      console.error("❌ Error completo al cargar PDF:", error);
-      
-      let errorMessage = "Error al cargar el PDF";
-      if (error.message?.includes("not found") || error.message?.includes("Object not found")) {
-        errorMessage = "El archivo PDF no existe en el almacenamiento";
-      } else if (error.message?.includes("permission") || error.message?.includes("access")) {
-        errorMessage = "No tiene permisos para acceder a este PDF";
-      } else if (error.message) {
-        errorMessage = error.message;
-      }
-      
-      toast.error(errorMessage);
+      console.error("❌ Error al cargar PDF:", error);
+      toast.error(error.message || "Error al cargar el PDF");
     }
   };
 
