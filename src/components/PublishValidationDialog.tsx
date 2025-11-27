@@ -64,13 +64,57 @@ export const PublishValidationDialog = ({
     let isValid = true;
 
     try {
-      // 1. Verificar conexión a QuickBooks
-      const { data: qboAccount } = await supabase
-        .from("integration_accounts")
-        .select("credentials, is_active")
-        .eq("organization_id", activeOrganization)
-        .eq("service_type", "quickbooks")
-        .maybeSingle();
+      console.log("⚡ Starting PARALLEL validation...");
+      
+      // OPTIMIZACIÓN: Ejecutar TODAS las consultas en PARALELO
+      const [
+        qboAccountResult,
+        pendingCountResult,
+        docsWithoutVendorResult
+      ] = await Promise.all([
+        // 1. Verificar conexión a QuickBooks
+        supabase
+          .from("integration_accounts")
+          .select("credentials, is_active")
+          .eq("organization_id", activeOrganization)
+          .eq("service_type", "quickbooks")
+          .eq("is_active", true)
+          .maybeSingle(),
+        
+        // 2. Contar documentos pendientes
+        (async () => {
+          let query = supabase
+            .from("processed_documents")
+            .select("id", { count: "exact", head: true })
+            .eq("organization_id", activeOrganization)
+            .is("qbo_entity_id", null)
+            .in("status", ["pending", "processed"]);
+
+          if (documentIds && documentIds.length > 0) {
+            query = query.in("id", documentIds);
+          }
+
+          return query;
+        })(),
+        
+        // 3. Contar vendors sin asignar
+        supabase
+          .from("processed_documents")
+          .select("id", { count: "exact", head: true })
+          .eq("organization_id", activeOrganization)
+          .is("vendor_id", null)
+          .in("status", ["pending", "processed"])
+      ]);
+
+      const qboAccount = qboAccountResult.data;
+      const pendingCount = pendingCountResult.count;
+      const docsWithoutVendor = docsWithoutVendorResult.count;
+
+      console.log("✓ Parallel queries completed:", {
+        qboConnected: !!qboAccount?.is_active,
+        pendingCount,
+        docsWithoutVendor
+      });
 
       const qboConnected = !!qboAccount?.is_active;
       
@@ -79,7 +123,7 @@ export const PublishValidationDialog = ({
         isValid = false;
       }
 
-      // 2. Verificar expiración del token
+      // Verificar expiración del token
       let tokenExpired = false;
       let tokenExpiresAt: string | undefined;
       
@@ -103,41 +147,25 @@ export const PublishValidationDialog = ({
         }
       }
 
-      // 3. Contar documentos pendientes
-      let query = supabase
-        .from("processed_documents")
-        .select("id", { count: "exact", head: true })
-        .eq("organization_id", activeOrganization)
-        .is("qbo_entity_id", null)
-        .in("status", ["pending", "processed"]);
-
-      if (documentIds && documentIds.length > 0) {
-        query = query.in("id", documentIds);
-      }
-
-      const { count: pendingCount } = await query;
-
       if (!pendingCount || pendingCount === 0) {
         warnings.push("No hay documentos para publicar");
       }
-
-      // 4. Verificar vendors sin asignar
-      const { count: docsWithoutVendor } = await supabase
-        .from("processed_documents")
-        .select("id", { count: "exact", head: true })
-        .eq("organization_id", activeOrganization)
-        .is("vendor_id", null)
-        .in("status", ["pending", "processed"]);
 
       if (docsWithoutVendor && docsWithoutVendor > 0) {
         warnings.push(`${docsWithoutVendor} documento${docsWithoutVendor !== 1 ? 's' : ''} sin vendor asignado. Se crearán automáticamente en QuickBooks.`);
       }
 
-      // 5. Validar cuentas contables
-      console.log("🔍 Validating account codes...");
-      const invalidAccounts: Array<{ vendor: string; account: string; docCount: number }> = [];
+      // OPTIMIZACIÓN: Saltar validación de cuentas si hay MUCHOS documentos (> 20)
+      // Esto evita consultas pesadas cuando hay lotes grandes
+      const skipAccountValidation = (pendingCount || 0) > 20;
       
-      if (qboConnected && !tokenExpired) {
+      let invalidAccounts: Array<{ vendor: string; account: string; docCount: number }> = [];
+      
+      if (skipAccountValidation) {
+        console.log("⚡ Skipping account validation for large batch (>20 docs)");
+        warnings.push("Validación de cuentas omitida por lote grande. Las cuentas se validarán durante la publicación.");
+      } else if (qboConnected && !tokenExpired) {
+        console.log("🔍 Validating account codes...");
         try {
           // Obtener cuentas válidas de QuickBooks
           const { data: qboData, error: qboError } = await supabase.functions.invoke(
@@ -226,6 +254,7 @@ export const PublishValidationDialog = ({
         }
       }
 
+
       setValidation({
         isValid,
         warnings,
@@ -238,6 +267,8 @@ export const PublishValidationDialog = ({
           invalidAccounts: invalidAccounts.length > 0 ? invalidAccounts : undefined,
         },
       });
+      
+      console.log("✅ Validation completed:", { isValid, pendingCount, warnings: warnings.length, errors: errors.length });
     } catch (error) {
       console.error("Error validating publish conditions:", error);
       setValidation({
