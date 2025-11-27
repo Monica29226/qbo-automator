@@ -792,9 +792,9 @@ const InvoicesPendingLog = () => {
       return;
     }
 
+    const loadingToast = toast.loading("Cargando PDF...");
+
     try {
-      const loadingToast = toast.loading("Cargando PDF...");
-      
       let pdfPath = invoice.pdf_attachment_url;
       
       // Extraer el path relativo del storage desde cualquier formato de URL
@@ -808,11 +808,7 @@ const InvoicesPendingLog = () => {
       }
       
       // Remover prefijos si los tiene
-      const prefixesToRemove = [
-        'company-documents/',
-        '/company-documents/'
-      ];
-      
+      const prefixesToRemove = ['company-documents/', '/company-documents/'];
       for (const prefix of prefixesToRemove) {
         if (pdfPath.startsWith(prefix)) {
           pdfPath = pdfPath.replace(prefix, '');
@@ -827,30 +823,43 @@ const InvoicesPendingLog = () => {
         URL.revokeObjectURL(currentPdfUrl);
       }
       
-      console.log("📥 Descargando PDF como blob...");
+      console.log("🔐 Método 1: Intentando con signed URL...");
       
-      // Descargar como blob para crear URL local (evita problemas CORS del iframe)
+      // MÉTODO 1: Intentar con signed URL (más rápido)
+      const { data: signedData, error: signedError } = await supabase.storage
+        .from('company-documents')
+        .createSignedUrl(pdfPath, 7200); // 2 horas
+
+      if (!signedError && signedData?.signedUrl) {
+        console.log("✅ Signed URL creada exitosamente");
+        setCurrentPdfUrl(signedData.signedUrl);
+        setCurrentPdfName(`Factura ${invoice.doc_number}`);
+        setPdfViewerOpen(true);
+        toast.dismiss(loadingToast);
+        toast.success("PDF cargado");
+        return;
+      }
+
+      console.warn("⚠️ Signed URL falló, intentando con blob download...");
+      
+      // MÉTODO 2: Fallback - descargar blob
       const { data: blobData, error: downloadError } = await supabase.storage
         .from('company-documents')
         .download(pdfPath);
 
       if (downloadError) {
-        console.error("❌ Error descargando PDF:", downloadError);
-        toast.dismiss(loadingToast);
-        toast.error(`Error al cargar el PDF: ${downloadError.message}`);
-        return;
+        console.error("❌ Blob download falló:", downloadError);
+        throw new Error(`No se pudo acceder al PDF: ${downloadError.message}`);
       }
 
       if (!blobData) {
-        toast.dismiss(loadingToast);
-        toast.error("No se pudo descargar el archivo");
-        return;
+        throw new Error("El archivo PDF está vacío");
       }
 
-      console.log("✅ PDF descargado:", { size: blobData.size, type: blobData.type });
+      console.log("✅ PDF descargado como blob:", { size: blobData.size, type: blobData.type });
       
       // Crear blob URL local
-      const blobUrl = URL.createObjectURL(blobData);
+      const blobUrl = URL.createObjectURL(new Blob([blobData], { type: 'application/pdf' }));
       console.log("🔗 Blob URL creado:", blobUrl);
       
       setCurrentPdfUrl(blobUrl);
@@ -858,23 +867,23 @@ const InvoicesPendingLog = () => {
       setPdfViewerOpen(true);
       
       toast.dismiss(loadingToast);
-      toast.success("PDF cargado correctamente");
+      toast.success("PDF cargado");
       console.log("✅ PDF listo en visor");
       
     } catch (error: any) {
-      toast.dismiss();
+      toast.dismiss(loadingToast);
       console.error("❌ Error completo al cargar PDF:", error);
       
       let errorMessage = "Error al cargar el PDF";
-      if (error.message.includes("not found") || error.message.includes("Object not found")) {
+      if (error.message?.includes("not found") || error.message?.includes("Object not found")) {
         errorMessage = "El archivo PDF no existe en el almacenamiento";
-      } else if (error.message.includes("Bucket")) {
-        errorMessage = "Bucket de almacenamiento no encontrado. Contacta al administrador.";
+      } else if (error.message?.includes("permission") || error.message?.includes("access")) {
+        errorMessage = "No tiene permisos para acceder a este PDF";
       } else if (error.message) {
         errorMessage = error.message;
       }
       
-      toast.error(errorMessage, { duration: 5000 });
+      toast.error(errorMessage);
     }
   };
 
