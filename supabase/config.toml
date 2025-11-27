@@ -104,3 +104,6 @@ verify_jwt = true
 
 [functions.verify-qbo-bill-exists]
 verify_jwt = true
+
+[functions.auto-publish-vendor-invoices]
+verify_jwt = true

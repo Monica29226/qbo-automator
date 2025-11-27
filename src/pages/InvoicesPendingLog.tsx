@@ -146,14 +146,64 @@ const InvoicesPendingLog = () => {
     }
   };
 
+  // Normalizar nombre de vendor para comparación
+  const normalizeVendorName = (name: string): string => {
+    return name
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-z0-9]/g, "")
+      .trim();
+  };
+
   const fetchPendingInvoices = async () => {
     if (!activeOrganization) return;
 
     setIsLoading(true);
     try {
+      // Primero, obtener TODOS los vendors que ya tienen regla configurada
+      const [vendorDefaultsResult, vendorRulesResult, vendorsResult] = await Promise.all([
+        supabase
+          .from("vendor_defaults")
+          .select("vendor_name, default_account_ref")
+          .eq("organization_id", activeOrganization)
+          .not("default_account_ref", "is", null),
+        supabase
+          .from("vendor_classification_rules")
+          .select("vendor_name, account_code")
+          .eq("organization_id", activeOrganization)
+          .eq("is_active", true),
+        supabase
+          .from("vendors")
+          .select("vendor_name, default_account_ref")
+          .eq("organization_id", activeOrganization)
+          .not("default_account_ref", "is", null)
+      ]);
+
+      // Crear set de vendors con regla (normalizados para comparación)
+      const vendorsWithRules = new Set<string>();
+      
+      vendorDefaultsResult.data?.forEach(v => {
+        if (v.default_account_ref) {
+          vendorsWithRules.add(normalizeVendorName(v.vendor_name));
+        }
+      });
+      
+      vendorRulesResult.data?.forEach(v => {
+        if (v.account_code) {
+          vendorsWithRules.add(normalizeVendorName(v.vendor_name));
+        }
+      });
+      
+      vendorsResult.data?.forEach(v => {
+        if (v.default_account_ref) {
+          vendorsWithRules.add(normalizeVendorName(v.vendor_name));
+        }
+      });
+
+      console.log(`📋 Vendors con regla configurada: ${vendorsWithRules.size}`);
+
       // Fetch documents - SOLO facturas pendientes (SIN qbo_entity_id)
-      // FILTRO: Solo facturas de noviembre 2025 en adelante
-      // EXCLUIR: Facturas ya publicadas a QuickBooks (que tienen qbo_entity_id)
       const { data: docsData, error: docsError } = await supabase
         .from("processed_documents")
         .select("*")
@@ -162,7 +212,7 @@ const InvoicesPendingLog = () => {
         .is("qbo_entity_id", null)
         .gte("issue_date", "2025-11-01")
         .order("created_at", { ascending: false })
-        .limit(100);
+        .limit(200);
 
       if (docsError) throw docsError;
 
@@ -172,10 +222,24 @@ const InvoicesPendingLog = () => {
         return;
       }
 
-      // Get unique vendor IDs (filter out nulls)
-      const vendorIds = [...new Set(docsData.map(doc => doc.vendor_id).filter(Boolean))];
+      // FILTRAR: Solo mostrar facturas de vendors SIN regla configurada
+      const filteredDocs = docsData.filter(doc => {
+        const normalizedName = normalizeVendorName(doc.supplier_name);
+        const hasRule = vendorsWithRules.has(normalizedName);
+        
+        if (hasRule) {
+          console.log(`⏭️ Ocultando factura de vendor con regla: ${doc.supplier_name} (${doc.doc_number})`);
+        }
+        
+        return !hasRule;
+      });
+
+      console.log(`📄 Facturas: ${docsData.length} total, ${filteredDocs.length} sin regla de vendor`);
+
+      // Get unique vendor IDs from filtered docs
+      const vendorIds = [...new Set(filteredDocs.map(doc => doc.vendor_id).filter(Boolean))];
       
-      // Batch fetch all vendors at once (OPTIMIZACIÓN: Una sola query en lugar de N queries)
+      // Batch fetch all vendors at once
       let vendorsMap = new Map();
       if (vendorIds.length > 0) {
         const { data: vendorsData } = await supabase
@@ -188,28 +252,23 @@ const InvoicesPendingLog = () => {
         });
       }
 
-      // Apply vendor data and defaults in memory (OPTIMIZACIÓN: Sin queries adicionales)
-      const invoicesWithVendors = docsData.map((doc) => {
+      // Apply vendor data and defaults in memory
+      const invoicesWithVendors = filteredDocs.map((doc) => {
         let invoiceData: PendingInvoice = { 
           ...doc,
-          // IMPORTANTE: Usar los valores ya guardados en el documento primero
           default_account_ref: doc.default_account_ref || undefined,
           default_class_ref: doc.default_class_ref || undefined,
           has_vendor_default: false
         };
         
-        // Si no hay cuenta en el documento, usar del vendor
         if (!invoiceData.default_account_ref && doc.vendor_id && vendorsMap.has(doc.vendor_id)) {
           const vendorData = vendorsMap.get(doc.vendor_id);
           invoiceData.default_account_ref = vendorData.default_account_ref;
           invoiceData.default_class_ref = vendorData.default_class_ref;
         }
 
-        // Si tampoco hay en vendor, aplicar vendor defaults
         const vendorDefault = vendorDefaults.get(doc.supplier_name);
         if (vendorDefault) {
-          const hasDefaultApplied = !invoiceData.default_account_ref || !invoiceData.uses_tax;
-          
           if (!invoiceData.default_account_ref && vendorDefault.default_account_ref) {
             invoiceData.default_account_ref = vendorDefault.default_account_ref;
             invoiceData.has_vendor_default = true;
@@ -436,10 +495,36 @@ const InvoicesPendingLog = () => {
           console.error("Error creating classification rule:", ruleError);
         } else {
           console.log(`✓ Regla de clasificación creada para ${vendorName}: ${accountRef}`);
+          
+          // 3. AUTO-PUBLICAR: Invocar función para publicar automáticamente las facturas de este vendor
+          try {
+            console.log(`📤 Auto-publicando facturas de ${vendorName}...`);
+            const { data: publishResult, error: publishError } = await supabase.functions.invoke(
+              "auto-publish-vendor-invoices",
+              {
+                body: {
+                  organization_id: activeOrganization,
+                  vendor_name: vendorName,
+                  account_code: accountRef,
+                },
+              }
+            );
+
+            if (publishError) {
+              console.error("Error en auto-publish:", publishError);
+            } else {
+              console.log(`✅ Auto-publish result:`, publishResult);
+              if (publishResult?.published > 0) {
+                toast.success(`${publishResult.published} factura(s) de ${vendorName} publicadas a QuickBooks`);
+              }
+            }
+          } catch (autoPublishError) {
+            console.error("Error calling auto-publish:", autoPublishError);
+          }
         }
       }
 
-      // 3. Update local cache
+      // 4. Update local cache
       if (data) {
         setVendorDefaults((prev) => {
           const newMap = new Map(prev);
