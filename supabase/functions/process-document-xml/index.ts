@@ -143,6 +143,66 @@ function parseLineItems(xml: string): any[] {
   return lineItems;
 }
 
+// Función para extraer datos del Receptor del XML
+function parseReceptorData(xml: string): { nombre: string; identificacion: string } {
+  // Buscar la sección Receptor
+  const receptorMatch = xml.match(/<Receptor[^>]*>([\s\S]*?)<\/Receptor>/i);
+  if (!receptorMatch) {
+    return { nombre: '', identificacion: '' };
+  }
+  
+  const receptorXml = receptorMatch[1];
+  
+  // Extraer nombre del receptor
+  const nombre = parseXMLValue(receptorXml, 'Nombre');
+  
+  // Extraer identificación del receptor (puede estar en diferentes tags)
+  let identificacion = parseXMLValue(receptorXml, 'Numero');
+  if (!identificacion) {
+    identificacion = parseXMLValue(receptorXml, 'NumeroIdentificacion');
+  }
+  if (!identificacion) {
+    // Buscar dentro de <Identificacion>
+    const identMatch = receptorXml.match(/<Identificacion[^>]*>([\s\S]*?)<\/Identificacion>/i);
+    if (identMatch) {
+      identificacion = parseXMLValue(identMatch[1], 'Numero');
+    }
+  }
+  
+  return { nombre, identificacion };
+}
+
+// Función para extraer datos del Emisor del XML
+function parseEmisorData(xml: string): { nombre: string; identificacion: string; email: string } {
+  // Buscar la sección Emisor
+  const emisorMatch = xml.match(/<Emisor[^>]*>([\s\S]*?)<\/Emisor>/i);
+  if (!emisorMatch) {
+    // Fallback: buscar en todo el XML (para XMLs simples)
+    return {
+      nombre: parseXMLValue(xml, 'Nombre'),
+      identificacion: parseXMLValue(xml, 'Numero') || parseXMLValue(xml, 'NumeroIdentificacion'),
+      email: parseXMLValue(xml, 'CorreoElectronico')
+    };
+  }
+  
+  const emisorXml = emisorMatch[1];
+  
+  const nombre = parseXMLValue(emisorXml, 'Nombre');
+  let identificacion = parseXMLValue(emisorXml, 'Numero');
+  if (!identificacion) {
+    identificacion = parseXMLValue(emisorXml, 'NumeroIdentificacion');
+  }
+  if (!identificacion) {
+    const identMatch = emisorXml.match(/<Identificacion[^>]*>([\s\S]*?)<\/Identificacion>/i);
+    if (identMatch) {
+      identificacion = parseXMLValue(identMatch[1], 'Numero');
+    }
+  }
+  const email = parseXMLValue(emisorXml, 'CorreoElectronico');
+  
+  return { nombre, identificacion, email };
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -164,9 +224,61 @@ Deno.serve(async (req) => {
     
     console.log("📄 XML Preview:", xmlContent.substring(0, 500));
     
+    // ============================================================
+    // VALIDACIÓN CRÍTICA: Solo procesar facturas dirigidas a la organización
+    // ============================================================
+    
+    // Obtener datos de la organización (nombre y cédula jurídica)
+    const { data: organization, error: orgError } = await supabase
+      .from('organizations')
+      .select('name, tax_id')
+      .eq('id', payload.organization_id)
+      .single();
+    
+    if (orgError || !organization) {
+      console.error("❌ Error obteniendo organización:", orgError);
+      throw new Error("No se pudo obtener información de la organización");
+    }
+    
+    // Extraer datos del Receptor del XML
+    const receptor = parseReceptorData(xmlContent);
+    console.log("🎯 Receptor del XML:", receptor);
+    console.log("🏢 Organización esperada:", { name: organization.name, tax_id: organization.tax_id });
+    
+    // Validar que la factura sea para esta organización
+    if (organization.tax_id) {
+      // Normalizar cédulas para comparación (quitar guiones, espacios)
+      const normalizedOrgTaxId = organization.tax_id.replace(/[-\s]/g, '').trim();
+      const normalizedReceptorId = receptor.identificacion.replace(/[-\s]/g, '').trim();
+      
+      if (normalizedReceptorId && normalizedReceptorId !== normalizedOrgTaxId) {
+        console.warn(`⚠️ FACTURA RECHAZADA - Receptor no coincide con la organización`);
+        console.warn(`   Receptor: ${receptor.nombre} (${receptor.identificacion})`);
+        console.warn(`   Esperado: ${organization.name} (${organization.tax_id})`);
+        
+        return new Response(
+          JSON.stringify({
+            success: false,
+            rejected: true,
+            message: `Factura rechazada: El receptor (${receptor.nombre} - ${receptor.identificacion}) no coincide con la organización (${organization.name} - ${organization.tax_id})`,
+            reason: 'receptor_mismatch'
+          }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+      
+      console.log("✅ Receptor validado correctamente");
+    } else {
+      console.warn("⚠️ La organización no tiene cédula jurídica configurada, saltando validación de receptor");
+    }
+    
+    // ============================================================
+    // Continuar con el procesamiento normal del documento
+    // ============================================================
+    
     // Parse XML to extract all data
-    const doc_key = parseXMLValue(xmlContent, 'Clave'); // Clave numérica larga (50 dígitos)
-    const doc_number = parseNumeroConsecutivo(xmlContent); // Número de factura (20 dígitos aprox)
+    const doc_key = parseXMLValue(xmlContent, 'Clave');
+    const doc_number = parseNumeroConsecutivo(xmlContent);
     
     // VALIDACIÓN CRÍTICA: Asegurar que doc_number NO sea la clave numérica
     if (doc_number && doc_number.length > 25) {
@@ -177,9 +289,12 @@ Deno.serve(async (req) => {
     
     const issue_date_str = parseXMLValue(xmlContent, 'FechaEmision');
     const issue_date = issue_date_str ? issue_date_str.split('T')[0] : '';
-    const supplier_name = parseXMLValue(xmlContent, 'Nombre');
-    const supplier_tax_id = parseXMLValue(xmlContent, 'Numero') || parseXMLValue(xmlContent, 'NumeroIdentificacion');
-    const supplier_email = parseXMLValue(xmlContent, 'CorreoElectronico');
+    
+    // Usar parseEmisorData para obtener datos del proveedor correctamente
+    const emisor = parseEmisorData(xmlContent);
+    const supplier_name = emisor.nombre;
+    const supplier_tax_id = emisor.identificacion;
+    const supplier_email = emisor.email;
     
     console.log("🔍 Parsed values:", { doc_number, doc_key: doc_key?.substring(0, 20), supplier_name, supplier_tax_id });
     
