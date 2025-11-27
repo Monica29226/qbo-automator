@@ -542,7 +542,7 @@ const InvoicesPendingLog = () => {
       const invoice = invoices.find((inv) => inv.id === id);
       if (!invoice) return;
 
-      console.log('💾 Guardando campo:', field, 'valor:', value, 'para factura:', id);
+      console.log('💾 Actualizando campo:', field, 'con valor:', value, 'tipo:', typeof value, 'para factura:', invoice.doc_number);
 
       // Si estamos actualizando default_account_ref, convertir el ID a código
       let valueToSave = value;
@@ -554,11 +554,15 @@ const InvoicesPendingLog = () => {
           valueToSave = account.accountNumber 
             ? `${account.accountNumber} - ${account.name}` 
             : account.name;
-          console.log(`✓ Convertido ID ${value} a código: ${valueToSave}`);
+          console.log(`✓ Convertido ID ${value} a código: "${valueToSave}"`);
         } else {
           console.warn(`⚠️ No se encontró la cuenta con ID: ${value}`);
+          toast.error("No se pudo encontrar la cuenta seleccionada");
+          return;
         }
       }
+
+      console.log(`📝 Guardando en DB - Campo: ${field}, Valor final: "${valueToSave}"`);
 
       // CRÍTICO: Actualizar processed_documents SIEMPRE que cambie un campo
       const { error: docUpdateError } = await supabase
@@ -571,7 +575,7 @@ const InvoicesPendingLog = () => {
         throw docUpdateError;
       }
 
-      console.log('✅ Campo actualizado en processed_documents');
+      console.log('✅ Campo actualizado en processed_documents exitosamente');
 
       // If updating account or class, also update the vendor record
       if (field === "default_account_ref" || field === "default_class_ref") {
@@ -587,56 +591,82 @@ const InvoicesPendingLog = () => {
         }
 
         // Save as vendor default if updating account
-        if (field === "default_account_ref") {
+        if (field === "default_account_ref" && typeof valueToSave === 'string') {
           await saveVendorDefault(
             invoice.supplier_name,
-            valueToSave as string,
+            valueToSave,
             invoice.uses_tax ?? true
           );
-          toast.success(`✓ Configuración guardada para ${invoice.supplier_name}. Se aplicará a futuras facturas.`);
           
           // AUTO-PUBLICAR: Si se asignó una cuenta contable válida, publicar automáticamente
-          if (valueToSave && typeof valueToSave === 'string' && valueToSave.trim() !== '') {
-            console.log(`🚀 Iniciando publicación automática para factura ${id} con cuenta: ${valueToSave}`);
-            const publishToast = toast.loading("Publicando factura automáticamente a QuickBooks...");
+          if (valueToSave.trim() !== '') {
+            console.log(`🚀 Iniciando publicación automática para factura ${invoice.doc_number} con cuenta: ${valueToSave}`);
             
-            // Marcar como "publishing" temporalmente
+            // Actualizar UI inmediatamente (optimistic update)
             setInvoices((prev) =>
               prev.map((inv) => (inv.id === id ? { ...inv, [field]: valueToSave, _isPublishing: true } : inv))
             );
             
+            toast.success(`✓ Cuenta guardada para ${invoice.supplier_name}. Publicando a QuickBooks...`);
+            
             try {
               console.log(`📤 Llamando a publish-to-quickbooks para documento ${id}...`);
-              const { data, error: publishError } = await supabase.functions.invoke(
+              
+              // Llamar al edge function en background
+              const publishPromise = supabase.functions.invoke(
                 "publish-to-quickbooks",
                 {
                   body: { organization_id: activeOrganization, document_ids: [id] },
                 }
               );
-
-              console.log(`📥 Respuesta de publish-to-quickbooks:`, { data, error: publishError });
-
-              if (publishError) {
-                console.error("❌ Error de publicación:", publishError);
-                throw publishError;
-              }
-
-              if (data?.errors && data.errors.length > 0) {
-                console.error("❌ Errores en publicación:", data.errors);
-                throw new Error(data.errors[0].error || "Error al publicar");
-              }
-
-              toast.dismiss(publishToast);
-              toast.success("✅ Factura publicada exitosamente a QuickBooks");
-              console.log(`✅ Factura ${id} publicada exitosamente`);
               
-              // Refrescar la lista para que desaparezca de pendientes
-              await fetchPendingInvoices();
-              return; // Exit early since we refreshed the list
+              // Esperar respuesta con timeout de 5 segundos
+              const timeoutPromise = new Promise((_, reject) => 
+                setTimeout(() => reject(new Error('Timeout')), 5000)
+              );
+              
+              const result = await Promise.race([publishPromise, timeoutPromise]);
+              
+              if (result && typeof result === 'object' && 'data' in result) {
+                const { data, error: publishError } = result as any;
+                
+                console.log(`📥 Respuesta rápida de publish-to-quickbooks:`, { data, error: publishError });
+
+                if (publishError) {
+                  console.error("❌ Error de publicación:", publishError);
+                  throw publishError;
+                }
+
+                if (data?.errors && data.errors.length > 0) {
+                  console.error("❌ Errores en publicación:", data.errors);
+                  throw new Error(data.errors[0].error || "Error al publicar");
+                }
+
+                toast.success("✅ Factura publicada exitosamente a QuickBooks");
+                console.log(`✅ Factura ${invoice.doc_number} publicada exitosamente`);
+              }
+              
+              // Refrescar la lista después de un pequeño delay
+              setTimeout(async () => {
+                await fetchPendingInvoices();
+              }, 1000);
+              
+              return; // Exit early
+              
             } catch (publishError: any) {
               console.error("❌ Error en publicación automática:", publishError);
-              toast.dismiss(publishToast);
-              toast.error("Cuenta guardada pero error al publicar: " + (publishError.message || "Error desconocido"));
+              
+              if (publishError.message === 'Timeout') {
+                // El timeout es normal - la publicación continúa en background
+                toast.info("⏳ Publicación iniciada. La factura se publicará en segundo plano.");
+                
+                // Refrescar después de 3 segundos
+                setTimeout(async () => {
+                  await fetchPendingInvoices();
+                }, 3000);
+              } else {
+                toast.error("Cuenta guardada pero error al publicar: " + (publishError.message || "Error desconocido"));
+              }
               
               // Quitar el estado de publishing
               setInvoices((prev) =>
@@ -645,6 +675,7 @@ const InvoicesPendingLog = () => {
             }
           } else {
             console.warn(`⚠️ No se puede publicar automáticamente - cuenta vacía o inválida:`, valueToSave);
+            toast.warning("Cuenta guardada pero valor inválido para publicar");
           }
         }
       }
