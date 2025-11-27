@@ -5,12 +5,76 @@ const DEBUG = Deno.env.get("DEBUG") === "true";
 
 // Conditional logging helpers
 const log = (...args: any[]) => DEBUG && console.log(...args);
-const logInfo = (msg: string) => console.log(msg); // Always log important info
-const logError = (...args: any[]) => console.error(...args); // Always log errors
+const logInfo = (msg: string) => console.log(msg);
+const logError = (...args: any[]) => console.error(...args);
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+};
+
+// Helper: Delay function for rate limiting
+const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+// Helper: Fetch with retry for rate limiting (429 errors)
+const fetchWithRetry = async (
+  url: string,
+  options: RequestInit,
+  maxRetries = 3,
+  baseDelay = 2000
+): Promise<Response> => {
+  let lastError: Error | null = null;
+  
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const response = await fetch(url, options);
+      
+      // Check for rate limiting (429)
+      if (response.status === 429) {
+        const retryAfter = response.headers.get('Retry-After');
+        const waitTime = retryAfter 
+          ? parseInt(retryAfter) * 1000 
+          : baseDelay * Math.pow(2, attempt); // Exponential backoff
+        
+        if (attempt < maxRetries) {
+          logInfo(`⏳ Rate limited (429), waiting ${waitTime}ms before retry ${attempt + 1}/${maxRetries}`);
+          await delay(waitTime);
+          continue;
+        }
+      }
+      
+      // Check for throttle error in response body
+      if (!response.ok) {
+        const clonedResponse = response.clone();
+        try {
+          const errorBody = await clonedResponse.text();
+          if (errorBody.includes('ThrottleExceeded') || errorBody.includes('003001')) {
+            const waitTime = baseDelay * Math.pow(2, attempt);
+            if (attempt < maxRetries) {
+              logInfo(`⏳ Throttle exceeded, waiting ${waitTime}ms before retry ${attempt + 1}/${maxRetries}`);
+              await delay(waitTime);
+              continue;
+            }
+          }
+        } catch {
+          // Ignore parse errors
+        }
+      }
+      
+      return response;
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+      
+      if (attempt < maxRetries) {
+        const waitTime = baseDelay * Math.pow(2, attempt);
+        logInfo(`⏳ Network error, waiting ${waitTime}ms before retry ${attempt + 1}/${maxRetries}`);
+        await delay(waitTime);
+        continue;
+      }
+    }
+  }
+  
+  throw lastError || new Error('Max retries exceeded');
 };
 
 Deno.serve(async (req) => {
@@ -137,7 +201,7 @@ Deno.serve(async (req) => {
       errors: [] as any[],
     };
 
-    // Helper para buscar vendor en QBO
+    // Helper para buscar vendor en QBO (con retry)
     const findOrCreateVendor = async (supplierName: string, supplierTaxId: string) => {
       const normalizedName = supplierName
         .normalize('NFD')
@@ -150,7 +214,7 @@ Deno.serve(async (req) => {
       let searchQuery = `SELECT * FROM Vendor WHERE DisplayName = '${supplierName.replace(/'/g, "\\'")}'`;
       let searchUrl = `https://quickbooks.api.intuit.com/v3/company/${realmId}/query?query=${encodeURIComponent(searchQuery)}`;
 
-      let searchResponse = await fetch(searchUrl, {
+      let searchResponse = await fetchWithRetry(searchUrl, {
         headers: {
           "Authorization": `Bearer ${accessToken}`,
           "Accept": "application/json",
@@ -169,7 +233,7 @@ Deno.serve(async (req) => {
         searchQuery = `SELECT * FROM Vendor WHERE DisplayName = '${normalizedName.replace(/'/g, "\\'")}'`;
         searchUrl = `https://quickbooks.api.intuit.com/v3/company/${realmId}/query?query=${encodeURIComponent(searchQuery)}`;
 
-        searchResponse = await fetch(searchUrl, {
+        searchResponse = await fetchWithRetry(searchUrl, {
           headers: {
             "Authorization": `Bearer ${accessToken}`,
             "Accept": "application/json",
@@ -189,7 +253,10 @@ Deno.serve(async (req) => {
       
       const vendorBody: any = { DisplayName: normalizedName };
       
-      const createResponse = await fetch(
+      // Small delay before creating vendor
+      await delay(500);
+      
+      const createResponse = await fetchWithRetry(
         `https://quickbooks.api.intuit.com/v3/company/${realmId}/vendor`,
         {
           method: "POST",
@@ -213,12 +280,12 @@ Deno.serve(async (req) => {
       return vendorData.Vendor.Id;
     };
 
-    // Helper para verificar duplicados en QBO
+    // Helper para verificar duplicados en QBO (con retry)
     const checkDuplicateBill = async (docNumber: string) => {
       const query = `SELECT * FROM Bill WHERE DocNumber = '${docNumber.replace(/'/g, "\\'")}'`;
       const url = `https://quickbooks.api.intuit.com/v3/company/${realmId}/query?query=${encodeURIComponent(query)}`;
 
-      const response = await fetch(url, {
+      const response = await fetchWithRetry(url, {
         headers: {
           "Authorization": `Bearer ${accessToken}`,
           "Accept": "application/json",
@@ -307,13 +374,13 @@ Deno.serve(async (req) => {
 
         const vendorId = await findOrCreateVendor(doc.supplier_name, doc.supplier_tax_id);
 
-        // Función para obtener código de impuesto
+        // Función para obtener código de impuesto (con retry)
         const getTaxCodeRef = async (taxRate: number): Promise<string | null> => {
           try {
             const query = `SELECT Id, Name, Description FROM TaxCode WHERE Active = true MAXRESULTS 100`;
             const queryUrl = `https://quickbooks.api.intuit.com/v3/company/${realmId}/query?query=${encodeURIComponent(query)}`;
             
-            const response = await fetch(queryUrl, {
+            const response = await fetchWithRetry(queryUrl, {
               headers: {
                 "Authorization": `Bearer ${accessToken}`,
                 "Accept": "application/json",
@@ -354,13 +421,13 @@ Deno.serve(async (req) => {
           }
         };
 
-        // Función para obtener ID de cuenta
+        // Función para obtener ID de cuenta (con retry)
         const getAccountIdByCode = async (accountCode: string): Promise<string | null> => {
           try {
             const query = `SELECT Id, Name, AcctNum, AccountType FROM Account MAXRESULTS 1000`;
             const queryUrl = `https://quickbooks.api.intuit.com/v3/company/${realmId}/query?query=${encodeURIComponent(query)}`;
             
-            const response = await fetch(queryUrl, {
+            const response = await fetchWithRetry(queryUrl, {
               headers: {
                 Authorization: `Bearer ${accessToken}`,
                 Accept: "application/json",
@@ -573,14 +640,36 @@ Deno.serve(async (req) => {
         let accountRef = await getAccountIdByCode(accountCode!);
         
         if (!accountRef) {
-          throw new Error(`Cuenta ${accountCode} no existe en QuickBooks`);
+          throw new Error(`Cuenta ${accountCode} no existe en QuickBooks. Factura ${doc.doc_number} - Proveedor: ${doc.supplier_name}. Verifica que la cuenta esté creada.`);
         }
 
         const isCreditNote = doc.xml_data?.esNotaCredito === true || doc.doc_type === 'NotaCreditoElectronica';
         
-        // Preparar líneas
-        const lines = [];
+        // ============================================
+        // FIX ERROR 1: Detectar y usar UNA SOLA MONEDA
+        // ============================================
         const xmlData = doc.xml_data as any;
+        
+        // Determinar la moneda principal del documento
+        let documentCurrency = 'CRC'; // Default
+        
+        // 1. Del campo currency del documento
+        if (doc.currency) {
+          documentCurrency = doc.currency.toUpperCase();
+        }
+        // 2. Del XML data
+        else if (xmlData?.moneda) {
+          documentCurrency = xmlData.moneda.toUpperCase();
+        }
+        // 3. Inferir si tiene tipo de cambio mayor a 1
+        else if (xmlData?.tipoCambio && parseFloat(xmlData.tipoCambio) > 1) {
+          documentCurrency = 'USD';
+        }
+        
+        log(`💱 Document currency: ${documentCurrency}`);
+        
+        // Preparar líneas con UNA SOLA moneda
+        const lines = [];
         const taxCodeCache = new Map<number, string | null>();
         
         if (xmlData?.detalle && Array.isArray(xmlData.detalle) && xmlData.detalle.length > 0) {
@@ -588,7 +677,10 @@ Deno.serve(async (req) => {
             const cantidad = parseFloat(item.cantidad) || 1;
             const precioUnitario = parseFloat(item.precioUnitario) || 0;
             const subtotal = parseFloat(item.subtotal) || (cantidad * precioUnitario);
-            const lineAmount = subtotal;
+            
+            // IMPORTANTE: Usar el subtotal en la moneda del documento
+            // NO mezclar monedas diferentes
+            let lineAmount = subtotal;
             
             let tasaImpuesto = 0;
             let montoImpuesto = 0;
@@ -691,20 +783,24 @@ Deno.serve(async (req) => {
           throw new Error(`Cannot create bill without line items`);
         }
 
-        // Crear Bill
+        // ============================================
+        // Crear Bill con UNA SOLA moneda
+        // ============================================
         const billPayload: any = {
           VendorRef: { value: vendorId },
           TxnDate: doc.issue_date,
           DocNumber: qboDocNumber,
           Line: lines,
           DueDate: doc.issue_date,
-          PrivateNote: `Factura XML: ${doc.doc_number}\nProveedor: ${doc.supplier_name}`,
+          PrivateNote: `Factura XML: ${doc.doc_number}\nProveedor: ${doc.supplier_name}\nMoneda: ${documentCurrency}`,
           GlobalTaxCalculation: "TaxExcluded",
         };
 
-        if (doc.currency && doc.currency.toUpperCase() === 'USD') {
+        // Solo agregar CurrencyRef si NO es CRC (moneda base)
+        if (documentCurrency === 'USD') {
           billPayload.CurrencyRef = { value: "USD" };
           
+          // Tipo de cambio
           const exchangeRate = parseFloat(xmlData?.resumen_factura?.tipoCambio || xmlData?.tipoCambio || '1');
           if (exchangeRate && exchangeRate > 1) {
             billPayload.ExchangeRate = exchangeRate;
@@ -715,7 +811,13 @@ Deno.serve(async (req) => {
           billPayload.TxnTaxDetail = { TotalTax: totalTax };
         }
 
-        const billResponse = await fetch(
+        // ============================================
+        // FIX ERROR 2: Usar fetchWithRetry para rate limiting
+        // ============================================
+        // Small delay before creating bill (rate limiting prevention)
+        await delay(1000);
+        
+        const billResponse = await fetchWithRetry(
           `https://quickbooks.api.intuit.com/v3/company/${realmId}/bill`,
           {
             method: "POST",
@@ -748,9 +850,11 @@ Deno.serve(async (req) => {
 
         logInfo(`✅ Bill created: ${doc.doc_number} → ${billId}`);
 
-        // Adjuntar PDF
+        // Adjuntar PDF (con delay para rate limiting)
         if (doc.pdf_attachment_url) {
           try {
+            await delay(500); // Small delay before attachment
+            
             let pdfPath = doc.pdf_attachment_url;
             if (pdfPath.includes('/object/public/company-documents/')) {
               pdfPath = pdfPath.split('/object/public/company-documents/')[1];
@@ -795,7 +899,7 @@ Deno.serve(async (req) => {
                 `--${boundary}--`,
               ].join("\r\n");
 
-              const attachResponse = await fetch(
+              const attachResponse = await fetchWithRetry(
                 `https://quickbooks.api.intuit.com/v3/company/${realmId}/upload`,
                 {
                   method: "POST",
@@ -885,8 +989,11 @@ Deno.serve(async (req) => {
       }
     };
     
-    // Procesamiento
-    const BATCH_SIZE = 3;
+    // ============================================
+    // Procesamiento con DELAYS entre documentos
+    // ============================================
+    const BATCH_SIZE = 2; // Reduced batch size for rate limiting
+    const DELAY_BETWEEN_BATCHES = 2000; // 2 seconds between batches
     
     if (isSingleDocument) {
       const doc = documents[0];
@@ -912,16 +1019,28 @@ Deno.serve(async (req) => {
       );
     }
     
-    // Múltiples documentos en lotes
+    // Múltiples documentos en lotes con delay
     const documentResults = [];
     for (let i = 0; i < documents.length; i += BATCH_SIZE) {
       const batch = documents.slice(i, i + BATCH_SIZE);
       
-      const batchResults = await Promise.all(
-        batch.map((doc, batchIndex) => processDocument(doc, i + batchIndex, documents.length))
-      );
+      // Process batch sequentially to avoid rate limits
+      for (let j = 0; j < batch.length; j++) {
+        const doc = batch[j];
+        const result = await processDocument(doc, i + j, documents.length);
+        documentResults.push(result);
+        
+        // Add delay between documents in the same batch
+        if (j < batch.length - 1) {
+          await delay(1500);
+        }
+      }
       
-      documentResults.push(...batchResults);
+      // Add delay between batches
+      if (i + BATCH_SIZE < documents.length) {
+        logInfo(`⏳ Waiting ${DELAY_BETWEEN_BATCHES}ms before next batch...`);
+        await delay(DELAY_BETWEEN_BATCHES);
+      }
     }
     
     // Contabilizar resultados
@@ -946,13 +1065,11 @@ Deno.serve(async (req) => {
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 200 }
     );
-
   } catch (error) {
-    logError("❌ Fatal error:", error);
-    const errorMessage = error instanceof Error ? error.message : "Unknown error";
-
+    logError("❌ Publish error:", error);
+    
     return new Response(
-      JSON.stringify({ error: errorMessage }),
+      JSON.stringify({ error: error instanceof Error ? error.message : "Unknown error" }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 500 }
     );
   }
