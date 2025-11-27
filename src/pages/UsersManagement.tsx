@@ -44,13 +44,12 @@ interface UserProfile {
 }
 
 interface PendingInvitation {
-  id: string;
   email: string;
   role: string;
   created_at: string;
   expires_at: string;
-  organization_id: string;
-  organization_name?: string;
+  organizations: string[];
+  invitation_ids: string[];
 }
 
 interface Organization {
@@ -169,12 +168,25 @@ const UsersManagement = () => {
     if (invitationsError) {
       console.error("Error loading invitations:", invitationsError);
     } else {
-      setPendingInvitations(
-        (invitationsData || []).map((inv: any) => ({
-          ...inv,
-          organization_name: inv.organizations?.name,
-        }))
-      );
+      // Group invitations by email to show one row per user with all organizations
+      const groupedInvitations = (invitationsData || []).reduce((acc: any, inv: any) => {
+        const key = inv.email;
+        if (!acc[key]) {
+          acc[key] = {
+            email: inv.email,
+            role: inv.role,
+            created_at: inv.created_at,
+            expires_at: inv.expires_at,
+            organizations: [],
+            invitation_ids: []
+          };
+        }
+        acc[key].organizations.push(inv.organizations?.name);
+        acc[key].invitation_ids.push(inv.id);
+        return acc;
+      }, {});
+
+      setPendingInvitations(Object.values(groupedInvitations));
     }
 
     setIsLoading(false);
@@ -258,19 +270,19 @@ const UsersManagement = () => {
     }
   };
 
-  const handleDeleteInvitation = async (invitationId: string) => {
-    if (!confirm("¿Está seguro de eliminar esta invitación?")) return;
+  const handleDeleteInvitation = async (invitationIds: string[]) => {
+    if (!confirm("¿Está seguro de eliminar todas las invitaciones para este usuario?")) return;
 
     const { error } = await supabase
       .from("organization_invitations")
       .delete()
-      .eq("id", invitationId);
+      .in("id", invitationIds);
 
     if (error) {
-      toast.error("Error al eliminar invitación");
+      toast.error("Error al eliminar invitaciones");
       console.error(error);
     } else {
-      toast.success("Invitación eliminada");
+      toast.success("Invitaciones eliminadas");
       fetchData();
     }
   };
@@ -367,20 +379,33 @@ const UsersManagement = () => {
                 </CardHeader>
                 <CardContent>
                   <div className="space-y-2">
-                    {pendingInvitations.map((invitation) => (
+                    {pendingInvitations.map((invitation: any) => (
                       <div
-                        key={invitation.id}
+                        key={invitation.email}
                         className="flex items-center justify-between p-4 border rounded-lg bg-muted/30"
                       >
                         <div className="flex-1">
                           <p className="font-medium">{invitation.email}</p>
-                          <div className="flex items-center gap-2 mt-1">
-                            <Badge variant="outline">{invitation.organization_name}</Badge>
-                            <span className="text-sm text-muted-foreground">•</span>
+                          <div className="flex items-center gap-2 mt-2">
                             <span className="text-sm text-muted-foreground">
                               {roleLabels[invitation.role]}
                             </span>
+                            <span className="text-sm text-muted-foreground">•</span>
+                            <span className="text-sm font-medium text-primary">
+                              Acceso a {invitation.organizations.length === organizations.length 
+                                ? 'todas las empresas' 
+                                : `${invitation.organizations.length} empresa${invitation.organizations.length > 1 ? 's' : ''}`}
+                            </span>
                           </div>
+                          {invitation.organizations.length <= 5 && (
+                            <div className="flex flex-wrap gap-1 mt-2">
+                              {invitation.organizations.map((orgName: string, idx: number) => (
+                                <Badge key={idx} variant="outline" className="text-xs">
+                                  {orgName}
+                                </Badge>
+                              ))}
+                            </div>
+                          )}
                           <p className="text-xs text-muted-foreground mt-1">
                             Expira: {formatDate(invitation.expires_at)}
                           </p>
@@ -388,7 +413,7 @@ const UsersManagement = () => {
                         <Button
                           variant="ghost"
                           size="sm"
-                          onClick={() => handleDeleteInvitation(invitation.id)}
+                          onClick={() => handleDeleteInvitation(invitation.invitation_ids)}
                         >
                           <Trash2 className="h-4 w-4 text-destructive" />
                         </Button>
