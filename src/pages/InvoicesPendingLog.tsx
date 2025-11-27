@@ -1,4 +1,4 @@
-import { CheckCircle2, Eye, FileText, Loader2, RefreshCw, Search, Star, Trash2, Upload } from "lucide-react";
+import { CheckCircle2, Eye, FileText, Loader2, RefreshCw, Search, Star, Trash2, Upload, X, Filter } from "lucide-react";
 import { useState, useEffect, useMemo } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
@@ -88,6 +88,13 @@ const InvoicesPendingLog = () => {
   const [pdfViewerOpen, setPdfViewerOpen] = useState(false);
   const [currentPdfUrl, setCurrentPdfUrl] = useState<string | null>(null);
   const [currentPdfName, setCurrentPdfName] = useState<string>("");
+
+  // Filtros individuales por columna
+  const [filterDocNumber, setFilterDocNumber] = useState("");
+  const [filterSupplier, setFilterSupplier] = useState("");
+  const [filterDateFrom, setFilterDateFrom] = useState("");
+  const [filterDateTo, setFilterDateTo] = useState("");
+  const [filterQBStatus, setFilterQBStatus] = useState<"all" | "published" | "pending">("all");
 
   const fetchVendorDefaults = async () => {
     if (!activeOrganization) return;
@@ -361,34 +368,95 @@ const InvoicesPendingLog = () => {
   };
 
   useEffect(() => {
-    if (!searchTerm.trim()) {
-      setFilteredInvoices(invoices);
-      return;
+    // Aplicar todos los filtros combinados
+    let filtered = [...invoices];
+
+    // Filtro por número de documento
+    if (filterDocNumber.trim()) {
+      const searchLower = filterDocNumber.toLowerCase();
+      filtered = filtered.filter((inv) => 
+        inv.doc_number.toLowerCase().includes(searchLower)
+      );
     }
 
-    const searchLower = searchTerm.toLowerCase();
-    
-    const filtered = invoices.filter((inv) => {
-      // Buscar por número de documento
-      if (inv.doc_number.toLowerCase().includes(searchLower)) return true;
-      
-      // Buscar por nombre de proveedor
-      if (inv.supplier_name.toLowerCase().includes(searchLower)) return true;
-      
-      // Buscar por cuenta contable
-      if (inv.default_account_ref && inv.default_account_ref.toLowerCase().includes(searchLower)) return true;
-      
-      // Buscar en la descripción de la cuenta (OPTIMIZACIÓN: uso de Map en lugar de find)
-      if (inv.default_account_ref && accountsMap.has(inv.default_account_ref)) {
-        const account = accountsMap.get(inv.default_account_ref);
-        if (account.name.toLowerCase().includes(searchLower)) return true;
-        if (account.accountNumber && account.accountNumber.toLowerCase().includes(searchLower)) return true;
-      }
-      
-      return false;
-    });
+    // Filtro por proveedor
+    if (filterSupplier.trim()) {
+      const searchLower = filterSupplier.toLowerCase();
+      filtered = filtered.filter((inv) => 
+        inv.supplier_name.toLowerCase().includes(searchLower) ||
+        (inv.supplier_tax_id && inv.supplier_tax_id.toLowerCase().includes(searchLower))
+      );
+    }
+
+    // Filtro por fecha desde
+    if (filterDateFrom) {
+      const dateFrom = new Date(filterDateFrom);
+      filtered = filtered.filter((inv) => {
+        const invoiceDate = new Date(inv.issue_date);
+        return invoiceDate >= dateFrom;
+      });
+    }
+
+    // Filtro por fecha hasta
+    if (filterDateTo) {
+      const dateTo = new Date(filterDateTo);
+      dateTo.setHours(23, 59, 59, 999); // Incluir todo el día
+      filtered = filtered.filter((inv) => {
+        const invoiceDate = new Date(inv.issue_date);
+        return invoiceDate <= dateTo;
+      });
+    }
+
+    // Filtro por estado de QuickBooks
+    if (filterQBStatus !== "all") {
+      filtered = filtered.filter((inv) => {
+        if (filterQBStatus === "published") {
+          return inv.qbo_entity_id !== null && inv.qbo_entity_id !== undefined;
+        } else {
+          return !inv.qbo_entity_id;
+        }
+      });
+    }
+
+    // Búsqueda general (searchTerm) - se aplica sobre los filtros anteriores
+    if (searchTerm.trim()) {
+      const searchLower = searchTerm.toLowerCase();
+      filtered = filtered.filter((inv) => {
+        // Buscar por número de documento
+        if (inv.doc_number.toLowerCase().includes(searchLower)) return true;
+        
+        // Buscar por nombre de proveedor
+        if (inv.supplier_name.toLowerCase().includes(searchLower)) return true;
+        
+        // Buscar por cuenta contable
+        if (inv.default_account_ref && inv.default_account_ref.toLowerCase().includes(searchLower)) return true;
+        
+        // Buscar en la descripción de la cuenta
+        if (inv.default_account_ref && accountsMap.has(inv.default_account_ref)) {
+          const account = accountsMap.get(inv.default_account_ref);
+          if (account.name.toLowerCase().includes(searchLower)) return true;
+          if (account.accountNumber && account.accountNumber.toLowerCase().includes(searchLower)) return true;
+        }
+        
+        return false;
+      });
+    }
+
     setFilteredInvoices(filtered);
-  }, [searchTerm, invoices, accountsMap]);
+  }, [searchTerm, invoices, accountsMap, filterDocNumber, filterSupplier, filterDateFrom, filterDateTo, filterQBStatus]);
+
+  // Función para limpiar todos los filtros
+  const clearAllFilters = () => {
+    setFilterDocNumber("");
+    setFilterSupplier("");
+    setFilterDateFrom("");
+    setFilterDateTo("");
+    setFilterQBStatus("all");
+    setSearchTerm("");
+  };
+
+  // Verificar si hay filtros activos
+  const hasActiveFilters = filterDocNumber || filterSupplier || filterDateFrom || filterDateTo || filterQBStatus !== "all" || searchTerm;
 
   const saveVendorDefault = async (
     vendorName: string,
@@ -881,12 +949,23 @@ const InvoicesPendingLog = () => {
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
-                placeholder="Buscar por número de factura, proveedor o cuenta contable..."
+                placeholder="Búsqueda general por número, proveedor o cuenta..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="pl-10"
               />
             </div>
+            {hasActiveFilters && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={clearAllFilters}
+                className="whitespace-nowrap"
+              >
+                <X className="h-4 w-4 mr-2" />
+                Limpiar Filtros
+              </Button>
+            )}
           </div>
         </CardHeader>
         <CardContent>
@@ -912,6 +991,73 @@ const InvoicesPendingLog = () => {
                     <TableHead>Usa IVA</TableHead>
                     <TableHead className="text-center">Estado QB</TableHead>
                     <TableHead className="text-right">Acciones</TableHead>
+                  </TableRow>
+                  {/* Fila de filtros */}
+                  <TableRow className="bg-muted/30 hover:bg-muted/30">
+                    <TableHead className="py-2">
+                      <Input
+                        placeholder="Filtrar..."
+                        value={filterDocNumber}
+                        onChange={(e) => setFilterDocNumber(e.target.value)}
+                        className="h-8 text-xs"
+                      />
+                    </TableHead>
+                    <TableHead className="py-2">
+                      <Input
+                        placeholder="Filtrar..."
+                        value={filterSupplier}
+                        onChange={(e) => setFilterSupplier(e.target.value)}
+                        className="h-8 text-xs"
+                      />
+                    </TableHead>
+                    <TableHead className="py-2">
+                      {/* Sin filtro para monto */}
+                    </TableHead>
+                    <TableHead className="py-2">
+                      <div className="flex gap-1">
+                        <Input
+                          type="date"
+                          value={filterDateFrom}
+                          onChange={(e) => setFilterDateFrom(e.target.value)}
+                          className="h-8 text-xs"
+                          placeholder="Desde"
+                        />
+                        <Input
+                          type="date"
+                          value={filterDateTo}
+                          onChange={(e) => setFilterDateTo(e.target.value)}
+                          className="h-8 text-xs"
+                          placeholder="Hasta"
+                        />
+                      </div>
+                    </TableHead>
+                    <TableHead className="py-2">
+                      {/* Sin filtro para cuenta contable */}
+                    </TableHead>
+                    <TableHead className="py-2">
+                      {/* Sin filtro para centro de costo */}
+                    </TableHead>
+                    <TableHead className="py-2">
+                      {/* Sin filtro para Usa IVA */}
+                    </TableHead>
+                    <TableHead className="py-2 text-center">
+                      <Select
+                        value={filterQBStatus}
+                        onValueChange={(value: "all" | "published" | "pending") => setFilterQBStatus(value)}
+                      >
+                        <SelectTrigger className="h-8 text-xs">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">Todos</SelectItem>
+                          <SelectItem value="published">Publicado</SelectItem>
+                          <SelectItem value="pending">Pendiente</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </TableHead>
+                    <TableHead className="py-2">
+                      {/* Sin filtro para acciones */}
+                    </TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
