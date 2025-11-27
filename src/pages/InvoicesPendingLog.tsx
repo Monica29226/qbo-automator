@@ -826,34 +826,21 @@ const InvoicesPendingLog = () => {
       if (currentPdfUrl && currentPdfUrl.startsWith('blob:')) {
         URL.revokeObjectURL(currentPdfUrl);
       }
-      setCurrentPdfUrl(null);
       
-      console.log("📥 Descargando PDF como blob...");
+      console.log("🔗 Obteniendo URL pública del PDF...");
       
-      // OPTIMIZACIÓN: Descargar el PDF como blob para mejor rendimiento en iframe
-      const { data: blobData, error: downloadError } = await supabase.storage
+      // OPTIMIZACIÓN: Usar URL pública directamente para evitar timeouts en descarga
+      const { data: publicUrlData } = supabase.storage
         .from('company-documents')
-        .download(pdfPath);
+        .getPublicUrl(pdfPath);
 
-      if (downloadError) {
-        console.error("❌ Error descargando PDF:", downloadError);
-        throw new Error(`Error al descargar el PDF: ${downloadError.message}`);
+      if (!publicUrlData?.publicUrl) {
+        throw new Error("No se pudo obtener la URL del PDF");
       }
 
-      if (!blobData) {
-        throw new Error("No se pudo descargar el archivo");
-      }
-
-      console.log("✅ PDF descargado como blob:", {
-        size: blobData.size,
-        type: blobData.type
-      });
+      console.log("✅ URL pública obtenida:", publicUrlData.publicUrl);
       
-      // Crear blob URL para el iframe (mejor rendimiento y no expira)
-      const blobUrl = URL.createObjectURL(blobData);
-      console.log("🔗 Blob URL creado para iframe");
-      
-      setCurrentPdfUrl(blobUrl);
+      setCurrentPdfUrl(publicUrlData.publicUrl);
       setCurrentPdfName(`Factura ${invoice.doc_number}`);
       setPdfViewerOpen(true);
       
