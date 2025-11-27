@@ -153,13 +153,21 @@ serve(async (req) => {
       );
     }
 
-    // Extraer datos clave
+    // Extraer datos clave con normalización UTF-8
+    const normalizeUTF8 = (text: string): string => {
+      // Normalizar caracteres UTF-8 y eliminar caracteres de control
+      return text
+        .normalize('NFC') // Normalizar forma canónica
+        .replace(/[\u0000-\u001F\u007F-\u009F]/g, '') // Eliminar caracteres de control
+        .trim();
+    };
+
     const extractedData = {
       doc_key: doc_key || parseXMLValue(xml_content, "Clave"),
       doc_type: docType,
       doc_number: parseXMLValue(xml_content, "NumeroConsecutivo"),
       issue_date: parseXMLValue(xml_content, "FechaEmision").split("T")[0],
-      supplier_name: parseXMLValue(xml_content, "Nombre"),
+      supplier_name: normalizeUTF8(parseXMLValue(xml_content, "Nombre")),
       supplier_tax_id: parseXMLValue(xml_content, "Numero"),
       supplier_email: parseXMLValue(xml_content, "CorreoElectronico"),
       currency: parseXMLValue(xml_content, "CodigoMoneda") || "CRC",
