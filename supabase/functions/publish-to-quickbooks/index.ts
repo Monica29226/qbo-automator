@@ -569,7 +569,54 @@ Deno.serve(async (req) => {
           }
         }
         
-        // 3. Si no hay cuenta del vendor, buscar en vendor_categories por tax_id
+        // 3. Si no hay cuenta del vendor, buscar en vendor_defaults por nombre (normalizado)
+        if (!accountCode) {
+          // Normalizar nombre del proveedor para búsqueda más robusta
+          const normalizedSupplierName = doc.supplier_name
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '') // Remover diacríticos/acentos
+            .toLowerCase()
+            .trim();
+          
+          console.log(`🔍 Buscando en vendor_defaults para: "${doc.supplier_name}" (normalizado: "${normalizedSupplierName}")`);
+          
+          // Buscar en vendor_defaults con normalización
+          const { data: allVendorDefaults } = await supabase
+            .from("vendor_defaults")
+            .select("vendor_name, default_account_ref")
+            .eq("organization_id", organization_id);
+          
+          if (allVendorDefaults && allVendorDefaults.length > 0) {
+            // Buscar coincidencia normalizando ambos lados
+            const matchedDefault = allVendorDefaults.find(vd => {
+              const normalizedVendorName = vd.vendor_name
+                .normalize('NFD')
+                .replace(/[\u0300-\u036f]/g, '')
+                .toLowerCase()
+                .trim();
+              return normalizedVendorName === normalizedSupplierName;
+            });
+            
+            if (matchedDefault?.default_account_ref) {
+              const rawCode = matchedDefault.default_account_ref;
+              
+              // Si contiene " - " (espacio-guion-espacio), usar eso como separador
+              if (rawCode.includes(' - ')) {
+                accountCode = rawCode.split(' - ')[0].trim();
+              } else {
+                // Si no, usar el primer espacio
+                accountCode = rawCode.split(' ')[0].trim();
+              }
+              
+              console.log(`✅ Account code from vendor_defaults: ${accountCode} (matched: "${matchedDefault.vendor_name}")`);
+            } else {
+              console.log(`⚠️ Vendor defaults found but no match for "${doc.supplier_name}"`);
+              console.log(`   Available vendors: ${allVendorDefaults.map(v => v.vendor_name).slice(0, 5).join(', ')}...`);
+            }
+          }
+        }
+        
+        // 4. Si no hay cuenta, buscar en vendor_categories por tax_id
         if (!accountCode && doc.supplier_tax_id) {
           const { data: vendorCategory } = await supabase
             .from("vendor_categories")
@@ -585,24 +632,41 @@ Deno.serve(async (req) => {
           }
         }
         
-        // 4. Si aún no hay cuenta, buscar en las reglas de clasificación por nombre
+        // 5. Si aún no hay cuenta, buscar en las reglas de clasificación por nombre (normalizado)
         if (!accountCode) {
-          const { data: classificationRule } = await supabase
-            .from("vendor_classification_rules")
-            .select("account_code")
-            .eq("organization_id", organization_id)
-            .ilike("vendor_name", doc.supplier_name)
-            .eq("is_active", true)
-            .maybeSingle();
+          // Normalizar nombre para búsqueda
+          const normalizedSupplierName = doc.supplier_name
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .toLowerCase()
+            .trim();
           
-          if (classificationRule?.account_code) {
-            // Extraer solo el código numérico (ej: "5105" de "5105 Costo de ventas")
-            accountCode = classificationRule.account_code.split(" ")[0];
-            console.log(`✓ Account code from classification rule: ${accountCode} for ${doc.supplier_name}`);
+          // Buscar en classification rules con normalización
+          const { data: allClassificationRules } = await supabase
+            .from("vendor_classification_rules")
+            .select("vendor_name, account_code")
+            .eq("organization_id", organization_id)
+            .eq("is_active", true);
+          
+          if (allClassificationRules && allClassificationRules.length > 0) {
+            const matchedRule = allClassificationRules.find(rule => {
+              const normalizedRuleName = rule.vendor_name
+                .normalize('NFD')
+                .replace(/[\u0300-\u036f]/g, '')
+                .toLowerCase()
+                .trim();
+              return normalizedRuleName === normalizedSupplierName;
+            });
+            
+            if (matchedRule?.account_code) {
+              // Extraer solo el código numérico (ej: "5105" de "5105 Costo de ventas")
+              accountCode = matchedRule.account_code.split(" ")[0];
+              console.log(`✓ Account code from classification rule: ${accountCode} for ${doc.supplier_name}`);
+            }
           }
         }
         
-        // 5. Si aún no hay cuenta, buscar en xml_data.cuentaContable
+        // 6. Si aún no hay cuenta, buscar en xml_data.cuentaContable
         if (!accountCode && doc.xml_data?.cuentaContable) {
           // Extraer solo el código, ignorando descripción adicional
           // Formato: "6130-03 Gasto de operacion:Utencilios cafeteria" -> "6130-03"
@@ -615,7 +679,7 @@ Deno.serve(async (req) => {
           }
         }
         
-        // 6. Si no se pudo determinar ninguna cuenta, marcar como pending_config
+        // 7. Si no se pudo determinar ninguna cuenta, marcar como pending_config
         if (!accountCode) {
           console.log(`❌ No account code found for ${doc.supplier_name}, requires manual configuration`);
           
