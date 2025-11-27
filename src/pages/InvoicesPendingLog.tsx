@@ -827,20 +827,21 @@ const InvoicesPendingLog = () => {
         URL.revokeObjectURL(currentPdfUrl);
       }
       
-      console.log("🔗 Obteniendo URL pública del PDF...");
+      console.log("🔐 Creando URL firmada para bucket privado...");
       
-      // OPTIMIZACIÓN: Usar URL pública directamente para evitar timeouts en descarga
-      const { data: publicUrlData } = supabase.storage
+      // OPTIMIZACIÓN: Crear signed URL para bucket privado (válida por 1 hora)
+      const { data: signedUrlData, error: signedError } = await supabase.storage
         .from('company-documents')
-        .getPublicUrl(pdfPath);
+        .createSignedUrl(pdfPath, 3600); // 3600 segundos = 1 hora
 
-      if (!publicUrlData?.publicUrl) {
-        throw new Error("No se pudo obtener la URL del PDF");
+      if (signedError || !signedUrlData?.signedUrl) {
+        console.error("❌ Error creando signed URL:", signedError);
+        throw new Error(`Error al obtener el PDF: ${signedError?.message || 'URL no disponible'}`);
       }
 
-      console.log("✅ URL pública obtenida:", publicUrlData.publicUrl);
+      console.log("✅ Signed URL creada exitosamente");
       
-      setCurrentPdfUrl(publicUrlData.publicUrl);
+      setCurrentPdfUrl(signedUrlData.signedUrl);
       setCurrentPdfName(`Factura ${invoice.doc_number}`);
       setPdfViewerOpen(true);
       
