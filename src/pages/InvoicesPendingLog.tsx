@@ -664,39 +664,53 @@ const InvoicesPendingLog = () => {
     try {
       const loadingToast = toast.loading("Abriendo visor PDF...");
       
-      // Extraer el path del storage de la URL
-      let pdfPath = invoice.pdf_attachment_url;
+      let pdfUrl = invoice.pdf_attachment_url;
       
-      // Si es una URL completa, extraer solo el path
-      if (pdfPath.startsWith('http')) {
-        const url = new URL(pdfPath);
-        pdfPath = url.pathname;
+      // Si la URL es completa de Supabase (público o privado), usarla directamente
+      if (pdfUrl.startsWith('http')) {
+        console.log("✅ Usando URL pública directa del storage");
+        
+        // Limpiar URL anterior si existe
+        if (currentPdfUrl) {
+          setCurrentPdfUrl(null);
+        }
+        
+        // Usar la URL pública directamente (permite streaming inmediato)
+        setCurrentPdfUrl(pdfUrl);
+        setCurrentPdfName(`Factura ${invoice.doc_number}`);
+        setPdfViewerOpen(true);
+        
+        toast.dismiss(loadingToast);
+        toast.success("Visor de PDF abierto");
+        console.log("✅ PDF abierto con URL pública - carga instantánea");
+        return;
       }
       
-      // Remover prefijos comunes
+      // Si no es URL completa, construir path para signed URL
+      let pdfPath = pdfUrl;
+      
+      // Remover prefijos si los tiene
       const prefixesToRemove = [
-        '/storage/v1/object/public/company-documents/',
-        '/object/public/company-documents/',
         'company-documents/',
         '/company-documents/'
       ];
       
       for (const prefix of prefixesToRemove) {
-        if (pdfPath.includes(prefix)) {
-          pdfPath = pdfPath.split(prefix)[1];
+        if (pdfPath.startsWith(prefix)) {
+          pdfPath = pdfPath.replace(prefix, '');
           break;
         }
       }
       
       console.log("📂 Path extraído:", pdfPath);
-      console.log("🔐 Generando URL temporal con streaming...");
+      console.log("🔐 Generando URL temporal...");
       
       // Limpiar URL anterior si existe
       if (currentPdfUrl) {
         setCurrentPdfUrl(null);
       }
       
-      // Crear signed URL temporal (válida por 5 minutos) - permite streaming
+      // Crear signed URL temporal para buckets privados
       const { data: signedUrlData, error } = await supabase.storage
         .from('company-documents')
         .createSignedUrl(pdfPath, 300); // 300 segundos = 5 minutos
@@ -710,17 +724,16 @@ const InvoicesPendingLog = () => {
         throw new Error("No se pudo generar la URL temporal");
       }
 
-      console.log("✅ URL temporal generada con streaming");
+      console.log("✅ URL temporal generada");
       
-      // Usar la signed URL directamente (permite que el navegador haga streaming del PDF)
+      // Usar la signed URL
       setCurrentPdfUrl(signedUrlData.signedUrl);
       setCurrentPdfName(`Factura ${invoice.doc_number}`);
       setPdfViewerOpen(true);
       
       toast.dismiss(loadingToast);
       toast.success("Visor de PDF abierto");
-      console.log("✅ PDF abierto con streaming - carga rápida");
-      
+      console.log("✅ PDF abierto con signed URL");
       
     } catch (error: any) {
       toast.dismiss();
