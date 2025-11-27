@@ -55,12 +55,13 @@ export default function AuditReport() {
   const fetchData = async () => {
     setIsLoading(true);
     try {
-      // Fetch documents
+      // Fetch documents from November 2025 onwards
       const { data: docs, error: docsError } = await supabase
         .from("processed_documents")
         .select("*")
         .eq("organization_id", activeOrganization)
-        .order("processed_at", { ascending: false })
+        .gte("issue_date", "2025-11-01")
+        .order("issue_date", { ascending: false })
         .limit(500);
 
       if (docsError) throw docsError;
@@ -74,6 +75,7 @@ export default function AuditReport() {
 
       if (rulesError) throw rulesError;
 
+      console.log(`📊 Audit Report: ${docs?.length || 0} documents loaded`);
       setDocuments(docs || []);
       setVendorRules(rules || []);
     } catch (error) {
