@@ -153,43 +153,63 @@ export const RecentDocuments = () => {
       return;
     }
 
+    // FILTRO CRÍTICO: Solo mostrar documentos pendientes SIN cuenta contable asignada
     const { data, error } = await supabase
       .from("processed_documents")
       .select("*")
       .eq("organization_id", activeOrganization)
+      .eq("status", "pending")
+      .is("qbo_entity_id", null) // No publicados a QuickBooks
       .order("created_at", { ascending: false })
-      .limit(5);
+      .limit(10); // Traer más para filtrar después
 
     if (!error && data) {
-      // Apply vendor defaults if available
-      const docsWithDefaults = await Promise.all(
+      // Verificar cuáles tienen cuenta en vendors
+      const docsWithVendorCheck = await Promise.all(
         data.map(async (doc) => {
-          let docData: Document = { 
-            ...doc,
-            default_account_ref: undefined,
-            has_vendor_default: false
-          };
+          let hasVendorAccount = false;
           
           if (doc.vendor_id) {
             const { data: vendorData } = await supabase
               .from("vendors")
               .select("default_account_ref")
               .eq("id", doc.vendor_id)
-              .single();
-
-            docData.default_account_ref = vendorData?.default_account_ref;
-          }
-
-          // Apply vendor defaults if available and fields are empty
-          const vendorDefault = vendorDefaults.get(doc.supplier_name);
-          if (vendorDefault && !docData.default_account_ref && vendorDefault.default_account_ref) {
-            docData.default_account_ref = vendorDefault.default_account_ref;
-            docData.has_vendor_default = true;
+              .maybeSingle();
+            
+            hasVendorAccount = !!vendorData?.default_account_ref;
           }
           
-          return docData;
+          return {
+            ...doc,
+            hasVendorAccount
+          };
         })
       );
+
+      // Filtrar: solo documentos SIN cuenta asignada (ni en vendor ni en documento)
+      const docsWithoutAccount = docsWithVendorCheck.filter((doc: any) => {
+        const hasDocAccount = !!doc.default_account_ref;
+        return !doc.hasVendorAccount && !hasDocAccount;
+      }).slice(0, 5); // Tomar solo 5 después de filtrar
+
+      // Apply vendor defaults if available
+      const docsWithDefaults = docsWithoutAccount.map((doc: any) => {
+        let docData: Document = { 
+          ...doc,
+          default_account_ref: undefined,
+          has_vendor_default: false
+        };
+
+        // Apply vendor defaults if available
+        const vendorDefault = vendorDefaults.get(doc.supplier_name);
+        if (vendorDefault && vendorDefault.default_account_ref) {
+          docData.default_account_ref = vendorDefault.default_account_ref;
+          docData.has_vendor_default = true;
+        }
+        
+        return docData;
+      });
+      
       setDocuments(docsWithDefaults);
     }
     setIsLoading(false);
@@ -239,6 +259,8 @@ export const RecentDocuments = () => {
       const document = documents.find((doc) => doc.id === id);
       if (!document) return;
 
+      console.log("🔄 Asignando cuenta y publicando facturas del proveedor:", document.supplier_name);
+
       // Update vendor record if exists
       if (document.vendor_id) {
         const { error } = await supabase
@@ -252,14 +274,59 @@ export const RecentDocuments = () => {
       // Save as vendor default
       await saveVendorDefault(document.supplier_name, accountRef);
 
-      // Update local state
-      setDocuments((prev) =>
-        prev.map((doc) => 
-          doc.id === id 
-            ? { ...doc, default_account_ref: accountRef, has_vendor_default: true } 
-            : doc
-        )
-      );
+      // Update document account
+      const { error: updateError } = await supabase
+        .from("processed_documents")
+        .update({ default_account_ref: accountRef })
+        .eq("id", id);
+
+      if (updateError) throw updateError;
+
+      // PUBLICACIÓN AUTOMÁTICA: Buscar TODAS las facturas pendientes del mismo proveedor
+      const { data: vendorInvoices, error: fetchError } = await supabase
+        .from("processed_documents")
+        .select("id, doc_number")
+        .eq("organization_id", activeOrganization)
+        .eq("supplier_name", document.supplier_name)
+        .eq("status", "pending")
+        .is("qbo_entity_id", null);
+
+      if (fetchError) throw fetchError;
+
+      console.log(`📤 Publicando ${vendorInvoices?.length || 0} facturas de ${document.supplier_name}...`);
+
+      // Publicar todas las facturas del proveedor en batch
+      if (vendorInvoices && vendorInvoices.length > 0) {
+        const invoiceIds = vendorInvoices.map(inv => inv.id);
+        
+        toast.loading(`Publicando ${invoiceIds.length} factura${invoiceIds.length > 1 ? 's' : ''} a QuickBooks...`);
+
+        const { data: publishResult, error: publishError } = await supabase.functions.invoke(
+          "publish-to-quickbooks",
+          {
+            body: { 
+              organization_id: activeOrganization,
+              document_ids: invoiceIds
+            }
+          }
+        );
+
+        if (publishError) {
+          console.error("❌ Error publicando:", publishError);
+          toast.error(`Error al publicar: ${publishError.message}`);
+        } else if (publishResult?.error) {
+          console.error("❌ Error en resultado:", publishResult.error);
+          toast.error(`Error al publicar: ${publishResult.error}`);
+        } else {
+          console.log("✅ Facturas publicadas exitosamente");
+          toast.success(`${invoiceIds.length} factura${invoiceIds.length > 1 ? 's' : ''} publicada${invoiceIds.length > 1 ? 's' : ''} a QuickBooks`);
+          
+          // Refrescar la lista después de publicar
+          setTimeout(() => {
+            fetchDocuments();
+          }, 1000);
+        }
+      }
       
       toast.success("Cuenta actualizada y guardada como predeterminada");
     } catch (error: any) {
