@@ -352,25 +352,28 @@ Deno.serve(async (req) => {
               const name = (taxCode.Name || "").toLowerCase();
               const description = (taxCode.Description || "").toLowerCase();
               
-              // Para tasa 0%, buscar códigos "NON", "Sin IVA", "0%", etc.
-              if (taxRate === 0) {
-                const zeroPatterns = [
-                  'non',
-                  'sin iva',
-                  'sin impuesto',
-                  'exento',
-                  'exempt',
-                  '0%',
-                  '(0%)',
-                ];
-                
-                for (const pattern of zeroPatterns) {
-                  if (name.includes(pattern) || description.includes(pattern)) {
-                    console.log(`✅ Found tax code for 0%: ${taxCode.Name} (ID: ${taxCode.Id})`);
-                    return taxCode.Id;
-                  }
-                }
-              } else {
+               // Para tasa 0%, buscar códigos "NON", "Sin IVA", "0%", "No VAT", etc.
+               if (taxRate === 0) {
+                 const zeroPatterns = [
+                   'non',
+                   'sin iva',
+                   'sin impuesto',
+                   'exento',
+                   'exempt',
+                   '0%',
+                   '(0%)',
+                   'no vat',
+                   'out of scope',
+                   'out of scope of vat',
+                 ];
+                 
+                 for (const pattern of zeroPatterns) {
+                   if (name.includes(pattern) || description.includes(pattern)) {
+                     console.log(`✅ Found tax code for 0%: ${taxCode.Name} (ID: ${taxCode.Id})`);
+                     return taxCode.Id;
+                   }
+                 }
+               } else {
                 // Para tasas > 0%
                 const targetRate = `${taxRate}%`.toLowerCase();
                 const patterns = [
