@@ -73,37 +73,34 @@ export const VendorConfigurationModal = ({
 
       if (ruleError) throw ruleError;
 
-      // 3. Actualizar documentos de pending_config a pending
-      const { error: updateError } = await supabase
-        .from("processed_documents")
-        .update({
-          status: "pending",
-          error_message: null,
-        })
-        .eq("organization_id", activeOrganization)
-        .eq("supplier_name", vendor.supplier_name)
-        .in("status", ["pending_config", "error"]);
-
-      if (updateError) throw updateError;
-
-      // 4. Invocar función de publicación automática
-      const { error: publishError } = await supabase.functions.invoke("publish-to-quickbooks", {
-        body: {
-          organization_id: activeOrganization,
-        },
-      });
+      // 3. Auto-publicar todas las facturas del vendor con la nueva cuenta
+      console.log(`📤 Auto-publicando facturas de ${vendor.supplier_name}...`);
+      const { data: publishResult, error: publishError } = await supabase.functions.invoke(
+        "auto-publish-vendor-invoices",
+        {
+          body: {
+            organization_id: activeOrganization,
+            vendor_name: vendor.supplier_name,
+            account_code: accountCode.trim(),
+          },
+        }
+      );
 
       if (publishError) {
         console.error("Error publishing:", publishError);
         toast.warning("Regla creada exitosamente, pero hubo un error al publicar. Intente de nuevo desde el Log de Pendientes.");
       } else {
+        const published = publishResult?.published || 0;
         toast.success(
           <div className="flex items-center gap-2">
             <CheckCircle className="h-4 w-4" />
             <div>
               <p className="font-semibold">¡Configuración exitosa!</p>
               <p className="text-sm">
-                Regla creada para "{vendor.supplier_name}". Se aplicará automáticamente a futuras facturas.
+                {published > 0 
+                  ? `${published} factura(s) de "${vendor.supplier_name}" publicadas a QuickBooks.`
+                  : `Regla creada para "${vendor.supplier_name}". Se aplicará automáticamente a futuras facturas.`
+                }
               </p>
             </div>
           </div>,
