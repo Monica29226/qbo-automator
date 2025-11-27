@@ -150,6 +150,8 @@ const handler = async (req: Request): Promise<Response> => {
         "Authorization": `Bearer ${RESEND_API_KEY}`,
       },
       body: JSON.stringify({
+        // IMPORTANT: Replace with your verified domain from resend.com/domains
+        // Example: from: "InvoiceFlow <noreply@calderon.cr>"
         from: "InvoiceFlow <onboarding@resend.dev>",
         to: [email],
         subject: `Invitación a ${org.name}`,
