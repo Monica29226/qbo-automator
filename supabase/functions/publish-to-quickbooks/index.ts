@@ -515,10 +515,20 @@ Deno.serve(async (req) => {
         
         // 1. PRIORIDAD MÁXIMA: Cuenta configurada específicamente en el documento
         if (doc.default_account_ref) {
-          // Extraer solo el código (antes del primer espacio)
-          // Ej: "6124-01 Alimentación y hoteles" → "6124-01"
+          // Extraer solo el código (antes del primer guion con espacios o primer espacio)
+          // Formatos soportados:
+          // "6124-01 - Alimentación y hoteles" → "6124-01"
+          // "6124-01 Alimentación y hoteles" → "6124-01"
           const rawCode = doc.default_account_ref;
-          accountCode = rawCode.split(' ')[0].trim();
+          
+          // Si contiene " - " (espacio-guion-espacio), usar eso como separador
+          if (rawCode.includes(' - ')) {
+            accountCode = rawCode.split(' - ')[0].trim();
+          } else {
+            // Si no, usar el primer espacio
+            accountCode = rawCode.split(' ')[0].trim();
+          }
+          
           console.log(`✓✓ PRIORITY: Account code from document: ${accountCode} (raw: ${rawCode})`);
         }
         
@@ -531,10 +541,17 @@ Deno.serve(async (req) => {
             .maybeSingle();
           
           if (vendorData?.default_account_ref) {
-            // Extraer solo el código (antes del primer espacio)
-            // Ej: "6124-01 Alimentación y hoteles" → "6124-01"
+            // Extraer solo el código (antes del primer guion con espacios o primer espacio)
             const rawCode = vendorData.default_account_ref;
-            accountCode = rawCode.split(' ')[0].trim();
+            
+            // Si contiene " - " (espacio-guion-espacio), usar eso como separador
+            if (rawCode.includes(' - ')) {
+              accountCode = rawCode.split(' - ')[0].trim();
+            } else {
+              // Si no, usar el primer espacio
+              accountCode = rawCode.split(' ')[0].trim();
+            }
+            
             console.log(`✓ Account code from vendor: ${accountCode} (raw: ${rawCode})`);
           }
         }
