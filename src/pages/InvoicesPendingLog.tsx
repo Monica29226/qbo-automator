@@ -550,9 +550,9 @@ const InvoicesPendingLog = () => {
         // Buscar la cuenta por ID para obtener su código
         const account = qboAccounts.find(acc => acc.id === value);
         if (account) {
-          // Guardar el código completo con descripción
+          // CRÍTICO: Guardar el código en formato correcto "XXXX-XX - Nombre"
           valueToSave = account.accountNumber 
-            ? `${account.accountNumber} ${account.name}` 
+            ? `${account.accountNumber} - ${account.name}` 
             : account.name;
           console.log(`✓ Convertido ID ${value} a código: ${valueToSave}`);
         } else {
@@ -597,6 +597,7 @@ const InvoicesPendingLog = () => {
           
           // AUTO-PUBLICAR: Si se asignó una cuenta contable válida, publicar automáticamente
           if (valueToSave && typeof valueToSave === 'string' && valueToSave.trim() !== '') {
+            console.log(`🚀 Iniciando publicación automática para factura ${id} con cuenta: ${valueToSave}`);
             const publishToast = toast.loading("Publicando factura automáticamente a QuickBooks...");
             
             // Marcar como "publishing" temporalmente
@@ -605,6 +606,7 @@ const InvoicesPendingLog = () => {
             );
             
             try {
+              console.log(`📤 Llamando a publish-to-quickbooks para documento ${id}...`);
               const { data, error: publishError } = await supabase.functions.invoke(
                 "publish-to-quickbooks",
                 {
@@ -612,16 +614,27 @@ const InvoicesPendingLog = () => {
                 }
               );
 
-              if (publishError) throw publishError;
+              console.log(`📥 Respuesta de publish-to-quickbooks:`, { data, error: publishError });
+
+              if (publishError) {
+                console.error("❌ Error de publicación:", publishError);
+                throw publishError;
+              }
+
+              if (data?.errors && data.errors.length > 0) {
+                console.error("❌ Errores en publicación:", data.errors);
+                throw new Error(data.errors[0].error || "Error al publicar");
+              }
 
               toast.dismiss(publishToast);
-              toast.success("✓ Factura publicada exitosamente a QuickBooks");
+              toast.success("✅ Factura publicada exitosamente a QuickBooks");
+              console.log(`✅ Factura ${id} publicada exitosamente`);
               
               // Refrescar la lista para que desaparezca de pendientes
               await fetchPendingInvoices();
               return; // Exit early since we refreshed the list
             } catch (publishError: any) {
-              console.error("Error publishing invoice:", publishError);
+              console.error("❌ Error en publicación automática:", publishError);
               toast.dismiss(publishToast);
               toast.error("Cuenta guardada pero error al publicar: " + (publishError.message || "Error desconocido"));
               
@@ -630,6 +643,8 @@ const InvoicesPendingLog = () => {
                 prev.map((inv) => (inv.id === id ? { ...inv, _isPublishing: false } : inv))
               );
             }
+          } else {
+            console.warn(`⚠️ No se puede publicar automáticamente - cuenta vacía o inválida:`, valueToSave);
           }
         }
       }
