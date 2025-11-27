@@ -662,7 +662,7 @@ const InvoicesPendingLog = () => {
     }
 
     try {
-      const loadingToast = toast.loading("Cargando PDF...");
+      const loadingToast = toast.loading("Abriendo visor PDF...");
       
       // Extraer el path del storage de la URL
       let pdfPath = invoice.pdf_attachment_url;
@@ -689,38 +689,38 @@ const InvoicesPendingLog = () => {
       }
       
       console.log("📂 Path extraído:", pdfPath);
-      console.log("🔐 Cargando PDF desde storage...");
+      console.log("🔐 Generando URL temporal con streaming...");
       
-      // Descargar el archivo como blob
-      const { data: blobData, error } = await supabase.storage
+      // Limpiar URL anterior si existe
+      if (currentPdfUrl) {
+        setCurrentPdfUrl(null);
+      }
+      
+      // Crear signed URL temporal (válida por 5 minutos) - permite streaming
+      const { data: signedUrlData, error } = await supabase.storage
         .from('company-documents')
-        .download(pdfPath);
+        .createSignedUrl(pdfPath, 300); // 300 segundos = 5 minutos
 
       if (error) {
         console.error("❌ Error de storage:", error);
         throw new Error(`Error al acceder al archivo: ${error.message}`);
       }
 
-      if (!blobData) {
-        throw new Error("No se pudo cargar el archivo");
+      if (!signedUrlData?.signedUrl) {
+        throw new Error("No se pudo generar la URL temporal");
       }
 
-      console.log("✅ PDF cargado exitosamente");
+      console.log("✅ URL temporal generada con streaming");
       
-      // Limpiar URL anterior si existe
-      if (currentPdfUrl) {
-        URL.revokeObjectURL(currentPdfUrl);
-      }
-      
-      // Crear URL blob local para el visor
-      const blobUrl = URL.createObjectURL(blobData);
-      setCurrentPdfUrl(blobUrl);
+      // Usar la signed URL directamente (permite que el navegador haga streaming del PDF)
+      setCurrentPdfUrl(signedUrlData.signedUrl);
       setCurrentPdfName(`Factura ${invoice.doc_number}`);
       setPdfViewerOpen(true);
       
       toast.dismiss(loadingToast);
-      toast.success("PDF cargado correctamente");
-      console.log("✅ PDF abierto en visor");
+      toast.success("Visor de PDF abierto");
+      console.log("✅ PDF abierto con streaming - carga rápida");
+      
       
     } catch (error: any) {
       toast.dismiss();
@@ -741,13 +741,8 @@ const InvoicesPendingLog = () => {
 
   const handleClosePdfViewer = () => {
     setPdfViewerOpen(false);
-    // Limpiar el blob URL cuando se cierra el modal
-    if (currentPdfUrl) {
-      setTimeout(() => {
-        URL.revokeObjectURL(currentPdfUrl!);
-        setCurrentPdfUrl(null);
-      }, 100);
-    }
+    // Limpiar la URL cuando se cierra el modal
+    setCurrentPdfUrl(null);
   };
 
   const handleShowDetail = (invoice: PendingInvoice) => {
