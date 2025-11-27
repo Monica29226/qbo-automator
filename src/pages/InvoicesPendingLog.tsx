@@ -600,77 +600,84 @@ const InvoicesPendingLog = () => {
           
           // AUTO-PUBLICAR: Si se asignó una cuenta contable válida, publicar automáticamente
           if (valueToSave.trim() !== '') {
-            console.log(`🚀 Iniciando publicación automática para factura ${invoice.doc_number} con cuenta: ${valueToSave}`);
+            console.log(`🚀 Iniciando publicación automática para ${invoice.supplier_name} con cuenta: ${valueToSave}`);
             
-            // Actualizar UI inmediatamente (optimistic update)
-            setInvoices((prev) =>
-              prev.map((inv) => (inv.id === id ? { ...inv, [field]: valueToSave, _isPublishing: true } : inv))
+            // Buscar TODAS las facturas pendientes del mismo proveedor para publicarlas juntas
+            const vendorInvoices = invoices.filter(inv => 
+              inv.supplier_name === invoice.supplier_name && 
+              !inv.qbo_entity_id &&
+              (inv.status === 'pending' || inv.status === 'pending_config')
             );
             
-            toast.success(`✓ Cuenta guardada para ${invoice.supplier_name}. Publicando a QuickBooks...`);
+            const documentIds = vendorInvoices.map(inv => inv.id);
+            const vendorName = invoice.supplier_name;
+            const count = documentIds.length;
+            
+            console.log(`📦 Encontradas ${count} facturas de ${vendorName} para publicar:`, documentIds);
+            
+            // Actualizar UI inmediatamente para TODAS las facturas del proveedor
+            setInvoices((prev) =>
+              prev.map((inv) => 
+                documentIds.includes(inv.id) 
+                  ? { ...inv, default_account_ref: valueToSave, _isPublishing: true } 
+                  : inv
+              )
+            );
+            
+            toast.success(`✓ Cuenta guardada. Publicando ${count} factura${count > 1 ? 's' : ''} de ${vendorName}...`);
             
             try {
-              console.log(`📤 Llamando a publish-to-quickbooks para documento ${id}...`);
+              console.log(`📤 Llamando a publish-to-quickbooks para ${count} documento(s)...`);
               
-              // Llamar al edge function en background
-              const publishPromise = supabase.functions.invoke(
+              // Publicar todas las facturas del proveedor en una sola llamada
+              const { data, error: publishError } = await supabase.functions.invoke(
                 "publish-to-quickbooks",
                 {
-                  body: { organization_id: activeOrganization, document_ids: [id] },
+                  body: { 
+                    organization_id: activeOrganization, 
+                    document_ids: documentIds 
+                  },
                 }
               );
               
-              // Esperar respuesta con timeout de 5 segundos
-              const timeoutPromise = new Promise((_, reject) => 
-                setTimeout(() => reject(new Error('Timeout')), 5000)
-              );
-              
-              const result = await Promise.race([publishPromise, timeoutPromise]);
-              
-              if (result && typeof result === 'object' && 'data' in result) {
-                const { data, error: publishError } = result as any;
+              console.log(`📥 Respuesta de publish-to-quickbooks:`, { data, error: publishError });
+
+              if (publishError) {
+                console.error("❌ Error de publicación:", publishError);
+                throw publishError;
+              }
+
+              if (data?.errors && data.errors.length > 0) {
+                console.error("❌ Errores en publicación:", data.errors);
+                const successCount = data.published || 0;
+                const errorCount = data.errors.length;
                 
-                console.log(`📥 Respuesta rápida de publish-to-quickbooks:`, { data, error: publishError });
-
-                if (publishError) {
-                  console.error("❌ Error de publicación:", publishError);
-                  throw publishError;
-                }
-
-                if (data?.errors && data.errors.length > 0) {
-                  console.error("❌ Errores en publicación:", data.errors);
-                  throw new Error(data.errors[0].error || "Error al publicar");
-                }
-
-                toast.success("✅ Factura publicada exitosamente a QuickBooks");
-                console.log(`✅ Factura ${invoice.doc_number} publicada exitosamente`);
+                toast.warning(
+                  `⚠️ ${successCount} factura${successCount !== 1 ? 's' : ''} publicada${successCount !== 1 ? 's' : ''}, ` +
+                  `${errorCount} con error${errorCount !== 1 ? 'es' : ''}`
+                );
+              } else {
+                toast.success(
+                  `✅ ${data?.published || count} factura${count > 1 ? 's' : ''} de ${vendorName} publicada${count > 1 ? 's' : ''} exitosamente`
+                );
               }
               
-              // Refrescar la lista después de un pequeño delay
-              setTimeout(async () => {
-                await fetchPendingInvoices();
-              }, 1000);
+              console.log(`✅ Publicación completada para ${vendorName}`);
               
-              return; // Exit early
+              // Refrescar la lista inmediatamente para quitar las facturas publicadas
+              await fetchPendingInvoices();
               
             } catch (publishError: any) {
               console.error("❌ Error en publicación automática:", publishError);
+              toast.error("Error al publicar: " + (publishError.message || "Error desconocido"));
               
-              if (publishError.message === 'Timeout') {
-                // El timeout es normal - la publicación continúa en background
-                toast.info("⏳ Publicación iniciada. La factura se publicará en segundo plano.");
-                
-                // Refrescar después de 3 segundos
-                setTimeout(async () => {
-                  await fetchPendingInvoices();
-                }, 3000);
-              } else {
-                toast.error("Cuenta guardada pero error al publicar: " + (publishError.message || "Error desconocido"));
-              }
-              
-              // Quitar el estado de publishing
+              // Quitar el estado de publishing de todas las facturas
               setInvoices((prev) =>
-                prev.map((inv) => (inv.id === id ? { ...inv, _isPublishing: false } : inv))
+                prev.map((inv) => 
+                  documentIds.includes(inv.id) 
+                    ? { ...inv, _isPublishing: false } 
+                    : inv
+                )
               );
             }
           } else {
