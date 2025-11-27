@@ -92,6 +92,7 @@ const InvoicesPendingLog = () => {
   const [publishingIds, setPublishingIds] = useState<Set<string>>(new Set());
   const [qboAccounts, setQboAccounts] = useState<QBOAccount[]>([]);
   const [loadingAccounts, setLoadingAccounts] = useState(false);
+  const [qboNotConnected, setQboNotConnected] = useState(false);
   const [vendorDefaults, setVendorDefaults] = useState<Map<string, VendorDefault>>(new Map());
   const [selectedInvoice, setSelectedInvoice] = useState<PendingInvoice | null>(null);
   const [showDetailDialog, setShowDetailDialog] = useState(false);
@@ -126,8 +127,8 @@ const InvoicesPendingLog = () => {
     }
   };
 
-  const fetchQBOAccounts = async () => {
-    if (!activeOrganization) return;
+  const fetchQBOAccounts = async (): Promise<QBOAccount[]> => {
+    if (!activeOrganization) return [];
     
     // Check if QuickBooks is connected first
     const { data: qbIntegration } = await supabase
@@ -139,10 +140,13 @@ const InvoicesPendingLog = () => {
       .maybeSingle();
 
     if (!qbIntegration) {
-      console.log("QuickBooks not connected, skipping account fetch");
-      return;
+      console.log("⚠️ QuickBooks not connected, skipping account fetch");
+      setQboNotConnected(true);
+      setLoadingAccounts(false);
+      return [];
     }
     
+    setQboNotConnected(false);
     setLoadingAccounts(true);
     try {
       const { data, error } = await supabase.functions.invoke(
@@ -155,11 +159,15 @@ const InvoicesPendingLog = () => {
       if (error) throw error;
       
       if (data?.accounts) {
+        console.log(`✅ Cargadas ${data.accounts.length} cuentas de QuickBooks`);
         setQboAccounts(data.accounts);
+        return data.accounts;
       }
+      return [];
     } catch (error: any) {
-      console.error("Error fetching QBO accounts:", error);
+      console.error("❌ Error fetching QBO accounts:", error);
       toast.error("Error al cargar cuentas de QuickBooks");
+      return [];
     } finally {
       setLoadingAccounts(false);
     }
@@ -547,8 +555,29 @@ const InvoicesPendingLog = () => {
       // Si estamos actualizando default_account_ref, convertir el ID a código
       let valueToSave = value;
       if (field === "default_account_ref" && typeof value === "string") {
+        console.log(`🔍 Estado qboAccounts: ${qboAccounts.length} cuentas cargadas`);
+        console.log(`🔍 Buscando cuenta ID: "${value}"`);
+        
+        // VALIDACIÓN: Si no hay cuentas cargadas, intentar recargar
+        let accountsList = qboAccounts;
+        if (accountsList.length === 0) {
+          console.warn('⚠️ qboAccounts está vacío - intentando recargar...');
+          toast.loading("Cargando cuentas...", { id: "loading-accounts" });
+          accountsList = await fetchQBOAccounts();
+          toast.dismiss("loading-accounts");
+          
+          if (accountsList.length === 0) {
+            console.error('❌ No se pudieron cargar las cuentas de QuickBooks');
+            toast.error("Las cuentas de QuickBooks no se han cargado. Verifique la conexión.");
+            return;
+          }
+        }
+        
+        console.log(`🔍 IDs disponibles (primeros 10):`, accountsList.slice(0, 10).map(a => `${a.id}: ${a.name}`));
+        
         // Buscar la cuenta por ID para obtener su código
-        const account = qboAccounts.find(acc => acc.id === value);
+        let account = accountsList.find(acc => acc.id === value);
+        
         if (account) {
           // CRÍTICO: Guardar el código en formato correcto "XXXX-XX - Nombre"
           valueToSave = account.accountNumber 
@@ -556,8 +585,9 @@ const InvoicesPendingLog = () => {
             : account.name;
           console.log(`✓ Convertido ID ${value} a código: "${valueToSave}"`);
         } else {
-          console.warn(`⚠️ No se encontró la cuenta con ID: ${value}`);
-          toast.error("No se pudo encontrar la cuenta seleccionada");
+          console.error(`❌ No se encontró cuenta con ID: ${value}`);
+          console.error(`❌ Cuentas disponibles (${accountsList.length}):`, accountsList.map(a => `${a.id}: ${a.name}`).join(', '));
+          toast.error("No se pudo encontrar la cuenta seleccionada. Intente de nuevo.");
           return;
         }
       }
@@ -1184,21 +1214,28 @@ const InvoicesPendingLog = () => {
                             </div>
                           ) : (
                             <>
-                              <AccountCombobox
+                            <AccountCombobox
                                 accounts={qboAccounts}
                                 value={getAccountIdFromCode(invoice.default_account_ref)}
                                 onValueChange={(value) => {
                                   console.log('🔄 Cuenta seleccionada - ID:', value);
                                   console.log('📋 Cuenta actual antes de cambio:', invoice.default_account_ref);
+                                  console.log(`📊 qboAccounts disponibles: ${qboAccounts.length}`);
                                   handleUpdateInvoice(
                                     invoice.id,
                                     "default_account_ref",
                                     value
                                   );
                                 }}
-                                disabled={loadingAccounts}
+                                disabled={loadingAccounts || qboAccounts.length === 0}
                                 className="w-[260px]"
-                                placeholder="Seleccionar cuenta"
+                                placeholder={
+                                  loadingAccounts 
+                                    ? "Cargando cuentas..." 
+                                    : qboAccounts.length === 0 
+                                      ? "Sin cuentas - verificar QB" 
+                                      : "Seleccionar cuenta"
+                                }
                               />
                               {invoice.has_vendor_default && (
                                 <TooltipProvider>

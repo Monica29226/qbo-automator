@@ -42,6 +42,7 @@ export function AccountCombobox({
   const [open, setOpen] = React.useState(false);
   const [searchQuery, setSearchQuery] = React.useState("");
 
+  const isEmpty = accounts.length === 0;
   const selectedAccount = accounts.find((account) => account.id === value);
 
   const getDisplayText = (account: Account) => {
@@ -69,17 +70,27 @@ export function AccountCombobox({
   }, [accounts, searchQuery]);
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover open={open && !isEmpty} onOpenChange={(newOpen) => {
+      if (isEmpty && newOpen) {
+        console.warn('⚠️ AccountCombobox: No hay cuentas disponibles');
+        return;
+      }
+      setOpen(newOpen);
+    }}>
       <PopoverTrigger asChild>
         <Button
           variant="outline"
           role="combobox"
           aria-expanded={open}
           className={cn("justify-between", className)}
-          disabled={disabled}
+          disabled={disabled || isEmpty}
         >
           <span className="truncate">
-            {selectedAccount ? getDisplayText(selectedAccount) : placeholder}
+            {isEmpty 
+              ? "Sin cuentas disponibles" 
+              : selectedAccount 
+                ? getDisplayText(selectedAccount) 
+                : placeholder}
           </span>
           <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
         </Button>
