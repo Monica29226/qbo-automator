@@ -25,6 +25,7 @@ import { ProcessAllNowButton } from "@/components/dashboard/ProcessAllNowButton"
 import { CleanIrrecoverableErrorsButton } from "@/components/dashboard/CleanIrrecoverableErrorsButton";
 import { PendingVendorConfiguration } from "@/components/dashboard/PendingVendorConfiguration";
 import { BatchUploadToDriveButton } from "@/components/dashboard/BatchUploadToDriveButton";
+import { AutoPublishConfiguredInvoices } from "@/components/dashboard/AutoPublishConfiguredInvoices";
 import { DashboardSidebar } from "@/components/DashboardSidebar";
 import { SidebarProvider, SidebarTrigger, SidebarInset } from "@/components/ui/sidebar";
 import { useAuth } from "@/hooks/useAuth";
@@ -595,6 +596,9 @@ const Dashboard = () => {
             <div className="mb-6">
               <PendingVendorConfiguration />
             </div>
+            
+            {/* Auto-publish invoices with configured accounts */}
+            <AutoPublishConfiguredInvoices />
             
             <TodayProcessingReport />
 
