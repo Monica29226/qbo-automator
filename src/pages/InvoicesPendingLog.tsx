@@ -1496,13 +1496,22 @@ const InvoicesPendingLog = () => {
             <DialogTitle className="text-lg font-semibold">{currentPdfName}</DialogTitle>
             <div className="flex items-center gap-2">
               {currentPdfUrl && (
-                <a
-                  href={currentPdfUrl}
-                  download={`${currentPdfName}.pdf`}
-                  className="inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 bg-primary text-primary-foreground hover:bg-primary/90 h-9 px-4"
-                >
-                  Descargar PDF
-                </a>
+                <>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => window.open(currentPdfUrl, '_blank')}
+                  >
+                    Abrir en nueva pestaña
+                  </Button>
+                  <a
+                    href={currentPdfUrl}
+                    download={`${currentPdfName}.pdf`}
+                    className="inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 bg-primary text-primary-foreground hover:bg-primary/90 h-9 px-4"
+                  >
+                    Descargar
+                  </a>
+                </>
               )}
               <Button
                 variant="ghost"
@@ -1516,13 +1525,38 @@ const InvoicesPendingLog = () => {
           </div>
           <div className="flex-1 overflow-hidden bg-muted/20">
             {currentPdfUrl && (
-              <iframe
-                src={currentPdfUrl}
-                className="w-full h-full border-0"
+              <object
+                data={currentPdfUrl}
+                type="application/pdf"
+                className="w-full h-full"
                 title={currentPdfName}
-                sandbox="allow-same-origin allow-scripts allow-popups allow-forms allow-downloads"
-                allow="fullscreen"
-              />
+              >
+                {/* Fallback si object no funciona */}
+                <embed
+                  src={currentPdfUrl}
+                  type="application/pdf"
+                  className="w-full h-full"
+                />
+                {/* Fallback final si nada funciona */}
+                <div className="flex flex-col items-center justify-center h-full gap-4 p-8 text-center">
+                  <FileText className="h-16 w-16 text-muted-foreground" />
+                  <p className="text-muted-foreground">
+                    El visor de PDF no está disponible en tu navegador.
+                  </p>
+                  <div className="flex gap-2">
+                    <Button onClick={() => window.open(currentPdfUrl, '_blank')}>
+                      Abrir en nueva pestaña
+                    </Button>
+                    <a
+                      href={currentPdfUrl}
+                      download={`${currentPdfName}.pdf`}
+                      className="inline-flex items-center justify-center rounded-md text-sm font-medium bg-secondary text-secondary-foreground hover:bg-secondary/80 h-10 px-4"
+                    >
+                      Descargar PDF
+                    </a>
+                  </div>
+                </div>
+              </object>
             )}
           </div>
         </DialogContent>
