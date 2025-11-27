@@ -740,30 +740,17 @@ const InvoicesPendingLog = () => {
     try {
       const loadingToast = toast.loading("Abriendo visor PDF...");
       
-      let pdfUrl = invoice.pdf_attachment_url;
+      let pdfPath = invoice.pdf_attachment_url;
       
-      // Si la URL es completa de Supabase (público o privado), usarla directamente
-      if (pdfUrl.startsWith('http')) {
-        console.log("✅ Usando URL pública directa del storage");
-        
-        // Limpiar URL anterior si existe
-        if (currentPdfUrl) {
-          setCurrentPdfUrl(null);
+      // Extraer el path relativo del storage desde cualquier formato de URL
+      if (pdfPath.startsWith('http')) {
+        const url = new URL(pdfPath);
+        const pathMatch = url.pathname.match(/\/storage\/v1\/object\/(?:public|sign|authenticated)\/company-documents\/(.+)/);
+        if (pathMatch) {
+          pdfPath = pathMatch[1];
+          console.log("🔄 Extraído path desde URL completa:", pdfPath);
         }
-        
-        // Usar la URL pública directamente (permite streaming inmediato)
-        setCurrentPdfUrl(pdfUrl);
-        setCurrentPdfName(`Factura ${invoice.doc_number}`);
-        setPdfViewerOpen(true);
-        
-        toast.dismiss(loadingToast);
-        toast.success("Visor de PDF abierto");
-        console.log("✅ PDF abierto con URL pública - carga instantánea");
-        return;
       }
-      
-      // Si no es URL completa, construir path para signed URL
-      let pdfPath = pdfUrl;
       
       // Remover prefijos si los tiene
       const prefixesToRemove = [
@@ -778,15 +765,16 @@ const InvoicesPendingLog = () => {
         }
       }
       
-      console.log("📂 Path extraído:", pdfPath);
-      console.log("🔐 Generando URL temporal...");
+      console.log("📂 Path final para storage:", pdfPath);
+      console.log("🔐 Generando URL temporal para bucket privado...");
       
       // Limpiar URL anterior si existe
       if (currentPdfUrl) {
         setCurrentPdfUrl(null);
       }
       
-      // Crear signed URL temporal para buckets privados
+      // IMPORTANTE: El bucket company-documents es PRIVADO
+      // Siempre crear signed URL temporal (válida por 5 minutos)
       const { data: signedUrlData, error } = await supabase.storage
         .from('company-documents')
         .createSignedUrl(pdfPath, 300); // 300 segundos = 5 minutos
@@ -800,7 +788,7 @@ const InvoicesPendingLog = () => {
         throw new Error("No se pudo generar la URL temporal");
       }
 
-      console.log("✅ URL temporal generada");
+      console.log("✅ URL temporal generada para bucket privado");
       
       // Usar la signed URL
       setCurrentPdfUrl(signedUrlData.signedUrl);
@@ -816,10 +804,10 @@ const InvoicesPendingLog = () => {
       console.error("❌ Error completo al cargar PDF:", error);
       
       let errorMessage = "Error al cargar el PDF";
-      if (error.message.includes("not found")) {
+      if (error.message.includes("not found") || error.message.includes("Object not found")) {
         errorMessage = "El archivo PDF no existe en el almacenamiento";
       } else if (error.message.includes("Bucket")) {
-        errorMessage = "Error de configuración del almacenamiento";
+        errorMessage = "Bucket de almacenamiento no encontrado. Contacta al administrador.";
       } else if (error.message) {
         errorMessage = error.message;
       }
