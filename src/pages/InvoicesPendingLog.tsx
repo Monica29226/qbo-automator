@@ -1,4 +1,4 @@
-import { CheckCircle2, Eye, FileText, Loader2, RefreshCw, Search, Star, Trash2, Upload, X, Filter } from "lucide-react";
+import { CheckCircle2, Eye, FileText, Loader2, RefreshCw, Search, Star, Trash2, Upload, X, Filter, CalendarIcon } from "lucide-react";
 import { useState, useEffect, useMemo } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
@@ -36,6 +36,16 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { Calendar } from "@/components/ui/calendar";
+import { format } from "date-fns";
+import { es } from "date-fns/locale";
+import { cn } from "@/lib/utils";
+import type { DateRange } from "react-day-picker";
 
 interface QBOAccount {
   id: string;
@@ -92,8 +102,7 @@ const InvoicesPendingLog = () => {
   // Filtros individuales por columna
   const [filterDocNumber, setFilterDocNumber] = useState("");
   const [filterSupplier, setFilterSupplier] = useState("");
-  const [filterDateFrom, setFilterDateFrom] = useState("");
-  const [filterDateTo, setFilterDateTo] = useState("");
+  const [dateRange, setDateRange] = useState<DateRange | undefined>();
   const [filterQBStatus, setFilterQBStatus] = useState<"all" | "published" | "pending">("all");
 
   const fetchVendorDefaults = async () => {
@@ -388,22 +397,22 @@ const InvoicesPendingLog = () => {
       );
     }
 
-    // Filtro por fecha desde
-    if (filterDateFrom) {
-      const dateFrom = new Date(filterDateFrom);
+    // Filtro por rango de fechas
+    if (dateRange?.from) {
       filtered = filtered.filter((inv) => {
         const invoiceDate = new Date(inv.issue_date);
-        return invoiceDate >= dateFrom;
-      });
-    }
-
-    // Filtro por fecha hasta
-    if (filterDateTo) {
-      const dateTo = new Date(filterDateTo);
-      dateTo.setHours(23, 59, 59, 999); // Incluir todo el día
-      filtered = filtered.filter((inv) => {
-        const invoiceDate = new Date(inv.issue_date);
-        return invoiceDate <= dateTo;
+        const fromDate = new Date(dateRange.from!);
+        fromDate.setHours(0, 0, 0, 0);
+        
+        if (!dateRange.to) {
+          // Solo fecha desde
+          return invoiceDate >= fromDate;
+        }
+        
+        // Rango completo
+        const toDate = new Date(dateRange.to);
+        toDate.setHours(23, 59, 59, 999);
+        return invoiceDate >= fromDate && invoiceDate <= toDate;
       });
     }
 
@@ -443,20 +452,19 @@ const InvoicesPendingLog = () => {
     }
 
     setFilteredInvoices(filtered);
-  }, [searchTerm, invoices, accountsMap, filterDocNumber, filterSupplier, filterDateFrom, filterDateTo, filterQBStatus]);
+  }, [searchTerm, invoices, accountsMap, filterDocNumber, filterSupplier, dateRange, filterQBStatus]);
 
   // Función para limpiar todos los filtros
   const clearAllFilters = () => {
     setFilterDocNumber("");
     setFilterSupplier("");
-    setFilterDateFrom("");
-    setFilterDateTo("");
+    setDateRange(undefined);
     setFilterQBStatus("all");
     setSearchTerm("");
   };
 
   // Verificar si hay filtros activos
-  const hasActiveFilters = filterDocNumber || filterSupplier || filterDateFrom || filterDateTo || filterQBStatus !== "all" || searchTerm;
+  const hasActiveFilters = filterDocNumber || filterSupplier || dateRange?.from || filterQBStatus !== "all" || searchTerm;
 
   const saveVendorDefault = async (
     vendorName: string,
@@ -1014,22 +1022,41 @@ const InvoicesPendingLog = () => {
                       {/* Sin filtro para monto */}
                     </TableHead>
                     <TableHead className="py-2">
-                      <div className="flex gap-1">
-                        <Input
-                          type="date"
-                          value={filterDateFrom}
-                          onChange={(e) => setFilterDateFrom(e.target.value)}
-                          className="h-8 text-xs"
-                          placeholder="Desde"
-                        />
-                        <Input
-                          type="date"
-                          value={filterDateTo}
-                          onChange={(e) => setFilterDateTo(e.target.value)}
-                          className="h-8 text-xs"
-                          placeholder="Hasta"
-                        />
-                      </div>
+                      <Popover>
+                        <PopoverTrigger asChild>
+                          <Button
+                            variant="outline"
+                            className={cn(
+                              "h-8 w-full justify-start text-left font-normal text-xs",
+                              !dateRange && "text-muted-foreground"
+                            )}
+                          >
+                            <CalendarIcon className="mr-2 h-3 w-3" />
+                            {dateRange?.from ? (
+                              dateRange.to ? (
+                                <>
+                                  {format(dateRange.from, "dd/MM/yyyy", { locale: es })} -{" "}
+                                  {format(dateRange.to, "dd/MM/yyyy", { locale: es })}
+                                </>
+                              ) : (
+                                format(dateRange.from, "dd/MM/yyyy", { locale: es })
+                              )
+                            ) : (
+                              <span>Rango de fecha</span>
+                            )}
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-auto p-0" align="start">
+                          <Calendar
+                            mode="range"
+                            selected={dateRange}
+                            onSelect={setDateRange}
+                            numberOfMonths={2}
+                            locale={es}
+                            className={cn("p-3 pointer-events-auto")}
+                          />
+                        </PopoverContent>
+                      </Popover>
                     </TableHead>
                     <TableHead className="py-2">
                       {/* Sin filtro para cuenta contable */}
