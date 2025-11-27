@@ -1039,15 +1039,14 @@ const InvoicesPendingLog = () => {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Número</TableHead>
-                    <TableHead>Proveedor</TableHead>
-                    <TableHead>Monto</TableHead>
-                    <TableHead>Fecha</TableHead>
-                    <TableHead>Cuenta Contable</TableHead>
-                    <TableHead>Centro de Costo</TableHead>
-                    <TableHead>Usa IVA</TableHead>
-                    <TableHead className="text-center">Estado QB</TableHead>
-                    <TableHead className="text-right">Acciones</TableHead>
+                    <TableHead className="w-[120px]">Número</TableHead>
+                    <TableHead className="w-[200px]">Proveedor</TableHead>
+                    <TableHead className="w-[110px]">Monto</TableHead>
+                    <TableHead className="w-[100px]">Fecha</TableHead>
+                    <TableHead className="w-[280px]">Cuenta Contable</TableHead>
+                    <TableHead className="w-[140px]">Centro de Costo</TableHead>
+                    <TableHead className="text-center w-[100px]">Estado QB</TableHead>
+                    <TableHead className="text-right w-[180px]">Acciones</TableHead>
                   </TableRow>
                   {/* Fila de filtros */}
                   <TableRow className="bg-muted/30 hover:bg-muted/30">
@@ -1112,9 +1111,6 @@ const InvoicesPendingLog = () => {
                     </TableHead>
                     <TableHead className="py-2">
                       {/* Sin filtro para centro de costo */}
-                    </TableHead>
-                    <TableHead className="py-2">
-                      {/* Sin filtro para Usa IVA */}
                     </TableHead>
                     <TableHead className="py-2 text-center">
                       <Select
@@ -1220,7 +1216,7 @@ const InvoicesPendingLog = () => {
                                   );
                                 }}
                                 disabled={loadingAccounts}
-                                className="w-[280px]"
+                                className="w-[260px]"
                                 placeholder="Seleccionar cuenta"
                               />
                               {invoice.has_vendor_default && (
@@ -1250,19 +1246,7 @@ const InvoicesPendingLog = () => {
                               e.target.value
                             )
                           }
-                          className="w-32"
-                        />
-                      </TableCell>
-                      <TableCell>
-                        <Checkbox
-                          checked={invoice.uses_tax ?? true}
-                          onCheckedChange={(checked) =>
-                            handleUpdateInvoice(
-                              invoice.id,
-                              "uses_tax",
-                              checked as boolean
-                            )
-                          }
+                          className="w-[120px]"
                         />
                       </TableCell>
                       <TableCell className="text-center">
