@@ -374,8 +374,15 @@ Deno.serve(async (req) => {
 
         const vendorId = await findOrCreateVendor(doc.supplier_name, doc.supplier_tax_id);
 
-        // Función para obtener código de impuesto (con retry)
-        const getTaxCodeRef = async (taxRate: number): Promise<string | null> => {
+        // Cache global para TaxCodes (evitar múltiples llamadas)
+        let allTaxCodes: any[] = [];
+        let taxCodesLoaded = false;
+        let defaultNoTaxId: string | null = null;
+        
+        // Función para cargar todos los TaxCodes una sola vez
+        const loadAllTaxCodes = async (): Promise<any[]> => {
+          if (taxCodesLoaded) return allTaxCodes;
+          
           try {
             const query = `SELECT Id, Name, Description FROM TaxCode WHERE Active = true MAXRESULTS 100`;
             const queryUrl = `https://quickbooks.api.intuit.com/v3/company/${realmId}/query?query=${encodeURIComponent(query)}`;
@@ -387,38 +394,86 @@ Deno.serve(async (req) => {
               },
             });
 
-            if (!response.ok) return null;
+            taxCodesLoaded = true;
+            
+            if (!response.ok) {
+              allTaxCodes = [];
+              return [];
+            }
 
             const data = await response.json();
-            const taxCodes = data.QueryResponse?.TaxCode || [];
+            allTaxCodes = data.QueryResponse?.TaxCode || [];
             
-            for (const taxCode of taxCodes) {
+            // Log de TaxCodes disponibles para debug
+            logInfo(`📋 TaxCodes disponibles en QBO: ${allTaxCodes.map((tc: any) => `${tc.Name} (${tc.Id})`).join(', ')}`);
+            
+            // Encontrar el código "No VAT" o similar para usar como fallback
+            for (const taxCode of allTaxCodes) {
               const name = (taxCode.Name || "").toLowerCase();
-              const description = (taxCode.Description || "").toLowerCase();
-              
-              if (taxRate === 0) {
-                const zeroPatterns = ['non', 'sin iva', 'exento', 'exempt', '0%', 'out of scope'];
-                for (const pattern of zeroPatterns) {
-                  if (name.includes(pattern) || description.includes(pattern)) {
-                    return taxCode.Id;
-                  }
-                }
-              } else {
-                const targetRate = `${taxRate}%`.toLowerCase();
-                const patterns = [targetRate, `(${taxRate}%)`, `iva ${taxRate}%`];
-                
-                for (const pattern of patterns) {
-                  if (name.includes(pattern) || description.includes(pattern)) {
-                    return taxCode.Id;
-                  }
-                }
+              if (name.includes('no vat') || name.includes('non') || name === 'out of scope') {
+                defaultNoTaxId = taxCode.Id;
+                logInfo(`✅ TaxCode por defecto (sin IVA): ${taxCode.Name} (${taxCode.Id})`);
+                break;
               }
             }
             
-            return null;
-          } catch {
-            return null;
+            return allTaxCodes;
+          } catch (err) {
+            logError('Error cargando TaxCodes:', err);
+            taxCodesLoaded = true;
+            allTaxCodes = [];
+            return [];
           }
+        };
+
+        // Función para obtener código de impuesto
+        const getTaxCodeRef = async (taxRate: number): Promise<string | null> => {
+          const taxCodes = await loadAllTaxCodes();
+          
+          for (const taxCode of taxCodes) {
+            const name = (taxCode.Name || "").toLowerCase();
+            const description = (taxCode.Description || "").toLowerCase();
+            
+            if (taxRate === 0) {
+              // Buscar código sin impuesto
+              const zeroPatterns = ['no vat', 'non', 'sin iva', 'exento', 'exempt', '0%', 'out of scope'];
+              for (const pattern of zeroPatterns) {
+                if (name.includes(pattern) || description.includes(pattern)) {
+                  return taxCode.Id;
+                }
+              }
+            } else {
+              // Patrones específicos para tasas de Costa Rica
+              // Ej: "13% S (13%)", "4% R (4%)", "1% R Import (1%)", "2% R Import (2%)"
+              const rate = Math.round(taxRate);
+              const patterns = [
+                `${rate}%`,           // "13%"
+                `(${rate}%)`,         // "(13%)"
+                `${rate}% s`,         // "13% S" - Servicios
+                `${rate}% r`,         // "4% R" - Retención
+                `iva ${rate}%`,       // "IVA 13%"
+                `iva${rate}`,         // "IVA13"
+              ];
+              
+              for (const pattern of patterns) {
+                if (name.includes(pattern) || description.includes(pattern)) {
+                  return taxCode.Id;
+                }
+              }
+              
+              // Buscar coincidencia exacta del porcentaje en el nombre
+              const rateRegex = new RegExp(`\\b${rate}%?\\b`);
+              if (rateRegex.test(name)) {
+                return taxCode.Id;
+              }
+            }
+          }
+          
+          // Si no encontró, retornar el código por defecto (No VAT)
+          if (defaultNoTaxId) {
+            logInfo(`⚠️ No se encontró TaxCode para ${taxRate}%, usando fallback: ${defaultNoTaxId}`);
+          }
+          return defaultNoTaxId;
         };
 
         // Función para obtener ID de cuenta (con retry)
@@ -727,16 +782,17 @@ Deno.serve(async (req) => {
                 },
               };
 
-              if (tasaImpuesto > 0) {
-                let taxCodeId = taxCodeCache.get(tasaImpuesto);
-                if (taxCodeId === undefined) {
-                  taxCodeId = await getTaxCodeRef(tasaImpuesto);
-                  taxCodeCache.set(tasaImpuesto, taxCodeId);
-                }
-                
-                if (taxCodeId) {
-                  lineDetail.AccountBasedExpenseLineDetail.TaxCodeRef = { value: taxCodeId };
-                }
+              // SIEMPRE asignar TaxCodeRef (QuickBooks lo requiere cuando "Los importes son Impuestos no incluidos")
+              let taxCodeId = taxCodeCache.get(tasaImpuesto);
+              if (taxCodeId === undefined) {
+                taxCodeId = await getTaxCodeRef(tasaImpuesto);
+                taxCodeCache.set(tasaImpuesto, taxCodeId);
+              }
+              
+              if (taxCodeId) {
+                lineDetail.AccountBasedExpenseLineDetail.TaxCodeRef = { value: taxCodeId };
+              } else {
+                logInfo(`⚠️ Línea sin TaxCodeRef asignado para tasa ${tasaImpuesto}%`);
               }
 
               lines.push(lineDetail);
@@ -754,14 +810,24 @@ Deno.serve(async (req) => {
             throw new Error(`Invalid total amount: ${doc.total_amount}`);
           }
           
-          lines.push({
+          // Obtener TaxCodeRef para la línea fallback
+          const fallbackTaxRate = doc.uses_tax !== false && doc.total_tax && doc.total_tax > 0 ? 13 : 0;
+          const fallbackTaxCodeId = await getTaxCodeRef(fallbackTaxRate);
+          
+          const fallbackLine: any = {
             DetailType: "AccountBasedExpenseLineDetail",
             Amount: subtotal,
             Description: `${isCreditNote ? 'Nota de Crédito' : 'Factura'} ${doc.doc_number} - ${doc.supplier_name}`,
             AccountBasedExpenseLineDetail: {
               AccountRef: { value: accountRef },
             },
-          });
+          };
+          
+          if (fallbackTaxCodeId) {
+            fallbackLine.AccountBasedExpenseLineDetail.TaxCodeRef = { value: fallbackTaxCodeId };
+          }
+          
+          lines.push(fallbackLine);
         }
         
         const documentUsesTax = doc.uses_tax !== false;
