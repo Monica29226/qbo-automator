@@ -224,6 +224,7 @@ serve(async (req) => {
     // Clasificar proveedor usando Lovable AI
     let vendorId = null;
     let classificationReason = "No classification attempted";
+    let suggestedAccountRef = null;
 
     try {
       const classifyResponse = await fetch(
@@ -248,9 +249,38 @@ serve(async (req) => {
         const classification = await classifyResponse.json();
         console.log("Classification result:", classification);
         
+        // Usar la clasificación de cuenta basada en contenido
+        if (classification.account_classification) {
+          suggestedAccountRef = classification.account_classification.account_code;
+          console.log("✅ Account classification from content:", suggestedAccountRef, 
+                     "- Reason:", classification.account_classification_reason);
+        }
+        
         if (classification.vendor_id && classification.confidence >= 70) {
           vendorId = classification.vendor_id;
           classificationReason = classification.reason;
+          
+          // Si hay clasificación de cuenta y no existe regla, crearla
+          if (suggestedAccountRef) {
+            try {
+              await supabase
+                .from("vendor_classification_rules")
+                .upsert({
+                  organization_id,
+                  vendor_name: extractedData.supplier_name,
+                  account_code: suggestedAccountRef,
+                  account_description: classification.account_classification_reason || 
+                                      "Auto-clasificación basada en contenido",
+                  is_active: true,
+                }, {
+                  onConflict: 'organization_id,vendor_name'
+                });
+              
+              console.log(`✅ Created/updated classification rule: ${extractedData.supplier_name} → ${suggestedAccountRef}`);
+            } catch (ruleError) {
+              console.error("Error creating classification rule:", ruleError);
+            }
+          }
         } else {
           classificationReason = `Low confidence (${classification.confidence}%): ${classification.reason}`;
         }
@@ -266,7 +296,7 @@ serve(async (req) => {
       status = "review";
     }
 
-    // Guardar documento
+    // Guardar documento con la cuenta clasificada
     const { data: savedDoc, error: saveError } = await supabase
       .from("processed_documents")
       .insert([
@@ -279,6 +309,7 @@ serve(async (req) => {
           supplier_tax_id: extractedData.supplier_tax_id,
           supplier_email: extractedData.supplier_email,
           vendor_id: vendorId,
+          default_account_ref: suggestedAccountRef || null,
           currency: extractedData.currency,
           total_amount: extractedData.total_amount,
           total_tax: extractedData.total_tax,
