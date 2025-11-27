@@ -1483,21 +1483,34 @@ const InvoicesPendingLog = () => {
         <DialogContent className="max-w-6xl h-[90vh] p-0 flex flex-col">
           <div className="flex items-center justify-between p-4 border-b bg-muted/50">
             <DialogTitle className="text-lg font-semibold">{currentPdfName}</DialogTitle>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={handleClosePdfViewer}
-              className="h-8 w-8 p-0"
-            >
-              ✕
-            </Button>
+            <div className="flex items-center gap-2">
+              {currentPdfUrl && (
+                <a
+                  href={currentPdfUrl}
+                  download={`${currentPdfName}.pdf`}
+                  className="inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 bg-primary text-primary-foreground hover:bg-primary/90 h-9 px-4"
+                >
+                  Descargar PDF
+                </a>
+              )}
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleClosePdfViewer}
+                className="h-8 w-8 p-0"
+              >
+                ✕
+              </Button>
+            </div>
           </div>
-          <div className="flex-1 overflow-hidden">
+          <div className="flex-1 overflow-hidden bg-muted/20">
             {currentPdfUrl && (
               <iframe
                 src={currentPdfUrl}
                 className="w-full h-full border-0"
                 title={currentPdfName}
+                sandbox="allow-same-origin allow-scripts allow-popups allow-forms allow-downloads"
+                allow="fullscreen"
               />
             )}
           </div>
