@@ -111,30 +111,51 @@ const Vendors = () => {
 
     setIsLoading(true);
 
+    // DEBUG: Mostrar datos antes de guardar
+    console.log("📝 GUARDANDO PROVEEDOR - FormData:", {
+      vendor_name: formData.vendor_name,
+      vendor_tax_id: formData.vendor_tax_id,
+      qbo_vendor_ref: formData.qbo_vendor_ref,
+      default_account_ref: formData.default_account_ref,
+      tax_treatment: formData.tax_treatment,
+      tax_rate: formData.tax_rate,
+    });
+
     if (editingVendor) {
-      const { error } = await supabase
+      console.log("📝 Actualizando proveedor ID:", editingVendor.id);
+      
+      const { data, error } = await supabase
         .from("vendors")
         .update(formData)
-        .eq("id", editingVendor.id);
+        .eq("id", editingVendor.id)
+        .select();
+
+      console.log("📝 Respuesta UPDATE:", { data, error });
 
       if (error) {
         toast.error("Error al actualizar proveedor");
-        console.error(error);
+        console.error("❌ Error UPDATE:", error);
       } else {
+        console.log("✅ Proveedor actualizado correctamente:", data);
         toast.success("Proveedor actualizado");
         setIsDialogOpen(false);
         fetchVendors();
       }
     } else {
-      const { error } = await supabase.from("vendors").insert([{
+      console.log("📝 Creando nuevo proveedor para org:", activeOrganization);
+      
+      const { data, error } = await supabase.from("vendors").insert([{
         ...formData,
         organization_id: activeOrganization,
-      }]);
+      }]).select();
+
+      console.log("📝 Respuesta INSERT:", { data, error });
 
       if (error) {
         toast.error("Error al crear proveedor");
-        console.error(error);
+        console.error("❌ Error INSERT:", error);
       } else {
+        console.log("✅ Proveedor creado correctamente:", data);
         toast.success("Proveedor creado");
         setIsDialogOpen(false);
         fetchVendors();

@@ -545,16 +545,68 @@ Deno.serve(async (req) => {
           }
         }
         
-        // 2. Si no hay cuenta en el documento, intentar desde el vendor
-        if (!accountCode && doc.vendor_id) {
-          const { data: vendorData } = await supabase
-            .from("vendors")
-            .select("default_account_ref")
-            .eq("id", doc.vendor_id)
-            .maybeSingle();
+        // 2. Si no hay cuenta en el documento, buscar en vendors por vendor_id o qbo_vendor_ref
+        if (!accountCode) {
+          let vendorData = null;
           
+          // 2a. Primero intentar por vendor_id si existe
+          if (doc.vendor_id) {
+            const { data } = await supabase
+              .from("vendors")
+              .select("vendor_name, default_account_ref, qbo_vendor_ref")
+              .eq("id", doc.vendor_id)
+              .maybeSingle();
+            vendorData = data;
+            if (vendorData) {
+              console.log(`✓ Found vendor by vendor_id: ${vendorData.vendor_name}`);
+            }
+          }
+          
+          // 2b. Si no encontró por vendor_id, buscar por qbo_vendor_ref (ID de QuickBooks)
+          if (!vendorData && vendorId) {
+            const { data } = await supabase
+              .from("vendors")
+              .select("vendor_name, default_account_ref, qbo_vendor_ref")
+              .eq("organization_id", organization_id)
+              .eq("qbo_vendor_ref", vendorId)
+              .maybeSingle();
+            vendorData = data;
+            if (vendorData) {
+              console.log(`✓ Found vendor by qbo_vendor_ref (${vendorId}): ${vendorData.vendor_name}`);
+            }
+          }
+          
+          // 2c. Buscar también por nombre del proveedor (normalizado)
+          if (!vendorData) {
+            const normalizedSupplierName = doc.supplier_name
+              .normalize('NFD')
+              .replace(/[\u0300-\u036f]/g, '')
+              .toLowerCase()
+              .trim();
+            
+            const { data: allOrgVendors } = await supabase
+              .from("vendors")
+              .select("vendor_name, default_account_ref, qbo_vendor_ref")
+              .eq("organization_id", organization_id);
+            
+            if (allOrgVendors && allOrgVendors.length > 0) {
+              vendorData = allOrgVendors.find(v => {
+                const normalizedVendorName = v.vendor_name
+                  .normalize('NFD')
+                  .replace(/[\u0300-\u036f]/g, '')
+                  .toLowerCase()
+                  .trim();
+                return normalizedVendorName === normalizedSupplierName;
+              });
+              
+              if (vendorData) {
+                console.log(`✓ Found vendor by normalized name: ${vendorData.vendor_name}`);
+              }
+            }
+          }
+          
+          // Usar la cuenta del vendor encontrado
           if (vendorData?.default_account_ref) {
-            // Extraer solo el código (antes del primer guion con espacios o primer espacio)
             const rawCode = vendorData.default_account_ref;
             
             // Si contiene " - " (espacio-guion-espacio), usar eso como separador
@@ -565,7 +617,9 @@ Deno.serve(async (req) => {
               accountCode = rawCode.split(' ')[0].trim();
             }
             
-            console.log(`✓ Account code from vendor: ${accountCode} (raw: ${rawCode})`);
+            console.log(`✓ Account code from vendors table: ${accountCode} (vendor: ${vendorData.vendor_name}, raw: ${rawCode})`);
+          } else if (vendorData) {
+            console.log(`⚠️ Vendor found but no default_account_ref configured: ${vendorData.vendor_name}`);
           }
         }
         
