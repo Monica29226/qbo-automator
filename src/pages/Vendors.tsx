@@ -73,11 +73,10 @@ const Vendors = () => {
   const [qboNotConnected, setQboNotConnected] = useState(false);
 
   useEffect(() => {
-    if (isAdmin && activeOrganization) {
+    if (activeOrganization) {
       fetchVendors();
-      fetchQBOAccounts(); // Precargar cuentas al montar
     }
-  }, [isAdmin, activeOrganization]);
+  }, [activeOrganization]);
 
   const fetchVendors = async () => {
     if (!activeOrganization) return;
