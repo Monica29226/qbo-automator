@@ -70,10 +70,12 @@ const Vendors = () => {
     tax_treatment: "gravado",
     tax_rate: 13,
   });
+  const [qboNotConnected, setQboNotConnected] = useState(false);
 
   useEffect(() => {
     if (isAdmin && activeOrganization) {
       fetchVendors();
+      fetchQBOAccounts(); // Precargar cuentas al montar
     }
   }, [isAdmin, activeOrganization]);
 
@@ -143,27 +145,46 @@ const Vendors = () => {
   };
 
   const fetchQBOAccounts = async () => {
-    if (!activeOrganization) return;
+    console.log("🔍 fetchQBOAccounts - activeOrganization:", activeOrganization);
     
-    // Check if QuickBooks is connected first
-    const { data: qbIntegration } = await supabase
-      .from("integration_accounts")
-      .select("id")
-      .eq("organization_id", activeOrganization)
-      .eq("service_type", "quickbooks")
-      .eq("is_active", true)
-      .maybeSingle();
-
-    if (!qbIntegration) {
-      console.log("QuickBooks not connected, skipping account fetch");
+    if (!activeOrganization) {
+      console.log("❌ No hay organización activa");
       return;
     }
     
     setIsLoadingAccounts(true);
+    setQboNotConnected(false);
+    
     try {
+      // Check if QuickBooks is connected first
+      console.log("🔍 Verificando integración de QuickBooks...");
+      const { data: qbIntegration, error: qbError } = await supabase
+        .from("integration_accounts")
+        .select("id, is_active, credentials")
+        .eq("organization_id", activeOrganization)
+        .eq("service_type", "quickbooks")
+        .eq("is_active", true)
+        .maybeSingle();
+
+      console.log("📊 qbIntegration:", qbIntegration);
+      console.log("📊 qbError:", qbError);
+
+      if (qbError) {
+        console.error("❌ Error al verificar integración:", qbError);
+        throw new Error("Error al verificar integración de QuickBooks");
+      }
+
+      if (!qbIntegration) {
+        console.log("⚠️ QuickBooks no está conectado para esta organización");
+        setQboNotConnected(true);
+        setIsLoadingAccounts(false);
+        return;
+      }
+      
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) throw new Error("No session");
 
+      console.log("📡 Llamando a list-quickbooks-accounts...");
       const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/list-quickbooks-accounts`, {
         method: "POST",
         headers: {
@@ -173,12 +194,25 @@ const Vendors = () => {
         body: JSON.stringify({ organization_id: activeOrganization }),
       });
 
-      if (!response.ok) throw new Error("Error al obtener cuentas");
+      console.log("📡 Response status:", response.status);
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error("❌ Error de Edge Function:", errorText);
+        throw new Error(`Error al obtener cuentas: ${response.status}`);
+      }
 
       const result = await response.json();
+      console.log("✅ Resultado de list-quickbooks-accounts:", result);
+      console.log("📊 Total cuentas:", result.accounts?.length || 0);
+      
       setQboAccounts(result.accounts || []);
+      
+      if (result.accounts?.length === 0) {
+        console.log("⚠️ No se encontraron cuentas en QuickBooks");
+      }
     } catch (error) {
-      console.error("Error fetching QBO accounts:", error);
+      console.error("❌ Error fetching QBO accounts:", error);
       toast.error("Error al cargar cuentas de QuickBooks");
     } finally {
       setIsLoadingAccounts(false);
@@ -361,14 +395,22 @@ const Vendors = () => {
               <Label htmlFor="default_account_ref">
                 Cuenta a Registrar <span className="text-destructive">*</span>
               </Label>
-              <AccountCombobox
-                accounts={qboAccounts}
-                value={formData.default_account_ref}
-                onValueChange={(value) => setFormData({ ...formData, default_account_ref: value })}
-                disabled={isLoadingAccounts}
-                className="w-full"
-                placeholder={isLoadingAccounts ? "Cargando cuentas..." : "Seleccionar cuenta"}
-              />
+              {qboNotConnected ? (
+                <div className="p-3 border border-destructive/50 bg-destructive/10 rounded-md">
+                  <p className="text-sm text-destructive">
+                    QuickBooks no está conectado. Vaya a Integraciones para conectar QuickBooks primero.
+                  </p>
+                </div>
+              ) : (
+                <AccountCombobox
+                  accounts={qboAccounts}
+                  value={formData.default_account_ref}
+                  onValueChange={(value) => setFormData({ ...formData, default_account_ref: value })}
+                  disabled={isLoadingAccounts}
+                  className="w-full"
+                  placeholder={isLoadingAccounts ? "Cargando cuentas..." : qboAccounts.length === 0 ? "No hay cuentas disponibles" : "Seleccionar cuenta"}
+                />
+              )}
             </div>
 
             <div className="space-y-2">
