@@ -429,47 +429,62 @@ Deno.serve(async (req) => {
             const allAccounts = data.QueryResponse?.Account || [];
             console.log(`✓ Retrieved ${allAccounts.length} accounts from QuickBooks`);
             
-            // Buscar la cuenta que coincida con nuestro código
-            // Estrategia: buscar por código completo, o sin el sufijo después del guion
-            // Ej: buscar "6124-01" y también "6124" como alternativa
-            const codeVariants = [accountCode];
-            if (accountCode.includes('-')) {
-              const baseCode = accountCode.split('-')[0]; // "6124-01" → "6124"
-              codeVariants.push(baseCode);
-            }
-            
-            const targetAccount = allAccounts.find((acc: any) => {
-              for (const variant of codeVariants) {
-                // Buscar por AcctNum (si existe)
-                if (acc.AcctNum) {
-                  if (acc.AcctNum === variant || acc.AcctNum === accountCode) {
-                    return true;
-                  }
-                }
-                
-                // Buscar por Name (muchas veces el código está al inicio del nombre)
-                if (acc.Name) {
-                  // Coincidencia exacta al inicio: "6124 Gastos" o "6124-01 Alimentación"
-                  if (acc.Name.startsWith(variant + ' ') || acc.Name.startsWith(accountCode + ' ')) {
-                    return true;
-                  }
-                  // Coincidencia exacta al inicio sin espacio
-                  if (acc.Name.startsWith(variant) || acc.Name.startsWith(accountCode)) {
-                    return true;
-                  }
-                }
+            // PASO 1: Buscar EXACTAMENTE por el código completo primero
+            console.log(`🎯 PRIORITY: Searching for EXACT match: "${accountCode}"`);
+            let targetAccount = allAccounts.find((acc: any) => {
+              // Coincidencia EXACTA en AcctNum
+              if (acc.AcctNum && acc.AcctNum === accountCode) {
+                return true;
+              }
+              
+              // Coincidencia EXACTA al inicio del Name seguido de espacio
+              if (acc.Name && acc.Name.startsWith(accountCode + ' ')) {
+                return true;
+              }
+              
+              // Coincidencia EXACTA al inicio del Name seguido de guion
+              if (acc.Name && acc.Name.startsWith(accountCode + '-')) {
+                return true;
               }
               
               return false;
             });
             
             if (targetAccount) {
-              console.log(`✅ FOUND account with code ${accountCode}:`);
+              console.log(`✅ EXACT MATCH FOUND for ${accountCode}:`);
               console.log(`   ID: ${targetAccount.Id}`);
               console.log(`   Name: "${targetAccount.Name}"`);
               console.log(`   AcctNum: "${targetAccount.AcctNum || 'N/A'}"`);
               console.log(`   Type: "${targetAccount.AccountType}"`);
               return targetAccount.Id;
+            }
+            
+            // PASO 2: Si NO encontró match exacto Y el código tiene guion, intentar con código base (cuenta madre)
+            if (accountCode.includes('-')) {
+              const baseCode = accountCode.split('-')[0]; // "5500-03" → "5500"
+              console.log(`⚠️ FALLBACK: No exact match, searching for parent account: "${baseCode}"`);
+              
+              targetAccount = allAccounts.find((acc: any) => {
+                // Buscar código base
+                if (acc.AcctNum && acc.AcctNum === baseCode) {
+                  return true;
+                }
+                
+                if (acc.Name && acc.Name.startsWith(baseCode + ' ')) {
+                  return true;
+                }
+                
+                return false;
+              });
+              
+              if (targetAccount) {
+                console.log(`⚠️ USING PARENT ACCOUNT as fallback for ${accountCode}:`);
+                console.log(`   ID: ${targetAccount.Id}`);
+                console.log(`   Name: "${targetAccount.Name}"`);
+                console.log(`   AcctNum: "${targetAccount.AcctNum || 'N/A'}"`);
+                console.log(`   ⚠️ WARNING: This is a parent account, not the specific sub-account requested!`);
+                return targetAccount.Id;
+              }
             }
             
             // Si no se encontró, mostrar cuentas similares para debugging
