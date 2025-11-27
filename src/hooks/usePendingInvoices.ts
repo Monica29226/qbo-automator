@@ -30,10 +30,62 @@ interface VendorDefault {
   default_uses_tax: boolean;
 }
 
+// Normalizar nombre de vendor para comparación
+const normalizeVendorName = (name: string): string => {
+  return name
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "") // Quitar acentos
+    .replace(/[^a-z0-9]/g, "") // Solo alfanuméricos
+    .trim();
+};
+
 const fetchPendingInvoicesFromAPI = async (
   organizationId: string,
   vendorDefaults: Map<string, VendorDefault>
 ): Promise<PendingInvoice[]> => {
+  // Primero, obtener TODOS los vendors que ya tienen regla configurada
+  const [vendorDefaultsResult, vendorRulesResult, vendorsResult] = await Promise.all([
+    supabase
+      .from("vendor_defaults")
+      .select("vendor_name, default_account_ref")
+      .eq("organization_id", organizationId)
+      .not("default_account_ref", "is", null),
+    supabase
+      .from("vendor_classification_rules")
+      .select("vendor_name, account_code")
+      .eq("organization_id", organizationId)
+      .eq("is_active", true),
+    supabase
+      .from("vendors")
+      .select("vendor_name, default_account_ref")
+      .eq("organization_id", organizationId)
+      .not("default_account_ref", "is", null)
+  ]);
+
+  // Crear set de vendors con regla (normalizados para comparación)
+  const vendorsWithRules = new Set<string>();
+  
+  vendorDefaultsResult.data?.forEach(v => {
+    if (v.default_account_ref) {
+      vendorsWithRules.add(normalizeVendorName(v.vendor_name));
+    }
+  });
+  
+  vendorRulesResult.data?.forEach(v => {
+    if (v.account_code) {
+      vendorsWithRules.add(normalizeVendorName(v.vendor_name));
+    }
+  });
+  
+  vendorsResult.data?.forEach(v => {
+    if (v.default_account_ref) {
+      vendorsWithRules.add(normalizeVendorName(v.vendor_name));
+    }
+  });
+
+  console.log(`📋 Vendors con regla configurada: ${vendorsWithRules.size}`, [...vendorsWithRules]);
+
   // Fetch documents - SOLO facturas pendientes
   const { data: docsData, error: docsError } = await supabase
     .from("processed_documents")
@@ -48,8 +100,22 @@ const fetchPendingInvoicesFromAPI = async (
   if (docsError) throw docsError;
   if (!docsData || docsData.length === 0) return [];
 
-  // Get unique vendor IDs
-  const vendorIds = [...new Set(docsData.map(doc => doc.vendor_id).filter(Boolean))];
+  // FILTRAR: Solo mostrar facturas de vendors SIN regla configurada
+  const filteredDocs = docsData.filter(doc => {
+    const normalizedName = normalizeVendorName(doc.supplier_name);
+    const hasRule = vendorsWithRules.has(normalizedName);
+    
+    if (hasRule) {
+      console.log(`⏭️ Ocultando factura de vendor con regla: ${doc.supplier_name} (${doc.doc_number})`);
+    }
+    
+    return !hasRule;
+  });
+
+  console.log(`📄 Facturas pendientes: ${docsData.length} total, ${filteredDocs.length} sin regla de vendor`);
+
+  // Get unique vendor IDs from filtered docs
+  const vendorIds = [...new Set(filteredDocs.map(doc => doc.vendor_id).filter(Boolean))];
   
   // Batch fetch all vendors
   let vendorsMap = new Map();
@@ -65,7 +131,7 @@ const fetchPendingInvoicesFromAPI = async (
   }
 
   // Apply vendor data and defaults
-  return docsData.map((doc) => {
+  return filteredDocs.map((doc) => {
     let invoiceData: PendingInvoice = { 
       ...doc,
       default_account_ref: doc.default_account_ref || undefined,
