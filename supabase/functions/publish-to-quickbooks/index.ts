@@ -1030,6 +1030,53 @@ Deno.serve(async (req) => {
           })
           .eq("id", doc.id);
 
+        // CREAR/ACTUALIZAR REGLA EN CATÁLOGO DE PROVEEDORES AUTOMÁTICAMENTE
+        // Guardar la cuenta contable usada para este proveedor como regla por defecto
+        if (accountRef && doc.supplier_name) {
+          console.log(`💾 Guardando regla automática para proveedor: ${doc.supplier_name} → Cuenta: ${accountRef}`);
+          
+          try {
+            // Verificar si ya existe un default para este proveedor
+            const { data: existingDefault } = await supabase
+              .from("vendor_defaults")
+              .select("id")
+              .eq("organization_id", organization_id)
+              .eq("vendor_name", doc.supplier_name)
+              .maybeSingle();
+
+            const defaultData = {
+              vendor_name: doc.supplier_name,
+              default_account_ref: accountRef,
+              default_uses_tax: doc.uses_tax !== false, // Default true si no está definido
+              organization_id: organization_id,
+            };
+
+            if (existingDefault) {
+              // Actualizar regla existente
+              await supabase
+                .from("vendor_defaults")
+                .update({
+                  default_account_ref: accountRef,
+                  default_uses_tax: doc.uses_tax !== false,
+                  updated_at: new Date().toISOString(),
+                })
+                .eq("id", existingDefault.id);
+              
+              console.log(`✅ Regla actualizada para ${doc.supplier_name}`);
+            } else {
+              // Crear nueva regla
+              await supabase
+                .from("vendor_defaults")
+                .insert(defaultData);
+              
+              console.log(`✅ Nueva regla creada para ${doc.supplier_name}`);
+            }
+          } catch (ruleError) {
+            // No fallar la publicación si falla guardar la regla
+            console.error(`⚠️ Error guardando regla para ${doc.supplier_name}:`, ruleError);
+          }
+        }
+
         const elapsedTime = Date.now() - startTime;
         console.log(`${progress} ✅ Factura ${doc.doc_number} publicada exitosamente en ${elapsedTime}ms`);
         return { success: true, docNumber: doc.doc_number };
