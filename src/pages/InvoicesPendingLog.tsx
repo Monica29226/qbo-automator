@@ -85,6 +85,9 @@ const InvoicesPendingLog = () => {
   const [vendorDefaults, setVendorDefaults] = useState<Map<string, VendorDefault>>(new Map());
   const [selectedInvoice, setSelectedInvoice] = useState<PendingInvoice | null>(null);
   const [showDetailDialog, setShowDetailDialog] = useState(false);
+  const [pdfViewerOpen, setPdfViewerOpen] = useState(false);
+  const [currentPdfUrl, setCurrentPdfUrl] = useState<string | null>(null);
+  const [currentPdfName, setCurrentPdfName] = useState<string>("");
 
   const fetchVendorDefaults = async () => {
     if (!activeOrganization) return;
@@ -659,7 +662,7 @@ const InvoicesPendingLog = () => {
     }
 
     try {
-      const loadingToast = toast.loading("Descargando PDF...");
+      const loadingToast = toast.loading("Cargando PDF...");
       
       // Extraer el path del storage de la URL
       let pdfPath = invoice.pdf_attachment_url;
@@ -686,7 +689,7 @@ const InvoicesPendingLog = () => {
       }
       
       console.log("📂 Path extraído:", pdfPath);
-      console.log("🔐 Descargando PDF desde storage...");
+      console.log("🔐 Cargando PDF desde storage...");
       
       // Descargar el archivo como blob
       const { data: blobData, error } = await supabase.storage
@@ -699,37 +702,31 @@ const InvoicesPendingLog = () => {
       }
 
       if (!blobData) {
-        throw new Error("No se pudo descargar el archivo");
+        throw new Error("No se pudo cargar el archivo");
       }
 
-      console.log("✅ PDF descargado exitosamente");
+      console.log("✅ PDF cargado exitosamente");
       
-      // Crear URL blob local
+      // Limpiar URL anterior si existe
+      if (currentPdfUrl) {
+        URL.revokeObjectURL(currentPdfUrl);
+      }
+      
+      // Crear URL blob local para el visor
       const blobUrl = URL.createObjectURL(blobData);
-      
-      // Crear elemento <a> temporal para descargar el archivo
-      // Esto evita problemas con bloqueadores de popups y extensiones de seguridad
-      const link = document.createElement('a');
-      link.href = blobUrl;
-      link.download = `Factura_${invoice.doc_number}.pdf`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      
-      // Limpiar la URL blob después de un momento
-      setTimeout(() => {
-        URL.revokeObjectURL(blobUrl);
-      }, 1000);
+      setCurrentPdfUrl(blobUrl);
+      setCurrentPdfName(`Factura ${invoice.doc_number}`);
+      setPdfViewerOpen(true);
       
       toast.dismiss(loadingToast);
-      toast.success("PDF descargado correctamente");
-      console.log("✅ PDF descargado como archivo");
+      toast.success("PDF cargado correctamente");
+      console.log("✅ PDF abierto en visor");
       
     } catch (error: any) {
       toast.dismiss();
-      console.error("❌ Error completo al descargar PDF:", error);
+      console.error("❌ Error completo al cargar PDF:", error);
       
-      let errorMessage = "Error al descargar el PDF";
+      let errorMessage = "Error al cargar el PDF";
       if (error.message.includes("not found")) {
         errorMessage = "El archivo PDF no existe en el almacenamiento";
       } else if (error.message.includes("Bucket")) {
@@ -739,6 +736,17 @@ const InvoicesPendingLog = () => {
       }
       
       toast.error(errorMessage, { duration: 5000 });
+    }
+  };
+
+  const handleClosePdfViewer = () => {
+    setPdfViewerOpen(false);
+    // Limpiar el blob URL cuando se cierra el modal
+    if (currentPdfUrl) {
+      setTimeout(() => {
+        URL.revokeObjectURL(currentPdfUrl!);
+        setCurrentPdfUrl(null);
+      }, 100);
     }
   };
 
@@ -1246,6 +1254,32 @@ const InvoicesPendingLog = () => {
               </div>
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal Visor de PDF */}
+      <Dialog open={pdfViewerOpen} onOpenChange={handleClosePdfViewer}>
+        <DialogContent className="max-w-6xl h-[90vh] p-0 flex flex-col">
+          <div className="flex items-center justify-between p-4 border-b bg-muted/50">
+            <DialogTitle className="text-lg font-semibold">{currentPdfName}</DialogTitle>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleClosePdfViewer}
+              className="h-8 w-8 p-0"
+            >
+              ✕
+            </Button>
+          </div>
+          <div className="flex-1 overflow-hidden">
+            {currentPdfUrl && (
+              <iframe
+                src={currentPdfUrl}
+                className="w-full h-full border-0"
+                title={currentPdfName}
+              />
+            )}
+          </div>
         </DialogContent>
       </Dialog>
     </div>
