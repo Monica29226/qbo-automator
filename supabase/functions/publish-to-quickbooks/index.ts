@@ -124,6 +124,13 @@ Deno.serve(async (req) => {
     }
 
     console.log(`Found ${documents.length} documents to publish`);
+    
+    // OPTIMIZACIÓN: Si es solo 1 documento, responder inmediatamente después de iniciar el procesamiento
+    const isSingleDocument = documents.length === 1;
+    
+    if (isSingleDocument) {
+      console.log(`🚀 Modo rápido: procesando 1 documento de forma prioritaria`);
+    }
 
     const results = {
       published: 0,
@@ -529,7 +536,13 @@ Deno.serve(async (req) => {
             accountCode = rawCode.split(' ')[0].trim();
           }
           
-          console.log(`✓✓ PRIORITY: Account code from document: ${accountCode} (raw: ${rawCode})`);
+          console.log(`✓✓ PRIORITY: Account code from document: ${accountCode} (raw: "${rawCode}")`);
+          
+          // VALIDACIÓN: Verificar que no sea una cadena vacía después de extraer
+          if (!accountCode || accountCode === '') {
+            console.error(`❌ CRITICAL: Extracted empty account code from raw: "${rawCode}"`);
+            throw new Error(`Código de cuenta vacío extraído de: "${rawCode}". Factura ${doc.doc_number}`);
+          }
         }
         
         // 2. Si no hay cuenta en el documento, intentar desde el vendor
@@ -1135,6 +1148,38 @@ Deno.serve(async (req) => {
     
     // PROCESAMIENTO EN PARALELO (3 facturas simultáneas máximo)
     const BATCH_SIZE = 3;
+    
+    // Para documentos individuales, procesar inmediatamente sin batching
+    if (isSingleDocument) {
+      console.log(`⚡ Procesamiento rápido de documento único`);
+      const doc = documents[0];
+      
+      const result = await processDocument(doc, 0, 1);
+      
+      results.published = result.success ? 1 : 0;
+      results.failed = result.success ? 0 : 1;
+      if (!result.success) {
+        results.errors.push({ doc_number: result.docNumber, error: result.error });
+      }
+      
+      const totalTime = Date.now() - batchStartTime;
+      console.log(`⚡ Documento único procesado en ${totalTime}ms: ${results.published ? 'exitoso' : 'fallido'}`);
+      
+      return new Response(
+        JSON.stringify({
+          success: result.success,
+          published: results.published,
+          failed: results.failed,
+          errors: results.errors.length > 0 ? results.errors : undefined,
+        }),
+        {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+          status: 200,
+        }
+      );
+    }
+    
+    // Para múltiples documentos, procesamiento en lotes
     const documentResults = [];
     
     for (let i = 0; i < documents.length; i += BATCH_SIZE) {
