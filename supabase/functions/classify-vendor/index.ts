@@ -118,28 +118,49 @@ serve(async (req) => {
       hints: v.mapping_hints,
     }));
 
-    const systemPrompt = `Eres un experto en clasificación de proveedores de Costa Rica. 
-Tu tarea es identificar qué proveedor del catálogo corresponde a la factura proporcionada.
+    // Extraer descripciones de líneas de detalle del XML
+    const lineDescriptions = xml_data?.detalle?.map((item: any) => item.descripcion).filter(Boolean) || [];
+    const itemsDescription = lineDescriptions.length > 0 ? lineDescriptions.join(", ") : "No disponible";
+
+    const systemPrompt = `Eres un experto en clasificación contable de facturas de Costa Rica. 
+Tu tarea es:
+1. Identificar qué proveedor del catálogo corresponde a la factura
+2. CLASIFICAR la cuenta contable según el CONTENIDO de la factura (lo que se está comprando/servicio)
 
 Analiza cuidadosamente:
-1. El nombre exacto del proveedor
-2. La cédula jurídica (si está disponible)
-3. El correo electrónico
-4. Las pistas de mapeo configuradas
+1. Las DESCRIPCIONES de los items/servicios de la factura (MUY IMPORTANTE)
+2. El nombre del proveedor
+3. La cédula jurídica
+4. Las reglas de clasificación existentes
+
+CATEGORÍAS CONTABLES COMUNES:
+- "Viáticos": hospedaje, transporte, combustible, peajes, alimentación en viaje
+- "Gastos Médicos": consultas médicas, medicamentos, exámenes, servicios de salud
+- "Vehículos": mantenimiento vehicular, ITV, inspección, repuestos auto
+- "Servicios Profesionales": consultoría, honorarios, servicios legales
+- "Suministros de Oficina": papelería, útiles, materiales de oficina
+- "Telecomunicaciones": internet, teléfono, servicios de comunicación
+- "Publicidad": marketing, anuncios, promoción
 
 Devuelve tu análisis usando la herramienta classify_vendor.`;
 
-    const userPrompt = `Analiza esta factura y clasifica el proveedor:
+    const userPrompt = `Analiza esta factura y clasifica el proveedor Y la cuenta contable según el CONTENIDO:
 
 Datos del emisor:
 - Nombre: ${supplier_name}
 - Cédula: ${supplier_tax_id || "No disponible"}
 - Correo: ${supplier_email || "No disponible"}
 
+CONTENIDO DE LA FACTURA (items/servicios):
+${itemsDescription}
+
 Catálogo de proveedores disponibles:
 ${JSON.stringify(vendorsList, null, 2)}
 
-¿Qué proveedor del catálogo corresponde a esta factura?`;
+Reglas de clasificación existentes:
+${classificationRules?.map(r => `${r.vendor_name}: ${r.account_code} (${r.account_description})`).join('\n') || 'Ninguna'}
+
+¿Qué proveedor del catálogo corresponde? ¿Qué cuenta contable según el CONTENIDO/NATURALEZA del gasto?`;
 
     // Llamar a Lovable AI con structured output
     const aiResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
@@ -174,6 +195,14 @@ ${JSON.stringify(vendorsList, null, 2)}
                   reason: {
                     type: "string",
                     description: "Explicación detallada de por qué se eligió este proveedor o por qué no se encontró coincidencia",
+                  },
+                  suggested_account_code: {
+                    type: "string",
+                    description: "Código de cuenta contable sugerido BASADO EN EL CONTENIDO de la factura (ej: 'Viáticos', 'Gastos Médicos', 'Vehículos')",
+                  },
+                  account_classification_reason: {
+                    type: "string",
+                    description: "Explicación de POR QUÉ se sugiere esa cuenta contable basándose en las descripciones de los items",
                   },
                   suggested_mapping_hints: {
                     type: "string",
@@ -220,9 +249,16 @@ ${JSON.stringify(vendorsList, null, 2)}
 
     const classification = JSON.parse(toolCall.function.arguments);
 
-    // Agregar clasificación de cuenta si se encontró
+    // Agregar clasificación de cuenta si se encontró por nombre exacto
     if (accountClassification) {
       classification.account_classification = accountClassification;
+    } else if (classification.suggested_account_code) {
+      // Si la IA sugiere una cuenta basada en el contenido, usarla
+      classification.account_classification = {
+        account_code: classification.suggested_account_code,
+        account_description: classification.account_classification_reason || "Clasificación basada en contenido de factura",
+        matched_by: "content_analysis",
+      };
     }
 
     return new Response(JSON.stringify(classification), {
