@@ -15,7 +15,6 @@ interface VendorError {
   supplier_tax_id: string | null;
   facturas_count: number;
   sample_doc_number: string;
-  error_type: string;
   document_ids?: string[];
 }
 
@@ -28,6 +27,70 @@ export const VendorsWithoutRules = () => {
   useEffect(() => {
     if (activeOrganization) {
       fetchVendorsWithoutRules();
+
+      // Suscripción realtime para actualizaciones automáticas
+      const channel = supabase
+        .channel('vendors_errors_changes')
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'processed_documents',
+            filter: `organization_id=eq.${activeOrganization}`
+          },
+          (payload) => {
+            console.log('📡 Realtime: Documento actualizado en proveedores con errores', payload);
+            fetchVendorsWithoutRules();
+          }
+        )
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'vendor_defaults',
+            filter: `organization_id=eq.${activeOrganization}`
+          },
+          (payload) => {
+            console.log('📡 Realtime: Vendor default actualizado', payload);
+            fetchVendorsWithoutRules();
+          }
+        )
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'vendor_classification_rules',
+            filter: `organization_id=eq.${activeOrganization}`
+          },
+          (payload) => {
+            console.log('📡 Realtime: Regla de clasificación actualizada', payload);
+            fetchVendorsWithoutRules();
+          }
+        )
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'vendors',
+            filter: `organization_id=eq.${activeOrganization}`
+          },
+          (payload) => {
+            console.log('📡 Realtime: Vendor actualizado', payload);
+            fetchVendorsWithoutRules();
+          }
+        )
+        .subscribe((status) => {
+          console.log('📡 Realtime subscription status (Vendors Errors):', status);
+        });
+
+      return () => {
+        console.log('📡 Cerrando suscripción realtime (Vendors Errors)');
+        supabase.removeChannel(channel);
+      };
     }
   }, [activeOrganization]);
 
@@ -36,35 +99,59 @@ export const VendorsWithoutRules = () => {
 
     setIsLoading(true);
     try {
-      // Obtener documentos en error o pending_config
+      // Obtener documentos con errores o pendientes de configuración
       const { data: errorDocs, error } = await supabase
         .from("processed_documents")
-        .select("id, supplier_name, supplier_tax_id, doc_number, error_message, status")
+        .select("id, supplier_name, supplier_tax_id, doc_number, error_message, status, vendor_id, default_account_ref")
         .eq("organization_id", activeOrganization)
-        .in("status", ["error", "pending_config"]);
+        .or("status.eq.error,status.eq.pending,status.eq.pending_config")
+        .is("qbo_entity_id", null); // Solo no publicados
 
       if (error) throw error;
 
-      // Agrupar por proveedor y tipo de error
+      // Filtrar: Solo proveedores sin cuenta asignada
+      const docsNeedingAccount = [];
+      for (const doc of errorDocs || []) {
+        let needsAccount = !doc.default_account_ref;
+
+        // Verificar si tiene cuenta en vendor
+        if (doc.vendor_id && needsAccount) {
+          const { data: vendorData } = await supabase
+            .from("vendors")
+            .select("default_account_ref")
+            .eq("id", doc.vendor_id)
+            .maybeSingle();
+          
+          if (vendorData?.default_account_ref) {
+            needsAccount = false;
+          }
+        }
+
+        // Verificar si tiene vendor default
+        if (needsAccount) {
+          const { data: defaultData } = await supabase
+            .from("vendor_defaults")
+            .select("default_account_ref")
+            .eq("organization_id", activeOrganization)
+            .eq("vendor_name", doc.supplier_name)
+            .maybeSingle();
+          
+          if (defaultData?.default_account_ref) {
+            needsAccount = false;
+          }
+        }
+
+        if (needsAccount) {
+          docsNeedingAccount.push(doc);
+        }
+      }
+
+      // Agrupar por proveedor
       const vendorMap = new Map<string, VendorError>();
       
-      errorDocs?.forEach((doc) => {
+      docsNeedingAccount.forEach((doc) => {
         const key = doc.supplier_name;
         const existing = vendorMap.get(key);
-        
-        // Determinar tipo de error
-        let errorType = "Otro";
-        if (doc.status === "pending_config" || doc.error_message?.includes("sin cuenta contable")) {
-          errorType = "Sin cuenta contable";
-        } else if (doc.error_message?.includes("No se pudo determinar cuenta contable")) {
-          errorType = "Sin cuenta contable";
-        } else if (doc.error_message?.includes("Max retries reached")) {
-          errorType = "Reintentos agotados";
-        } else if (doc.error_message?.includes("Gmail")) {
-          errorType = "Error Gmail";
-        } else if (doc.error_message?.includes("QuickBooks") || doc.error_message?.includes("QBO")) {
-          errorType = "Error QuickBooks";
-        }
         
         if (existing) {
           existing.facturas_count++;
@@ -75,7 +162,6 @@ export const VendorsWithoutRules = () => {
             supplier_tax_id: doc.supplier_tax_id,
             facturas_count: 1,
             sample_doc_number: doc.doc_number,
-            error_type: errorType,
             document_ids: [doc.id],
           });
         }
@@ -100,7 +186,6 @@ export const VendorsWithoutRules = () => {
       "Proveedor": vendor.supplier_name,
       "RUC": vendor.supplier_tax_id || "",
       "Facturas Afectadas": vendor.facturas_count,
-      "Tipo de Error": vendor.error_type,
       "Código Contable": "", // Vacío para que el usuario lo llene
       "Descripción Cuenta": "", // Vacío para que el usuario lo llene
     }));
@@ -115,7 +200,6 @@ export const VendorsWithoutRules = () => {
       { wch: 50 }, // Proveedor
       { wch: 15 }, // RUC
       { wch: 18 }, // Facturas Afectadas
-      { wch: 20 }, // Tipo de Error
       { wch: 15 }, // Código Contable
       { wch: 40 }, // Descripción Cuenta
     ];
@@ -162,7 +246,7 @@ export const VendorsWithoutRules = () => {
       </div>
 
       <p className="text-sm text-muted-foreground mb-4">
-        Proveedores con facturas en error. Los que tienen "Sin cuenta contable" necesitan reglas de clasificación.
+        Proveedores con facturas pendientes que necesitan asignación de cuenta contable para publicar en QuickBooks.
       </p>
 
       <div className="space-y-2 mb-4 max-h-64 overflow-y-auto">
@@ -177,11 +261,8 @@ export const VendorsWithoutRules = () => {
                 {vendor.supplier_tax_id && (
                   <p className="text-xs text-muted-foreground">RUC: {vendor.supplier_tax_id}</p>
                 )}
-                <Badge 
-                  variant={vendor.error_type === "Sin cuenta contable" ? "destructive" : "secondary"}
-                  className="text-xs"
-                >
-                  {vendor.error_type}
+                <Badge variant="destructive" className="text-xs">
+                  Sin cuenta contable
                 </Badge>
               </div>
             </div>
@@ -189,16 +270,14 @@ export const VendorsWithoutRules = () => {
               <Badge variant="outline" className="ml-2">
                 {vendor.facturas_count} {vendor.facturas_count === 1 ? "factura" : "facturas"}
               </Badge>
-              {vendor.error_type === "Sin cuenta contable" && (
-                <Button
-                  variant="default"
-                  size="sm"
-                  onClick={() => setSelectedVendor(vendor)}
-                >
-                  <Settings className="h-4 w-4 mr-2" />
-                  Configurar
-                </Button>
-              )}
+              <Button
+                variant="default"
+                size="sm"
+                onClick={() => setSelectedVendor(vendor)}
+              >
+                <Settings className="h-4 w-4 mr-2" />
+                Asignar Cuenta
+              </Button>
             </div>
           </div>
         ))}
