@@ -4,6 +4,8 @@ import {
   Eye,
   FileCheck,
   FileSpreadsheet,
+  FileText,
+  Clock,
   LogOut,
   Plug,
   Settings,
@@ -39,10 +41,22 @@ export function DashboardSidebar({ isAdmin, reviewCount, onSignOut }: DashboardS
 
   const navigationItems = [
     {
+      title: "Todas las Facturas",
+      icon: FileText,
+      path: "/all-invoices",
+      show: true,
+    },
+    {
+      title: "Pendientes Configurar",
+      icon: Clock,
+      path: "/invoices-pending-log",
+      badge: reviewCount > 0 ? reviewCount : undefined,
+      show: true,
+    },
+    {
       title: "Revisión",
       icon: Eye,
       path: "/review-queue",
-      badge: reviewCount > 0 ? reviewCount : undefined,
       show: true,
     },
     {

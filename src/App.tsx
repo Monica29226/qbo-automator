@@ -26,6 +26,7 @@ import InvoicesPendingLog from "./pages/InvoicesPendingLog";
 import QuickBooksStatus from "./pages/QuickBooksStatus";
 import UsersManagement from "./pages/UsersManagement";
 import MyCompany from "./pages/MyCompany";
+import AllInvoices from "./pages/AllInvoices";
 import NotFound from "./pages/NotFound";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import { AuthProvider } from "./contexts/AuthContext";
@@ -176,6 +177,14 @@ const App = () => (
             element={
               <ProtectedRoute>
                 <QuickBooksStatus />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/all-invoices"
+            element={
+              <ProtectedRoute>
+                <AllInvoices />
               </ProtectedRoute>
             }
           />
