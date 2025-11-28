@@ -75,6 +75,9 @@ const Vendors = () => {
   useEffect(() => {
     if (activeOrganization) {
       fetchVendors();
+    } else {
+      // Si no hay organización activa, dejar de mostrar loading
+      setIsLoading(false);
     }
   }, [activeOrganization]);
 
