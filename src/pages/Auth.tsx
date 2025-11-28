@@ -65,18 +65,30 @@ const Auth = () => {
 
     setIsResetting(true);
 
-    const { error } = await supabase.auth.resetPasswordForEmail(resetEmail, {
-      redirectTo: `${window.location.origin}/reset-password`,
-    });
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(resetEmail, {
+        redirectTo: `${window.location.origin}/reset-password`,
+      });
 
-    setIsResetting(false);
-
-    if (error) {
-      toast.error(error.message);
-    } else {
-      toast.success("Se ha enviado un enlace de recuperación a tu correo");
-      setShowForgotPassword(false);
-      setResetEmail("");
+      if (error) {
+        console.error("Reset password error:", error);
+        if (error.message.includes("rate limit")) {
+          toast.error("Demasiados intentos. Espera unos minutos e intenta de nuevo.");
+        } else if (error.message.includes("not found") || error.message.includes("invalid")) {
+          toast.error("No se encontró una cuenta con ese correo electrónico");
+        } else {
+          toast.error(error.message || "Error al enviar el enlace de recuperación");
+        }
+      } else {
+        toast.success("Se ha enviado un enlace de recuperación a tu correo");
+        setShowForgotPassword(false);
+        setResetEmail("");
+      }
+    } catch (error: any) {
+      console.error("Reset password exception:", error);
+      toast.error("Error de conexión. Verifica tu internet e intenta de nuevo.");
+    } finally {
+      setIsResetting(false);
     }
   };
 
