@@ -681,14 +681,19 @@ const InvoicesPendingLog = () => {
               
               console.log(`✅ Publicación completada para ${vendorName}`);
               
-              // Refrescar la lista inmediatamente para quitar las facturas publicadas
-              await fetchPendingInvoices();
+              // OPTIMISTIC UPDATE: Remover INMEDIATAMENTE las facturas publicadas del estado local
+              // Esto evita tener que esperar al refetch y race conditions
+              setInvoices((prev) => prev.filter((inv) => !documentIds.includes(inv.id)));
+              setFilteredInvoices((prev) => prev.filter((inv) => !documentIds.includes(inv.id)));
+              
+              // También refrescar en background para sincronizar con DB (no bloqueante)
+              fetchPendingInvoices();
               
             } catch (publishError: any) {
               console.error("❌ Error en publicación automática:", publishError);
               toast.error("Error al publicar: " + (publishError.message || "Error desconocido"));
               
-              // Quitar el estado de publishing de todas las facturas
+              // Revertir el estado de publishing de todas las facturas
               setInvoices((prev) =>
                 prev.map((inv) => 
                   documentIds.includes(inv.id) 
