@@ -27,6 +27,7 @@ import QuickBooksStatus from "./pages/QuickBooksStatus";
 import UsersManagement from "./pages/UsersManagement";
 import MyCompany from "./pages/MyCompany";
 import AllInvoices from "./pages/AllInvoices";
+import ResetPassword from "./pages/ResetPassword";
 import NotFound from "./pages/NotFound";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import { AuthProvider } from "./contexts/AuthContext";
@@ -42,6 +43,7 @@ const App = () => (
         <AuthProvider>
         <Routes>
           <Route path="/" element={<Auth />} />
+          <Route path="/reset-password" element={<ResetPassword />} />
           <Route path="/select-company" element={<SelectCompany />} />
           <Route path="/multi-tenant" element={<MultiTenantDocs />} />
           <Route
