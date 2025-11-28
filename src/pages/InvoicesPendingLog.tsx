@@ -1,5 +1,5 @@
-import { CheckCircle2, Eye, FileText, Loader2, RefreshCw, Search, Star, Trash2, Upload, X, Filter, CalendarIcon } from "lucide-react";
-import { useState, useEffect, useMemo, useCallback, memo } from "react";
+import { CheckCircle2, Eye, FileText, Loader2, RefreshCw, Search, Star, Trash2, Upload, X, Filter, CalendarIcon, CheckSquare, Square, ListChecks } from "lucide-react";
+import { useState, useEffect, useMemo, useCallback, memo, useRef } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { AccountCombobox } from "@/components/AccountCombobox";
+import { Badge } from "@/components/ui/badge";
 import {
   Select,
   SelectContent,
@@ -35,6 +36,8 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogDescription,
+  DialogFooter,
 } from "@/components/ui/dialog";
 import {
   Popover,
@@ -49,6 +52,7 @@ import type { DateRange } from "react-day-picker";
 import { PdfViewer } from "@/components/PdfViewer";
 import { useQBOAccounts } from "@/hooks/useQBOAccounts";
 import { useDebounce } from "@/hooks/useDebounce";
+import { useVirtualizer } from "@tanstack/react-virtual";
 
 interface QBOAccount {
   id: string;
@@ -119,11 +123,27 @@ const InvoicesPendingLog = () => {
   const [filterSupplier, setFilterSupplier] = useState("");
   const [dateRange, setDateRange] = useState<DateRange | undefined>();
   const [filterQBStatus, setFilterQBStatus] = useState<"all" | "published" | "pending">("all");
+  const [filterMinAmount, setFilterMinAmount] = useState("");
+  const [filterMaxAmount, setFilterMaxAmount] = useState("");
+  
+  // ===== SELECCIÓN MÚLTIPLE =====
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [showBulkClassifyDialog, setShowBulkClassifyDialog] = useState(false);
+  const [bulkAccountId, setBulkAccountId] = useState("");
+  const [isBulkClassifying, setIsBulkClassifying] = useState(false);
+  
+  // ===== HISTORIAL DE CUENTAS POR PROVEEDOR =====
+  const [vendorAccountHistory, setVendorAccountHistory] = useState<Map<string, string>>(new Map());
+  
+  // ===== VIRTUAL SCROLLING =====
+  const tableContainerRef = useRef<HTMLDivElement>(null);
   
   // ===== DEBOUNCE PARA FILTROS (300ms delay) =====
   const debouncedDocNumber = useDebounce(filterDocNumber, 300);
   const debouncedSupplier = useDebounce(filterSupplier, 300);
   const debouncedSearchTerm = useDebounce(searchTerm, 300);
+  const debouncedMinAmount = useDebounce(filterMinAmount, 300);
+  const debouncedMaxAmount = useDebounce(filterMaxAmount, 300);
 
   const fetchVendorDefaults = async () => {
     if (!activeOrganization) return;
@@ -291,10 +311,44 @@ const InvoicesPendingLog = () => {
     }
   };
 
+  // Fetch vendor account history for suggestions
+  const fetchVendorAccountHistory = async () => {
+    if (!activeOrganization) return;
+    
+    try {
+      const { data, error } = await supabase
+        .from("processed_documents")
+        .select("supplier_name, default_account_ref")
+        .eq("organization_id", activeOrganization)
+        .eq("status", "published")
+        .not("default_account_ref", "is", null)
+        .order("created_at", { ascending: false })
+        .limit(500);
+      
+      if (error) throw error;
+      
+      const historyMap = new Map<string, string>();
+      data?.forEach((doc) => {
+        const normalizedName = normalizeVendorName(doc.supplier_name);
+        if (!historyMap.has(normalizedName) && doc.default_account_ref) {
+          historyMap.set(normalizedName, doc.default_account_ref);
+        }
+      });
+      
+      setVendorAccountHistory(historyMap);
+      console.log(`📊 Historial de cuentas cargado: ${historyMap.size} proveedores`);
+    } catch (error) {
+      console.error("Error fetching vendor history:", error);
+    }
+  };
+
   useEffect(() => {
     const loadData = async () => {
-      // OPTIMIZACIÓN: Solo cargar vendor defaults, las cuentas se cargan via React Query
-      await fetchVendorDefaults();
+      // OPTIMIZACIÓN: Cargar en paralelo vendor defaults, historial y facturas
+      await Promise.all([
+        fetchVendorDefaults(),
+        fetchVendorAccountHistory(),
+      ]);
       await fetchPendingInvoices();
     };
     loadData();
@@ -404,6 +458,20 @@ const InvoicesPendingLog = () => {
       });
     }
 
+    // Filtro por rango de monto (debounced)
+    if (debouncedMinAmount.trim()) {
+      const minVal = parseFloat(debouncedMinAmount);
+      if (!isNaN(minVal)) {
+        filtered = filtered.filter((inv) => inv.total_amount >= minVal);
+      }
+    }
+    if (debouncedMaxAmount.trim()) {
+      const maxVal = parseFloat(debouncedMaxAmount);
+      if (!isNaN(maxVal)) {
+        filtered = filtered.filter((inv) => inv.total_amount <= maxVal);
+      }
+    }
+
     // Búsqueda general (debouncedSearchTerm) - se aplica sobre los filtros anteriores
     if (debouncedSearchTerm.trim()) {
       const searchLower = debouncedSearchTerm.toLowerCase();
@@ -432,7 +500,9 @@ const InvoicesPendingLog = () => {
     }
 
     setFilteredInvoices(filtered);
-  }, [debouncedSearchTerm, invoices, getAccountById, getAccountIdFromCode, debouncedDocNumber, debouncedSupplier, dateRange, filterQBStatus]);
+    // Limpiar selección cuando cambian los filtros
+    setSelectedIds(new Set());
+  }, [debouncedSearchTerm, invoices, getAccountById, getAccountIdFromCode, debouncedDocNumber, debouncedSupplier, dateRange, filterQBStatus, debouncedMinAmount, debouncedMaxAmount]);
 
   // Función para limpiar todos los filtros
   const clearAllFilters = () => {
@@ -441,10 +511,127 @@ const InvoicesPendingLog = () => {
     setDateRange(undefined);
     setFilterQBStatus("all");
     setSearchTerm("");
+    setFilterMinAmount("");
+    setFilterMaxAmount("");
   };
 
   // Verificar si hay filtros activos
-  const hasActiveFilters = filterDocNumber || filterSupplier || dateRange?.from || filterQBStatus !== "all" || searchTerm;
+  const hasActiveFilters = filterDocNumber || filterSupplier || dateRange?.from || filterQBStatus !== "all" || searchTerm || filterMinAmount || filterMaxAmount;
+
+  // ===== FUNCIONES DE SELECCIÓN MÚLTIPLE =====
+  const toggleSelectAll = () => {
+    if (selectedIds.size === filteredInvoices.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(filteredInvoices.map((inv) => inv.id)));
+    }
+  };
+
+  const toggleSelectOne = (id: string) => {
+    setSelectedIds((prev) => {
+      const newSet = new Set(prev);
+      if (newSet.has(id)) {
+        newSet.delete(id);
+      } else {
+        newSet.add(id);
+      }
+      return newSet;
+    });
+  };
+
+  const clearSelection = () => {
+    setSelectedIds(new Set());
+  };
+
+  // Obtener sugerencia de cuenta para un proveedor
+  const getSuggestedAccount = (supplierName: string): string | null => {
+    const normalizedName = normalizeVendorName(supplierName);
+    return vendorAccountHistory.get(normalizedName) || null;
+  };
+
+  // ===== CLASIFICACIÓN MASIVA =====
+  const handleBulkClassify = async () => {
+    if (!bulkAccountId || selectedIds.size === 0 || !activeOrganization) return;
+    
+    setIsBulkClassifying(true);
+    const selectedInvoices = filteredInvoices.filter((inv) => selectedIds.has(inv.id));
+    
+    try {
+      // Obtener información de la cuenta
+      const account = qboAccounts.find((acc) => acc.id === bulkAccountId);
+      if (!account) {
+        toast.error("Cuenta no encontrada");
+        return;
+      }
+      
+      const accountRef = account.accountNumber 
+        ? `${account.accountNumber} - ${account.name}` 
+        : account.name;
+      
+      // Agrupar por proveedor para crear reglas
+      const vendorGroups = new Map<string, PendingInvoice[]>();
+      selectedInvoices.forEach((inv) => {
+        const existing = vendorGroups.get(inv.supplier_name) || [];
+        existing.push(inv);
+        vendorGroups.set(inv.supplier_name, existing);
+      });
+      
+      // Actualizar todos los documentos
+      const documentIds = selectedInvoices.map((inv) => inv.id);
+      
+      const { error: updateError } = await supabase
+        .from("processed_documents")
+        .update({ default_account_ref: accountRef })
+        .in("id", documentIds);
+      
+      if (updateError) throw updateError;
+      
+      // Crear reglas para cada proveedor único
+      for (const [vendorName] of vendorGroups) {
+        await saveVendorDefault(vendorName, accountRef, true);
+      }
+      
+      toast.success(`✓ ${selectedInvoices.length} facturas clasificadas. Publicando a QuickBooks...`);
+      
+      // Publicar todas las facturas
+      const { data: publishResult, error: publishError } = await supabase.functions.invoke(
+        "publish-to-quickbooks",
+        {
+          body: { 
+            organization_id: activeOrganization, 
+            document_ids: documentIds 
+          },
+        }
+      );
+      
+      if (publishError) throw publishError;
+      
+      const published = publishResult?.published || 0;
+      const errors = publishResult?.errors?.length || 0;
+      
+      if (errors > 0) {
+        toast.warning(`⚠️ ${published} publicadas, ${errors} con errores`);
+      } else {
+        toast.success(`✅ ${published} facturas publicadas a QuickBooks`);
+      }
+      
+      // Optimistic update - remover inmediatamente
+      setInvoices((prev) => prev.filter((inv) => !documentIds.includes(inv.id)));
+      setFilteredInvoices((prev) => prev.filter((inv) => !documentIds.includes(inv.id)));
+      setSelectedIds(new Set());
+      setShowBulkClassifyDialog(false);
+      setBulkAccountId("");
+      
+      // Refrescar en background
+      fetchPendingInvoices();
+      
+    } catch (error: any) {
+      console.error("Error en clasificación masiva:", error);
+      toast.error(`Error: ${error.message || "Error desconocido"}`);
+    } finally {
+      setIsBulkClassifying(false);
+    }
+  };
 
   const saveVendorDefault = async (
     vendorName: string,
@@ -984,23 +1171,48 @@ const InvoicesPendingLog = () => {
             Gestiona y configura las facturas antes de publicar a QuickBooks
           </p>
         </div>
-        <Button
-          onClick={() => setShowPublishDialog(true)}
-          disabled={filteredInvoices.length === 0 || isPublishing}
-          size="lg"
-        >
-          {isPublishing ? (
+        <div className="flex items-center gap-2">
+          {selectedIds.size > 0 && (
             <>
-              <Loader2 className="h-4 w-4 animate-spin mr-2" />
-              Publicando...
-            </>
-          ) : (
-            <>
-              <Upload className="h-4 w-4 mr-2" />
-              Publicar Todas ({filteredInvoices.length})
+              <Badge variant="secondary" className="text-sm px-3 py-1">
+                {selectedIds.size} seleccionada{selectedIds.size !== 1 ? 's' : ''}
+              </Badge>
+              <Button
+                onClick={() => setShowBulkClassifyDialog(true)}
+                variant="default"
+                size="default"
+              >
+                <ListChecks className="h-4 w-4 mr-2" />
+                Clasificar Seleccionadas
+              </Button>
+              <Button
+                onClick={clearSelection}
+                variant="outline"
+                size="sm"
+              >
+                <X className="h-4 w-4 mr-1" />
+                Limpiar
+              </Button>
             </>
           )}
-        </Button>
+          <Button
+            onClick={() => setShowPublishDialog(true)}
+            disabled={filteredInvoices.length === 0 || isPublishing}
+            size="lg"
+          >
+            {isPublishing ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                Publicando...
+              </>
+            ) : (
+              <>
+                <Upload className="h-4 w-4 mr-2" />
+                Publicar Todas ({filteredInvoices.length})
+              </>
+            )}
+          </Button>
+        </div>
       </div>
 
       <Card>
@@ -1038,10 +1250,17 @@ const InvoicesPendingLog = () => {
               No hay facturas pendientes
             </div>
           ) : (
-            <div className="rounded-md border">
+            <div className="rounded-md border" ref={tableContainerRef}>
               <Table>
                 <TableHeader>
                   <TableRow>
+                    <TableHead className="w-[40px]">
+                      <Checkbox
+                        checked={selectedIds.size === filteredInvoices.length && filteredInvoices.length > 0}
+                        onCheckedChange={toggleSelectAll}
+                        aria-label="Seleccionar todas"
+                      />
+                    </TableHead>
                     <TableHead className="w-[120px]">Número</TableHead>
                     <TableHead className="w-[200px]">Proveedor</TableHead>
                     <TableHead className="w-[110px]">Monto</TableHead>
@@ -1053,6 +1272,9 @@ const InvoicesPendingLog = () => {
                   </TableRow>
                   {/* Fila de filtros */}
                   <TableRow className="bg-muted/30 hover:bg-muted/30">
+                    <TableHead className="py-2">
+                      {/* Checkbox column - no filter */}
+                    </TableHead>
                     <TableHead className="py-2">
                       <Input
                         placeholder="Filtrar..."
@@ -1070,7 +1292,22 @@ const InvoicesPendingLog = () => {
                       />
                     </TableHead>
                     <TableHead className="py-2">
-                      {/* Sin filtro para monto */}
+                      <div className="flex gap-1">
+                        <Input
+                          placeholder="Min"
+                          value={filterMinAmount}
+                          onChange={(e) => setFilterMinAmount(e.target.value)}
+                          className="h-8 text-xs w-[50px]"
+                          type="number"
+                        />
+                        <Input
+                          placeholder="Max"
+                          value={filterMaxAmount}
+                          onChange={(e) => setFilterMaxAmount(e.target.value)}
+                          className="h-8 text-xs w-[50px]"
+                          type="number"
+                        />
+                      </div>
                     </TableHead>
                     <TableHead className="py-2">
                       <Popover>
@@ -1086,14 +1323,14 @@ const InvoicesPendingLog = () => {
                             {dateRange?.from ? (
                               dateRange.to ? (
                                 <>
-                                  {format(dateRange.from, "dd/MM/yyyy", { locale: es })} -{" "}
-                                  {format(dateRange.to, "dd/MM/yyyy", { locale: es })}
+                                  {format(dateRange.from, "dd/MM", { locale: es })} -{" "}
+                                  {format(dateRange.to, "dd/MM", { locale: es })}
                                 </>
                               ) : (
                                 format(dateRange.from, "dd/MM/yyyy", { locale: es })
                               )
                             ) : (
-                              <span>Rango de fecha</span>
+                              <span>Fechas</span>
                             )}
                           </Button>
                         </PopoverTrigger>
@@ -1136,11 +1373,23 @@ const InvoicesPendingLog = () => {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredInvoices.map((invoice) => (
+                  {filteredInvoices.map((invoice) => {
+                    const suggestedAccount = getSuggestedAccount(invoice.supplier_name);
+                    return (
                     <TableRow 
                       key={invoice.id}
-                      className="hover:bg-muted/50"
+                      className={cn(
+                        "hover:bg-muted/50",
+                        selectedIds.has(invoice.id) && "bg-primary/5"
+                      )}
                     >
+                      <TableCell>
+                        <Checkbox
+                          checked={selectedIds.has(invoice.id)}
+                          onCheckedChange={() => toggleSelectOne(invoice.id)}
+                          aria-label={`Seleccionar factura ${invoice.doc_number}`}
+                        />
+                      </TableCell>
                       <TableCell 
                         className="font-medium cursor-pointer hover:underline hover:text-primary"
                         onClick={(e) => {
@@ -1169,6 +1418,21 @@ const InvoicesPendingLog = () => {
                             <div className="text-xs text-muted-foreground">
                               {invoice.supplier_tax_id}
                             </div>
+                          )}
+                          {suggestedAccount && !invoice.default_account_ref && (
+                            <TooltipProvider>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <div className="flex items-center gap-1 mt-1">
+                                    <Star className="h-3 w-3 text-amber-500 fill-amber-500" />
+                                    <span className="text-xs text-amber-600">Sugerida</span>
+                                  </div>
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                  <p>Cuenta histórica: {suggestedAccount}</p>
+                                </TooltipContent>
+                              </Tooltip>
+                            </TooltipProvider>
                           )}
                         </div>
                       </TableCell>
@@ -1338,7 +1602,8 @@ const InvoicesPendingLog = () => {
                         </div>
                       </TableCell>
                     </TableRow>
-                  ))}
+                    );
+                  })}
                 </TableBody>
               </Table>
             </div>
@@ -1500,6 +1765,85 @@ const InvoicesPendingLog = () => {
               <PdfViewer url={currentPdfUrl} fileName={currentPdfName} />
             )}
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Dialog de Clasificación Masiva */}
+      <Dialog open={showBulkClassifyDialog} onOpenChange={setShowBulkClassifyDialog}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ListChecks className="h-5 w-5" />
+              Clasificar {selectedIds.size} Factura{selectedIds.size !== 1 ? 's' : ''}
+            </DialogTitle>
+            <DialogDescription>
+              Selecciona una cuenta contable para aplicar a todas las facturas seleccionadas.
+              Se creará una regla automática para cada proveedor.
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Cuenta Contable</label>
+              <AccountCombobox
+                accounts={qboAccounts}
+                value={bulkAccountId}
+                onValueChange={setBulkAccountId}
+                disabled={loadingAccounts || qboAccounts.length === 0}
+                className="w-full"
+                placeholder={
+                  loadingAccounts 
+                    ? "Cargando cuentas..." 
+                    : qboAccounts.length === 0 
+                      ? "Sin cuentas - verificar QB" 
+                      : "Seleccionar cuenta"
+                }
+              />
+            </div>
+            
+            <div className="bg-muted/50 rounded-lg p-3 text-sm">
+              <p className="font-medium mb-2">Proveedores incluidos:</p>
+              <div className="flex flex-wrap gap-1 max-h-24 overflow-y-auto">
+                {[...new Set(
+                  filteredInvoices
+                    .filter((inv) => selectedIds.has(inv.id))
+                    .map((inv) => inv.supplier_name)
+                )].map((name) => (
+                  <Badge key={name} variant="secondary" className="text-xs">
+                    {name}
+                  </Badge>
+                ))}
+              </div>
+            </div>
+          </div>
+          
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setShowBulkClassifyDialog(false);
+                setBulkAccountId("");
+              }}
+            >
+              Cancelar
+            </Button>
+            <Button
+              onClick={handleBulkClassify}
+              disabled={!bulkAccountId || isBulkClassifying}
+            >
+              {isBulkClassifying ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                  Clasificando...
+                </>
+              ) : (
+                <>
+                  <CheckCircle2 className="h-4 w-4 mr-2" />
+                  Clasificar y Publicar
+                </>
+              )}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>
