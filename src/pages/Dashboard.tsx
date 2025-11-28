@@ -46,6 +46,7 @@ const Dashboard = () => {
     total: 0,
     errors: 0,
     published: 0,
+    pendingConfig: 0, // Facturas pendientes de configurar (sin cuenta asignada)
   });
   const [isFetchingEmails, setIsFetchingEmails] = useState(false);
   const [isAutoSyncing, setIsAutoSyncing] = useState(false);
@@ -97,7 +98,7 @@ const Dashboard = () => {
     const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
 
     // Parallel queries for better performance
-    const [docsResult, accountsResult] = await Promise.all([
+    const [docsResult, accountsResult, pendingConfigResult] = await Promise.all([
       supabase
         .from("processed_documents")
         .select("status, created_at, processed_at")
@@ -107,7 +108,15 @@ const Dashboard = () => {
         .from("integration_accounts")
         .select("service_type")
         .eq("organization_id", activeOrganization)
-        .eq("is_active", true)
+        .eq("is_active", true),
+      // Query específica para facturas pendientes de configurar
+      supabase
+        .from("processed_documents")
+        .select("id, supplier_name, default_account_ref, qbo_entity_id")
+        .eq("organization_id", activeOrganization)
+        .in("status", ["pending", "pending_config"])
+        .is("qbo_entity_id", null)
+        .gte("issue_date", "2025-11-01")
     ]);
 
     if (!docsResult.error && docsResult.data) {
@@ -117,6 +126,14 @@ const Dashboard = () => {
         (doc.status === "processed" || doc.status === "published")
       );
       
+      // Contar facturas realmente pendientes de configurar (sin cuenta asignada)
+      let pendingConfigCount = 0;
+      if (!pendingConfigResult.error && pendingConfigResult.data) {
+        pendingConfigCount = pendingConfigResult.data.filter(
+          (d) => !d.default_account_ref || d.default_account_ref === ""
+        ).length;
+      }
+      
       setStats({
         processed: processedToday.length,
         review: data.filter((d) => d.status === "review").length,
@@ -124,6 +141,7 @@ const Dashboard = () => {
         total: data.length,
         errors: data.filter((d) => d.status === "error").length,
         published: data.filter((d) => d.status === "published").length,
+        pendingConfig: pendingConfigCount,
       });
     }
 
@@ -431,7 +449,7 @@ const Dashboard = () => {
       <div className="min-h-screen flex w-full bg-background">
         <DashboardSidebar 
           isAdmin={isAdmin} 
-          reviewCount={stats.review} 
+          reviewCount={stats.pendingConfig} 
           onSignOut={signOut}
         />
         
