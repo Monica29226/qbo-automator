@@ -223,16 +223,15 @@ const InvoicesPendingLog = () => {
 
       console.log(`📋 Vendors con regla configurada: ${vendorsWithRules.size}`);
 
-      // Fetch documents - SOLO facturas pendientes (SIN qbo_entity_id)
+      // Fetch documents - Facturas pendientes que necesitan configuración
+      // Sin filtro de qbo_entity_id para mostrar TODAS las que faltan configurar
       const { data: docsData, error: docsError } = await supabase
         .from("processed_documents")
         .select("*")
         .eq("organization_id", activeOrganization)
         .in("status", ["pending", "pending_config"])
-        .is("qbo_entity_id", null)
-        .gte("issue_date", "2025-11-01")
         .order("created_at", { ascending: false })
-        .limit(200);
+        .limit(500);
 
       if (docsError) throw docsError;
 
@@ -242,16 +241,23 @@ const InvoicesPendingLog = () => {
         return;
       }
 
-      // FILTRAR: Solo mostrar facturas de vendors SIN regla configurada
+      // FILTRAR: Mostrar facturas que necesiten configuración
+      // (sin cuenta contable, sin centro de costo, o sin vendor_id)
+      // Y que no sean de vendors con regla ya configurada
       const filteredDocs = docsData.filter(doc => {
+        // Verificar si necesita configuración
+        const needsConfig = !doc.default_account_ref || !doc.vendor_id;
+        
+        // Verificar si el vendor ya tiene regla configurada
         const normalizedName = normalizeVendorName(doc.supplier_name);
         const hasRule = vendorsWithRules.has(normalizedName);
         
-        if (hasRule) {
-          console.log(`⏭️ Ocultando factura de vendor con regla: ${doc.supplier_name} (${doc.doc_number})`);
+        if (hasRule && !needsConfig) {
+          console.log(`⏭️ Ocultando factura ya configurada: ${doc.supplier_name} (${doc.doc_number})`);
+          return false;
         }
         
-        return !hasRule;
+        return needsConfig || !hasRule;
       });
 
       console.log(`📄 Facturas: ${docsData.length} total, ${filteredDocs.length} sin regla de vendor`);
