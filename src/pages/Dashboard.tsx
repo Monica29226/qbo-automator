@@ -109,14 +109,13 @@ const Dashboard = () => {
         .select("service_type")
         .eq("organization_id", activeOrganization)
         .eq("is_active", true),
-      // Query específica para facturas pendientes de configurar
+      // Query para TODAS las facturas pendientes (sin filtro de fecha para el badge)
       supabase
         .from("processed_documents")
-        .select("id, supplier_name, default_account_ref, qbo_entity_id")
+        .select("id")
         .eq("organization_id", activeOrganization)
         .in("status", ["pending", "pending_config"])
         .is("qbo_entity_id", null)
-        .gte("issue_date", "2025-11-01")
     ]);
 
     if (!docsResult.error && docsResult.data) {
@@ -126,13 +125,10 @@ const Dashboard = () => {
         (doc.status === "processed" || doc.status === "published")
       );
       
-      // Contar facturas realmente pendientes de configurar (sin cuenta asignada)
-      let pendingConfigCount = 0;
-      if (!pendingConfigResult.error && pendingConfigResult.data) {
-        pendingConfigCount = pendingConfigResult.data.filter(
-          (d) => !d.default_account_ref || d.default_account_ref === ""
-        ).length;
-      }
+      // Contar TODAS las facturas pendientes sin publicar a QBO
+      const pendingConfigCount = !pendingConfigResult.error && pendingConfigResult.data 
+        ? pendingConfigResult.data.length 
+        : 0;
       
       setStats({
         processed: processedToday.length,
