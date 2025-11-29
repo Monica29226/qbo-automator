@@ -109,9 +109,9 @@ export function AccountCombobox({
                 <CommandItem
                   key={account.id}
                   value={account.id}
-                  onSelect={() => {
+                  onSelect={(currentValue) => {
                     // CRÍTICO: Usar account.id directamente, no currentValue procesado
-                    console.log('✅ AccountCombobox: Cuenta seleccionada -', account.id, getDisplayText(account));
+                    console.log('✅ AccountCombobox: Cuenta seleccionada -', account.id, getDisplayText(account), 'currentValue:', currentValue);
                     onValueChange(account.id);
                     setOpen(false);
                     setSearchQuery("");
