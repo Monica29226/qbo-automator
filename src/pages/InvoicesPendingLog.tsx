@@ -368,55 +368,38 @@ const InvoicesPendingLog = () => {
     if (!activeOrganization) return;
 
     try {
-      // 1. Guardar en vendor_defaults
-      const { data, error } = await supabase
-        .from("vendor_defaults")
-        .upsert(
-          {
+      const accountInfo = accountRef ? qboAccounts.find(acc => 
+        `${acc.accountNumber} - ${acc.name}` === accountRef || 
+        acc.accountNumber === accountRef
+      ) : null;
+
+      // Ejecutar operaciones en PARALELO usando async functions
+      const saveDefault = async () => {
+        return supabase
+          .from("vendor_defaults")
+          .upsert({
             organization_id: activeOrganization,
             vendor_name: vendorName,
             default_account_ref: accountRef,
             default_uses_tax: usesTax,
-          },
-          { onConflict: "organization_id,vendor_name" }
-        )
-        .select()
-        .single();
+          }, { onConflict: "organization_id,vendor_name" });
+      };
 
-      if (error) throw error;
-
-      // 2. Crear/actualizar regla de clasificación para futuras facturas
-      if (accountRef) {
-        const accountInfo = qboAccounts.find(acc => 
-          `${acc.accountNumber} - ${acc.name}` === accountRef || 
-          acc.accountNumber === accountRef
-        );
-        
-        const { error: ruleError } = await supabase
+      const saveRule = async () => {
+        if (!accountRef) return null;
+        return supabase
           .from("vendor_classification_rules")
-          .upsert(
-            {
-              organization_id: activeOrganization,
-              vendor_name: vendorName,
-              account_code: accountInfo?.accountNumber || accountRef,
-              account_description: accountInfo?.name || "Cuenta configurada desde Log Pendientes",
-              is_active: true,
-            },
-            { onConflict: "organization_id,vendor_name" }
-          );
+          .upsert({
+            organization_id: activeOrganization,
+            vendor_name: vendorName,
+            account_code: accountInfo?.accountNumber || accountRef,
+            account_description: accountInfo?.name || "Cuenta configurada",
+            is_active: true,
+          }, { onConflict: "organization_id,vendor_name" });
+      };
 
-        if (ruleError) {
-          console.error("Error creating classification rule:", ruleError);
-        } else {
-          console.log(`✓ Regla de clasificación creada para ${vendorName}: ${accountRef}`);
-          
-          // NOTA: NO llamar auto-publish aquí para evitar doble publicación
-          // La publicación se maneja en handleUpdateInvoice después de guardar
-          console.log(`✓ Regla de clasificación creada para ${vendorName}: ${accountRef}`);
-        }
-      }
-
-      // Cache se actualiza automáticamente via React Query
+      await Promise.all([saveDefault(), saveRule()]);
+      console.log(`✓ Default guardado para ${vendorName}`);
     } catch (error: any) {
       console.error("Error saving vendor default:", error);
     }
@@ -494,92 +477,89 @@ const InvoicesPendingLog = () => {
         }
       }
 
-      console.log(`📝 Guardando en DB - Campo: ${field}, Valor final: "${valueToSave}"`);
+      console.log(`📝 Guardando en DB - Campo: ${field}, Valor: "${valueToSave}"`);
 
-      // CRÍTICO: Actualizar processed_documents SIEMPRE que cambie un campo
-      const { error: docUpdateError, data: updateResult } = await supabase
-        .from("processed_documents")
-        .update({ [field]: valueToSave })
-        .eq("id", id)
-        .select();
+      // PARALELO: Ejecutar actualizaciones de BD simultáneamente
+      const updateDoc = async () => {
+        return supabase
+          .from("processed_documents")
+          .update({ [field]: valueToSave })
+          .eq("id", id)
+          .select();
+      };
 
-      if (docUpdateError) {
-        console.error('❌ Error actualizando processed_documents:', docUpdateError);
-        toast.error(`Error al guardar: ${docUpdateError.message}`);
-        throw docUpdateError;
-      }
-
-      console.log('✅ Campo actualizado en processed_documents:', updateResult);
-
-      // If updating account or class, also update the vendor record
-      if (field === "default_account_ref" || field === "default_class_ref") {
-        if (invoice.vendor_id) {
-          const { error } = await supabase
+      const updateVendor = async () => {
+        if ((field === "default_account_ref" || field === "default_class_ref") && invoice.vendor_id) {
+          return supabase
             .from("vendors")
             .update({ [field]: valueToSave })
-            .eq("id", invoice.vendor_id);
-
-          if (error) {
-            console.error('⚠️ Error actualizando vendor (no crítico):', error);
-          }
+            .eq("id", invoice.vendor_id)
+            .select();
         }
+        return null;
+      };
 
-        // Save as vendor default if updating account
-        if (field === "default_account_ref" && typeof valueToSave === 'string') {
-          await saveVendorDefault(
-            invoice.supplier_name,
-            valueToSave,
-            invoice.uses_tax ?? true
+      const [docResult] = await Promise.all([updateDoc(), updateVendor()]);
+      
+      if (docResult.error) {
+        console.error('❌ Error actualizando:', docResult.error);
+        toast.error(`Error al guardar: ${docResult.error.message}`);
+        throw docResult.error;
+      }
+
+      console.log('✅ BD actualizada');
+
+      // Guardar default en background (no bloquea)
+      if (field === "default_account_ref" && typeof valueToSave === 'string') {
+        // Guardar regla sin await (en background)
+        saveVendorDefault(invoice.supplier_name, valueToSave, invoice.uses_tax ?? true);
+        
+        // AUTO-PUBLICAR: Si se asignó una cuenta contable válida
+        if (valueToSave.trim() !== '') {
+          console.log(`🚀 Publicando automáticamente para ${invoice.supplier_name}`);
+          
+          const vendorInvoices = rawInvoices.filter(inv => 
+            inv.supplier_name === invoice.supplier_name && 
+            !inv.qbo_entity_id &&
+            (inv.status === 'pending' || inv.status === 'pending_config')
           );
           
-          // AUTO-PUBLICAR: Si se asignó una cuenta contable válida, publicar automáticamente
-          if (valueToSave.trim() !== '') {
-            console.log(`🚀 Publicando automáticamente para ${invoice.supplier_name}`);
-            
-            // Buscar facturas pendientes del mismo proveedor
-            const vendorInvoices = rawInvoices.filter(inv => 
-              inv.supplier_name === invoice.supplier_name && 
-              !inv.qbo_entity_id &&
-              (inv.status === 'pending' || inv.status === 'pending_config')
-            );
-            
-            const documentIds = vendorInvoices.map(inv => inv.id);
-            const vendorName = invoice.supplier_name;
-            const count = documentIds.length;
-            
-            // Optimistic update - remover de UI inmediatamente
-            removeInvoicesByVendor(vendorName);
-            setFilteredInvoices((prev) => prev.filter((inv) => inv.supplier_name !== vendorName));
-            
-            // Cerrar toast de guardando y mostrar toast de publicando
-            toast.dismiss(`saving-${id}`);
-            toast.success(`✓ Publicando ${count} factura${count > 1 ? 's' : ''} de ${vendorName}...`);
-            
-            try {
-              const { data, error: publishError } = await supabase.functions.invoke(
-                "publish-to-quickbooks",
-                {
-                  body: { 
-                    organization_id: activeOrganization, 
-                    document_ids: documentIds 
-                  },
-                }
-              );
-
-              if (publishError) throw publishError;
-
-              if (data?.errors && data.errors.length > 0) {
-                toast.warning(`⚠️ ${data.published || 0} publicada${(data.published || 0) !== 1 ? 's' : ''}, ${data.errors.length} con errores`);
-                invalidateInvoices(); // Recargar para mostrar errores
-              } else {
-                toast.success(`✅ ${data?.published || count} factura${count > 1 ? 's' : ''} publicada${count > 1 ? 's' : ''}`);
+          const documentIds = vendorInvoices.map(inv => inv.id);
+          const vendorName = invoice.supplier_name;
+          const count = documentIds.length;
+          
+          // Optimistic update - remover de UI inmediatamente
+          removeInvoicesByVendor(vendorName);
+          setFilteredInvoices((prev) => prev.filter((inv) => inv.supplier_name !== vendorName));
+          
+          // Cerrar toast de guardando y mostrar toast de publicando
+          toast.dismiss(`saving-${id}`);
+          toast.success(`✓ Publicando ${count} factura${count > 1 ? 's' : ''} de ${vendorName}...`);
+          
+          try {
+            const { data, error: publishError } = await supabase.functions.invoke(
+              "publish-to-quickbooks",
+              {
+                body: { 
+                  organization_id: activeOrganization, 
+                  document_ids: documentIds 
+                },
               }
-              
-            } catch (publishError: any) {
-              console.error("❌ Error en publicación:", publishError);
-              toast.error("Error al publicar: " + (publishError.message || "Error desconocido"));
-              invalidateInvoices(); // Recargar para restaurar estado
+            );
+
+            if (publishError) throw publishError;
+
+            if (data?.errors && data.errors.length > 0) {
+              toast.warning(`⚠️ ${data.published || 0} publicada${(data.published || 0) !== 1 ? 's' : ''}, ${data.errors.length} con errores`);
+              invalidateInvoices();
+            } else {
+              toast.success(`✅ ${data?.published || count} factura${count > 1 ? 's' : ''} publicada${count > 1 ? 's' : ''}`);
             }
+            
+          } catch (publishError: any) {
+            console.error("❌ Error en publicación:", publishError);
+            toast.error("Error al publicar: " + (publishError.message || "Error desconocido"));
+            invalidateInvoices();
           }
         }
       }
