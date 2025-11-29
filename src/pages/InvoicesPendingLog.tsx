@@ -689,31 +689,9 @@ const InvoicesPendingLog = () => {
         } else {
           console.log(`✓ Regla de clasificación creada para ${vendorName}: ${accountRef}`);
           
-          // 3. AUTO-PUBLICAR: Invocar función para publicar automáticamente las facturas de este vendor
-          try {
-            console.log(`📤 Auto-publicando facturas de ${vendorName}...`);
-            const { data: publishResult, error: publishError } = await supabase.functions.invoke(
-              "auto-publish-vendor-invoices",
-              {
-                body: {
-                  organization_id: activeOrganization,
-                  vendor_name: vendorName,
-                  account_code: accountRef,
-                },
-              }
-            );
-
-            if (publishError) {
-              console.error("Error en auto-publish:", publishError);
-            } else {
-              console.log(`✅ Auto-publish result:`, publishResult);
-              if (publishResult?.published > 0) {
-                toast.success(`${publishResult.published} factura(s) de ${vendorName} publicadas a QuickBooks`);
-              }
-            }
-          } catch (autoPublishError) {
-            console.error("Error calling auto-publish:", autoPublishError);
-          }
+          // NOTA: NO llamar auto-publish aquí para evitar doble publicación
+          // La publicación se maneja en handleUpdateInvoice después de guardar
+          console.log(`✓ Regla de clasificación creada para ${vendorName}: ${accountRef}`);
         }
       }
 

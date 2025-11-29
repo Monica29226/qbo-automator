@@ -65,6 +65,8 @@ const ReviewQueue = () => {
   useEffect(() => {
     if (activeOrganization) {
       fetchData();
+    } else {
+      setIsLoading(false);
     }
   }, [activeOrganization]);
 
