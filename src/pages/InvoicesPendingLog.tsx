@@ -658,7 +658,7 @@ const InvoicesPendingLog = () => {
       return;
     }
 
-    const loadingToast = toast.loading("Cargando PDF...");
+    const loadingToast = toast.loading("Abriendo PDF...");
 
     try {
       let pdfPath = invoice.pdf_attachment_url;
@@ -676,15 +676,9 @@ const InvoicesPendingLog = () => {
       }
       
       console.log("📂 Path final para storage:", pdfPath);
-      
-      // Revocar URL anterior si existe
-      if (currentPdfUrl) {
-        URL.revokeObjectURL(currentPdfUrl);
-      }
-      
       console.log("📥 Descargando PDF...");
       
-      // Descargar como blob (método más confiable para iframes)
+      // Descargar como blob
       const { data: blobData, error: downloadError } = await supabase.storage
         .from('company-documents')
         .download(pdfPath);
@@ -700,16 +694,12 @@ const InvoicesPendingLog = () => {
 
       console.log("✅ PDF descargado:", { size: blobData.size, type: blobData.type });
       
-      // Crear blob URL local
+      // Crear blob URL y abrir directamente en nueva pestaña (más confiable que iframe)
       const blobUrl = URL.createObjectURL(new Blob([blobData], { type: 'application/pdf' }));
-      console.log("🔗 Blob URL creado");
-      
-      setCurrentPdfUrl(blobUrl);
-      setCurrentPdfName(`Factura ${invoice.doc_number}`);
-      setPdfViewerOpen(true);
+      window.open(blobUrl, '_blank');
       
       toast.dismiss(loadingToast);
-      toast.success("PDF cargado");
+      toast.success("PDF abierto en nueva pestaña");
       
     } catch (error: any) {
       toast.dismiss(loadingToast);
