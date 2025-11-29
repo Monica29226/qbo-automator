@@ -132,6 +132,9 @@ const InvoicesPendingLog = () => {
   const [bulkAccountId, setBulkAccountId] = useState("");
   const [isBulkClassifying, setIsBulkClassifying] = useState(false);
   
+  // ===== PREVENIR ACTUALIZACIONES DUPLICADAS =====
+  const updatingInvoicesRef = useRef<Set<string>>(new Set());
+  
   // ===== VIRTUAL SCROLLING =====
   const tableContainerRef = useRef<HTMLDivElement>(null);
   
@@ -424,11 +427,20 @@ const InvoicesPendingLog = () => {
     field: string,
     value: string | boolean
   ) => {
+    // ===== GUARD: Prevenir actualizaciones duplicadas =====
+    const updateKey = `${id}-${field}`;
+    if (updatingInvoicesRef.current.has(updateKey)) {
+      console.log('⏳ Actualización ya en progreso, ignorando:', updateKey);
+      return;
+    }
+    updatingInvoicesRef.current.add(updateKey);
+
     try {
       const invoice = rawInvoices.find((inv) => inv.id === id) || filteredInvoices.find((inv) => inv.id === id);
       if (!invoice) {
         console.error('❌ Factura no encontrada:', id);
         toast.error("Error: Factura no encontrada. Recargue la página.");
+        updatingInvoicesRef.current.delete(updateKey);
         return;
       }
 
@@ -578,9 +590,14 @@ const InvoicesPendingLog = () => {
       if (field !== "default_account_ref") {
         toast.success("Actualizado correctamente");
       }
+      
+      // Limpiar guard
+      updatingInvoicesRef.current.delete(updateKey);
     } catch (error: any) {
       console.error("Error updating invoice:", error);
       toast.error(`Error al actualizar: ${error.message || 'Error desconocido'}`);
+      // Limpiar guard en caso de error
+      updatingInvoicesRef.current.delete(updateKey);
     }
   };
 
