@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { AccountCombobox } from "@/components/AccountCombobox";
 import { Badge } from "@/components/ui/badge";
+import { usePublishQueue } from "@/hooks/usePublishQueue";
 import {
   Select,
   SelectContent,
@@ -103,6 +104,7 @@ const InvoicesPendingLog = () => {
   } = usePendingInvoicesOptimized();
   
   const { data: vendorDefaults } = useVendorDefaults();
+  const { addToQueue } = usePublishQueue();
   
   const qboNotConnected = !qboConnected && !loadingAccounts;
   
@@ -515,9 +517,7 @@ const InvoicesPendingLog = () => {
         saveVendorDefault(invoice.supplier_name, valueToSave, invoice.uses_tax ?? true);
         
         // AUTO-PUBLICAR: Si se asignó una cuenta contable válida
-        if (valueToSave.trim() !== '') {
-          console.log(`🚀 Publicando automáticamente para ${invoice.supplier_name}`);
-          
+        if (valueToSave.trim() !== '' && activeOrganization) {
           const vendorInvoices = rawInvoices.filter(inv => 
             inv.supplier_name === invoice.supplier_name && 
             !inv.qbo_entity_id &&
@@ -532,35 +532,16 @@ const InvoicesPendingLog = () => {
           removeInvoicesByVendor(vendorName);
           setFilteredInvoices((prev) => prev.filter((inv) => inv.supplier_name !== vendorName));
           
-          // Cerrar toast de guardando y mostrar toast de publicando
+          // Cerrar toast de guardando
           toast.dismiss(`saving-${id}`);
-          toast.success(`✓ Publicando ${count} factura${count > 1 ? 's' : ''} de ${vendorName}...`);
+          toast.success(`✓ ${count} factura${count > 1 ? 's' : ''} de ${vendorName} en cola de publicación`);
           
-          try {
-            const { data, error: publishError } = await supabase.functions.invoke(
-              "publish-to-quickbooks",
-              {
-                body: { 
-                  organization_id: activeOrganization, 
-                  document_ids: documentIds 
-                },
-              }
-            );
-
-            if (publishError) throw publishError;
-
-            if (data?.errors && data.errors.length > 0) {
-              toast.warning(`⚠️ ${data.published || 0} publicada${(data.published || 0) !== 1 ? 's' : ''}, ${data.errors.length} con errores`);
-              invalidateInvoices();
-            } else {
-              toast.success(`✅ ${data?.published || count} factura${count > 1 ? 's' : ''} publicada${count > 1 ? 's' : ''}`);
-            }
-            
-          } catch (publishError: any) {
-            console.error("❌ Error en publicación:", publishError);
-            toast.error("Error al publicar: " + (publishError.message || "Error desconocido"));
-            invalidateInvoices();
-          }
+          // Agregar a cola de publicación (NO BLOQUEA)
+          addToQueue({
+            documentIds,
+            vendorName,
+            organizationId: activeOrganization
+          });
         }
       }
 
