@@ -170,7 +170,7 @@ Deno.serve(async (req) => {
           "Authorization": `Bearer ${RESEND_API_KEY}`,
         },
         body: JSON.stringify({
-          from: "InvoiceFlow <noreply@calderon.cr>",
+          from: "InvoiceFlow <onboarding@resend.dev>",
           to: [email],
           subject: `Bienvenido a InvoiceFlow${orgName ? ` - ${orgName}` : ''}`,
           html: `
