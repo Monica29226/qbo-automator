@@ -1,6 +1,6 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { Loader2, FileText, Download, ExternalLink, RefreshCw } from 'lucide-react';
+import { FileText, Download, ExternalLink, CheckCircle2 } from 'lucide-react';
 
 interface PdfViewerProps {
   url: string;
@@ -8,56 +8,29 @@ interface PdfViewerProps {
 }
 
 export const PdfViewer = ({ url, fileName = 'documento' }: PdfViewerProps) => {
-  const [loading, setLoading] = useState<boolean>(true);
-  const [error, setError] = useState<string | null>(null);
-  const objectRef = useRef<HTMLObjectElement>(null);
-
-  // Detectar si es blob URL
-  const isBlobUrl = url.startsWith('blob:');
-
-  useEffect(() => {
-    setLoading(true);
-    setError(null);
-    console.log('📄 PdfViewer cargando:', isBlobUrl ? 'Blob URL' : url);
-    
-    // Para blob URLs, simplemente mostrar después de un breve delay
-    // ya que el blob ya está en memoria
-    if (isBlobUrl) {
-      const timer = setTimeout(() => {
-        setLoading(false);
-      }, 500);
-      return () => clearTimeout(timer);
-    }
-  }, [url, isBlobUrl]);
-
-  const handleLoad = () => {
-    console.log('✅ PDF cargado');
-    setLoading(false);
-  };
-
-  const handleError = () => {
-    console.log('❌ Error cargando PDF');
-    setError('No se pudo mostrar el PDF en el visor');
-    setLoading(false);
-  };
+  const [opened, setOpened] = useState(false);
 
   const openInNewTab = () => {
-    if (isBlobUrl) {
-      const newWindow = window.open('', '_blank');
-      if (newWindow) {
-        newWindow.document.write(`
-          <!DOCTYPE html>
-          <html>
-            <head><title>${fileName}</title></head>
-            <body style="margin:0;padding:0;height:100vh;">
-              <iframe src="${url}" style="width:100%;height:100%;border:none;"></iframe>
-            </body>
-          </html>
-        `);
-        newWindow.document.close();
-      }
-    } else {
-      window.open(url, '_blank');
+    // Crear una nueva ventana con el PDF
+    const newWindow = window.open('', '_blank');
+    if (newWindow) {
+      newWindow.document.write(`
+        <!DOCTYPE html>
+        <html>
+          <head>
+            <title>${fileName}</title>
+            <style>
+              body { margin: 0; padding: 0; height: 100vh; overflow: hidden; }
+              iframe { width: 100%; height: 100%; border: none; }
+            </style>
+          </head>
+          <body>
+            <iframe src="${url}"></iframe>
+          </body>
+        </html>
+      `);
+      newWindow.document.close();
+      setOpened(true);
     }
   };
 
@@ -70,68 +43,55 @@ export const PdfViewer = ({ url, fileName = 'documento' }: PdfViewerProps) => {
     document.body.removeChild(a);
   };
 
-  if (error) {
-    return (
-      <div className="flex flex-col items-center justify-center h-full gap-4 p-8 text-center bg-muted/20">
-        <FileText className="h-16 w-16 text-muted-foreground" />
-        <div className="space-y-2">
-          <p className="text-lg font-medium">PDF disponible</p>
-          <p className="text-sm text-muted-foreground">El visor no pudo cargar. Use las opciones abajo.</p>
-        </div>
-        <div className="flex gap-2 mt-4">
-          <Button variant="default" onClick={openInNewTab}>
-            <ExternalLink className="h-4 w-4 mr-2" />
-            Abrir en nueva pestaña
-          </Button>
-          <Button variant="outline" onClick={downloadPdf}>
-            <Download className="h-4 w-4 mr-2" />
-            Descargar
-          </Button>
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <div className="flex flex-col h-full">
-      {/* Toolbar */}
-      <div className="flex items-center justify-end px-4 py-2 border-b bg-muted/30 flex-shrink-0">
-        <div className="flex items-center gap-2">
-          <Button variant="ghost" size="sm" onClick={openInNewTab} title="Abrir en nueva pestaña">
-            <ExternalLink className="h-4 w-4" />
-          </Button>
-          <Button variant="ghost" size="sm" onClick={downloadPdf} title="Descargar PDF">
-            <Download className="h-4 w-4" />
-          </Button>
-        </div>
+    <div className="flex flex-col items-center justify-center h-full gap-6 p-8 text-center bg-gradient-to-b from-muted/30 to-muted/10">
+      <div className="w-24 h-32 bg-white rounded-lg shadow-lg flex items-center justify-center border-2 border-primary/20">
+        <FileText className="h-12 w-12 text-primary" />
+      </div>
+      
+      <div className="space-y-2">
+        <h3 className="text-xl font-semibold">{fileName}</h3>
+        <p className="text-sm text-muted-foreground max-w-md">
+          PDF listo para visualizar
+        </p>
       </div>
 
-      {/* PDF Content */}
-      <div className="flex-1 relative bg-white min-h-[500px]">
-        {loading && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-background/80 z-10">
-            <Loader2 className="h-8 w-8 animate-spin text-primary" />
-            <p className="text-sm text-muted-foreground">Cargando PDF...</p>
-          </div>
-        )}
-        
-        {/* Object tag with iframe fallback */}
-        <object
-          ref={objectRef}
-          data={url}
-          type="application/pdf"
-          className="w-full h-full"
-          onLoad={handleLoad}
-          onError={handleError}
+      <div className="flex flex-col sm:flex-row gap-3 mt-2">
+        <Button 
+          size="lg" 
+          onClick={openInNewTab}
+          className="gap-2"
         >
-          {/* Fallback: iframe */}
-          <iframe
-            src={url}
-            className="w-full h-full border-0"
-            title={fileName}
-          />
-        </object>
+          {opened ? (
+            <>
+              <CheckCircle2 className="h-5 w-5" />
+              Abierto - Abrir de nuevo
+            </>
+          ) : (
+            <>
+              <ExternalLink className="h-5 w-5" />
+              Ver PDF
+            </>
+          )}
+        </Button>
+        
+        <Button 
+          variant="outline" 
+          size="lg" 
+          onClick={downloadPdf}
+          className="gap-2"
+        >
+          <Download className="h-5 w-5" />
+          Descargar
+        </Button>
       </div>
+
+      {opened && (
+        <p className="text-xs text-green-600 flex items-center gap-1">
+          <CheckCircle2 className="h-3 w-3" />
+          PDF abierto en nueva pestaña
+        </p>
+      )}
     </div>
   );
 };
