@@ -41,6 +41,7 @@ export function AccountCombobox({
 }: AccountComboboxProps) {
   const [open, setOpen] = React.useState(false);
   const [searchQuery, setSearchQuery] = React.useState("");
+  const isSelectingRef = React.useRef(false); // Prevenir múltiples selecciones
 
   const isEmpty = accounts.length === 0;
   const selectedAccount = accounts.find((account) => account.id === value);
@@ -109,12 +110,22 @@ export function AccountCombobox({
                 <CommandItem
                   key={account.id}
                   value={account.id}
-                  onSelect={(currentValue) => {
-                    // CRÍTICO: Usar account.id directamente, no currentValue procesado
-                    console.log('✅ AccountCombobox: Cuenta seleccionada -', account.id, getDisplayText(account), 'currentValue:', currentValue);
+                  onSelect={() => {
+                    // Prevenir múltiples selecciones rápidas
+                    if (isSelectingRef.current) {
+                      return;
+                    }
+                    isSelectingRef.current = true;
+                    
+                    console.log('✅ AccountCombobox: Cuenta seleccionada -', account.id, getDisplayText(account));
                     onValueChange(account.id);
                     setOpen(false);
                     setSearchQuery("");
+                    
+                    // Resetear después de un breve delay
+                    setTimeout(() => {
+                      isSelectingRef.current = false;
+                    }, 500);
                   }}
                 >
                   <Check
