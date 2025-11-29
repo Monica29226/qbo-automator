@@ -715,7 +715,11 @@ const InvoicesPendingLog = () => {
   ) => {
     try {
       const invoice = invoices.find((inv) => inv.id === id);
-      if (!invoice) return;
+      if (!invoice) {
+        console.error('❌ Factura no encontrada en estado local:', id);
+        toast.error("Error: Factura no encontrada. Recargue la página.");
+        return;
+      }
 
       console.log('💾 Actualizando campo:', field, 'con valor:', value, 'tipo:', typeof value, 'para factura:', invoice.doc_number);
 
@@ -724,11 +728,21 @@ const InvoicesPendingLog = () => {
       if (field === "default_account_ref" && typeof value === "string") {
         // VALIDACIÓN: Si no hay cuentas cargadas, intentar recargar
         let accountsList = qboAccounts;
+        console.log(`📊 Cuentas QBO disponibles: ${accountsList.length}`);
+        
         if (accountsList.length === 0) {
-          toast.loading("Cargando cuentas...", { id: "loading-accounts" });
-          const result = await refetchQBOAccounts();
-          toast.dismiss("loading-accounts");
-          accountsList = result.data || [];
+          toast.loading("Cargando cuentas de QuickBooks...", { id: "loading-accounts" });
+          try {
+            const result = await refetchQBOAccounts();
+            toast.dismiss("loading-accounts");
+            accountsList = result.data || [];
+            console.log(`📊 Cuentas recargadas: ${accountsList.length}`);
+          } catch (refetchError) {
+            toast.dismiss("loading-accounts");
+            console.error('❌ Error recargando cuentas:', refetchError);
+            toast.error("Error al cargar cuentas. Verifique la conexión con QuickBooks.");
+            return;
+          }
           
           if (accountsList.length === 0) {
             toast.error("Las cuentas de QuickBooks no se han cargado. Verifique la conexión.");
@@ -737,14 +751,17 @@ const InvoicesPendingLog = () => {
         }
         
         // Buscar la cuenta por ID para obtener su código
-        let account = accountsList.find(acc => acc.id === value);
+        const account = accountsList.find(acc => acc.id === value);
+        console.log(`🔍 Buscando cuenta con ID "${value}":`, account ? `Encontrada: ${account.name}` : 'NO ENCONTRADA');
         
         if (account) {
           // CRÍTICO: Guardar el código en formato correcto "XXXX-XX - Nombre"
           valueToSave = account.accountNumber 
             ? `${account.accountNumber} - ${account.name}` 
             : account.name;
+          console.log(`✅ Cuenta encontrada: "${valueToSave}"`);
         } else {
+          console.error('❌ Cuenta no encontrada. ID buscado:', value, 'Cuentas disponibles:', accountsList.map(a => a.id).slice(0, 5));
           toast.error("No se pudo encontrar la cuenta seleccionada. Intente de nuevo.");
           return;
         }
@@ -753,17 +770,19 @@ const InvoicesPendingLog = () => {
       console.log(`📝 Guardando en DB - Campo: ${field}, Valor final: "${valueToSave}"`);
 
       // CRÍTICO: Actualizar processed_documents SIEMPRE que cambie un campo
-      const { error: docUpdateError } = await supabase
+      const { error: docUpdateError, data: updateResult } = await supabase
         .from("processed_documents")
         .update({ [field]: valueToSave })
-        .eq("id", id);
+        .eq("id", id)
+        .select();
 
       if (docUpdateError) {
         console.error('❌ Error actualizando processed_documents:', docUpdateError);
+        toast.error(`Error al guardar: ${docUpdateError.message}`);
         throw docUpdateError;
       }
 
-      console.log('✅ Campo actualizado en processed_documents exitosamente');
+      console.log('✅ Campo actualizado en processed_documents:', updateResult);
 
       // If updating account or class, also update the vendor record
       if (field === "default_account_ref" || field === "default_class_ref") {
