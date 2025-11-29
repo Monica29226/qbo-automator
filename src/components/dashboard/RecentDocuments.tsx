@@ -261,29 +261,32 @@ export const RecentDocuments = () => {
 
       console.log("🔄 Asignando cuenta y publicando facturas del proveedor:", document.supplier_name);
 
+      // OPTIMISTIC UPDATE: Remover inmediatamente de la lista
+      setDocuments(prev => prev.filter(doc => doc.supplier_name !== document.supplier_name));
+      toast.loading(`Procesando ${document.supplier_name}...`, { id: `processing-${id}` });
+
       // Update vendor record if exists
       if (document.vendor_id) {
-        const { error } = await supabase
+        await supabase
           .from("vendors")
           .update({ default_account_ref: accountRef })
           .eq("id", document.vendor_id);
-
-        if (error) throw error;
       }
 
       // Save as vendor default
       await saveVendorDefault(document.supplier_name, accountRef);
 
-      // Update document account
-      const { error: updateError } = await supabase
+      // Update all pending documents from this vendor with the account
+      await supabase
         .from("processed_documents")
         .update({ default_account_ref: accountRef })
-        .eq("id", id);
+        .eq("organization_id", activeOrganization)
+        .eq("supplier_name", document.supplier_name)
+        .eq("status", "pending")
+        .is("qbo_entity_id", null);
 
-      if (updateError) throw updateError;
-
-      // PUBLICACIÓN AUTOMÁTICA: Buscar TODAS las facturas pendientes del mismo proveedor
-      const { data: vendorInvoices, error: fetchError } = await supabase
+      // Get all pending invoices from this vendor
+      const { data: vendorInvoices } = await supabase
         .from("processed_documents")
         .select("id, doc_number")
         .eq("organization_id", activeOrganization)
@@ -291,16 +294,9 @@ export const RecentDocuments = () => {
         .eq("status", "pending")
         .is("qbo_entity_id", null);
 
-      if (fetchError) throw fetchError;
-
-      console.log(`📤 Publicando ${vendorInvoices?.length || 0} facturas de ${document.supplier_name}...`);
-
-      // Publicar todas las facturas del proveedor en batch
       if (vendorInvoices && vendorInvoices.length > 0) {
         const invoiceIds = vendorInvoices.map(inv => inv.id);
         
-        toast.loading(`Publicando ${invoiceIds.length} factura${invoiceIds.length > 1 ? 's' : ''} a QuickBooks...`);
-
         const { data: publishResult, error: publishError } = await supabase.functions.invoke(
           "publish-to-quickbooks",
           {
@@ -311,27 +307,23 @@ export const RecentDocuments = () => {
           }
         );
 
-        if (publishError) {
-          console.error("❌ Error publicando:", publishError);
-          toast.error(`Error al publicar: ${publishError.message}`);
-        } else if (publishResult?.error) {
-          console.error("❌ Error en resultado:", publishResult.error);
-          toast.error(`Error al publicar: ${publishResult.error}`);
+        toast.dismiss(`processing-${id}`);
+        
+        if (publishError || publishResult?.error) {
+          toast.error(`Error al publicar: ${publishError?.message || publishResult?.error}`);
+          fetchDocuments(); // Refetch on error to restore state
         } else {
-          console.log("✅ Facturas publicadas exitosamente");
-          toast.success(`${invoiceIds.length} factura${invoiceIds.length > 1 ? 's' : ''} publicada${invoiceIds.length > 1 ? 's' : ''} a QuickBooks`);
-          
-          // Refrescar la lista después de publicar
-          setTimeout(() => {
-            fetchDocuments();
-          }, 1000);
+          toast.success(`✅ ${invoiceIds.length} factura${invoiceIds.length > 1 ? 's' : ''} de ${document.supplier_name} publicada${invoiceIds.length > 1 ? 's' : ''}`);
         }
+      } else {
+        toast.dismiss(`processing-${id}`);
+        toast.success(`✅ Cuenta asignada para ${document.supplier_name}`);
       }
-      
-      toast.success("Cuenta actualizada y guardada como predeterminada");
     } catch (error: any) {
       console.error("Error updating account:", error);
+      toast.dismiss(`processing-${id}`);
       toast.error("Error al actualizar cuenta");
+      fetchDocuments(); // Refetch on error to restore state
     }
   };
 
