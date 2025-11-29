@@ -1,5 +1,5 @@
 import { CheckCircle2, Eye, FileText, Loader2, RefreshCw, Search, Star, Trash2, Upload, X, Filter, CalendarIcon, CheckSquare, Square, ListChecks } from "lucide-react";
-import { useState, useEffect, useMemo, useCallback, memo, useRef } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -52,20 +52,13 @@ import type { DateRange } from "react-day-picker";
 import { PdfViewer } from "@/components/PdfViewer";
 import { useQBOAccounts } from "@/hooks/useQBOAccounts";
 import { useDebounce } from "@/hooks/useDebounce";
-import { useVirtualizer } from "@tanstack/react-virtual";
+import { usePendingInvoicesOptimized, useVendorDefaults } from "@/hooks/usePendingInvoicesOptimized";
 
 interface QBOAccount {
   id: string;
   name: string;
   accountNumber: string;
   accountType: string;
-}
-
-interface VendorDefault {
-  id: string;
-  vendor_name: string;
-  default_account_ref: string | null;
-  default_uses_tax: boolean;
 }
 
 interface PendingInvoice {
@@ -91,27 +84,34 @@ interface PendingInvoice {
 const InvoicesPendingLog = () => {
   const { activeOrganization } = useAuth();
   
-  // ===== HOOKS OPTIMIZADOS =====
+  // ===== HOOKS OPTIMIZADOS CON CACHING =====
   const {
     accounts: qboAccounts,
     isLoading: loadingAccounts,
     isConnected: qboConnected,
     refetch: refetchQBOAccounts,
     getAccountIdFromCode,
-    getAccountById,
   } = useQBOAccounts();
+  
+  // Hook optimizado con React Query (caching de 30s)
+  const { 
+    invoices: rawInvoices, 
+    isLoading, 
+    refetch: refetchInvoices,
+    removeInvoicesByVendor,
+    invalidate: invalidateInvoices 
+  } = usePendingInvoicesOptimized();
+  
+  const { data: vendorDefaults } = useVendorDefaults();
   
   const qboNotConnected = !qboConnected && !loadingAccounts;
   
-  // Estados locales
-  const [invoices, setInvoices] = useState<PendingInvoice[]>([]);
+  // Estados locales (solo UI, no data)
   const [filteredInvoices, setFilteredInvoices] = useState<PendingInvoice[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [isPublishing, setIsPublishing] = useState(false);
   const [showPublishDialog, setShowPublishDialog] = useState(false);
   const [publishingIds, setPublishingIds] = useState<Set<string>>(new Set());
-  const [vendorDefaults, setVendorDefaults] = useState<Map<string, VendorDefault>>(new Map());
   const [selectedInvoice, setSelectedInvoice] = useState<PendingInvoice | null>(null);
   const [showDetailDialog, setShowDetailDialog] = useState(false);
   const [pdfViewerOpen, setPdfViewerOpen] = useState(false);
@@ -132,9 +132,6 @@ const InvoicesPendingLog = () => {
   const [bulkAccountId, setBulkAccountId] = useState("");
   const [isBulkClassifying, setIsBulkClassifying] = useState(false);
   
-  // ===== HISTORIAL DE CUENTAS POR PROVEEDOR =====
-  const [vendorAccountHistory, setVendorAccountHistory] = useState<Map<string, string>>(new Map());
-  
   // ===== VIRTUAL SCROLLING =====
   const tableContainerRef = useRef<HTMLDivElement>(null);
   
@@ -145,278 +142,10 @@ const InvoicesPendingLog = () => {
   const debouncedMinAmount = useDebounce(filterMinAmount, 300);
   const debouncedMaxAmount = useDebounce(filterMaxAmount, 300);
 
-  const fetchVendorDefaults = async () => {
-    if (!activeOrganization) return;
-
-    try {
-      const { data, error } = await supabase
-        .from("vendor_defaults")
-        .select("*")
-        .eq("organization_id", activeOrganization);
-
-      if (error) throw error;
-
-      const defaultsMap = new Map<string, VendorDefault>();
-      data?.forEach((def) => {
-        defaultsMap.set(def.vendor_name, def);
-      });
-      setVendorDefaults(defaultsMap);
-    } catch (error: any) {
-      console.error("Error fetching vendor defaults:", error);
-    }
-  };
-
   // Normalizar nombre de vendor para comparación
-  const normalizeVendorName = (name: string): string => {
-    return name
-      .toLowerCase()
-      .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "")
-      .replace(/[^a-z0-9]/g, "")
-      .trim();
-  };
-
-  const fetchPendingInvoices = async () => {
-    if (!activeOrganization) return;
-
-    setIsLoading(true);
-    try {
-      // Primero, obtener TODOS los vendors que ya tienen regla configurada
-      const [vendorDefaultsResult, vendorRulesResult, vendorsResult] = await Promise.all([
-        supabase
-          .from("vendor_defaults")
-          .select("vendor_name, default_account_ref")
-          .eq("organization_id", activeOrganization)
-          .not("default_account_ref", "is", null),
-        supabase
-          .from("vendor_classification_rules")
-          .select("vendor_name, account_code")
-          .eq("organization_id", activeOrganization)
-          .eq("is_active", true),
-        supabase
-          .from("vendors")
-          .select("vendor_name, default_account_ref")
-          .eq("organization_id", activeOrganization)
-          .not("default_account_ref", "is", null)
-      ]);
-
-      // Crear set de vendors con regla (normalizados para comparación)
-      const vendorsWithRules = new Set<string>();
-      
-      vendorDefaultsResult.data?.forEach(v => {
-        if (v.default_account_ref) {
-          vendorsWithRules.add(normalizeVendorName(v.vendor_name));
-        }
-      });
-      
-      vendorRulesResult.data?.forEach(v => {
-        if (v.account_code) {
-          vendorsWithRules.add(normalizeVendorName(v.vendor_name));
-        }
-      });
-      
-      vendorsResult.data?.forEach(v => {
-        if (v.default_account_ref) {
-          vendorsWithRules.add(normalizeVendorName(v.vendor_name));
-        }
-      });
-
-      console.log(`📋 Vendors con regla configurada: ${vendorsWithRules.size}`);
-
-      // Fetch documents - Facturas pendientes que necesitan configuración
-      // Sin filtro de qbo_entity_id para mostrar TODAS las que faltan configurar
-      const { data: docsData, error: docsError } = await supabase
-        .from("processed_documents")
-        .select("*")
-        .eq("organization_id", activeOrganization)
-        .in("status", ["pending", "pending_config"])
-        .order("created_at", { ascending: false })
-        .limit(500);
-
-      if (docsError) throw docsError;
-
-      if (!docsData || docsData.length === 0) {
-        setInvoices([]);
-        setFilteredInvoices([]);
-        return;
-      }
-
-      // FILTRAR: Mostrar TODAS las facturas pendientes que no hayan sido publicadas
-      // Las facturas con cuenta configurada también deben mostrarse hasta que se publiquen
-      const filteredDocs = docsData.filter(doc => {
-        // Si ya está publicada en QB, no mostrar
-        if (doc.qbo_entity_id) {
-          return false;
-        }
-        
-        // Mostrar si necesita configuración (sin cuenta)
-        const needsConfig = !doc.default_account_ref;
-        
-        // Verificar si el vendor ya tiene regla configurada
-        const normalizedName = normalizeVendorName(doc.supplier_name);
-        const hasRule = vendorsWithRules.has(normalizedName);
-        
-        // Mostrar todas las facturas pendientes - con o sin cuenta configurada
-        // El objetivo es que el usuario pueda ver y publicar
-        return true;
-      });
-
-      console.log(`📄 Facturas: ${docsData.length} total, ${filteredDocs.length} sin regla de vendor`);
-
-      // Get unique vendor IDs from filtered docs
-      const vendorIds = [...new Set(filteredDocs.map(doc => doc.vendor_id).filter(Boolean))];
-      
-      // Batch fetch all vendors at once
-      let vendorsMap = new Map();
-      if (vendorIds.length > 0) {
-        const { data: vendorsData } = await supabase
-          .from("vendors")
-          .select("id, default_account_ref, default_class_ref")
-          .in("id", vendorIds);
-
-        vendorsData?.forEach(vendor => {
-          vendorsMap.set(vendor.id, vendor);
-        });
-      }
-
-      // Apply vendor data and defaults in memory
-      const invoicesWithVendors = filteredDocs.map((doc) => {
-        let invoiceData: PendingInvoice = { 
-          ...doc,
-          default_account_ref: doc.default_account_ref || undefined,
-          default_class_ref: doc.default_class_ref || undefined,
-          has_vendor_default: false
-        };
-        
-        if (!invoiceData.default_account_ref && doc.vendor_id && vendorsMap.has(doc.vendor_id)) {
-          const vendorData = vendorsMap.get(doc.vendor_id);
-          invoiceData.default_account_ref = vendorData.default_account_ref;
-          invoiceData.default_class_ref = vendorData.default_class_ref;
-        }
-
-        const vendorDefault = vendorDefaults.get(doc.supplier_name);
-        if (vendorDefault) {
-          if (!invoiceData.default_account_ref && vendorDefault.default_account_ref) {
-            invoiceData.default_account_ref = vendorDefault.default_account_ref;
-            invoiceData.has_vendor_default = true;
-          }
-          if (invoiceData.uses_tax === null || invoiceData.uses_tax === undefined) {
-            invoiceData.uses_tax = vendorDefault.default_uses_tax;
-          }
-        }
-        
-        return invoiceData;
-      });
-
-      setInvoices(invoicesWithVendors);
-      setFilteredInvoices(invoicesWithVendors);
-    } catch (error: any) {
-      console.error("Error fetching pending invoices:", error);
-      toast.error("Error al cargar facturas pendientes");
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  // Fetch vendor account history for suggestions
-  const fetchVendorAccountHistory = async () => {
-    if (!activeOrganization) return;
-    
-    try {
-      const { data, error } = await supabase
-        .from("processed_documents")
-        .select("supplier_name, default_account_ref")
-        .eq("organization_id", activeOrganization)
-        .eq("status", "published")
-        .not("default_account_ref", "is", null)
-        .order("created_at", { ascending: false })
-        .limit(500);
-      
-      if (error) throw error;
-      
-      const historyMap = new Map<string, string>();
-      data?.forEach((doc) => {
-        const normalizedName = normalizeVendorName(doc.supplier_name);
-        if (!historyMap.has(normalizedName) && doc.default_account_ref) {
-          historyMap.set(normalizedName, doc.default_account_ref);
-        }
-      });
-      
-      setVendorAccountHistory(historyMap);
-      console.log(`📊 Historial de cuentas cargado: ${historyMap.size} proveedores`);
-    } catch (error) {
-      console.error("Error fetching vendor history:", error);
-    }
-  };
-
+  // Aplicar filtros cuando cambian los datos o filtros
   useEffect(() => {
-    const loadData = async () => {
-      // OPTIMIZACIÓN: Cargar en paralelo vendor defaults, historial y facturas
-      await Promise.all([
-        fetchVendorDefaults(),
-        fetchVendorAccountHistory(),
-      ]);
-      await fetchPendingInvoices();
-    };
-    loadData();
-
-    // Suscripción realtime para actualizaciones automáticas
-    if (!activeOrganization) return;
-
-    const channel = supabase
-      .channel('pending_invoices_changes')
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'processed_documents',
-          filter: `organization_id=eq.${activeOrganization}`
-        },
-        (payload) => {
-          console.log('📡 Realtime: Documento actualizado', payload);
-          fetchPendingInvoices();
-        }
-      )
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'vendor_defaults',
-          filter: `organization_id=eq.${activeOrganization}`
-        },
-        (payload) => {
-          console.log('📡 Realtime: Vendor default actualizado', payload);
-          fetchVendorDefaults();
-          fetchPendingInvoices();
-        }
-      )
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'vendor_classification_rules',
-          filter: `organization_id=eq.${activeOrganization}`
-        },
-        (payload) => {
-          console.log('📡 Realtime: Regla de clasificación actualizada', payload);
-          fetchPendingInvoices();
-        }
-      )
-      .subscribe((status) => {
-        console.log('📡 Realtime subscription status:', status);
-      });
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [activeOrganization]);
-
-  useEffect(() => {
-    // Aplicar todos los filtros combinados (usando valores debounced para evitar re-renders)
-    let filtered = [...invoices];
+    let filtered = [...rawInvoices];
 
     // Filtro por número de documento (debounced)
     if (debouncedDocNumber.trim()) {
@@ -438,16 +167,14 @@ const InvoicesPendingLog = () => {
     // Filtro por rango de fechas
     if (dateRange?.from) {
       filtered = filtered.filter((inv) => {
-        const invoiceDate = new Date(inv.issue_date);
+        const invoiceDate = new Date(inv.issue_date || inv.created_at);
         const fromDate = new Date(dateRange.from!);
         fromDate.setHours(0, 0, 0, 0);
         
         if (!dateRange.to) {
-          // Solo fecha desde
           return invoiceDate >= fromDate;
         }
         
-        // Rango completo
         const toDate = new Date(dateRange.to);
         toDate.setHours(23, 59, 59, 999);
         return invoiceDate >= fromDate && invoiceDate <= toDate;
@@ -479,28 +206,20 @@ const InvoicesPendingLog = () => {
       }
     }
 
-    // Búsqueda general (debouncedSearchTerm) - se aplica sobre los filtros anteriores
+    // Búsqueda general (debouncedSearchTerm)
     if (debouncedSearchTerm.trim()) {
       const searchLower = debouncedSearchTerm.toLowerCase();
       filtered = filtered.filter((inv) => {
-        // Buscar por número de documento
         if (inv.doc_number.toLowerCase().includes(searchLower)) return true;
-        
-        // Buscar por nombre de proveedor
         if (inv.supplier_name.toLowerCase().includes(searchLower)) return true;
-        
-        // Buscar por cuenta contable
         if (inv.default_account_ref && inv.default_account_ref.toLowerCase().includes(searchLower)) return true;
-        
         return false;
       });
     }
 
     setFilteredInvoices(filtered);
-    // Limpiar selección cuando cambian los filtros
     setSelectedIds(new Set());
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [debouncedSearchTerm, invoices, debouncedDocNumber, debouncedSupplier, dateRange, filterQBStatus, debouncedMinAmount, debouncedMaxAmount]);
+  }, [debouncedSearchTerm, rawInvoices, debouncedDocNumber, debouncedSupplier, dateRange, filterQBStatus, debouncedMinAmount, debouncedMaxAmount]);
 
   // Función para limpiar todos los filtros
   const clearAllFilters = () => {
@@ -541,10 +260,10 @@ const InvoicesPendingLog = () => {
     setSelectedIds(new Set());
   };
 
-  // Obtener sugerencia de cuenta para un proveedor
+  // Obtener sugerencia de cuenta para un proveedor (usando vendor defaults)
   const getSuggestedAccount = (supplierName: string): string | null => {
-    const normalizedName = normalizeVendorName(supplierName);
-    return vendorAccountHistory.get(normalizedName) || null;
+    const def = vendorDefaults?.get(supplierName);
+    return def?.default_account_ref || null;
   };
 
   // ===== CLASIFICACIÓN MASIVA =====
@@ -613,15 +332,14 @@ const InvoicesPendingLog = () => {
         toast.success(`✅ ${published} facturas publicadas a QuickBooks`);
       }
       
-      // Optimistic update - remover inmediatamente
-      setInvoices((prev) => prev.filter((inv) => !documentIds.includes(inv.id)));
+      // Optimistic update - remover inmediatamente de UI
       setFilteredInvoices((prev) => prev.filter((inv) => !documentIds.includes(inv.id)));
       setSelectedIds(new Set());
       setShowBulkClassifyDialog(false);
       setBulkAccountId("");
       
       // Refrescar en background
-      fetchPendingInvoices();
+      invalidateInvoices();
       
     } catch (error: any) {
       console.error("Error en clasificación masiva:", error);
@@ -687,14 +405,7 @@ const InvoicesPendingLog = () => {
         }
       }
 
-      // 4. Update local cache
-      if (data) {
-        setVendorDefaults((prev) => {
-          const newMap = new Map(prev);
-          newMap.set(vendorName, data);
-          return newMap;
-        });
-      }
+      // Cache se actualiza automáticamente via React Query
     } catch (error: any) {
       console.error("Error saving vendor default:", error);
     }
@@ -706,14 +417,14 @@ const InvoicesPendingLog = () => {
     value: string | boolean
   ) => {
     try {
-      const invoice = invoices.find((inv) => inv.id === id);
+      const invoice = rawInvoices.find((inv) => inv.id === id) || filteredInvoices.find((inv) => inv.id === id);
       if (!invoice) {
-        console.error('❌ Factura no encontrada en estado local:', id);
+        console.error('❌ Factura no encontrada:', id);
         toast.error("Error: Factura no encontrada. Recargue la página.");
         return;
       }
 
-      console.log('💾 Actualizando campo:', field, 'con valor:', value, 'tipo:', typeof value, 'para factura:', invoice.doc_number);
+      console.log('💾 Actualizando campo:', field, 'para factura:', invoice.doc_number);
 
       // Si estamos actualizando default_account_ref, convertir el ID a código
       let valueToSave = value;
@@ -799,10 +510,10 @@ const InvoicesPendingLog = () => {
           
           // AUTO-PUBLICAR: Si se asignó una cuenta contable válida, publicar automáticamente
           if (valueToSave.trim() !== '') {
-            console.log(`🚀 Iniciando publicación automática para ${invoice.supplier_name} con cuenta: ${valueToSave}`);
+            console.log(`🚀 Publicando automáticamente para ${invoice.supplier_name}`);
             
-            // Buscar TODAS las facturas pendientes del mismo proveedor para publicarlas juntas
-            const vendorInvoices = invoices.filter(inv => 
+            // Buscar facturas pendientes del mismo proveedor
+            const vendorInvoices = rawInvoices.filter(inv => 
               inv.supplier_name === invoice.supplier_name && 
               !inv.qbo_entity_id &&
               (inv.status === 'pending' || inv.status === 'pending_config')
@@ -812,23 +523,13 @@ const InvoicesPendingLog = () => {
             const vendorName = invoice.supplier_name;
             const count = documentIds.length;
             
-            console.log(`📦 Encontradas ${count} facturas de ${vendorName} para publicar:`, documentIds);
+            // Optimistic update - remover de UI inmediatamente
+            removeInvoicesByVendor(vendorName);
+            setFilteredInvoices((prev) => prev.filter((inv) => inv.supplier_name !== vendorName));
             
-            // Actualizar UI inmediatamente para TODAS las facturas del proveedor
-            setInvoices((prev) =>
-              prev.map((inv) => 
-                documentIds.includes(inv.id) 
-                  ? { ...inv, default_account_ref: valueToSave, _isPublishing: true } 
-                  : inv
-              )
-            );
-            
-            toast.success(`✓ Cuenta guardada. Publicando ${count} factura${count > 1 ? 's' : ''} de ${vendorName}...`);
+            toast.success(`✓ Publicando ${count} factura${count > 1 ? 's' : ''} de ${vendorName}...`);
             
             try {
-              console.log(`📤 Llamando a publish-to-quickbooks para ${count} documento(s)...`);
-              
-              // Publicar todas las facturas del proveedor en una sola llamada
               const { data, error: publishError } = await supabase.functions.invoke(
                 "publish-to-quickbooks",
                 {
@@ -838,55 +539,21 @@ const InvoicesPendingLog = () => {
                   },
                 }
               );
-              
-              console.log(`📥 Respuesta de publish-to-quickbooks:`, { data, error: publishError });
 
-              if (publishError) {
-                console.error("❌ Error de publicación:", publishError);
-                throw publishError;
-              }
+              if (publishError) throw publishError;
 
               if (data?.errors && data.errors.length > 0) {
-                console.error("❌ Errores en publicación:", data.errors);
-                const successCount = data.published || 0;
-                const errorCount = data.errors.length;
-                
-                toast.warning(
-                  `⚠️ ${successCount} factura${successCount !== 1 ? 's' : ''} publicada${successCount !== 1 ? 's' : ''}, ` +
-                  `${errorCount} con error${errorCount !== 1 ? 'es' : ''}`
-                );
+                toast.warning(`⚠️ ${data.published || 0} publicada${(data.published || 0) !== 1 ? 's' : ''}, ${data.errors.length} con errores`);
+                invalidateInvoices(); // Recargar para mostrar errores
               } else {
-                toast.success(
-                  `✅ ${data?.published || count} factura${count > 1 ? 's' : ''} de ${vendorName} publicada${count > 1 ? 's' : ''} exitosamente`
-                );
+                toast.success(`✅ ${data?.published || count} factura${count > 1 ? 's' : ''} publicada${count > 1 ? 's' : ''}`);
               }
               
-              console.log(`✅ Publicación completada para ${vendorName}`);
-              
-              // OPTIMISTIC UPDATE: Remover INMEDIATAMENTE las facturas publicadas del estado local
-              // Esto evita tener que esperar al refetch y race conditions
-              setInvoices((prev) => prev.filter((inv) => !documentIds.includes(inv.id)));
-              setFilteredInvoices((prev) => prev.filter((inv) => !documentIds.includes(inv.id)));
-              
-              // También refrescar en background para sincronizar con DB (no bloqueante)
-              fetchPendingInvoices();
-              
             } catch (publishError: any) {
-              console.error("❌ Error en publicación automática:", publishError);
+              console.error("❌ Error en publicación:", publishError);
               toast.error("Error al publicar: " + (publishError.message || "Error desconocido"));
-              
-              // Revertir el estado de publishing de todas las facturas
-              setInvoices((prev) =>
-                prev.map((inv) => 
-                  documentIds.includes(inv.id) 
-                    ? { ...inv, _isPublishing: false } 
-                    : inv
-                )
-              );
+              invalidateInvoices(); // Recargar para restaurar estado
             }
-          } else {
-            console.warn(`⚠️ No se puede publicar automáticamente - cuenta vacía o inválida:`, valueToSave);
-            toast.warning("Cuenta guardada pero valor inválido para publicar");
           }
         }
       }
@@ -900,11 +567,6 @@ const InvoicesPendingLog = () => {
         );
       }
 
-      // Update local state
-      setInvoices((prev) =>
-        prev.map((inv) => (inv.id === id ? { ...inv, [field]: valueToSave } : inv))
-      );
-      
       if (field !== "default_account_ref") {
         toast.success("Actualizado correctamente");
       }
@@ -916,14 +578,19 @@ const InvoicesPendingLog = () => {
 
   const handleDeleteInvoice = async (id: string) => {
     try {
+      // Optimistic update
+      setFilteredInvoices((prev) => prev.filter((inv) => inv.id !== id));
+      
       const { error } = await supabase
         .from("processed_documents")
         .delete()
         .eq("id", id);
 
-      if (error) throw error;
+      if (error) {
+        invalidateInvoices(); // Restore on error
+        throw error;
+      }
 
-      setInvoices((prev) => prev.filter((inv) => inv.id !== id));
       toast.success("Factura eliminada");
     } catch (error: any) {
       console.error("Error deleting invoice:", error);
@@ -944,7 +611,7 @@ const InvoicesPendingLog = () => {
       if (error) throw error;
 
       toast.success("Factura publicada correctamente");
-      await fetchPendingInvoices();
+      invalidateInvoices();
     } catch (error: any) {
       console.error("Error publishing invoice:", error);
       toast.error(error.message || "Error al publicar factura");
@@ -976,7 +643,8 @@ const InvoicesPendingLog = () => {
       if (error) throw error;
 
       toast.success(`${filteredInvoices.length} facturas publicadas correctamente`);
-      await fetchPendingInvoices();
+      invalidateInvoices();
+      setFilteredInvoices([]);
       setShowPublishDialog(false);
     } catch (error: any) {
       console.error("Error publishing all:", error);
@@ -1127,7 +795,7 @@ const InvoicesPendingLog = () => {
           toast.error("Error al actualizar el estado de la factura");
         } else {
           // Refrescar la lista
-          await fetchPendingInvoices();
+          invalidateInvoices();
           toast.success("Estado actualizado correctamente");
         }
       }
