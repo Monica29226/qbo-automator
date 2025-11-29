@@ -434,17 +434,21 @@ const InvoicesPendingLog = () => {
       return;
     }
     updatingInvoicesRef.current.add(updateKey);
+    
+    console.log('🎯 handleUpdateInvoice llamado con ID:', id, 'Field:', field);
 
     try {
       const invoice = rawInvoices.find((inv) => inv.id === id) || filteredInvoices.find((inv) => inv.id === id);
       if (!invoice) {
-        console.error('❌ Factura no encontrada:', id);
+        console.error('❌ Factura no encontrada con ID:', id);
+        console.log('📋 IDs en rawInvoices:', rawInvoices.slice(0, 5).map(i => i.id));
         toast.error("Error: Factura no encontrada. Recargue la página.");
         updatingInvoicesRef.current.delete(updateKey);
         return;
       }
 
-      console.log('💾 Actualizando campo:', field, 'para factura:', invoice.doc_number);
+      console.log('✅ Factura encontrada:', invoice.doc_number, '-', invoice.supplier_name);
+      toast.loading(`Guardando cuenta para ${invoice.supplier_name}...`, { id: `saving-${id}` });
 
       // Si estamos actualizando default_account_ref, convertir el ID a código
       let valueToSave = value;
@@ -547,6 +551,8 @@ const InvoicesPendingLog = () => {
             removeInvoicesByVendor(vendorName);
             setFilteredInvoices((prev) => prev.filter((inv) => inv.supplier_name !== vendorName));
             
+            // Cerrar toast de guardando y mostrar toast de publicando
+            toast.dismiss(`saving-${id}`);
             toast.success(`✓ Publicando ${count} factura${count > 1 ? 's' : ''} de ${vendorName}...`);
             
             try {
@@ -588,6 +594,7 @@ const InvoicesPendingLog = () => {
       }
 
       if (field !== "default_account_ref") {
+        toast.dismiss(`saving-${id}`);
         toast.success("Actualizado correctamente");
       }
       
@@ -595,6 +602,7 @@ const InvoicesPendingLog = () => {
       updatingInvoicesRef.current.delete(updateKey);
     } catch (error: any) {
       console.error("Error updating invoice:", error);
+      toast.dismiss(`saving-${id}`);
       toast.error(`Error al actualizar: ${error.message || 'Error desconocido'}`);
       // Limpiar guard en caso de error
       updatingInvoicesRef.current.delete(updateKey);
@@ -1162,11 +1170,16 @@ const InvoicesPendingLog = () => {
                                 accounts={qboAccounts}
                                 value={getAccountIdFromCode(invoice.default_account_ref)}
                                 onValueChange={(value) => {
-                                  console.log('🔄 Cuenta seleccionada - ID:', value);
-                                  console.log('📋 Cuenta actual antes de cambio:', invoice.default_account_ref);
-                                  console.log(`📊 qboAccounts disponibles: ${qboAccounts.length}`);
+                                  // Capturar ID inmediatamente para evitar race conditions
+                                  const invoiceId = invoice.id;
+                                  const invoiceDocNum = invoice.doc_number;
+                                  const supplierName = invoice.supplier_name;
+                                  
+                                  console.log('🔄 Cuenta seleccionada para:', invoiceDocNum, supplierName);
+                                  console.log('📌 Invoice ID capturado:', invoiceId);
+                                  
                                   handleUpdateInvoice(
-                                    invoice.id,
+                                    invoiceId,
                                     "default_account_ref",
                                     value
                                   );
@@ -1177,7 +1190,7 @@ const InvoicesPendingLog = () => {
                                   loadingAccounts 
                                     ? "Cargando cuentas..." 
                                     : qboAccounts.length === 0 
-                                      ? "Sin cuentas - verificar QB" 
+                                      ? "Sin cuentas - verificar QB"
                                       : "Seleccionar cuenta"
                                 }
                               />
