@@ -100,40 +100,68 @@ const UsersManagement = () => {
   const fetchData = async () => {
     setIsLoading(true);
 
-    // Fetch all users with their roles and organizations
-    const { data: usersData, error: usersError } = await supabase
-      .from("profiles")
-      .select(`
-        id,
-        email,
-        full_name,
-        created_at,
-        user_roles(role),
-        organization_members!inner(
+    try {
+      // Fetch profiles with organization members (separate queries to avoid FK issues)
+      const { data: profilesData, error: profilesError } = await supabase
+        .from("profiles")
+        .select(`
+          id,
+          email,
+          full_name,
+          created_at
+        `)
+        .order("created_at", { ascending: false });
+
+      if (profilesError) {
+        toast.error("Error al cargar usuarios");
+        console.error(profilesError);
+        setIsLoading(false);
+        return;
+      }
+
+      // Fetch user roles separately
+      const { data: rolesData } = await supabase
+        .from("user_roles")
+        .select("user_id, role");
+
+      // Fetch organization members with org names
+      const { data: membersData } = await supabase
+        .from("organization_members")
+        .select(`
+          user_id,
           organization_id,
           role,
           is_active,
           organizations(name)
-        )
-      `)
-      .order("created_at", { ascending: false });
+        `)
+        .eq("is_active", true);
 
-    if (usersError) {
-      toast.error("Error al cargar usuarios");
-      console.error(usersError);
-    } else {
+      // Create lookup maps
+      const rolesMap = new Map<string, string>();
+      (rolesData || []).forEach((r: any) => rolesMap.set(r.user_id, r.role));
+
+      const membersMap = new Map<string, { name: string }[]>();
+      (membersData || []).forEach((m: any) => {
+        const existing = membersMap.get(m.user_id) || [];
+        if (m.organizations?.name) {
+          existing.push({ name: m.organizations.name });
+        }
+        membersMap.set(m.user_id, existing);
+      });
+
       // Transform the data
-      const transformedUsers: UserProfile[] = (usersData || []).map((user: any) => ({
+      const transformedUsers: UserProfile[] = (profilesData || []).map((user: any) => ({
         id: user.id,
         email: user.email,
         full_name: user.full_name,
-        role: user.user_roles?.[0]?.role || "user",
+        role: rolesMap.get(user.id) || "user",
         created_at: user.created_at,
-        organizations: user.organization_members
-          ?.filter((m: any) => m.is_active)
-          ?.map((m: any) => ({ name: m.organizations?.name })) || [],
+        organizations: membersMap.get(user.id) || [],
       }));
       setUsers(transformedUsers);
+    } catch (err) {
+      console.error("Error fetching users:", err);
+      toast.error("Error al cargar usuarios");
     }
 
     // Fetch all organizations
