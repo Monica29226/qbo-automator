@@ -476,7 +476,7 @@ Deno.serve(async (req) => {
           return defaultNoTaxId;
         };
 
-        // Función para obtener ID de cuenta (con retry)
+        // Función para obtener ID de cuenta (con retry y búsqueda mejorada)
         const getAccountIdByCode = async (accountCode: string): Promise<string | null> => {
           try {
             const query = `SELECT Id, Name, AcctNum, AccountType FROM Account MAXRESULTS 1000`;
@@ -494,22 +494,51 @@ Deno.serve(async (req) => {
             const data = await response.json();
             const allAccounts = data.QueryResponse?.Account || [];
             
-            // Buscar match exacto
-            let targetAccount = allAccounts.find((acc: any) => {
-              if (acc.AcctNum && acc.AcctNum === accountCode) return true;
-              if (acc.Name && acc.Name.startsWith(accountCode + ' ')) return true;
-              if (acc.Name && acc.Name.startsWith(accountCode + '-')) return true;
-              return false;
-            });
+            // Normalizar el código de búsqueda
+            const searchCode = accountCode.trim();
+            const searchCodeLower = searchCode.toLowerCase();
+            
+            logInfo(`🔍 Buscando cuenta con código: "${searchCode}" entre ${allAccounts.length} cuentas`);
+            
+            // 1. Buscar match exacto por AcctNum
+            let targetAccount = allAccounts.find((acc: any) => 
+              acc.AcctNum && acc.AcctNum === searchCode
+            );
             
             if (targetAccount) {
-              log(`✅ Account found: ${accountCode} → ${targetAccount.Id}`);
+              logInfo(`✅ Cuenta encontrada por AcctNum exacto: ${targetAccount.Name} (ID: ${targetAccount.Id})`);
               return targetAccount.Id;
             }
             
-            // Fallback: buscar cuenta padre
-            if (accountCode.includes('-')) {
-              const baseCode = accountCode.split('-')[0];
+            // 2. Buscar por nombre que empiece con el código
+            targetAccount = allAccounts.find((acc: any) => {
+              const name = acc.Name || '';
+              return name.startsWith(searchCode + ' ') || 
+                     name.startsWith(searchCode + '-') ||
+                     name.startsWith(searchCode + ':');
+            });
+            
+            if (targetAccount) {
+              logInfo(`✅ Cuenta encontrada por nombre con código: ${targetAccount.Name} (ID: ${targetAccount.Id})`);
+              return targetAccount.Id;
+            }
+            
+            // 3. Buscar por nombre que CONTENGA el código/palabra clave
+            const searchWords = searchCodeLower.split(/[\s\-]+/);
+            targetAccount = allAccounts.find((acc: any) => {
+              const nameLower = (acc.Name || '').toLowerCase();
+              // Si busca "Combustibles", encontrar cuenta que contenga esa palabra
+              return searchWords.some(word => word.length > 3 && nameLower.includes(word));
+            });
+            
+            if (targetAccount) {
+              logInfo(`✅ Cuenta encontrada por palabra clave: ${targetAccount.Name} (ID: ${targetAccount.Id})`);
+              return targetAccount.Id;
+            }
+            
+            // 4. Fallback: buscar cuenta padre si tiene guión
+            if (searchCode.includes('-')) {
+              const baseCode = searchCode.split('-')[0];
               
               targetAccount = allAccounts.find((acc: any) => {
                 if (acc.AcctNum && acc.AcctNum === baseCode) return true;
@@ -518,14 +547,35 @@ Deno.serve(async (req) => {
               });
               
               if (targetAccount) {
-                log(`⚠️ Using parent account: ${baseCode} → ${targetAccount.Id}`);
+                logInfo(`⚠️ Usando cuenta padre: ${targetAccount.Name} (ID: ${targetAccount.Id})`);
                 return targetAccount.Id;
               }
             }
             
-            logError(`❌ Account ${accountCode} not found`);
+            // Log de cuentas similares para debug
+            const similarAccounts = allAccounts
+              .filter((acc: any) => {
+                const name = (acc.Name || '').toLowerCase();
+                const acctNum = (acc.AcctNum || '').toLowerCase();
+                return name.includes('combust') || 
+                       name.includes('gasolin') ||
+                       name.includes('costo') ||
+                       acctNum.startsWith('51');
+              })
+              .slice(0, 10);
+            
+            if (similarAccounts.length > 0) {
+              logError(`❌ Cuenta "${searchCode}" no encontrada. Cuentas similares disponibles:`);
+              similarAccounts.forEach((acc: any) => {
+                logError(`   - ${acc.AcctNum || 'Sin código'}: ${acc.Name} (ID: ${acc.Id})`);
+              });
+            } else {
+              logError(`❌ Cuenta "${searchCode}" no encontrada y no hay cuentas similares`);
+            }
+            
             return null;
-          } catch {
+          } catch (err) {
+            logError('Error buscando cuenta:', err);
             return null;
           }
         };
