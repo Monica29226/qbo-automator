@@ -32,7 +32,16 @@ import NotFound from "./pages/NotFound";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import { AuthProvider } from "./contexts/AuthContext";
 
-const queryClient = new QueryClient();
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 5 * 60 * 1000, // 5 minutos - datos considerados frescos
+      gcTime: 10 * 60 * 1000, // 10 minutos - tiempo en cache
+      refetchOnWindowFocus: false, // No refetch al cambiar ventana
+      retry: 1, // Solo 1 reintento en caso de error
+    },
+  },
+});
 
 const App = () => (
   <QueryClientProvider client={queryClient}>

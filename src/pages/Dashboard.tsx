@@ -30,125 +30,25 @@ import { DashboardSidebar } from "@/components/DashboardSidebar";
 import { SidebarProvider, SidebarTrigger, SidebarInset } from "@/components/ui/sidebar";
 import { useAuth } from "@/hooks/useAuth";
 import { Link, useNavigate } from "react-router-dom";
-import { useEffect, useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
+import { useDashboardStats, useOrganizationConnections } from "@/hooks/useDashboardStats";
 
 const Dashboard = () => {
   const { user, isAdmin, activeOrganization, signOut } = useAuth();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const [stats, setStats] = useState({
-    processed: 0,
-    review: 0,
-    pending: 0,
-    total: 0,
-    errors: 0,
-    published: 0,
-    pendingConfig: 0, // Facturas pendientes de configurar (sin cuenta asignada)
-  });
+  
+  // React Query hooks for cached data
+  const { data: stats = { processed: 0, review: 0, pending: 0, total: 0, errors: 0, published: 0, pendingConfig: 0 } } = useDashboardStats(activeOrganization);
+  const { data: connections = { gmail: false, quickbooks: false } } = useOrganizationConnections(activeOrganization);
+  
   const [isFetchingEmails, setIsFetchingEmails] = useState(false);
   const [isAutoSyncing, setIsAutoSyncing] = useState(false);
   const [isRetryingErrors, setIsRetryingErrors] = useState(false);
   const [isErrorModalOpen, setIsErrorModalOpen] = useState(false);
-  const [connections, setConnections] = useState({
-    gmail: false,
-    quickbooks: false,
-  });
-
-  useEffect(() => {
-    if (activeOrganization) {
-      fetchStatsAndConnections();
-
-      // Debounced realtime update - only refresh every 2 seconds max
-      let timeoutId: NodeJS.Timeout;
-      const channel = supabase
-        .channel('dashboard_stats_changes')
-        .on(
-          'postgres_changes',
-          {
-            event: '*',
-            schema: 'public',
-            table: 'processed_documents',
-            filter: `organization_id=eq.${activeOrganization}`
-          },
-          () => {
-            clearTimeout(timeoutId);
-            timeoutId = setTimeout(() => {
-              fetchStatsAndConnections();
-            }, 2000);
-          }
-        )
-        .subscribe();
-
-      return () => {
-        clearTimeout(timeoutId);
-        supabase.removeChannel(channel);
-      };
-    }
-  }, [activeOrganization]);
-
-  // Combined fetch for stats and connections - single query optimization
-  const fetchStatsAndConnections = useCallback(async () => {
-    if (!activeOrganization) return;
-
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-
-    // Parallel queries for better performance
-    const [docsResult, accountsResult, pendingConfigResult] = await Promise.all([
-      supabase
-        .from("processed_documents")
-        .select("status, created_at, processed_at")
-        .eq("organization_id", activeOrganization)
-        .gte("created_at", sevenDaysAgo.toISOString()),
-      supabase
-        .from("integration_accounts")
-        .select("service_type")
-        .eq("organization_id", activeOrganization)
-        .eq("is_active", true),
-      // Query para TODAS las facturas pendientes (sin filtro de fecha para el badge)
-      supabase
-        .from("processed_documents")
-        .select("id")
-        .eq("organization_id", activeOrganization)
-        .in("status", ["pending", "pending_config"])
-        .is("qbo_entity_id", null)
-    ]);
-
-    if (!docsResult.error && docsResult.data) {
-      const data = docsResult.data;
-      const processedToday = data.filter(
-        (doc) => doc.processed_at && new Date(doc.processed_at) >= today && 
-        (doc.status === "processed" || doc.status === "published")
-      );
-      
-      // Contar TODAS las facturas pendientes sin publicar a QBO
-      const pendingConfigCount = !pendingConfigResult.error && pendingConfigResult.data 
-        ? pendingConfigResult.data.length 
-        : 0;
-      
-      setStats({
-        processed: processedToday.length,
-        review: data.filter((d) => d.status === "review").length,
-        pending: data.filter((d) => d.status === "pending").length,
-        total: data.length,
-        errors: data.filter((d) => d.status === "error").length,
-        published: data.filter((d) => d.status === "published").length,
-        pendingConfig: pendingConfigCount,
-      });
-    }
-
-    if (!accountsResult.error && accountsResult.data) {
-      const accounts = accountsResult.data;
-      setConnections({
-        gmail: accounts.some(a => a.service_type === "gmail"),
-        quickbooks: accounts.some(a => a.service_type === "quickbooks"),
-      });
-    }
-  }, [activeOrganization]);
 
   const getMonthName = useCallback((month: number) => {
     const months = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 
@@ -162,6 +62,13 @@ const Dashboard = () => {
     quickbooks: connections.quickbooks,
     both: connections.gmail && connections.quickbooks
   }), [connections.gmail, connections.quickbooks]);
+  
+  // Helper to refresh data after actions
+  const refreshData = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: ["dashboard-stats"] });
+    queryClient.invalidateQueries({ queryKey: ["recent-documents"] });
+    queryClient.invalidateQueries({ queryKey: ["organization-connections"] });
+  }, [queryClient]);
 
   const handleFetchGmailInvoices = useCallback(async (month?: number, year?: number) => {
     if (!activeOrganization) return;
@@ -217,15 +124,14 @@ const Dashboard = () => {
       }
 
       // Refrescar stats y documentos
-      fetchStatsAndConnections();
-      queryClient.invalidateQueries({ queryKey: ["recent-documents"] });
+      refreshData();
     } catch (error) {
       console.error("Error fetching Gmail invoices:", error);
       toast.error("Error al obtener facturas de Gmail");
     } finally {
       setIsFetchingEmails(false);
     }
-  }, [activeOrganization, navigate, queryClient, fetchStatsAndConnections, getMonthName]);
+  }, [activeOrganization, navigate, refreshData, getMonthName]);
 
 
   const handleAutoSync = useCallback(async () => {
@@ -252,15 +158,14 @@ const Dashboard = () => {
         }
       }
 
-      fetchStatsAndConnections();
-      queryClient.invalidateQueries({ queryKey: ["recent-documents"] });
+      refreshData();
     } catch (error) {
       console.error("Error in auto-sync:", error);
       toast.error("Error al ejecutar sincronización automática");
     } finally {
       setIsAutoSyncing(false);
     }
-  }, [activeOrganization, queryClient, fetchStatsAndConnections]);
+  }, [activeOrganization, refreshData]);
 
   const handleForceResync = useCallback(async () => {
     if (!activeOrganization) return;
@@ -286,15 +191,14 @@ const Dashboard = () => {
       
       toast.success(`✓ ${processed} facturas reprocesadas${failed > 0 ? ` (${failed} fallidas)` : ''}`);
       
-      fetchStatsAndConnections();
-      queryClient.invalidateQueries({ queryKey: ["recent-documents"] });
+      refreshData();
     } catch (error: any) {
       console.error("Error in force resync:", error);
       toast.error(`Error al forzar sincronización: ${error.message}`);
     } finally {
       setIsFetchingEmails(false);
     }
-  }, [activeOrganization, queryClient, fetchStatsAndConnections]);
+  }, [activeOrganization, refreshData]);
 
   const handlePublishToQuickBooks = useCallback(async () => {
     if (!activeOrganization) return;
@@ -342,15 +246,14 @@ const Dashboard = () => {
       }
 
       // Refrescar stats y documentos
-      fetchStatsAndConnections();
-      queryClient.invalidateQueries({ queryKey: ["recent-documents"] });
+      refreshData();
     } catch (error) {
       console.error("Error publishing to QuickBooks:", error);
       toast.error("Error al publicar en QuickBooks");
     } finally {
       setIsFetchingEmails(false);
     }
-  }, [activeOrganization, navigate, queryClient, fetchStatsAndConnections]);
+  }, [activeOrganization, navigate, refreshData]);
 
   const handleRetryAllErrors = useCallback(async () => {
     if (!activeOrganization) return;
@@ -381,15 +284,14 @@ const Dashboard = () => {
       }
 
       // Refrescar stats y documentos
-      fetchStatsAndConnections();
-      queryClient.invalidateQueries({ queryKey: ["recent-documents"] });
+      refreshData();
     } catch (error) {
       console.error("Error retrying error documents:", error);
       toast.error("Error al reintentar facturas con errores");
     } finally {
       setIsRetryingErrors(false);
     }
-  }, [activeOrganization, queryClient, fetchStatsAndConnections]);
+  }, [activeOrganization, refreshData]);
 
   if (!activeOrganization) {
     return (
@@ -464,8 +366,7 @@ const Dashboard = () => {
                 </Button>
                 <GmailFetchDialog 
                   onSuccess={() => {
-                    fetchStatsAndConnections();
-                    queryClient.invalidateQueries({ queryKey: ["recent-documents"] });
+                    refreshData();
                   }}
                 />
                 <Button 
