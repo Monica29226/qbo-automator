@@ -142,9 +142,8 @@ const InvoicesPendingLog = () => {
   const debouncedMinAmount = useDebounce(filterMinAmount, 300);
   const debouncedMaxAmount = useDebounce(filterMaxAmount, 300);
 
-  // Normalizar nombre de vendor para comparación
-  // Aplicar filtros cuando cambian los datos o filtros
-  useEffect(() => {
+  // Memoizar facturas filtradas para evitar re-renders infinitos
+  const filteredData = useMemo(() => {
     let filtered = [...rawInvoices];
 
     // Filtro por número de documento (debounced)
@@ -217,9 +216,18 @@ const InvoicesPendingLog = () => {
       });
     }
 
-    setFilteredInvoices(filtered);
-    setSelectedIds(new Set());
+    return filtered;
   }, [debouncedSearchTerm, rawInvoices, debouncedDocNumber, debouncedSupplier, dateRange, filterQBStatus, debouncedMinAmount, debouncedMaxAmount]);
+
+  // Sincronizar filteredInvoices solo cuando filteredData cambia
+  useEffect(() => {
+    setFilteredInvoices(filteredData);
+  }, [filteredData]);
+
+  // Limpiar selección solo cuando cambian los filtros de búsqueda (no los datos)
+  useEffect(() => {
+    setSelectedIds(new Set());
+  }, [debouncedDocNumber, debouncedSupplier, debouncedSearchTerm, filterQBStatus]);
 
   // Función para limpiar todos los filtros
   const clearAllFilters = () => {
