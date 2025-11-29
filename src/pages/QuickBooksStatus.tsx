@@ -44,6 +44,8 @@ const QuickBooksStatus = () => {
   useEffect(() => {
     if (activeOrganization) {
       fetchDocuments();
+    } else {
+      setIsLoading(false);
     }
   }, [activeOrganization]);
 
@@ -60,7 +62,8 @@ const QuickBooksStatus = () => {
         .from("processed_documents")
         .select("*")
         .eq("organization_id", activeOrganization)
-        .order("created_at", { ascending: false });
+        .order("created_at", { ascending: false })
+        .limit(500);
 
       if (error) throw error;
       setDocuments(data || []);

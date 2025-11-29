@@ -49,20 +49,21 @@ export default function AuditReport() {
   useEffect(() => {
     if (activeOrganization) {
       fetchData();
+    } else {
+      setIsLoading(false);
     }
   }, [activeOrganization]);
 
   const fetchData = async () => {
     setIsLoading(true);
     try {
-      // Fetch documents from November 2025 onwards
+      // Fetch ALL documents (sin filtro de fecha para auditoría completa)
       const { data: docs, error: docsError } = await supabase
         .from("processed_documents")
         .select("*")
         .eq("organization_id", activeOrganization)
-        .gte("issue_date", "2025-11-01")
         .order("issue_date", { ascending: false })
-        .limit(500);
+        .limit(1000);
 
       if (docsError) throw docsError;
 
