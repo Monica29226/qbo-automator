@@ -66,6 +66,7 @@ const UsersManagement = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [isInviteDialogOpen, setIsInviteDialogOpen] = useState(false);
   const [isSending, setIsSending] = useState(false);
+  const [selectedOrganizations, setSelectedOrganizations] = useState<string[]>([]);
   const [formData, setFormData] = useState({
     email: "",
     role: "member",
@@ -232,21 +233,23 @@ const UsersManagement = () => {
       return;
     }
 
-    if (organizations.length === 0) {
-      toast.error("No hay empresas disponibles");
+    if (selectedOrganizations.length === 0) {
+      toast.error("Seleccione al menos una empresa");
       return;
     }
 
     setIsSending(true);
 
     try {
+      // Get selected organizations
+      const orgsToInvite = organizations.filter(org => selectedOrganizations.includes(org.id));
+      
       // Send invitations sequentially with delay to avoid rate limits
-      const results = [];
       let successCount = 0;
       let errorCount = 0;
 
-      for (let i = 0; i < organizations.length; i++) {
-        const org = organizations[i];
+      for (let i = 0; i < orgsToInvite.length; i++) {
+        const org = orgsToInvite[i];
         
         try {
           const result = await supabase.functions.invoke("send-invitation", {
@@ -257,8 +260,6 @@ const UsersManagement = () => {
             },
           });
 
-          results.push(result);
-          
           if (result.error || result.data?.error) {
             errorCount++;
             console.error(`Error inviting to ${org.name}:`, result.error || result.data?.error);
@@ -266,8 +267,8 @@ const UsersManagement = () => {
             successCount++;
           }
 
-          // Add delay between requests to avoid rate limits (500ms = 2 requests/second max)
-          if (i < organizations.length - 1) {
+          // Add delay between requests to avoid rate limits
+          if (i < orgsToInvite.length - 1) {
             await new Promise(resolve => setTimeout(resolve, 600));
           }
         } catch (err) {
@@ -278,14 +279,15 @@ const UsersManagement = () => {
 
       if (errorCount === 0) {
         toast.success(
-          `Usuario invitado a todas las ${organizations.length} empresas. Recibirá un correo para establecer su contraseña.`
+          `Usuario invitado a ${successCount} empresa${successCount > 1 ? 's' : ''}. Recibirá un correo para establecer su contraseña.`
         );
         setIsInviteDialogOpen(false);
         setFormData({ email: "", role: "member" });
+        setSelectedOrganizations([]);
         fetchData();
       } else if (successCount > 0) {
         toast.warning(
-          `Invitaciones enviadas a ${successCount} de ${organizations.length} empresas. ${errorCount} fallaron.`
+          `Invitaciones enviadas a ${successCount} de ${orgsToInvite.length} empresas. ${errorCount} fallaron.`
         );
         fetchData();
       } else {
@@ -296,6 +298,22 @@ const UsersManagement = () => {
     } finally {
       setIsSending(false);
     }
+  };
+
+  const toggleOrganization = (orgId: string) => {
+    setSelectedOrganizations(prev => 
+      prev.includes(orgId) 
+        ? prev.filter(id => id !== orgId)
+        : [...prev, orgId]
+    );
+  };
+
+  const selectAllOrganizations = () => {
+    setSelectedOrganizations(organizations.map(org => org.id));
+  };
+
+  const clearAllOrganizations = () => {
+    setSelectedOrganizations([]);
   };
 
   const handleDeleteInvitation = async (invitationIds: string[]) => {
@@ -528,11 +546,11 @@ const UsersManagement = () => {
 
       {/* Invitation Dialog */}
       <Dialog open={isInviteDialogOpen} onOpenChange={setIsInviteDialogOpen}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Invitar Usuario de ACL</DialogTitle>
             <DialogDescription>
-              El usuario será invitado automáticamente a TODAS las empresas del sistema.
+              Selecciona las empresas a las que el usuario tendrá acceso.
               Recibirá un correo para establecer su contraseña.
             </DialogDescription>
           </DialogHeader>
@@ -576,14 +594,65 @@ const UsersManagement = () => {
               </p>
             </div>
 
-            <div className="border rounded-lg p-3 bg-muted/30">
-              <div className="flex items-center gap-2 text-sm">
-                <Building2 className="h-4 w-4 text-primary" />
-                <span className="font-medium">Empresas con acceso:</span>
-                <Badge variant="default">Todas ({organizations.length})</Badge>
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label>Empresas con acceso *</Label>
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={selectAllOrganizations}
+                    className="text-xs h-7"
+                  >
+                    <CheckSquare className="h-3 w-3 mr-1" />
+                    Todas
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={clearAllOrganizations}
+                    className="text-xs h-7"
+                  >
+                    <Square className="h-3 w-3 mr-1" />
+                    Ninguna
+                  </Button>
+                </div>
               </div>
-              <p className="text-xs text-muted-foreground mt-2">
-                El usuario tendrá acceso a todas las empresas del sistema automáticamente
+              
+              <div className="border rounded-lg max-h-48 overflow-y-auto">
+                {organizations.length === 0 ? (
+                  <p className="p-3 text-sm text-muted-foreground text-center">
+                    No hay empresas disponibles
+                  </p>
+                ) : (
+                  <div className="divide-y">
+                    {organizations.map((org) => (
+                      <label
+                        key={org.id}
+                        className="flex items-center gap-3 p-3 cursor-pointer hover:bg-muted/50 transition-colors"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selectedOrganizations.includes(org.id)}
+                          onChange={() => toggleOrganization(org.id)}
+                          className="h-4 w-4 rounded border-input text-primary focus:ring-primary"
+                        />
+                        <div className="flex items-center gap-2 flex-1 min-w-0">
+                          <Building2 className="h-4 w-4 text-muted-foreground shrink-0" />
+                          <span className="text-sm truncate">{org.name}</span>
+                        </div>
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
+              
+              <p className="text-xs text-muted-foreground">
+                {selectedOrganizations.length === 0 
+                  ? "Selecciona al menos una empresa"
+                  : `${selectedOrganizations.length} de ${organizations.length} empresas seleccionadas`}
               </p>
             </div>
           </div>
@@ -594,18 +663,22 @@ const UsersManagement = () => {
               onClick={() => {
                 setIsInviteDialogOpen(false);
                 setFormData({ email: "", role: "member" });
+                setSelectedOrganizations([]);
               }}
             >
               Cancelar
             </Button>
-            <Button onClick={handleSendInvitation} disabled={isSending}>
+            <Button 
+              onClick={handleSendInvitation} 
+              disabled={isSending || selectedOrganizations.length === 0}
+            >
               {isSending ? (
                 <>
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                   Enviando...
                 </>
               ) : (
-                "Enviar Invitación"
+                `Enviar Invitación (${selectedOrganizations.length})`
               )}
             </Button>
           </DialogFooter>
