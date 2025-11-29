@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
+import { useCallback } from "react";
 
 export interface PendingInvoice {
   id: string;
@@ -85,6 +86,9 @@ const fetchPendingInvoicesOptimized = async (organizationId: string): Promise<Pe
   });
 };
 
+// Arreglo vacío memoizado para evitar re-renders infinitos
+const EMPTY_INVOICES: PendingInvoice[] = [];
+
 export const usePendingInvoicesOptimized = () => {
   const { activeOrganization } = useAuth();
   const queryClient = useQueryClient();
@@ -98,26 +102,29 @@ export const usePendingInvoicesOptimized = () => {
     refetchOnWindowFocus: false,
   });
 
-  const removeInvoice = (id: string) => {
+  const removeInvoice = useCallback((id: string) => {
     queryClient.setQueryData<PendingInvoice[]>(
       ["pending-invoices-optimized", activeOrganization],
-      (old) => old?.filter(inv => inv.id !== id) || []
+      (old) => old?.filter(inv => inv.id !== id) || EMPTY_INVOICES
     );
-  };
+  }, [queryClient, activeOrganization]);
 
-  const removeInvoicesByVendor = (supplierName: string) => {
+  const removeInvoicesByVendor = useCallback((supplierName: string) => {
     queryClient.setQueryData<PendingInvoice[]>(
       ["pending-invoices-optimized", activeOrganization],
-      (old) => old?.filter(inv => inv.supplier_name !== supplierName) || []
+      (old) => old?.filter(inv => inv.supplier_name !== supplierName) || EMPTY_INVOICES
     );
-  };
+  }, [queryClient, activeOrganization]);
 
-  const invalidate = () => {
+  const invalidate = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: ["pending-invoices-optimized", activeOrganization] });
-  };
+  }, [queryClient, activeOrganization]);
+
+  // Memoizar el resultado para evitar nuevas referencias
+  const invoices = query.data ?? EMPTY_INVOICES;
 
   return {
-    invoices: query.data || [],
+    invoices,
     isLoading: query.isLoading,
     isError: query.isError,
     error: query.error,
