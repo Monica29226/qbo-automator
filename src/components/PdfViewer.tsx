@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { FileText, Download, ExternalLink, CheckCircle2 } from 'lucide-react';
+import { FileText, Download, ExternalLink, Loader2 } from 'lucide-react';
 
 interface PdfViewerProps {
   url: string;
@@ -8,30 +8,11 @@ interface PdfViewerProps {
 }
 
 export const PdfViewer = ({ url, fileName = 'documento' }: PdfViewerProps) => {
-  const [opened, setOpened] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
 
   const openInNewTab = () => {
-    // Crear una nueva ventana con el PDF
-    const newWindow = window.open('', '_blank');
-    if (newWindow) {
-      newWindow.document.write(`
-        <!DOCTYPE html>
-        <html>
-          <head>
-            <title>${fileName}</title>
-            <style>
-              body { margin: 0; padding: 0; height: 100vh; overflow: hidden; }
-              iframe { width: 100%; height: 100%; border: none; }
-            </style>
-          </head>
-          <body>
-            <iframe src="${url}"></iframe>
-          </body>
-        </html>
-      `);
-      newWindow.document.close();
-      setOpened(true);
-    }
+    window.open(url, '_blank');
   };
 
   const downloadPdf = () => {
@@ -43,55 +24,42 @@ export const PdfViewer = ({ url, fileName = 'documento' }: PdfViewerProps) => {
     document.body.removeChild(a);
   };
 
+  if (error) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full gap-4 p-8 text-center">
+        <FileText className="h-16 w-16 text-muted-foreground" />
+        <p className="text-muted-foreground">No se pudo mostrar el PDF en el visor</p>
+        <div className="flex gap-2">
+          <Button onClick={openInNewTab} className="gap-2">
+            <ExternalLink className="h-4 w-4" />
+            Abrir en nueva pestaña
+          </Button>
+          <Button variant="outline" onClick={downloadPdf} className="gap-2">
+            <Download className="h-4 w-4" />
+            Descargar
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="flex flex-col items-center justify-center h-full gap-6 p-8 text-center bg-gradient-to-b from-muted/30 to-muted/10">
-      <div className="w-24 h-32 bg-white rounded-lg shadow-lg flex items-center justify-center border-2 border-primary/20">
-        <FileText className="h-12 w-12 text-primary" />
-      </div>
-      
-      <div className="space-y-2">
-        <h3 className="text-xl font-semibold">{fileName}</h3>
-        <p className="text-sm text-muted-foreground max-w-md">
-          PDF listo para visualizar
-        </p>
-      </div>
-
-      <div className="flex flex-col sm:flex-row gap-3 mt-2">
-        <Button 
-          size="lg" 
-          onClick={openInNewTab}
-          className="gap-2"
-        >
-          {opened ? (
-            <>
-              <CheckCircle2 className="h-5 w-5" />
-              Abierto - Abrir de nuevo
-            </>
-          ) : (
-            <>
-              <ExternalLink className="h-5 w-5" />
-              Ver PDF
-            </>
-          )}
-        </Button>
-        
-        <Button 
-          variant="outline" 
-          size="lg" 
-          onClick={downloadPdf}
-          className="gap-2"
-        >
-          <Download className="h-5 w-5" />
-          Descargar
-        </Button>
-      </div>
-
-      {opened && (
-        <p className="text-xs text-green-600 flex items-center gap-1">
-          <CheckCircle2 className="h-3 w-3" />
-          PDF abierto en nueva pestaña
-        </p>
+    <div className="relative w-full h-full min-h-[500px]">
+      {loading && (
+        <div className="absolute inset-0 flex items-center justify-center bg-background/80 z-10">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        </div>
       )}
+      <iframe
+        src={url}
+        className="w-full h-full border-0"
+        title={fileName}
+        onLoad={() => setLoading(false)}
+        onError={() => {
+          setLoading(false);
+          setError(true);
+        }}
+      />
     </div>
   );
 };
