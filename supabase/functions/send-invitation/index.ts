@@ -150,7 +150,7 @@ const handler = async (req: Request): Promise<Response> => {
         "Authorization": `Bearer ${RESEND_API_KEY}`,
       },
       body: JSON.stringify({
-        from: "InvoiceFlow <onboarding@resend.dev>",
+        from: "InvoiceFlow <noreply@aureoncr.com>",
         to: [email],
         subject: `Invitación a ${org.name}`,
         html: `
