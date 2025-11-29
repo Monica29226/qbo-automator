@@ -241,23 +241,24 @@ const InvoicesPendingLog = () => {
         return;
       }
 
-      // FILTRAR: Mostrar facturas que necesiten configuración
-      // (sin cuenta contable, sin centro de costo, o sin vendor_id)
-      // Y que no sean de vendors con regla ya configurada
+      // FILTRAR: Mostrar TODAS las facturas pendientes que no hayan sido publicadas
+      // Las facturas con cuenta configurada también deben mostrarse hasta que se publiquen
       const filteredDocs = docsData.filter(doc => {
-        // Verificar si necesita configuración
-        const needsConfig = !doc.default_account_ref || !doc.vendor_id;
+        // Si ya está publicada en QB, no mostrar
+        if (doc.qbo_entity_id) {
+          return false;
+        }
+        
+        // Mostrar si necesita configuración (sin cuenta)
+        const needsConfig = !doc.default_account_ref;
         
         // Verificar si el vendor ya tiene regla configurada
         const normalizedName = normalizeVendorName(doc.supplier_name);
         const hasRule = vendorsWithRules.has(normalizedName);
         
-        if (hasRule && !needsConfig) {
-          console.log(`⏭️ Ocultando factura ya configurada: ${doc.supplier_name} (${doc.doc_number})`);
-          return false;
-        }
-        
-        return needsConfig || !hasRule;
+        // Mostrar todas las facturas pendientes - con o sin cuenta configurada
+        // El objetivo es que el usuario pueda ver y publicar
+        return true;
       });
 
       console.log(`📄 Facturas: ${docsData.length} total, ${filteredDocs.length} sin regla de vendor`);
@@ -491,16 +492,6 @@ const InvoicesPendingLog = () => {
         // Buscar por cuenta contable
         if (inv.default_account_ref && inv.default_account_ref.toLowerCase().includes(searchLower)) return true;
         
-        // Buscar en la descripción de la cuenta usando el hook
-        if (inv.default_account_ref) {
-          const accountId = getAccountIdFromCode(inv.default_account_ref);
-          const account = getAccountById(accountId);
-          if (account) {
-            if (account.name.toLowerCase().includes(searchLower)) return true;
-            if (account.accountNumber && account.accountNumber.toLowerCase().includes(searchLower)) return true;
-          }
-        }
-        
         return false;
       });
     }
@@ -508,7 +499,8 @@ const InvoicesPendingLog = () => {
     setFilteredInvoices(filtered);
     // Limpiar selección cuando cambian los filtros
     setSelectedIds(new Set());
-  }, [debouncedSearchTerm, invoices, getAccountById, getAccountIdFromCode, debouncedDocNumber, debouncedSupplier, dateRange, filterQBStatus, debouncedMinAmount, debouncedMaxAmount]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [debouncedSearchTerm, invoices, debouncedDocNumber, debouncedSupplier, dateRange, filterQBStatus, debouncedMinAmount, debouncedMaxAmount]);
 
   // Función para limpiar todos los filtros
   const clearAllFilters = () => {
