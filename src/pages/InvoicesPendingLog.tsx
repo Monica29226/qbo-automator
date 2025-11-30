@@ -658,8 +658,6 @@ const InvoicesPendingLog = () => {
       return;
     }
 
-    const loadingToast = toast.loading("Abriendo PDF...");
-
     try {
       let pdfPath = invoice.pdf_attachment_url;
       
@@ -676,33 +674,24 @@ const InvoicesPendingLog = () => {
       }
       
       console.log("📂 Path final para storage:", pdfPath);
-      console.log("📥 Descargando PDF...");
       
-      // Descargar como blob
-      const { data: blobData, error: downloadError } = await supabase.storage
+      // Generar signed URL (1 hora de expiración)
+      const { data, error: signedUrlError } = await supabase.storage
         .from('company-documents')
-        .download(pdfPath);
+        .createSignedUrl(pdfPath, 3600);
 
-      if (downloadError) {
-        console.error("❌ Error descargando:", downloadError);
-        throw new Error(`No se pudo cargar el PDF: ${downloadError.message}`);
+      if (signedUrlError) {
+        console.error("❌ Error generando signed URL:", signedUrlError);
+        throw new Error(`No se pudo generar URL: ${signedUrlError.message}`);
       }
 
-      if (!blobData) {
-        throw new Error("El archivo PDF está vacío");
-      }
-
-      console.log("✅ PDF descargado:", { size: blobData.size, type: blobData.type });
+      console.log("✅ Signed URL generada");
       
-      // Crear blob URL y abrir directamente en nueva pestaña (más confiable que iframe)
-      const blobUrl = URL.createObjectURL(new Blob([blobData], { type: 'application/pdf' }));
-      window.open(blobUrl, '_blank');
-      
-      toast.dismiss(loadingToast);
-      toast.success("PDF abierto en nueva pestaña");
+      setCurrentPdfUrl(data.signedUrl);
+      setCurrentPdfName(`Factura ${invoice.doc_number}`);
+      setPdfViewerOpen(true);
       
     } catch (error: any) {
-      toast.dismiss(loadingToast);
       console.error("❌ Error al cargar PDF:", error);
       toast.error(error.message || "Error al cargar el PDF");
     }
@@ -710,13 +699,6 @@ const InvoicesPendingLog = () => {
 
   const handleClosePdfViewer = () => {
     setPdfViewerOpen(false);
-    
-    // IMPORTANTE: Liberar el blob URL para evitar memory leaks
-    if (currentPdfUrl && currentPdfUrl.startsWith('blob:')) {
-      URL.revokeObjectURL(currentPdfUrl);
-      console.log("🧹 Blob URL liberado");
-    }
-    
     setCurrentPdfUrl(null);
   };
 
