@@ -113,3 +113,9 @@ verify_jwt = true
 
 [functions.outlook-oauth-callback]
 verify_jwt = false
+
+[functions.gti-webhook-receiver]
+verify_jwt = false
+
+[functions.publish-sales-to-quickbooks]
+verify_jwt = true
