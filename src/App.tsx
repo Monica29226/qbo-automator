@@ -23,6 +23,7 @@ import AuditReport from "./pages/AuditReport";
 import VendorCategories from "./pages/VendorCategories";
 import MultiTenantDocs from "./pages/MultiTenantDocs";
 import InvoicesPendingLog from "./pages/InvoicesPendingLog";
+import SalesInvoices from "./pages/SalesInvoices";
 import QuickBooksStatus from "./pages/QuickBooksStatus";
 import UsersManagement from "./pages/UsersManagement";
 import MyCompany from "./pages/MyCompany";
@@ -180,6 +181,14 @@ const App = () => (
             element={
               <ProtectedRoute>
                 <InvoicesPendingLog />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/sales-invoices"
+            element={
+              <ProtectedRoute>
+                <SalesInvoices />
               </ProtectedRoute>
             }
           />

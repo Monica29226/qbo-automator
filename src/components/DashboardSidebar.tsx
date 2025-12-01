@@ -11,6 +11,7 @@ import {
   Settings,
   Shield,
   Users,
+  TrendingUp,
 } from "lucide-react";
 import calderonLogo from "@/assets/acl-logo-new.png";
 import {
@@ -47,10 +48,16 @@ export function DashboardSidebar({ isAdmin, reviewCount, onSignOut }: DashboardS
       show: true,
     },
     {
-      title: "Pendientes Configurar",
+      title: "Gastos Pendientes",
       icon: Clock,
       path: "/invoices-pending-log",
       badge: reviewCount > 0 ? reviewCount : undefined,
+      show: true,
+    },
+    {
+      title: "Facturas de Venta",
+      icon: TrendingUp,
+      path: "/sales-invoices",
       show: true,
     },
     {

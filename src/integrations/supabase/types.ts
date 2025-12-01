@@ -64,6 +64,53 @@ export type Database = {
           },
         ]
       }
+      customer_defaults: {
+        Row: {
+          created_at: string
+          customer_name: string
+          customer_tax_id: string | null
+          default_class_ref: string | null
+          default_income_account_ref: string | null
+          id: string
+          organization_id: string
+          payment_terms_ref: string | null
+          qbo_customer_ref: string | null
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          customer_name: string
+          customer_tax_id?: string | null
+          default_class_ref?: string | null
+          default_income_account_ref?: string | null
+          id?: string
+          organization_id: string
+          payment_terms_ref?: string | null
+          qbo_customer_ref?: string | null
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          customer_name?: string
+          customer_tax_id?: string | null
+          default_class_ref?: string | null
+          default_income_account_ref?: string | null
+          id?: string
+          organization_id?: string
+          payment_terms_ref?: string | null
+          qbo_customer_ref?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "customer_defaults_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       integration_accounts: {
         Row: {
           account_email: string | null
@@ -455,6 +502,116 @@ export type Database = {
           updated_at?: string
         }
         Relationships: []
+      }
+      sales_invoices: {
+        Row: {
+          created_at: string
+          currency: string
+          customer_email: string | null
+          customer_name: string
+          customer_tax_id: string | null
+          default_class_ref: string | null
+          default_income_account_ref: string | null
+          doc_key: string
+          doc_number: string
+          doc_type: string
+          error_message: string | null
+          exchange_rate: number | null
+          id: string
+          issue_date: string
+          organization_id: string
+          payment_terms_ref: string | null
+          pdf_attachment_url: string | null
+          processed_at: string | null
+          processed_by: string | null
+          qbo_customer_ref: string | null
+          qbo_entity_id: string | null
+          qbo_entity_type: string | null
+          retry_count: number | null
+          status: string
+          subtotal: number
+          total_amount: number
+          total_discount: number | null
+          total_tax: number | null
+          updated_at: string
+          xml_attachment_url: string | null
+          xml_data: Json | null
+        }
+        Insert: {
+          created_at?: string
+          currency?: string
+          customer_email?: string | null
+          customer_name: string
+          customer_tax_id?: string | null
+          default_class_ref?: string | null
+          default_income_account_ref?: string | null
+          doc_key: string
+          doc_number: string
+          doc_type?: string
+          error_message?: string | null
+          exchange_rate?: number | null
+          id?: string
+          issue_date: string
+          organization_id: string
+          payment_terms_ref?: string | null
+          pdf_attachment_url?: string | null
+          processed_at?: string | null
+          processed_by?: string | null
+          qbo_customer_ref?: string | null
+          qbo_entity_id?: string | null
+          qbo_entity_type?: string | null
+          retry_count?: number | null
+          status?: string
+          subtotal: number
+          total_amount: number
+          total_discount?: number | null
+          total_tax?: number | null
+          updated_at?: string
+          xml_attachment_url?: string | null
+          xml_data?: Json | null
+        }
+        Update: {
+          created_at?: string
+          currency?: string
+          customer_email?: string | null
+          customer_name?: string
+          customer_tax_id?: string | null
+          default_class_ref?: string | null
+          default_income_account_ref?: string | null
+          doc_key?: string
+          doc_number?: string
+          doc_type?: string
+          error_message?: string | null
+          exchange_rate?: number | null
+          id?: string
+          issue_date?: string
+          organization_id?: string
+          payment_terms_ref?: string | null
+          pdf_attachment_url?: string | null
+          processed_at?: string | null
+          processed_by?: string | null
+          qbo_customer_ref?: string | null
+          qbo_entity_id?: string | null
+          qbo_entity_type?: string | null
+          retry_count?: number | null
+          status?: string
+          subtotal?: number
+          total_amount?: number
+          total_discount?: number | null
+          total_tax?: number | null
+          updated_at?: string
+          xml_attachment_url?: string | null
+          xml_data?: Json | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sales_invoices_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       sync_logs: {
         Row: {
