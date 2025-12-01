@@ -1,4 +1,4 @@
-PdfViewerimport { serve } from "https://deno.land/std@0.177.0/http/server.ts";
+import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.7.1";
 
 const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY");
@@ -150,7 +150,7 @@ const handler = async (req: Request): Promise<Response> => {
         "Authorization": `Bearer ${RESEND_API_KEY}`,
       },
       body: JSON.stringify({
-        from: "InvoiceFlow <noreply@aureoncr.com>",
+        from: "InvoiceFlow <onboarding@resend.dev>",
         to: [email],
         subject: `Invitación a ${org.name}`,
         html: `

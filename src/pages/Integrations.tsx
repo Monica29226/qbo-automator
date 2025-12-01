@@ -102,6 +102,12 @@ const Integrations = () => {
       return;
     }
 
+    // Outlook requires OAuth flow
+    if (selectedService === "outlook") {
+      handleOutlookOAuth();
+      return;
+    }
+
     // QuickBooks requires OAuth flow
     if (selectedService === "quickbooks") {
       handleQuickBooksOAuth();
@@ -244,6 +250,99 @@ const Integrations = () => {
     } catch (error) {
       console.error("Error starting OAuth:", error);
       toast.error("Error al iniciar conexión con Gmail: " + (error instanceof Error ? error.message : "Error desconocido"));
+    }
+  };
+
+  const handleOutlookOAuth = async () => {
+    console.log("handleOutlookOAuth called");
+    
+    if (!activeOrganization) {
+      console.error("No active organization");
+      toast.error("No hay organización activa");
+      return;
+    }
+
+    try {
+      console.log("Getting current user...");
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        console.error("No user found");
+        toast.error("Usuario no autenticado");
+        return;
+      }
+
+      console.log("User found, showing toast...");
+      toast.info("Iniciando conexión con Outlook...");
+
+      const state = btoa(JSON.stringify({
+        organization_id: activeOrganization,
+        user_id: user.id,
+      }));
+
+      console.log("Calling outlook-oauth-init function...");
+      const { data, error } = await supabase.functions.invoke("outlook-oauth-init", {
+        body: { state },
+      });
+
+      console.log("Response from outlook-oauth-init:", { data, error });
+
+      if (error) {
+        console.error("Error from outlook-oauth-init:", error);
+        toast.error(`Error de función: ${JSON.stringify(error)}`);
+        throw error;
+      }
+
+      if (!data?.authUrl) {
+        console.error("No authUrl in response:", data);
+        throw new Error("No se recibió URL de autenticación");
+      }
+
+      console.log("Opening OAuth popup with URL:", data.authUrl);
+      const width = 500;
+      const height = 600;
+      const left = window.screen.width / 2 - width / 2;
+      const top = window.screen.height / 2 - height / 2;
+
+      const popup = window.open(
+        data.authUrl,
+        "Outlook OAuth",
+        `width=${width},height=${height},left=${left},top=${top}`
+      );
+
+      if (!popup) {
+        console.error("Popup blocked");
+        toast.error("Bloqueador de ventanas emergentes detectado. Por favor permite ventanas emergentes.");
+        return;
+      }
+
+      console.log("Popup opened successfully");
+
+      const messageHandler = (event: MessageEvent) => {
+        console.log("Message received:", event.data);
+        if (event.data.type === "outlook-connected") {
+          toast.success(`Outlook conectado: ${event.data.email}`);
+          setIsDialogOpen(false);
+          fetchData();
+          window.removeEventListener("message", messageHandler);
+        }
+      };
+
+      window.addEventListener("message", messageHandler);
+
+      const checkPopup = setInterval(() => {
+        if (popup?.closed) {
+          console.log("Popup closed");
+          clearInterval(checkPopup);
+          window.removeEventListener("message", messageHandler);
+          setTimeout(() => {
+            fetchData();
+            setIsDialogOpen(false);
+          }, 500);
+        }
+      }, 500);
+    } catch (error) {
+      console.error("Error starting Outlook OAuth:", error);
+      toast.error("Error al iniciar conexión con Outlook: " + (error instanceof Error ? error.message : "Error desconocido"));
     }
   };
 
@@ -603,7 +702,7 @@ const Integrations = () => {
             </DialogDescription>
           </DialogHeader>
 
-          {selectedService === "gmail" || selectedService === "quickbooks" ? (
+          {selectedService === "gmail" || selectedService === "outlook" || selectedService === "quickbooks" ? (
             <div className="space-y-4">
               <div className="bg-muted p-4 rounded-lg border border-border">
                 <p className="text-sm text-foreground mb-2">
@@ -612,6 +711,8 @@ const Integrations = () => {
                 <p className="text-xs text-muted-foreground mb-2">
                   {selectedService === "gmail" 
                     ? "Se abrirá una ventana de Google para que autorices el acceso de forma segura."
+                    : selectedService === "outlook"
+                    ? "Se abrirá una ventana de Microsoft para que autorices el acceso de forma segura."
                     : "Se abrirá una ventana de QuickBooks para que autorices el acceso de forma segura."
                   }
                   {" "}No necesitas ingresar tu contraseña aquí.
@@ -621,7 +722,7 @@ const Integrations = () => {
                 </p>
               </div>
               
-              {selectedService === "gmail" && (
+              {(selectedService === "gmail" || selectedService === "outlook") && (
                 <div className="bg-yellow-500/10 border border-yellow-500/30 p-4 rounded-lg">
                   <p className="text-sm font-semibold text-yellow-700 dark:text-yellow-400 mb-2">
                     ⚠️ Importante: Información sobre la conexión
@@ -690,13 +791,13 @@ const Integrations = () => {
               }}
               type="button"
             >
-              {isLoading && selectedService !== "gmail" && selectedService !== "quickbooks" ? (
+              {isLoading && selectedService !== "gmail" && selectedService !== "outlook" && selectedService !== "quickbooks" ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                   Agregando...
                 </>
               ) : (
-                selectedService === "gmail" || selectedService === "quickbooks" 
+                selectedService === "gmail" || selectedService === "outlook" || selectedService === "quickbooks" 
                   ? `Conectar con ${services.find((s) => s.id === selectedService)?.name}` 
                   : "Agregar Cuenta"
               )}

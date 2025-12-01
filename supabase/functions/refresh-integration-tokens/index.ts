@@ -18,11 +18,11 @@ serve(async (req) => {
 
     console.log("🔄 Iniciando verificación de tokens de integración...");
 
-    // Obtener todas las cuentas activas de Gmail y QuickBooks
+    // Obtener todas las cuentas activas de Gmail, QuickBooks y Outlook
     const { data: accounts, error: fetchError } = await supabase
       .from("integration_accounts")
       .select("*")
-      .in("service_type", ["gmail", "quickbooks"])
+      .in("service_type", ["gmail", "quickbooks", "outlook"])
       .eq("is_active", true);
 
     if (fetchError) throw fetchError;
@@ -37,6 +37,7 @@ serve(async (req) => {
     const results = {
       gmail: { checked: 0, refreshed: 0, warned: 0, failed: 0 },
       quickbooks: { checked: 0, refreshed: 0, warned: 0, failed: 0 },
+      outlook: { checked: 0, refreshed: 0, warned: 0, failed: 0 },
     };
 
     for (const account of accounts) {
@@ -191,6 +192,82 @@ serve(async (req) => {
           }
         } else if (hoursUntilExpiration < 48) {
           results.quickbooks.warned++;
+        }
+      }
+
+      // Outlook token refresh
+      if (account.service_type === "outlook") {
+        results.outlook.checked++;
+        
+        const expiresAt = typeof credentials.expires_at === "string"
+          ? new Date(credentials.expires_at).getTime()
+          : credentials.expires_at;
+
+        const hoursUntilExpiration = (expiresAt - now) / (1000 * 60 * 60);
+
+        // Microsoft tokens expire in 1 hour, refresh if less than 30 minutes remaining
+        if (hoursUntilExpiration < 0.5) {
+          console.log(`⚠️ Outlook token expirando en ${Math.floor(hoursUntilExpiration * 60)} minutos, renovando...`);
+          
+          try {
+            const MICROSOFT_CLIENT_ID = Deno.env.get("MICROSOFT_CLIENT_ID")!;
+            const MICROSOFT_CLIENT_SECRET = Deno.env.get("MICROSOFT_CLIENT_SECRET")!;
+
+            const refreshResponse = await fetch("https://login.microsoftonline.com/common/oauth2/v2.0/token", {
+              method: "POST",
+              headers: { "Content-Type": "application/x-www-form-urlencoded" },
+              body: new URLSearchParams({
+                client_id: MICROSOFT_CLIENT_ID,
+                client_secret: MICROSOFT_CLIENT_SECRET,
+                refresh_token: credentials.refresh_token,
+                grant_type: "refresh_token",
+                scope: "offline_access Mail.Read Mail.ReadBasic User.Read",
+              }),
+            });
+
+            if (!refreshResponse.ok) {
+              const errorText = await refreshResponse.text();
+              console.error("❌ Outlook token refresh failed:", errorText);
+              results.outlook.failed++;
+              
+              await supabase.from("alert_history").insert({
+                organization_id: account.organization_id,
+                alert_type: "critical",
+                issues_count: 1,
+                issues_data: [{
+                  type: "critical",
+                  title: "Fallo al renovar token de Outlook",
+                  description: `No se pudo renovar el token de Outlook automáticamente. Reconecte su cuenta.`,
+                  actionRequired: "Reconectar Outlook en Configuración > Integraciones",
+                  data: { account_email: account.account_email, error: errorText }
+                }]
+              });
+              continue;
+            }
+
+            const newTokens = await refreshResponse.json();
+            const newExpiresAt = now + (newTokens.expires_in * 1000);
+            
+            await supabase
+              .from("integration_accounts")
+              .update({
+                credentials: {
+                  ...credentials,
+                  access_token: newTokens.access_token,
+                  refresh_token: newTokens.refresh_token || credentials.refresh_token,
+                  expires_at: newExpiresAt,
+                },
+              })
+              .eq("id", account.id);
+
+            console.log(`✅ Outlook token renovado para ${account.account_email}`);
+            results.outlook.refreshed++;
+          } catch (error) {
+            console.error("❌ Error renovando Outlook token:", error);
+            results.outlook.failed++;
+          }
+        } else if (hoursUntilExpiration < 1) {
+          results.outlook.warned++;
         }
       }
     }
