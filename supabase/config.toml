@@ -107,3 +107,9 @@ verify_jwt = true
 
 [functions.auto-publish-vendor-invoices]
 verify_jwt = true
+
+[functions.outlook-oauth-init]
+verify_jwt = true
+
+[functions.outlook-oauth-callback]
+verify_jwt = false
