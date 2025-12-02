@@ -1380,11 +1380,16 @@ const InvoicesPendingLog = () => {
         </DialogContent>
       </Dialog>
 
-      {/* Modal Visor de PDF con react-pdf */}
+      {/* Modal Visor de PDF */}
       <Dialog open={pdfViewerOpen} onOpenChange={handleClosePdfViewer}>
         <DialogContent className="max-w-6xl h-[90vh] p-0 flex flex-col">
-          <div className="flex items-center justify-between p-4 border-b bg-muted/50">
-            <DialogTitle className="text-lg font-semibold">{currentPdfName}</DialogTitle>
+          <DialogHeader className="flex flex-row items-center justify-between p-4 border-b bg-muted/50 space-y-0">
+            <div>
+              <DialogTitle className="text-lg font-semibold">{currentPdfName}</DialogTitle>
+              <DialogDescription className="sr-only">
+                Visor de documento PDF
+              </DialogDescription>
+            </div>
             <Button
               variant="ghost"
               size="sm"
@@ -1393,10 +1398,14 @@ const InvoicesPendingLog = () => {
             >
               <X className="h-4 w-4" />
             </Button>
-          </div>
+          </DialogHeader>
           <div className="flex-1 overflow-hidden">
-            {currentPdfUrl && (
+            {currentPdfUrl ? (
               <PdfViewer url={currentPdfUrl} fileName={currentPdfName} />
+            ) : (
+              <div className="flex items-center justify-center h-full">
+                <Loader2 className="h-8 w-8 animate-spin text-primary" />
+              </div>
             )}
           </div>
         </DialogContent>
