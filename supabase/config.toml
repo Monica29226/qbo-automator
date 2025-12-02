@@ -119,3 +119,6 @@ verify_jwt = false
 
 [functions.publish-sales-to-quickbooks]
 verify_jwt = true
+
+[functions.bluehost-connect]
+verify_jwt = true
