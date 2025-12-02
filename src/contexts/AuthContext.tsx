@@ -42,12 +42,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       
       if (session?.user) {
         try {
-          const orgStart = performance.now();
-          await Promise.all([
-            loadUserOrganizations(session.user.id),
-            checkAdminRole(session.user.id)
-          ]);
-          console.log('⏱️ AuthContext: Datos de usuario cargados en', performance.now() - orgStart, 'ms');
+          await loadUserData(session.user.id);
         } catch (error) {
           console.error('❌ Error loading user data:', error);
         }
@@ -69,10 +64,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         
         if (session?.user) {
           try {
-            await Promise.all([
-              loadUserOrganizations(session.user.id),
-              checkAdminRole(session.user.id)
-            ]);
+            await loadUserData(session.user.id);
           } catch (error) {
             console.error('❌ Error loading user data:', error);
           }
@@ -90,76 +82,63 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     };
   }, []);
 
-  const loadUserOrganizations = async (userId: string) => {
+  const loadUserData = async (userId: string) => {
     try {
-      console.log('📊 Cargando organizaciones para usuario:', userId);
-      const orgStart = performance.now();
+      console.log('📊 Cargando datos de usuario:', userId);
+      const startTime = performance.now();
       
-      const { data: memberships, error: membershipsError } = await supabase
-        .from("organization_members")
-        .select("organization_id, role, organizations(*)")
-        .eq("user_id", userId)
-        .eq("is_active", true);
+      // Ejecutar todas las queries en paralelo para máxima velocidad
+      const [membershipsResult, activeOrgResult, adminRoleResult] = await Promise.all([
+        supabase
+          .from("organization_members")
+          .select("organization_id, role, organizations(id, name)")
+          .eq("user_id", userId)
+          .eq("is_active", true),
+        supabase
+          .from("user_active_organization")
+          .select("organization_id")
+          .eq("user_id", userId)
+          .maybeSingle(),
+        supabase
+          .from("user_roles")
+          .select("role")
+          .eq("user_id", userId)
+          .eq("role", "admin")
+          .maybeSingle()
+      ]);
 
-      console.log('⏱️ Query organizaciones:', performance.now() - orgStart, 'ms');
+      console.log('⏱️ Todas las queries completadas en:', performance.now() - startTime, 'ms');
 
-      if (!membershipsError && memberships) {
-        const orgs = memberships.map((m: any) => ({
+      // Procesar organizaciones
+      if (!membershipsResult.error && membershipsResult.data) {
+        const orgs = membershipsResult.data.map((m: any) => ({
           id: m.organization_id,
           name: m.organizations.name,
           role: m.role,
         }));
         setOrganizations(orgs);
-        console.log('✅ Organizaciones cargadas:', orgs.length);
+        console.log('✅ Organizaciones:', orgs.length);
 
-        const activeOrgStart = performance.now();
-        const { data: activeOrg, error: activeOrgError } = await supabase
-          .from("user_active_organization")
-          .select("organization_id")
-          .eq("user_id", userId)
-          .maybeSingle();
-
-        console.log('⏱️ Query org activa:', performance.now() - activeOrgStart, 'ms');
-
-        if (!activeOrgError && activeOrg) {
-          setActiveOrganization(activeOrg.organization_id);
-          console.log('✅ Organización activa:', activeOrg.organization_id);
+        // Configurar organización activa
+        if (!activeOrgResult.error && activeOrgResult.data) {
+          setActiveOrganization(activeOrgResult.data.organization_id);
+          console.log('✅ Org activa:', activeOrgResult.data.organization_id);
         } else if (orgs.length > 0) {
           setActiveOrganization(orgs[0].id);
-          await supabase
+          // Upsert en segundo plano, no bloquear el login
+          supabase
             .from("user_active_organization")
-            .upsert({ user_id: userId, organization_id: orgs[0].id });
-          console.log('✅ Primera organización establecida como activa');
+            .upsert({ user_id: userId, organization_id: orgs[0].id })
+            .then(() => console.log('✅ Primera org establecida como activa'));
         }
       }
+
+      // Procesar rol admin
+      setIsAdmin(!adminRoleResult.error && !!adminRoleResult.data);
+      console.log('✅ Admin:', !adminRoleResult.error && !!adminRoleResult.data);
+
     } catch (error) {
-      console.error("❌ Error loading organizations:", error);
-    }
-  };
-
-  const checkAdminRole = async (userId: string) => {
-    try {
-      console.log('🔍 Verificando rol admin para usuario:', userId);
-      const adminStart = performance.now();
-      
-      const { data, error } = await supabase
-        .from("user_roles")
-        .select("role")
-        .eq("user_id", userId)
-        .eq("role", "admin")
-        .maybeSingle();
-
-      console.log('⏱️ Query rol admin:', performance.now() - adminStart, 'ms');
-
-      if (!error && data) {
-        console.log('✅ Usuario ES admin');
-        setIsAdmin(true);
-      } else {
-        console.log('ℹ️ Usuario NO es admin');
-        setIsAdmin(false);
-      }
-    } catch (error) {
-      console.error("❌ Error verificando rol admin:", error);
+      console.error("❌ Error cargando datos:", error);
       setIsAdmin(false);
     }
   };
