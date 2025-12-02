@@ -88,13 +88,14 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       console.log('📊 Cargando datos de usuario:', userId);
       const startTime = performance.now();
       
-      // Ejecutar todas las queries en paralelo para máxima velocidad
+      // Ejecutar todas las queries en paralelo con selección mínima de campos
       const [membershipsResult, activeOrgResult, adminRoleResult] = await Promise.all([
         supabase
           .from("organization_members")
           .select("organization_id, role, organizations(id, name)")
           .eq("user_id", userId)
-          .eq("is_active", true),
+          .eq("is_active", true)
+          .limit(50), // Limitar a 50 organizaciones max
         supabase
           .from("user_active_organization")
           .select("organization_id")
@@ -105,7 +106,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
           .select("role")
           .eq("user_id", userId)
           .eq("role", "admin")
-          .maybeSingle()
+          .limit(1)
       ]);
 
       console.log('⏱️ Todas las queries completadas en:', performance.now() - startTime, 'ms');

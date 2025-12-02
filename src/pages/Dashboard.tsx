@@ -3,38 +3,45 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { FileText, CheckCircle, AlertCircle, Clock, Upload, Mail, RefreshCw, Send, FileCheck, Building2, Database } from "lucide-react";
 import { StatsCard } from "@/components/dashboard/StatsCard";
-import { RecentDocuments } from "@/components/dashboard/RecentDocuments";
-import { CronMonitor } from "@/components/dashboard/CronMonitor";
-import { AICreditsMonitor } from "@/components/dashboard/AICreditsMonitor";
-import { QBOAccountsDiagnostic } from "@/components/dashboard/QBOAccountsDiagnostic";
-import { ErrorLogsViewer } from "@/components/dashboard/ErrorLogsViewer";
-import { ErrorDocumentsModal } from "@/components/dashboard/ErrorDocumentsModal";
-import { TotalsValidationTest } from "@/components/dashboard/TotalsValidationTest";
-import { VerifyBillButton } from "@/components/dashboard/VerifyBillButton";
-import { TestAutoSyncFlow } from "@/components/dashboard/TestAutoSyncFlow";
-import { PendingDocumentsLog } from "@/components/dashboard/PendingDocumentsLog";
 import { OrganizationSwitcher } from "@/components/OrganizationSwitcher";
-import { SyncFromExcelDialog } from "@/components/SyncFromExcelDialog";
 import { GmailFetchDialog } from "@/components/GmailFetchDialog";
 import { GmailTokenAlert } from "@/components/dashboard/GmailTokenAlert";
 import { QuickBooksTokenAlert } from "@/components/dashboard/QuickBooksTokenAlert";
-import { VendorsWithoutRules } from "@/components/dashboard/VendorsWithoutRules";
-import { ErrorDiagnostic } from "@/components/dashboard/ErrorDiagnostic";
-import { TodayProcessingReport } from "@/components/dashboard/TodayProcessingReport";
-import { ProcessAllNowButton } from "@/components/dashboard/ProcessAllNowButton";
-import { CleanIrrecoverableErrorsButton } from "@/components/dashboard/CleanIrrecoverableErrorsButton";
-import { PendingVendorConfiguration } from "@/components/dashboard/PendingVendorConfiguration";
-import { BatchUploadToDriveButton } from "@/components/dashboard/BatchUploadToDriveButton";
-import { AutoPublishConfiguredInvoices } from "@/components/dashboard/AutoPublishConfiguredInvoices";
 import { DashboardSidebar } from "@/components/DashboardSidebar";
 import { SidebarProvider, SidebarTrigger, SidebarInset } from "@/components/ui/sidebar";
 import { useAuth } from "@/hooks/useAuth";
 import { Link, useNavigate } from "react-router-dom";
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo, lazy, Suspense } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
 import { useDashboardStats, useOrganizationConnections } from "@/hooks/useDashboardStats";
+
+// Lazy load componentes pesados para mejorar tiempo de carga inicial
+const RecentDocuments = lazy(() => import("@/components/dashboard/RecentDocuments").then(m => ({ default: m.RecentDocuments })));
+const CronMonitor = lazy(() => import("@/components/dashboard/CronMonitor").then(m => ({ default: m.CronMonitor })));
+const AICreditsMonitor = lazy(() => import("@/components/dashboard/AICreditsMonitor").then(m => ({ default: m.AICreditsMonitor })));
+const QBOAccountsDiagnostic = lazy(() => import("@/components/dashboard/QBOAccountsDiagnostic").then(m => ({ default: m.QBOAccountsDiagnostic })));
+const ErrorLogsViewer = lazy(() => import("@/components/dashboard/ErrorLogsViewer").then(m => ({ default: m.ErrorLogsViewer })));
+const ErrorDocumentsModal = lazy(() => import("@/components/dashboard/ErrorDocumentsModal").then(m => ({ default: m.ErrorDocumentsModal })));
+const TotalsValidationTest = lazy(() => import("@/components/dashboard/TotalsValidationTest").then(m => ({ default: m.TotalsValidationTest })));
+const TodayProcessingReport = lazy(() => import("@/components/dashboard/TodayProcessingReport").then(m => ({ default: m.TodayProcessingReport })));
+const PendingVendorConfiguration = lazy(() => import("@/components/dashboard/PendingVendorConfiguration").then(m => ({ default: m.PendingVendorConfiguration })));
+const AutoPublishConfiguredInvoices = lazy(() => import("@/components/dashboard/AutoPublishConfiguredInvoices").then(m => ({ default: m.AutoPublishConfiguredInvoices })));
+const VerifyBillButton = lazy(() => import("@/components/dashboard/VerifyBillButton").then(m => ({ default: m.VerifyBillButton })));
+const SyncFromExcelDialog = lazy(() => import("@/components/SyncFromExcelDialog").then(m => ({ default: m.SyncFromExcelDialog })));
+const TestAutoSyncFlow = lazy(() => import("@/components/dashboard/TestAutoSyncFlow").then(m => ({ default: m.TestAutoSyncFlow })));
+const PendingDocumentsLog = lazy(() => import("@/components/dashboard/PendingDocumentsLog").then(m => ({ default: m.PendingDocumentsLog })));
+const BatchUploadToDriveButton = lazy(() => import("@/components/dashboard/BatchUploadToDriveButton").then(m => ({ default: m.BatchUploadToDriveButton })));
+const CleanIrrecoverableErrorsButton = lazy(() => import("@/components/dashboard/CleanIrrecoverableErrorsButton").then(m => ({ default: m.CleanIrrecoverableErrorsButton })));
+const ProcessAllNowButton = lazy(() => import("@/components/dashboard/ProcessAllNowButton").then(m => ({ default: m.ProcessAllNowButton })));
+const VendorsWithoutRules = lazy(() => import("@/components/dashboard/VendorsWithoutRules").then(m => ({ default: m.VendorsWithoutRules })));
+const ErrorDiagnostic = lazy(() => import("@/components/dashboard/ErrorDiagnostic").then(m => ({ default: m.ErrorDiagnostic })));
+
+// Componente de loading para lazy components
+const LazyFallback = () => (
+  <div className="animate-pulse bg-muted rounded-lg h-32 w-full" />
+);
 
 const Dashboard = () => {
   const { user, isAdmin, activeOrganization, signOut, isLoading: authLoading } = useAuth();
@@ -426,7 +433,9 @@ const Dashboard = () => {
           </header>
 
           <main className="p-6">
-            <AICreditsMonitor organizationId={activeOrganization} />
+            <Suspense fallback={<LazyFallback />}>
+              <AICreditsMonitor organizationId={activeOrganization} />
+            </Suspense>
         
             <div className="mb-6">
               <div className="flex items-center justify-between mb-4">
@@ -453,7 +462,9 @@ const Dashboard = () => {
               <CardContent>
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
                   {isAdmin && (
-                    <VerifyBillButton />
+                    <Suspense fallback={<div className="h-9 bg-muted animate-pulse rounded" />}>
+                      <VerifyBillButton />
+                    </Suspense>
                   )}
                   <Button 
                     variant="secondary" 
@@ -493,13 +504,21 @@ const Dashboard = () => {
                       </>
                     )}
                   </Button>
-                  <SyncFromExcelDialog />
+                  <Suspense fallback={<div className="h-9 bg-muted animate-pulse rounded" />}>
+                    <SyncFromExcelDialog />
+                  </Suspense>
                 </div>
                 
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 mt-3">
-                  <TestAutoSyncFlow />
-                  <PendingDocumentsLog />
-                  <BatchUploadToDriveButton />
+                  <Suspense fallback={<div className="h-9 bg-muted animate-pulse rounded" />}>
+                    <TestAutoSyncFlow />
+                  </Suspense>
+                  <Suspense fallback={<div className="h-9 bg-muted animate-pulse rounded" />}>
+                    <PendingDocumentsLog />
+                  </Suspense>
+                  <Suspense fallback={<div className="h-9 bg-muted animate-pulse rounded" />}>
+                    <BatchUploadToDriveButton />
+                  </Suspense>
                   <Button 
                     variant="outline" 
                     size="sm"
@@ -510,26 +529,38 @@ const Dashboard = () => {
                     Ver Facturas con Errores
                   </Button>
                   {stats.errors > 0 && (
-                    <CleanIrrecoverableErrorsButton />
+                    <Suspense fallback={<div className="h-9 bg-muted animate-pulse rounded" />}>
+                      <CleanIrrecoverableErrorsButton />
+                    </Suspense>
                   )}
                   {isAdmin && stats.errors > 0 && (
-                    <ErrorLogsViewer />
+                    <Suspense fallback={<div className="h-9 bg-muted animate-pulse rounded" />}>
+                      <ErrorLogsViewer />
+                    </Suspense>
                   )}
                   {isAdmin && (
-                    <QBOAccountsDiagnostic />
+                    <Suspense fallback={<div className="h-9 bg-muted animate-pulse rounded" />}>
+                      <QBOAccountsDiagnostic />
+                    </Suspense>
                   )}
                 </div>
               </CardContent>
             </Card>
         
             <div className="mb-6">
-              <PendingVendorConfiguration />
+              <Suspense fallback={<LazyFallback />}>
+                <PendingVendorConfiguration />
+              </Suspense>
             </div>
             
             {/* Auto-publish invoices with configured accounts */}
-            <AutoPublishConfiguredInvoices />
+            <Suspense fallback={<LazyFallback />}>
+              <AutoPublishConfiguredInvoices />
+            </Suspense>
             
-            <TodayProcessingReport />
+            <Suspense fallback={<LazyFallback />}>
+              <TodayProcessingReport />
+            </Suspense>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
           <StatsCard
@@ -588,7 +619,9 @@ const Dashboard = () => {
               <FileText className="h-5 w-5 text-primary" />
               Documentos Recientes
             </h3>
-            <RecentDocuments />
+            <Suspense fallback={<LazyFallback />}>
+              <RecentDocuments />
+            </Suspense>
           </Card>
 
           <Card className="p-6 space-y-4">
@@ -599,7 +632,9 @@ const Dashboard = () => {
             
             {(stats.errors > 0 || stats.review > 0) && (
               <div className="space-y-3">
-                <ProcessAllNowButton />
+                <Suspense fallback={<div className="h-9 bg-muted animate-pulse rounded" />}>
+                  <ProcessAllNowButton />
+                </Suspense>
                 <p className="text-xs text-muted-foreground text-center">
                   Procesa automáticamente {stats.review} en revisión y {stats.errors} con error
                 </p>
@@ -628,21 +663,29 @@ const Dashboard = () => {
         </div>
 
         <div className="mb-8">
-          <VendorsWithoutRules />
+          <Suspense fallback={<LazyFallback />}>
+            <VendorsWithoutRules />
+          </Suspense>
         </div>
 
-        <CronMonitor />
+        <Suspense fallback={<LazyFallback />}>
+          <CronMonitor />
+        </Suspense>
 
         <div className="mb-8">
-          <TotalsValidationTest />
+          <Suspense fallback={<LazyFallback />}>
+            <TotalsValidationTest />
+          </Suspense>
         </div>
 
         </main>
 
-        <ErrorDocumentsModal
-          open={isErrorModalOpen} 
-          onOpenChange={setIsErrorModalOpen} 
-        />
+        <Suspense fallback={null}>
+          <ErrorDocumentsModal
+            open={isErrorModalOpen} 
+            onOpenChange={setIsErrorModalOpen} 
+          />
+        </Suspense>
       </SidebarInset>
     </div>
   </SidebarProvider>

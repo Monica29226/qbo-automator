@@ -65,7 +65,8 @@ export const useDashboardStats = (organizationId: string | null) => {
       };
     },
     enabled: !!organizationId,
-    staleTime: 30 * 1000, // 30 segundos para stats (se actualizan frecuentemente)
+    staleTime: 30 * 1000, // 30 segundos para stats
+    gcTime: 5 * 60 * 1000, // 5 minutos de cache
   });
 };
 
@@ -93,5 +94,6 @@ export const useOrganizationConnections = (organizationId: string | null) => {
     },
     enabled: !!organizationId,
     staleTime: 2 * 60 * 1000, // 2 minutos para conexiones
+    gcTime: 10 * 60 * 1000, // 10 minutos de cache
   });
 };
