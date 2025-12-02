@@ -281,6 +281,8 @@ export type Database = {
       organizations: {
         Row: {
           address: string | null
+          bluehost_connected: boolean | null
+          bluehost_email: string | null
           created_at: string
           email: string | null
           gmail_connected: boolean | null
@@ -304,6 +306,8 @@ export type Database = {
         }
         Insert: {
           address?: string | null
+          bluehost_connected?: boolean | null
+          bluehost_email?: string | null
           created_at?: string
           email?: string | null
           gmail_connected?: boolean | null
@@ -327,6 +331,8 @@ export type Database = {
         }
         Update: {
           address?: string | null
+          bluehost_connected?: boolean | null
+          bluehost_email?: string | null
           created_at?: string
           email?: string | null
           gmail_connected?: boolean | null
