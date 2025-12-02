@@ -37,13 +37,15 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useDashboardStats, useOrganizationConnections } from "@/hooks/useDashboardStats";
 
 const Dashboard = () => {
-  const { user, isAdmin, activeOrganization, signOut } = useAuth();
+  const { user, isAdmin, activeOrganization, signOut, isLoading: authLoading } = useAuth();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   
+  console.log('📊 Dashboard render:', { activeOrganization, authLoading });
+  
   // React Query hooks for cached data
-  const { data: stats = { processed: 0, review: 0, pending: 0, total: 0, errors: 0, published: 0, pendingConfig: 0 } } = useDashboardStats(activeOrganization);
-  const { data: connections = { gmail: false, quickbooks: false } } = useOrganizationConnections(activeOrganization);
+  const { data: stats = { processed: 0, review: 0, pending: 0, total: 0, errors: 0, published: 0, pendingConfig: 0 }, isLoading: statsLoading } = useDashboardStats(activeOrganization);
+  const { data: connections = { gmail: false, quickbooks: false }, isLoading: connectionsLoading } = useOrganizationConnections(activeOrganization);
   
   const [isFetchingEmails, setIsFetchingEmails] = useState(false);
   const [isAutoSyncing, setIsAutoSyncing] = useState(false);
@@ -292,6 +294,18 @@ const Dashboard = () => {
       setIsRetryingErrors(false);
     }
   }, [activeOrganization, refreshData]);
+
+  // Mostrar loader si auth está cargando o si acabamos de navegar pero no hay org aún
+  if (authLoading || (!activeOrganization && !user)) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-primary/5 via-background to-accent/5 flex items-center justify-center">
+        <div className="text-center">
+          <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-primary mb-4"></div>
+          <p className="text-muted-foreground">Cargando empresa...</p>
+        </div>
+      </div>
+    );
+  }
 
   if (!activeOrganization) {
     return (
