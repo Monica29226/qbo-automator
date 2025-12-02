@@ -1,4 +1,5 @@
 import { Link, useLocation } from "react-router-dom";
+import { useMemo } from "react";
 import {
   Building2,
   Eye,
@@ -40,7 +41,8 @@ export function DashboardSidebar({ isAdmin, reviewCount, onSignOut }: DashboardS
 
   const isActive = (path: string) => location.pathname === path;
 
-  const navigationItems = [
+  // Memoizar items para evitar recalculos en cada render
+  const navigationItems = useMemo(() => [
     {
       title: "Todas las Facturas",
       icon: FileText,
@@ -78,9 +80,9 @@ export function DashboardSidebar({ isAdmin, reviewCount, onSignOut }: DashboardS
       path: "/audit-report",
       show: true,
     },
-  ];
+  ], [reviewCount]);
 
-  const managementItems = [
+  const managementItems = useMemo(() => [
     {
       title: "Integraciones",
       icon: Plug,
@@ -111,9 +113,9 @@ export function DashboardSidebar({ isAdmin, reviewCount, onSignOut }: DashboardS
       path: "/settings",
       show: isAdmin,
     },
-  ];
+  ], [isAdmin]);
 
-  const rulesItems = [
+  const rulesItems = useMemo(() => [
     {
       title: "Reglas Proveedores",
       icon: FileSpreadsheet,
@@ -126,7 +128,7 @@ export function DashboardSidebar({ isAdmin, reviewCount, onSignOut }: DashboardS
       path: "/validation-rules",
       show: isAdmin,
     },
-  ];
+  ], [isAdmin]);
 
   const renderMenuItems = (items: typeof navigationItems) => {
     return items

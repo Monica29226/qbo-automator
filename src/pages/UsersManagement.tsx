@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
+import { useUserManagementData } from "@/hooks/useUserManagementData";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -60,10 +61,8 @@ interface Organization {
 const UsersManagement = () => {
   const navigate = useNavigate();
   const { isAdmin, activeOrganization, isLoading: authLoading } = useAuth();
-  const [users, setUsers] = useState<UserProfile[]>([]);
-  const [pendingInvitations, setPendingInvitations] = useState<PendingInvitation[]>([]);
-  const [organizations, setOrganizations] = useState<Organization[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const { users, organizations, pendingInvitations, isLoading, invalidate } = useUserManagementData(activeOrganization);
+  
   const [isInviteDialogOpen, setIsInviteDialogOpen] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [selectedOrganizations, setSelectedOrganizations] = useState<string[]>([]);
@@ -73,117 +72,20 @@ const UsersManagement = () => {
   });
 
   useEffect(() => {
-    console.log('🎯 UsersManagement - Auth state:', { authLoading, isAdmin, activeOrganization });
-    
-    if (authLoading) {
-      console.log('⏳ Still loading auth...');
-      return;
-    }
+    if (authLoading) return;
     
     if (!isAdmin) {
-      console.log('❌ Not admin, redirecting to dashboard');
       toast.error("Acceso denegado. Solo administradores pueden acceder.");
       navigate("/dashboard");
       return;
     }
     
     if (!activeOrganization) {
-      console.log('⚠️ No active organization, redirecting to select-company');
       toast.error("Por favor selecciona una empresa primero.");
       navigate("/select-company");
       return;
     }
-    
-    console.log('✅ All checks passed, fetching data...');
-    fetchData();
   }, [isAdmin, activeOrganization, authLoading, navigate]);
-
-  const fetchData = async () => {
-    setIsLoading(true);
-
-    try {
-      // Ejecutar TODAS las queries en paralelo
-      const [
-        profilesResult,
-        rolesResult,
-        membersResult,
-        orgsResult,
-        invitationsResult
-      ] = await Promise.all([
-        supabase.from("profiles").select(`id, email, full_name, created_at`).order("created_at", { ascending: false }),
-        supabase.from("user_roles").select("user_id, role"),
-        supabase.from("organization_members").select(`user_id, organization_id, role, is_active, organizations(name)`).eq("is_active", true),
-        supabase.from("organizations").select("id, name").eq("is_active", true).order("name"),
-        supabase.from("organization_invitations").select(`id, email, role, created_at, expires_at, organization_id, organizations(name)`).is("accepted_at", null).gt("expires_at", new Date().toISOString()).order("created_at", { ascending: false })
-      ]);
-
-      // Procesar profiles y usuarios
-      if (profilesResult.error) {
-        toast.error("Error al cargar usuarios");
-        console.error(profilesResult.error);
-        setIsLoading(false);
-        return;
-      }
-
-      const rolesMap = new Map<string, string>();
-      (rolesResult.data || []).forEach((r: any) => rolesMap.set(r.user_id, r.role));
-
-      const membersMap = new Map<string, { name: string }[]>();
-      (membersResult.data || []).forEach((m: any) => {
-        const existing = membersMap.get(m.user_id) || [];
-        if (m.organizations?.name) {
-          existing.push({ name: m.organizations.name });
-        }
-        membersMap.set(m.user_id, existing);
-      });
-
-      const transformedUsers: UserProfile[] = (profilesResult.data || []).map((user: any) => ({
-        id: user.id,
-        email: user.email,
-        full_name: user.full_name,
-        role: rolesMap.get(user.id) || "user",
-        created_at: user.created_at,
-        organizations: membersMap.get(user.id) || [],
-      }));
-      setUsers(transformedUsers);
-
-      // Procesar organizaciones
-      if (orgsResult.error) {
-        console.error("Error loading organizations:", orgsResult.error);
-      } else {
-        setOrganizations(orgsResult.data || []);
-      }
-
-      // Procesar invitaciones
-      if (invitationsResult.error) {
-        console.error("Error loading invitations:", invitationsResult.error);
-      } else {
-        const groupedInvitations = (invitationsResult.data || []).reduce((acc: any, inv: any) => {
-          const key = inv.email;
-          if (!acc[key]) {
-            acc[key] = {
-              email: inv.email,
-              role: inv.role,
-              created_at: inv.created_at,
-              expires_at: inv.expires_at,
-              organizations: [],
-              invitation_ids: []
-            };
-          }
-          acc[key].organizations.push(inv.organizations?.name);
-          acc[key].invitation_ids.push(inv.id);
-          return acc;
-        }, {});
-
-        setPendingInvitations(Object.values(groupedInvitations));
-      }
-    } catch (err) {
-      console.error("Error fetching data:", err);
-      toast.error("Error al cargar datos");
-    } finally {
-      setIsLoading(false);
-    }
-  };
 
   const handleSendInvitation = async () => {
     if (!formData.email) {
@@ -248,12 +150,12 @@ const UsersManagement = () => {
         setIsInviteDialogOpen(false);
         setFormData({ email: "", role: "member" });
         setSelectedOrganizations([]);
-        fetchData();
+        invalidate();
       } else if (successCount > 0) {
         toast.warning(
           `Invitaciones enviadas a ${successCount} de ${orgsToInvite.length} empresas. ${errorCount} fallaron.`
         );
-        fetchData();
+        invalidate();
       } else {
         toast.error("No se pudo enviar ninguna invitación. Verifica tus permisos y la configuración de Resend.");
       }
@@ -293,7 +195,7 @@ const UsersManagement = () => {
       console.error(error);
     } else {
       toast.success("Invitaciones eliminadas");
-      fetchData();
+      invalidate();
     }
   };
 

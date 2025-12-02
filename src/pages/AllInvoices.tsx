@@ -86,26 +86,6 @@ const AllInvoices = () => {
 
   useEffect(() => {
     fetchAllInvoices();
-
-    if (!activeOrganization) return;
-
-    const channel = supabase
-      .channel('all_invoices_changes')
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'processed_documents',
-          filter: `organization_id=eq.${activeOrganization}`
-        },
-        () => fetchAllInvoices()
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
   }, [activeOrganization]);
 
   const filteredInvoices = useMemo(() => {

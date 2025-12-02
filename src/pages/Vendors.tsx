@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { AccountCombobox } from "@/components/AccountCombobox";
+import { useVendorsData } from "@/hooks/useVendorsData";
 import {
   Table,
   TableBody,
@@ -55,8 +56,8 @@ interface QBOAccount {
 
 const Vendors = () => {
   const { isAdmin, activeOrganization } = useAuth();
-  const [vendors, setVendors] = useState<Vendor[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const { vendors, isLoading, invalidate } = useVendorsData(activeOrganization);
+  
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingVendor, setEditingVendor] = useState<Vendor | null>(null);
   const [qboAccounts, setQboAccounts] = useState<QBOAccount[]>([]);
@@ -72,34 +73,6 @@ const Vendors = () => {
   });
   const [qboNotConnected, setQboNotConnected] = useState(false);
 
-  useEffect(() => {
-    if (activeOrganization) {
-      fetchVendors();
-    } else {
-      // Si no hay organización activa, dejar de mostrar loading
-      setIsLoading(false);
-    }
-  }, [activeOrganization]);
-
-  const fetchVendors = async () => {
-    if (!activeOrganization) return;
-
-    setIsLoading(true);
-    const { data, error } = await supabase
-      .from("vendors")
-      .select("*")
-      .eq("organization_id", activeOrganization)
-      .order("vendor_name");
-
-    if (error) {
-      toast.error("Error al cargar proveedores");
-      console.error(error);
-    } else {
-      setVendors(data || []);
-    }
-    setIsLoading(false);
-  };
-
   const handleSave = async () => {
     if (!formData.vendor_name || !formData.qbo_vendor_ref || !formData.default_account_ref) {
       toast.error("Complete los campos requeridos");
@@ -110,8 +83,6 @@ const Vendors = () => {
       toast.error("No hay organización activa");
       return;
     }
-
-    setIsLoading(true);
 
     // DEBUG: Mostrar datos antes de guardar
     console.log("📝 GUARDANDO PROVEEDOR - FormData:", {
@@ -141,7 +112,7 @@ const Vendors = () => {
         console.log("✅ Proveedor actualizado correctamente:", data);
         toast.success("Proveedor actualizado");
         setIsDialogOpen(false);
-        fetchVendors();
+        invalidate();
       }
     } else {
       console.log("📝 Creando nuevo proveedor para org:", activeOrganization);
@@ -160,11 +131,9 @@ const Vendors = () => {
         console.log("✅ Proveedor creado correctamente:", data);
         toast.success("Proveedor creado");
         setIsDialogOpen(false);
-        fetchVendors();
+        invalidate();
       }
     }
-
-    setIsLoading(false);
   };
 
   const fetchQBOAccounts = async () => {
