@@ -2,9 +2,12 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import { Loader2, Building2 } from "lucide-react";
+import { Loader2, Building2, Plus } from "lucide-react";
 import calderonLogo from "@/assets/acl-logo-new.png";
 import { useAuth } from "@/hooks/useAuth";
 
@@ -13,6 +16,14 @@ const SelectCompany = () => {
   const { user, organizations, isLoading: authLoading } = useAuth();
   const [isSelecting, setIsSelecting] = useState(false);
   const [selectedOrg, setSelectedOrg] = useState<string | null>(null);
+  const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
+  const [newOrgName, setNewOrgName] = useState("");
+
+  // Ordenar organizaciones alfabéticamente
+  const sortedOrganizations = [...organizations].sort((a, b) => 
+    a.name.localeCompare(b.name, 'es', { sensitivity: 'base' })
+  );
 
   useEffect(() => {
     console.log('🏢 SelectCompany: Estado actual', { authLoading, userExists: !!user, orgCount: organizations.length });
@@ -55,6 +66,56 @@ const SelectCompany = () => {
     }
   };
 
+  const handleCreateOrganization = async () => {
+    if (!newOrgName.trim() || !user) return;
+
+    try {
+      setIsCreating(true);
+
+      // Crear la organización
+      const { data: org, error: orgError } = await supabase
+        .from("organizations")
+        .insert({ name: newOrgName.trim() })
+        .select()
+        .single();
+
+      if (orgError) throw orgError;
+
+      // Agregar al usuario como owner
+      const { error: memberError } = await supabase
+        .from("organization_members")
+        .insert({
+          organization_id: org.id,
+          user_id: user.id,
+          role: "owner",
+        });
+
+      if (memberError) throw memberError;
+
+      // Establecer como organización activa
+      const { error: activeError } = await supabase
+        .from("user_active_organization")
+        .upsert({
+          user_id: user.id,
+          organization_id: org.id,
+        });
+
+      if (activeError) throw activeError;
+
+      toast.success("Empresa creada exitosamente");
+      setIsCreateDialogOpen(false);
+      setNewOrgName("");
+      
+      // Recargar la página para obtener la nueva organización
+      window.location.reload();
+    } catch (error) {
+      console.error("Error creating organization:", error);
+      toast.error("Error al crear la empresa");
+    } finally {
+      setIsCreating(false);
+    }
+  };
+
   if (authLoading) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-primary/5 via-background to-accent/5 flex items-center justify-center">
@@ -78,7 +139,7 @@ const SelectCompany = () => {
 
         <Card className="p-6">
           <div className="space-y-4">
-            {organizations.map((org) => (
+            {sortedOrganizations.map((org) => (
               <button
                 key={org.id}
                 onClick={() => setSelectedOrg(org.id)}
@@ -114,20 +175,78 @@ const SelectCompany = () => {
             ))}
           </div>
 
-          <Button
-            onClick={handleSelectCompany}
-            disabled={!selectedOrg || isSelecting}
-            className="w-full mt-6"
-          >
-            {isSelecting ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Cargando...
-              </>
-            ) : (
-              "Continuar"
-            )}
-          </Button>
+          <div className="flex gap-3 mt-6">
+            <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
+              <DialogTrigger asChild>
+                <Button variant="outline" className="flex-1">
+                  <Plus className="mr-2 h-4 w-4" />
+                  Nueva Empresa
+                </Button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Crear Nueva Empresa</DialogTitle>
+                </DialogHeader>
+                <div className="space-y-4 pt-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="orgName">Nombre de la Empresa</Label>
+                    <Input
+                      id="orgName"
+                      value={newOrgName}
+                      onChange={(e) => setNewOrgName(e.target.value)}
+                      placeholder="Ingrese el nombre"
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && newOrgName.trim()) {
+                          handleCreateOrganization();
+                        }
+                      }}
+                    />
+                  </div>
+                  <div className="flex gap-3">
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        setIsCreateDialogOpen(false);
+                        setNewOrgName("");
+                      }}
+                      className="flex-1"
+                    >
+                      Cancelar
+                    </Button>
+                    <Button
+                      onClick={handleCreateOrganization}
+                      disabled={!newOrgName.trim() || isCreating}
+                      className="flex-1"
+                    >
+                      {isCreating ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Creando...
+                        </>
+                      ) : (
+                        "Crear"
+                      )}
+                    </Button>
+                  </div>
+                </div>
+              </DialogContent>
+            </Dialog>
+
+            <Button
+              onClick={handleSelectCompany}
+              disabled={!selectedOrg || isSelecting}
+              className="flex-1"
+            >
+              {isSelecting ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Cargando...
+                </>
+              ) : (
+                "Continuar"
+              )}
+            </Button>
+          </div>
         </Card>
       </div>
     </div>
