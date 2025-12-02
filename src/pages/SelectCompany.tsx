@@ -51,6 +51,11 @@ const SelectCompany = () => {
       console.log('⚡ Actualizando organización local antes de guardar:', selectedOrg);
       setActiveOrganizationLocal(selectedOrg);
       
+      // Navegar INMEDIATAMENTE después de actualizar estado local
+      console.log('🚀 Navegando al dashboard con org:', selectedOrg);
+      navigate("/dashboard");
+      
+      // Guardar en BD en segundo plano
       const { error } = await supabase
         .from("user_active_organization")
         .upsert({ 
@@ -58,11 +63,13 @@ const SelectCompany = () => {
           organization_id: selectedOrg 
         });
 
-      if (error) throw error;
-
-      console.log('✅ Organización guardada, navegando al dashboard');
-      toast.success("Empresa seleccionada");
-      navigate("/dashboard");
+      if (error) {
+        console.error('❌ Error guardando organización:', error);
+        toast.error("Error al guardar la selección");
+      } else {
+        console.log('✅ Organización guardada en BD');
+        toast.success("Empresa seleccionada");
+      }
     } catch (error) {
       console.error("Error selecting company:", error);
       toast.error("Error al seleccionar la empresa");
