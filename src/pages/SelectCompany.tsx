@@ -13,7 +13,7 @@ import { useAuth } from "@/hooks/useAuth";
 
 const SelectCompany = () => {
   const navigate = useNavigate();
-  const { user, organizations, isLoading: authLoading } = useAuth();
+  const { user, organizations, isLoading: authLoading, setActiveOrganizationLocal } = useAuth();
   const [isSelecting, setIsSelecting] = useState(false);
   const [selectedOrg, setSelectedOrg] = useState<string | null>(null);
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
@@ -47,6 +47,10 @@ const SelectCompany = () => {
     try {
       setIsSelecting(true);
       
+      // Actualizar estado local INMEDIATAMENTE para evitar delay
+      console.log('⚡ Actualizando organización local antes de guardar:', selectedOrg);
+      setActiveOrganizationLocal(selectedOrg);
+      
       const { error } = await supabase
         .from("user_active_organization")
         .upsert({ 
@@ -56,6 +60,7 @@ const SelectCompany = () => {
 
       if (error) throw error;
 
+      console.log('✅ Organización guardada, navegando al dashboard');
       toast.success("Empresa seleccionada");
       navigate("/dashboard");
     } catch (error) {
@@ -102,12 +107,14 @@ const SelectCompany = () => {
 
       if (activeError) throw activeError;
 
+      // Actualizar estado local y navegar
+      setActiveOrganizationLocal(org.id);
+      
       toast.success("Empresa creada exitosamente");
       setIsCreateDialogOpen(false);
       setNewOrgName("");
       
-      // Recargar la página para obtener la nueva organización
-      window.location.reload();
+      navigate("/dashboard");
     } catch (error) {
       console.error("Error creating organization:", error);
       toast.error("Error al crear la empresa");

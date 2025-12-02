@@ -11,6 +11,7 @@ interface AuthContextType {
   activeOrganization: string | null;
   organizations: any[];
   switchOrganization: (organizationId: string) => Promise<void>;
+  setActiveOrganizationLocal: (organizationId: string) => void;
   signOut: () => Promise<void>;
 }
 
@@ -143,6 +144,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     }
   };
 
+  const setActiveOrganizationLocal = (organizationId: string) => {
+    console.log('🔄 Actualizando organización local:', organizationId);
+    setActiveOrganization(organizationId);
+  };
+
   const switchOrganization = async (organizationId: string) => {
     if (!user) return;
 
@@ -153,7 +159,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
       if (!error) {
         setActiveOrganization(organizationId);
-        window.location.reload();
+        // No reload, solo navegar y dejar que React Query recargue los datos
+        console.log('✅ Organización cambiada sin reload');
       }
     } catch (error) {
       console.error("Error switching organization:", error);
@@ -180,6 +187,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         activeOrganization,
         organizations,
         switchOrganization,
+        setActiveOrganizationLocal,
         signOut,
       }}
     >
