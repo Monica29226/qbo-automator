@@ -1,5 +1,6 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { useEffect } from "react";
 
 interface DashboardStats {
   processed: number;
@@ -17,6 +18,36 @@ interface ConnectionStatus {
 }
 
 export const useDashboardStats = (organizationId: string | null) => {
+  const queryClient = useQueryClient();
+
+  // Suscripción realtime para actualizar stats cuando cambian documentos
+  useEffect(() => {
+    if (!organizationId) return;
+
+    const channel = supabase
+      .channel(`dashboard-stats-${organizationId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'processed_documents',
+          filter: `organization_id=eq.${organizationId}`
+        },
+        (payload) => {
+          console.log('📊 Realtime: documento actualizado, refrescando stats...', payload.eventType);
+          // Invalidar queries para refrescar stats
+          queryClient.invalidateQueries({ queryKey: ["dashboard-stats", organizationId] });
+          queryClient.invalidateQueries({ queryKey: ["recent-documents", organizationId] });
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [organizationId, queryClient]);
+
   return useQuery({
     queryKey: ["dashboard-stats", organizationId],
     queryFn: async (): Promise<DashboardStats> => {
