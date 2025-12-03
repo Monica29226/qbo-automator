@@ -65,32 +65,31 @@ const Integrations = () => {
 
     setIsLoading(true);
 
-    // Fetch organization data
-    const { data: org, error: orgError } = await supabase
-      .from("organizations")
-      .select("gmail_connected, gmail_email, outlook_connected, outlook_email, quickbooks_connected, quickbooks_realm_id, google_drive_connected, google_drive_folder_id, bluehost_connected, bluehost_email")
-      .eq("id", activeOrganization)
-      .single();
+    // Fetch both queries in parallel for better performance
+    const [orgResult, accountsResult] = await Promise.all([
+      supabase
+        .from("organizations")
+        .select("gmail_connected, gmail_email, outlook_connected, outlook_email, quickbooks_connected, quickbooks_realm_id, google_drive_connected, google_drive_folder_id, bluehost_connected, bluehost_email")
+        .eq("id", activeOrganization)
+        .single(),
+      supabase
+        .from("integration_accounts")
+        .select("id, service_type, account_email, account_name, is_active")
+        .eq("organization_id", activeOrganization)
+        .eq("is_active", true)
+        .order("service_type")
+    ]);
 
-    if (orgError) {
-      console.error("Error fetching organization:", orgError);
-      toast.error("Error al cargar organización");
+    if (orgResult.error) {
+      console.error("Error fetching organization:", orgResult.error);
     } else {
-      setOrgData(org);
+      setOrgData(orgResult.data);
     }
 
-    // Fetch integration accounts
-    const { data: accountsData, error: accountsError } = await supabase
-      .from("integration_accounts")
-      .select("*")
-      .eq("organization_id", activeOrganization)
-      .eq("is_active", true)
-      .order("service_type");
-
-    if (accountsError) {
-      console.error("Error fetching accounts:", accountsError);
+    if (accountsResult.error) {
+      console.error("Error fetching accounts:", accountsResult.error);
     } else {
-      setAccounts(accountsData || []);
+      setAccounts(accountsResult.data || []);
     }
 
     setIsLoading(false);
