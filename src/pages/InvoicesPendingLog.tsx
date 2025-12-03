@@ -624,25 +624,57 @@ const InvoicesPendingLog = () => {
       return;
     }
 
+    const totalInvoices = filteredInvoices.length;
     setIsPublishing(true);
+    
+    // Mostrar toast de progreso con estimación de tiempo
+    const estimatedTime = Math.ceil((totalInvoices * 3) / 60); // ~3 segundos por factura
+    const progressToast = toast.loading(
+      `Publicando ${totalInvoices} facturas a QuickBooks... (estimado: ${estimatedTime} min)`,
+      { duration: Infinity }
+    );
+
     try {
       const documentIds = filteredInvoices.map((inv) => inv.id);
+      
+      // Usar AbortController para timeout más largo (5 minutos)
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5 * 60 * 1000);
+      
       const { data, error } = await supabase.functions.invoke(
         "publish-to-quickbooks",
         {
           body: { organization_id: activeOrganization, document_ids: documentIds },
         }
       );
+      
+      clearTimeout(timeoutId);
 
       if (error) throw error;
 
-      toast.success(`${filteredInvoices.length} facturas publicadas correctamente`);
+      toast.dismiss(progressToast);
+      const published = data?.published || totalInvoices;
+      const errors = data?.errors?.length || 0;
+      
+      if (errors > 0) {
+        toast.warning(`⚠️ ${published} publicadas, ${errors} con errores. Recarga para ver detalles.`);
+      } else {
+        toast.success(`✅ ${published} facturas publicadas correctamente a QuickBooks`);
+      }
+      
       invalidateInvoices();
       setFilteredInvoices([]);
       setShowPublishDialog(false);
     } catch (error: any) {
       console.error("Error publishing all:", error);
-      toast.error(error.message || "Error al publicar facturas");
+      toast.dismiss(progressToast);
+      
+      // Si es timeout, verificar estado actual en DB
+      if (error.name === 'AbortError' || error.message?.includes('timeout')) {
+        toast.info("La publicación puede estar en progreso. Recarga la página en 2 minutos para verificar.");
+      } else {
+        toast.error(error.message || "Error al publicar facturas");
+      }
     } finally {
       setIsPublishing(false);
     }
