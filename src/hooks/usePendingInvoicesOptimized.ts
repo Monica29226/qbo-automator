@@ -39,9 +39,9 @@ const normalizeVendorName = (name: string): string => {
     .trim();
 };
 
-// Fetch optimizado - query rápida primero, luego enriquecimiento
+// Fetch optimizado - SOLO documentos, sin vendor_defaults (se obtiene del hook separado)
 const fetchPendingInvoicesOptimized = async (organizationId: string): Promise<PendingInvoice[]> => {
-  // Query principal optimizada - solo campos esenciales primero
+  // Query única y simple - solo documentos pendientes
   const { data: docsData, error: docsError } = await supabase
     .from("processed_documents")
     .select("id, doc_number, supplier_name, supplier_tax_id, total_amount, currency, created_at, vendor_id, default_account_ref, default_class_ref, uses_tax, pdf_attachment_url, issue_date, status, qbo_entity_id")
@@ -49,47 +49,11 @@ const fetchPendingInvoicesOptimized = async (organizationId: string): Promise<Pe
     .in("status", ["pending", "pending_config"])
     .is("qbo_entity_id", null)
     .order("created_at", { ascending: false })
-    .limit(100); // Reducido a 100 para mayor velocidad
+    .limit(100);
 
   if (docsError) throw docsError;
   
-  // Retorno rápido si no hay datos
-  if (!docsData || docsData.length === 0) {
-    return [];
-  }
-
-  // Solo cargar vendor defaults si hay facturas
-  const { data: vendorDefaults } = await supabase
-    .from("vendor_defaults")
-    .select("vendor_name, default_account_ref, default_uses_tax")
-    .eq("organization_id", organizationId)
-    .not("default_account_ref", "is", null);
-
-  // Crear mapa de defaults solo si hay datos
-  const defaultsMap = new Map<string, { account: string; usesTax: boolean }>();
-  if (vendorDefaults && vendorDefaults.length > 0) {
-    vendorDefaults.forEach(v => {
-      if (v.default_account_ref) {
-        defaultsMap.set(normalizeVendorName(v.vendor_name), {
-          account: v.default_account_ref,
-          usesTax: v.default_uses_tax ?? true
-        });
-      }
-    });
-  }
-
-  // Aplicar defaults a las facturas
-  return docsData.map(doc => {
-    const normalizedName = normalizeVendorName(doc.supplier_name);
-    const vendorDefault = defaultsMap.get(normalizedName);
-    
-    return {
-      ...doc,
-      default_account_ref: doc.default_account_ref || vendorDefault?.account,
-      uses_tax: doc.uses_tax ?? vendorDefault?.usesTax ?? true,
-      has_vendor_default: !!vendorDefault && !doc.default_account_ref
-    };
-  });
+  return docsData || [];
 };
 
 // Arreglo vacío memoizado para evitar re-renders infinitos
