@@ -147,9 +147,31 @@ const InvoicesPendingLog = () => {
   const debouncedMinAmount = useDebounce(filterMinAmount, 300);
   const debouncedMaxAmount = useDebounce(filterMaxAmount, 300);
 
-  // Memoizar facturas filtradas para evitar re-renders infinitos
+  // Función de normalización para comparar vendor names
+  const normalizeVendorName = (name: string): string => {
+    return name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, "").trim();
+  };
+
+  // Memoizar facturas filtradas y enriquecidas con vendor defaults
   const filteredData = useMemo(() => {
-    let filtered = [...rawInvoices];
+    // Enriquecer con vendor defaults del cache
+    let filtered = rawInvoices.map(inv => {
+      if (!inv.default_account_ref && vendorDefaults) {
+        const normalizedName = normalizeVendorName(inv.supplier_name);
+        // Buscar en el Map por nombre normalizado
+        for (const [key, def] of vendorDefaults) {
+          if (normalizeVendorName(key) === normalizedName && def.default_account_ref) {
+            return {
+              ...inv,
+              default_account_ref: def.default_account_ref,
+              uses_tax: def.default_uses_tax ?? true,
+              has_vendor_default: true
+            };
+          }
+        }
+      }
+      return inv;
+    });
 
     // Filtro por número de documento (debounced)
     if (debouncedDocNumber.trim()) {
@@ -222,7 +244,7 @@ const InvoicesPendingLog = () => {
     }
 
     return filtered;
-  }, [debouncedSearchTerm, rawInvoices, debouncedDocNumber, debouncedSupplier, dateRange, filterQBStatus, debouncedMinAmount, debouncedMaxAmount]);
+  }, [debouncedSearchTerm, rawInvoices, debouncedDocNumber, debouncedSupplier, dateRange, filterQBStatus, debouncedMinAmount, debouncedMaxAmount, vendorDefaults]);
 
   // Sincronizar filteredInvoices solo cuando filteredData cambia
   useEffect(() => {
