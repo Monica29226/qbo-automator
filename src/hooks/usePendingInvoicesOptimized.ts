@@ -39,38 +39,44 @@ const normalizeVendorName = (name: string): string => {
     .trim();
 };
 
-// Fetch optimizado - una sola query combinada
+// Fetch optimizado - query rápida primero, luego enriquecimiento
 const fetchPendingInvoicesOptimized = async (organizationId: string): Promise<PendingInvoice[]> => {
-  // Query 1: Obtener facturas pendientes (la query principal)
+  // Query principal optimizada - solo campos esenciales primero
   const { data: docsData, error: docsError } = await supabase
     .from("processed_documents")
-    .select("id, doc_number, supplier_name, supplier_tax_id, total_amount, currency, created_at, vendor_id, default_account_ref, default_class_ref, uses_tax, pdf_attachment_url, xml_data, issue_date, status, qbo_entity_id")
+    .select("id, doc_number, supplier_name, supplier_tax_id, total_amount, currency, created_at, vendor_id, default_account_ref, default_class_ref, uses_tax, pdf_attachment_url, issue_date, status, qbo_entity_id")
     .eq("organization_id", organizationId)
     .in("status", ["pending", "pending_config"])
     .is("qbo_entity_id", null)
     .order("created_at", { ascending: false })
-    .limit(200); // Reducido de 500 a 200 para velocidad
+    .limit(100); // Reducido a 100 para mayor velocidad
 
   if (docsError) throw docsError;
-  if (!docsData || docsData.length === 0) return [];
+  
+  // Retorno rápido si no hay datos
+  if (!docsData || docsData.length === 0) {
+    return [];
+  }
 
-  // Query 2: Vendor defaults (para aplicar valores predeterminados)
+  // Solo cargar vendor defaults si hay facturas
   const { data: vendorDefaults } = await supabase
     .from("vendor_defaults")
     .select("vendor_name, default_account_ref, default_uses_tax")
     .eq("organization_id", organizationId)
     .not("default_account_ref", "is", null);
 
-  // Crear mapa de defaults
+  // Crear mapa de defaults solo si hay datos
   const defaultsMap = new Map<string, { account: string; usesTax: boolean }>();
-  vendorDefaults?.forEach(v => {
-    if (v.default_account_ref) {
-      defaultsMap.set(normalizeVendorName(v.vendor_name), {
-        account: v.default_account_ref,
-        usesTax: v.default_uses_tax ?? true
-      });
-    }
-  });
+  if (vendorDefaults && vendorDefaults.length > 0) {
+    vendorDefaults.forEach(v => {
+      if (v.default_account_ref) {
+        defaultsMap.set(normalizeVendorName(v.vendor_name), {
+          account: v.default_account_ref,
+          usesTax: v.default_uses_tax ?? true
+        });
+      }
+    });
+  }
 
   // Aplicar defaults a las facturas
   return docsData.map(doc => {
@@ -90,16 +96,18 @@ const fetchPendingInvoicesOptimized = async (organizationId: string): Promise<Pe
 const EMPTY_INVOICES: PendingInvoice[] = [];
 
 export const usePendingInvoicesOptimized = () => {
-  const { activeOrganization } = useAuth();
+  const { activeOrganization, isLoading: authLoading } = useAuth();
   const queryClient = useQueryClient();
 
   const query = useQuery({
     queryKey: ["pending-invoices-optimized", activeOrganization],
     queryFn: () => fetchPendingInvoicesOptimized(activeOrganization!),
-    enabled: !!activeOrganization,
-    staleTime: 30 * 1000, // 30 segundos - datos recientes no se refetch
+    enabled: !!activeOrganization && !authLoading,
+    staleTime: 30 * 1000, // 30 segundos
     gcTime: 5 * 60 * 1000, // 5 minutos en cache
     refetchOnWindowFocus: false,
+    refetchOnMount: false, // No refetch innecesario al montar
+    retry: 1, // Solo 1 retry para fallos
   });
 
   const removeInvoice = useCallback((id: string) => {
@@ -123,21 +131,25 @@ export const usePendingInvoicesOptimized = () => {
   // Memoizar el resultado para evitar nuevas referencias
   const invoices = query.data ?? EMPTY_INVOICES;
 
+  // isLoading solo si auth está cargando O query está cargando por primera vez
+  const isLoading = authLoading || (query.isLoading && !query.isFetched);
+
   return {
     invoices,
-    isLoading: query.isLoading,
+    isLoading,
     isError: query.isError,
     error: query.error,
     refetch: query.refetch,
     removeInvoice,
     removeInvoicesByVendor,
     invalidate,
+    isFetched: query.isFetched,
   };
 };
 
 // Hook para vendor defaults (separado y cacheado)
 export const useVendorDefaults = () => {
-  const { activeOrganization } = useAuth();
+  const { activeOrganization, isLoading: authLoading } = useAuth();
 
   return useQuery({
     queryKey: ["vendor-defaults", activeOrganization],
@@ -146,19 +158,21 @@ export const useVendorDefaults = () => {
       
       const { data, error } = await supabase
         .from("vendor_defaults")
-        .select("*")
+        .select("id, vendor_name, default_account_ref, default_uses_tax")
         .eq("organization_id", activeOrganization);
 
       if (error) throw error;
 
       const defaultsMap = new Map<string, VendorDefault>();
       data?.forEach((def) => {
-        defaultsMap.set(def.vendor_name, def);
+        defaultsMap.set(def.vendor_name, def as VendorDefault);
       });
       return defaultsMap;
     },
-    enabled: !!activeOrganization,
+    enabled: !!activeOrganization && !authLoading,
     staleTime: 2 * 60 * 1000, // 2 minutos
     gcTime: 10 * 60 * 1000,
+    refetchOnWindowFocus: false,
+    retry: 1,
   });
 };
