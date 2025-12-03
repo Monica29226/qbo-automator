@@ -221,8 +221,9 @@ serve(async (req) => {
       `${r.vendor_name}: ${r.account_code} - ${r.account_description}`
     ).join(", ") || "";
 
-    const processedInvoices = [];
-    const errors = [];
+    const processedInvoices: any[] = [];
+    const skippedInvoices: any[] = [];
+    const errors: any[] = [];
 
     // Helper para validar y limpiar fechas
     const parseIssueDate = (dateString: string): string | null => {
@@ -375,12 +376,22 @@ serve(async (req) => {
               const processResult = await processResponse.json();
               
               if (!processResult.success) {
-                console.error(`Processing error for ${part.filename}:`, processResult.error || processResult.message);
-                errors.push({ filename: part.filename, error: processResult.error || processResult.message });
+                const errorMsg = processResult.error || processResult.message;
+                // Distinguir entre duplicados/skipped y errores reales
+                const isDuplicate = errorMsg?.includes("duplicado") || errorMsg?.includes("ya existe");
+                const isResponseXml = errorMsg?.includes("FechaEmision") || errorMsg?.includes("not found");
+                
+                if (isDuplicate || isResponseXml) {
+                  console.log(`⏭️ Skipped ${part.filename}: ${errorMsg}`);
+                  skippedInvoices.push({ filename: part.filename, reason: errorMsg });
+                } else {
+                  console.error(`❌ Processing error for ${part.filename}:`, errorMsg);
+                  errors.push({ filename: part.filename, error: errorMsg });
+                }
                 continue;
               }
 
-              console.log(`Successfully processed: ${part.filename} (${processResult.status})`);
+              console.log(`✅ Successfully processed: ${part.filename} (${processResult.status})`);
               processedInvoices.push({
                 filename: part.filename,
                 doc_id: processResult.doc_id,
@@ -431,13 +442,17 @@ serve(async (req) => {
       }
     }
 
+    console.log(`📊 Summary: ${processedInvoices.length} processed, ${skippedInvoices.length} skipped (duplicates/response XMLs), ${errors.length} real errors`);
+    
     return new Response(
       JSON.stringify({
         success: true,
         messages_found: messages.length,
         invoices_processed: processedInvoices.length,
-        invoices_failed: errors.length,
+        invoices_skipped: skippedInvoices.length,
+        invoices_failed: errors.length, // Solo errores reales
         invoices: processedInvoices,
+        skipped: skippedInvoices.length > 0 ? skippedInvoices : undefined,
         errors: errors.length > 0 ? errors : undefined,
       }),
       {

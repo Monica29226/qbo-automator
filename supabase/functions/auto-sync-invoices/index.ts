@@ -102,6 +102,11 @@ serve(async (req) => {
 
         console.log(`Gmail sync for ${org.name}: ${gmailData.invoices_processed} processed, ${gmailData.invoices_failed} failed`);
 
+        const invoicesSkipped = gmailData.invoices_skipped || 0;
+        const realFailures = gmailData.invoices_failed || 0;
+        
+        console.log(`📧 Gmail sync for ${org.name}: ${gmailData.invoices_processed} processed, ${invoicesSkipped} skipped, ${realFailures} failed`);
+
         // 2. Publish to QuickBooks (si hay facturas procesadas)
         if (gmailData.invoices_processed > 0) {
           console.log(`Publishing to QuickBooks for ${org.name}...`);
@@ -129,17 +134,17 @@ serve(async (req) => {
           if (!qboData) {
             throw new Error("QuickBooks publish returned no data");
           }
-          console.log(`QuickBooks sync for ${org.name}: ${qboData.published} published, ${qboData.failed} failed`);
+          console.log(`✅ QuickBooks sync for ${org.name}: ${qboData.published} published, ${qboData.failed} failed`);
 
-          // Actualizar log de sincronización
+          // Actualizar log de sincronización - solo errores reales, no skipped
           if (syncLog) {
             await supabase
               .from("sync_logs")
               .update({
-                status: "success",
+                status: realFailures > 0 ? "partial" : "success",
                 gmail_fetched: gmailData.messages_found || 0,
                 gmail_processed: gmailData.invoices_processed,
-                gmail_failed: gmailData.invoices_failed,
+                gmail_failed: realFailures, // Solo errores reales
                 qbo_published: qboData.published,
                 qbo_failed: qboData.failed,
                 completed_at: new Date().toISOString(),
@@ -152,23 +157,23 @@ serve(async (req) => {
             organization_id: org.id,
             organization_name: org.name,
             gmail_processed: gmailData.invoices_processed,
-            gmail_failed: gmailData.invoices_failed,
+            gmail_skipped: invoicesSkipped,
+            gmail_failed: realFailures,
             qbo_published: qboData.published,
             qbo_failed: qboData.failed,
             status: "success",
           });
         } else {
-          // Actualizar log con 0 facturas procesadas pero registrar los fallos
+          // Actualizar log con 0 facturas nuevas - solo marcar error si hay fallos REALES
           if (syncLog) {
-            const hasFailures = gmailData.invoices_failed > 0;
             await supabase
               .from("sync_logs")
               .update({
-                status: hasFailures ? "error" : "success",
+                status: realFailures > 0 ? "partial" : "success",
                 gmail_fetched: gmailData.messages_found || 0,
                 gmail_processed: 0,
-                gmail_failed: gmailData.invoices_failed,
-                error_message: hasFailures ? `${gmailData.invoices_failed} facturas fallaron en procesamiento de Gmail` : null,
+                gmail_failed: realFailures,
+                error_message: realFailures > 0 ? `${realFailures} facturas con errores reales` : null,
                 completed_at: new Date().toISOString(),
                 execution_time_ms: Date.now() - syncStartTime,
               })
@@ -179,8 +184,10 @@ serve(async (req) => {
             organization_id: org.id,
             organization_name: org.name,
             gmail_processed: 0,
-            gmail_failed: gmailData.invoices_failed,
-            status: gmailData.invoices_failed > 0 ? "partial_error" : "no_new_invoices",
+            gmail_skipped: invoicesSkipped,
+            gmail_failed: realFailures,
+            status: realFailures > 0 ? "partial" : "success",
+            message: invoicesSkipped > 0 ? `${invoicesSkipped} facturas ya procesadas (duplicados)` : "Sin facturas nuevas",
           });
         }
       } catch (error) {
