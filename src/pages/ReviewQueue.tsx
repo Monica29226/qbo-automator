@@ -31,6 +31,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { Label } from "@/components/ui/label";
 import { useAuth } from "@/hooks/useAuth";
+import { AccountCombobox } from "@/components/AccountCombobox";
 
 interface Document {
   id: string;
@@ -44,6 +45,7 @@ interface Document {
   currency: string;
   error_message: string | null;
   vendor_id: string | null;
+  default_account_ref: string | null;
 }
 
 interface Vendor {
@@ -52,13 +54,21 @@ interface Vendor {
   qbo_vendor_ref: string;
 }
 
+interface Account {
+  id: string;
+  name: string;
+  accountNumber?: string | null;
+}
+
 const ReviewQueue = () => {
   const { activeOrganization } = useAuth();
   const [documents, setDocuments] = useState<Document[]>([]);
   const [vendors, setVendors] = useState<Vendor[]>([]);
+  const [accounts, setAccounts] = useState<Account[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [selectedDoc, setSelectedDoc] = useState<Document | null>(null);
   const [selectedVendor, setSelectedVendor] = useState<string>("");
+  const [selectedAccount, setSelectedAccount] = useState<string>("");
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
 
@@ -75,34 +85,47 @@ const ReviewQueue = () => {
 
     setIsLoading(true);
     
-    // Obtener documentos en revisión
-    const { data: docs, error: docsError } = await supabase
-      .from("processed_documents")
-      .select("*")
-      .eq("organization_id", activeOrganization)
-      .eq("status", "review")
-      .order("issue_date", { ascending: false });
+    // Fetch documents, vendors, and accounts in parallel
+    const [docsResult, vendorsResult, accountsResult] = await Promise.all([
+      supabase
+        .from("processed_documents")
+        .select("*")
+        .eq("organization_id", activeOrganization)
+        .eq("status", "review")
+        .order("issue_date", { ascending: false }),
+      supabase
+        .from("vendors")
+        .select("id, vendor_name, qbo_vendor_ref")
+        .eq("organization_id", activeOrganization)
+        .eq("is_active", true)
+        .order("vendor_name"),
+      supabase.functions.invoke("list-quickbooks-accounts", {
+        body: { organization_id: activeOrganization }
+      })
+    ]);
 
-    if (docsError) {
+    if (docsResult.error) {
       toast.error("Error al cargar documentos");
-      console.error(docsError);
+      console.error(docsResult.error);
     } else {
-      setDocuments(docs || []);
+      setDocuments(docsResult.data || []);
     }
 
-    // Obtener proveedores activos
-    const { data: vendorsData, error: vendorsError } = await supabase
-      .from("vendors")
-      .select("id, vendor_name, qbo_vendor_ref")
-      .eq("organization_id", activeOrganization)
-      .eq("is_active", true)
-      .order("vendor_name");
-
-    if (vendorsError) {
+    if (vendorsResult.error) {
       toast.error("Error al cargar proveedores");
-      console.error(vendorsError);
+      console.error(vendorsResult.error);
     } else {
-      setVendors(vendorsData || []);
+      setVendors(vendorsResult.data || []);
+    }
+
+    // Process accounts
+    if (accountsResult.data?.accounts) {
+      const formattedAccounts = accountsResult.data.accounts.map((acc: any) => ({
+        id: acc.AcctNum ? `${acc.AcctNum} ${acc.Name}` : acc.Name,
+        name: acc.Name,
+        accountNumber: acc.AcctNum || null
+      }));
+      setAccounts(formattedAccounts);
     }
 
     setIsLoading(false);
@@ -111,35 +134,55 @@ const ReviewQueue = () => {
   const openDialog = (doc: Document) => {
     setSelectedDoc(doc);
     setSelectedVendor(doc.vendor_id || "");
+    setSelectedAccount(doc.default_account_ref || "");
     setIsDialogOpen(true);
   };
 
   const handleApprove = async () => {
-    if (!selectedDoc || !selectedVendor) {
-      toast.error("Seleccione un proveedor");
+    if (!selectedDoc || !selectedAccount) {
+      toast.error("Seleccione una cuenta contable");
       return;
     }
 
     setIsProcessing(true);
 
-    const { error } = await supabase
-      .from("processed_documents")
-      .update({
-        vendor_id: selectedVendor,
-        status: "processed",
-        error_message: null,
-      })
-      .eq("id", selectedDoc.id);
+    try {
+      // Update document with account
+      const { error } = await supabase
+        .from("processed_documents")
+        .update({
+          vendor_id: selectedVendor || null,
+          default_account_ref: selectedAccount,
+          status: "pending",
+          error_message: null,
+        })
+        .eq("id", selectedDoc.id);
 
-    setIsProcessing(false);
+      if (error) throw error;
 
-    if (error) {
-      toast.error("Error al aprobar documento");
-      console.error(error);
-    } else {
-      toast.success("Documento aprobado y procesado");
+      // Save vendor default for future invoices
+      const { error: defaultError } = await supabase
+        .from("vendor_defaults")
+        .upsert({
+          vendor_name: selectedDoc.supplier_name,
+          default_account_ref: selectedAccount,
+          organization_id: activeOrganization,
+        }, {
+          onConflict: 'organization_id,vendor_name'
+        });
+
+      if (defaultError) {
+        console.warn("Error saving vendor default:", defaultError);
+      }
+
+      toast.success("Documento clasificado - listo para publicar");
       setIsDialogOpen(false);
       fetchData();
+    } catch (err) {
+      toast.error("Error al aprobar documento");
+      console.error(err);
+    } finally {
+      setIsProcessing(false);
     }
   };
 
@@ -294,7 +337,17 @@ const ReviewQueue = () => {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="vendor">Seleccionar Proveedor</Label>
+                <Label htmlFor="account">Cuenta Contable *</Label>
+                <AccountCombobox
+                  accounts={accounts}
+                  value={selectedAccount}
+                  onValueChange={setSelectedAccount}
+                  placeholder="Seleccione cuenta contable..."
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="vendor">Proveedor QBO (opcional)</Label>
                 <Select value={selectedVendor} onValueChange={setSelectedVendor}>
                   <SelectTrigger>
                     <SelectValue placeholder="Seleccione un proveedor..." />
@@ -302,7 +355,7 @@ const ReviewQueue = () => {
                   <SelectContent>
                     {vendors.map((vendor) => (
                       <SelectItem key={vendor.id} value={vendor.id}>
-                        {vendor.vendor_name} (QBO: {vendor.qbo_vendor_ref})
+                        {vendor.vendor_name}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -316,7 +369,7 @@ const ReviewQueue = () => {
               <X className="mr-2 h-4 w-4" />
               Rechazar
             </Button>
-            <Button onClick={handleApprove} disabled={isProcessing || !selectedVendor}>
+            <Button onClick={handleApprove} disabled={isProcessing || !selectedAccount}>
               {isProcessing ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
