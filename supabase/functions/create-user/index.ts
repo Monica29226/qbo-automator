@@ -25,7 +25,75 @@ Deno.serve(async (req) => {
       }
     );
 
+    // ========== SECURITY: Validate JWT and admin permissions ==========
+    const authHeader = req.headers.get('Authorization');
+    if (!authHeader) {
+      return new Response(
+        JSON.stringify({ success: false, error: 'Autenticación requerida' }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 401 }
+      );
+    }
+
+    const token = authHeader.replace('Bearer ', '');
+    const { data: { user: callingUser }, error: authError } = await supabaseAdmin.auth.getUser(token);
+    
+    if (authError || !callingUser) {
+      return new Response(
+        JSON.stringify({ success: false, error: 'Token de autenticación inválido' }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 401 }
+      );
+    }
+
+    // Log audit entry for user creation attempt
+    await supabaseAdmin.from('audit_log').insert({
+      user_id: callingUser.id,
+      action: 'create_user_attempt',
+      resource_type: 'user',
+      details: { caller_email: callingUser.email },
+      ip_address: req.headers.get('x-forwarded-for') || req.headers.get('cf-connecting-ip'),
+      user_agent: req.headers.get('user-agent')
+    });
+
     const { email, password, full_name, role = 'user', organization_id } = await req.json();
+
+    // ========== SECURITY: Input validation ==========
+    if (!email || typeof email !== 'string' || !email.includes('@')) {
+      return new Response(
+        JSON.stringify({ success: false, error: 'Email inválido' }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
+      );
+    }
+
+    if (!password || typeof password !== 'string' || password.length < 8) {
+      return new Response(
+        JSON.stringify({ success: false, error: 'Contraseña debe tener al menos 8 caracteres' }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
+      );
+    }
+
+    // Verify calling user is admin of the organization (if creating for an org)
+    if (organization_id) {
+      const { data: isAdmin } = await supabaseAdmin
+        .rpc('is_organization_admin', { _user_id: callingUser.id, _org_id: organization_id });
+      
+      if (!isAdmin) {
+        // Log unauthorized attempt
+        await supabaseAdmin.from('audit_log').insert({
+          user_id: callingUser.id,
+          organization_id: organization_id,
+          action: 'unauthorized_user_creation',
+          resource_type: 'user',
+          details: { target_email: email, reason: 'not_admin' },
+          ip_address: req.headers.get('x-forwarded-for') || req.headers.get('cf-connecting-ip'),
+          user_agent: req.headers.get('user-agent')
+        });
+
+        return new Response(
+          JSON.stringify({ success: false, error: 'No tiene permisos para crear usuarios en esta organización' }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 403 }
+        );
+      }
+    }
 
     if (!email || !password) {
       throw new Error('Email y contraseña son requeridos');

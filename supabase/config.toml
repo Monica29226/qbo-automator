@@ -19,7 +19,7 @@ verify_jwt = true
 verify_jwt = false
 
 [functions.gmail-fetch-invoices]
-verify_jwt = false
+verify_jwt = true
 
 [functions.quickbooks-oauth-init]
 verify_jwt = true
@@ -31,10 +31,10 @@ verify_jwt = false
 verify_jwt = true
 
 [functions.extract-invoice-data]
-verify_jwt = false
+verify_jwt = true
 
 [functions.publish-to-quickbooks]
-verify_jwt = false
+verify_jwt = true
 
 [functions.auto-sync-invoices]
 verify_jwt = false
@@ -55,15 +55,12 @@ verify_jwt = true
 verify_jwt = true
 
 [functions.classify-vendor]
-verify_jwt = false
+verify_jwt = true
 
 [functions.process-document]
-verify_jwt = false
+verify_jwt = true
 
 [functions.process-document-xml]
-verify_jwt = false
-
-[functions.republish-bills-with-iva]
 verify_jwt = true
 
 [functions.republish-credit-notes]
@@ -91,7 +88,7 @@ verify_jwt = true
 verify_jwt = true
 
 [functions.create-user]
-verify_jwt = false
+verify_jwt = true
 
 [functions.refresh-integration-tokens]
 verify_jwt = false
@@ -121,4 +118,16 @@ verify_jwt = false
 verify_jwt = true
 
 [functions.bluehost-connect]
+verify_jwt = true
+
+[functions.google-drive-oauth-init]
+verify_jwt = true
+
+[functions.google-drive-oauth-callback]
+verify_jwt = false
+
+[functions.upload-to-google-drive]
+verify_jwt = true
+
+[functions.batch-upload-to-drive]
 verify_jwt = true
