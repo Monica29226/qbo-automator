@@ -329,7 +329,13 @@ export const CronMonitor = () => {
               No hay registros de sincronización
             </p>
           ) : (
-            recentLogs.map((log) => (
+            recentLogs.filter(log => {
+              if (log.status === 'error' && log.error_message) {
+                const patterns = ['Gmail fetch failed', 'FunctionsHttpError', 'Gateway Timeout', '504'];
+                return !patterns.some(p => log.error_message?.includes(p));
+              }
+              return true;
+            }).map((log) => (
               <div
                 key={log.id}
                 className="flex items-center justify-between p-3 rounded-lg border bg-card hover:bg-muted/30 transition-colors"
