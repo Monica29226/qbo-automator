@@ -56,47 +56,125 @@ serve(async (req) => {
       throw new Error("No access token found");
     }
 
-    // Función para renovar el token de Gmail
-    const refreshGmailToken = async () => {
-      console.log("Refreshing Gmail access token...");
+    // Función para renovar el token de Gmail con manejo robusto de errores
+    const refreshGmailToken = async (): Promise<string> => {
+      console.log("🔄 Attempting to refresh Gmail access token...");
       
-      const GOOGLE_CLIENT_ID = Deno.env.get("GOOGLE_CLIENT_ID")!;
-      const GOOGLE_CLIENT_SECRET = Deno.env.get("GOOGLE_CLIENT_SECRET")!;
+      const GOOGLE_CLIENT_ID = Deno.env.get("GOOGLE_CLIENT_ID");
+      const GOOGLE_CLIENT_SECRET = Deno.env.get("GOOGLE_CLIENT_SECRET");
 
-      const refreshResponse = await fetch("https://oauth2.googleapis.com/token", {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({
-          client_id: GOOGLE_CLIENT_ID,
-          client_secret: GOOGLE_CLIENT_SECRET,
-          refresh_token: credentials.refresh_token,
-          grant_type: "refresh_token",
-        }),
-      });
-
-      if (!refreshResponse.ok) {
-        const errorText = await refreshResponse.text();
-        console.error("Token refresh failed:", errorText);
-        throw new Error(`Failed to refresh token: ${errorText}`);
+      if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET) {
+        console.error("❌ Missing Google OAuth credentials");
+        throw new Error("Google OAuth credentials not configured");
       }
 
-      const refreshData = await refreshResponse.json();
-      const newExpiresAt = Date.now() + (refreshData.expires_in * 1000);
+      if (!credentials.refresh_token) {
+        console.error("❌ No refresh token available - account needs reconnection");
+        // Marcar cuenta como desconectada
+        await markAccountAsDisconnected("No refresh token available");
+        throw new Error("No refresh token - please reconnect Gmail");
+      }
 
-      // Actualizar credenciales en la base de datos
-      await supabase
-        .from("integration_accounts")
-        .update({
-          credentials: {
-            ...credentials,
-            access_token: refreshData.access_token,
-            expires_at: newExpiresAt,
-          },
-        })
-        .eq("id", gmailAccount.id);
+      try {
+        const refreshResponse = await fetch("https://oauth2.googleapis.com/token", {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({
+            client_id: GOOGLE_CLIENT_ID,
+            client_secret: GOOGLE_CLIENT_SECRET,
+            refresh_token: credentials.refresh_token,
+            grant_type: "refresh_token",
+          }),
+        });
 
-      console.log("Token refreshed successfully");
-      return refreshData.access_token;
+        const responseText = await refreshResponse.text();
+        
+        if (!refreshResponse.ok) {
+          console.error("❌ Token refresh failed:", refreshResponse.status, responseText);
+          
+          // Si el refresh token es inválido (revocado o expirado), marcar como desconectado
+          if (refreshResponse.status === 400 || refreshResponse.status === 401) {
+            const errorData = JSON.parse(responseText);
+            if (errorData.error === "invalid_grant" || errorData.error === "invalid_token") {
+              console.error("🚫 Refresh token is invalid or revoked");
+              await markAccountAsDisconnected(`Token inválido: ${errorData.error_description || errorData.error}`);
+              throw new Error("Gmail token revoked - please reconnect");
+            }
+          }
+          
+          throw new Error(`Token refresh failed: ${refreshResponse.status}`);
+        }
+
+        const refreshData = JSON.parse(responseText);
+        const newExpiresAt = Date.now() + (refreshData.expires_in * 1000);
+
+        // Actualizar credenciales en la base de datos
+        const { error: updateError } = await supabase
+          .from("integration_accounts")
+          .update({
+            credentials: {
+              ...credentials,
+              access_token: refreshData.access_token,
+              expires_at: newExpiresAt,
+            },
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", gmailAccount.id);
+
+        if (updateError) {
+          console.error("⚠️ Failed to save refreshed token:", updateError);
+        } else {
+          console.log("✅ Token refreshed and saved successfully");
+        }
+
+        return refreshData.access_token;
+      } catch (error) {
+        console.error("❌ Token refresh error:", error);
+        throw error;
+      }
+    };
+
+    // Función para marcar la cuenta como desconectada
+    const markAccountAsDisconnected = async (reason: string) => {
+      console.log("🔌 Marking Gmail account as disconnected:", reason);
+      
+      try {
+        // Desactivar la cuenta de integración
+        await supabase
+          .from("integration_accounts")
+          .update({ 
+            is_active: false,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", gmailAccount.id);
+
+        // Actualizar organización
+        await supabase
+          .from("organizations")
+          .update({ 
+            gmail_connected: false,
+            gmail_email: null,
+          })
+          .eq("id", organization_id);
+
+        // Registrar alerta crítica (solo si es un problema real que requiere acción)
+        await supabase.from("alert_history").insert({
+          organization_id,
+          alert_type: "critical",
+          issues_count: 1,
+          issues_data: [{
+            type: "critical",
+            title: "Gmail desconectado automáticamente",
+            description: reason,
+            actionRequired: "Reconectar Gmail en Configuración > Integraciones",
+            timestamp: new Date().toISOString()
+          }]
+        });
+
+        console.log("✅ Account marked as disconnected");
+      } catch (dbError) {
+        console.error("⚠️ Failed to mark account as disconnected:", dbError);
+      }
     };
 
     // Verificar si el token está expirado y renovarlo si es necesario
@@ -109,35 +187,25 @@ serve(async (req) => {
     const hoursUntilExpiration = expiresAt ? (expiresAt - Date.now()) / (1000 * 60 * 60) : null;
     
     if (hoursUntilExpiration !== null) {
-      console.log(`⚠️ Token expiring in ${Math.floor(hoursUntilExpiration * 60)} minutes`);
+      const minutesUntil = Math.floor(hoursUntilExpiration * 60);
+      if (hoursUntilExpiration < 0) {
+        console.log(`⚠️ Token EXPIRED ${Math.abs(minutesUntil)} minutes ago`);
+      } else {
+        console.log(`⏱️ Token expiring in ${minutesUntil} minutes`);
+      }
       
       // Renovar proactivamente si expira en menos de 2 horas o ya expiró
       if (hoursUntilExpiration < 2) {
         try {
           accessToken = await refreshGmailToken();
         } catch (refreshError) {
-          console.error("Failed to refresh token:", refreshError);
-          
-          // Registrar alerta crítica
-          await supabase.from("alert_history").insert({
-            organization_id,
-            alert_type: "critical",
-            issues_count: 1,
-            issues_data: [{
-              type: "critical",
-              title: "Error crítico al renovar token de Gmail",
-              description: "Falló la renovación automática del token. Reconecte su cuenta de Gmail inmediatamente.",
-              actionRequired: "Reconectar Gmail en Configuración > Integraciones",
-              data: {
-                error: refreshError instanceof Error ? refreshError.message : "Unknown error",
-                failedAt: new Date().toISOString()
-              }
-            }]
-          });
-          
+          console.error("❌ Token refresh failed:", refreshError);
+          // El error ya fue manejado (cuenta desconectada si es necesario)
           throw refreshError;
         }
       }
+    } else {
+      console.log("⚠️ No token expiration info available, proceeding with current token");
     }
 
     // Obtener settings de búsqueda
@@ -181,7 +249,7 @@ serve(async (req) => {
 
     // Si falla con 401, intentar renovar el token y reintentar
     if (!searchResponse.ok && searchResponse.status === 401) {
-      console.log("Gmail API returned 401, attempting to refresh token and retry...");
+      console.log("⚠️ Gmail API returned 401, attempting token refresh and retry...");
       
       try {
         accessToken = await refreshGmailToken();
@@ -193,16 +261,30 @@ serve(async (req) => {
             headers: { Authorization: `Bearer ${accessToken}` },
           }
         );
+        
+        if (!searchResponse.ok) {
+          const errorBody = await searchResponse.text();
+          console.error("❌ Gmail API still failing after token refresh:", searchResponse.status, errorBody);
+          await markAccountAsDisconnected(`Gmail API error after refresh: ${searchResponse.status}`);
+          throw new Error("Gmail authentication failed after token refresh");
+        }
+        
+        console.log("✅ Successfully recovered from 401 with token refresh");
       } catch (refreshError) {
-        console.error("Failed to refresh token after 401:", refreshError);
-        throw new Error("Gmail authentication failed and token refresh failed");
+        console.error("❌ Failed to refresh token after 401:", refreshError);
+        // markAccountAsDisconnected ya fue llamado en refreshGmailToken si aplica
+        throw new Error("Gmail authentication failed - please reconnect Gmail");
       }
-    }
-
-    if (!searchResponse.ok) {
+    } else if (!searchResponse.ok) {
       const errorBody = await searchResponse.text();
-      console.error("Gmail API error:", searchResponse.status, errorBody);
-      throw new Error(`Failed to search Gmail messages: ${searchResponse.status} - ${errorBody}`);
+      console.error("❌ Gmail API error:", searchResponse.status, errorBody);
+      
+      // Si es un error de autenticación diferente, también desconectar
+      if (searchResponse.status === 403) {
+        await markAccountAsDisconnected(`Gmail API permission denied: ${errorBody}`);
+      }
+      
+      throw new Error(`Gmail API error: ${searchResponse.status}`);
     }
 
     const searchData = await searchResponse.json();
