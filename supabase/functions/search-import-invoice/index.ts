@@ -191,43 +191,68 @@ serve(async (req) => {
         const messageData = await messageResponse.json();
         const parts = messageData.payload?.parts || [];
 
-        let xmlPart = null;
         let pdfPart = null;
+        const xmlParts: any[] = [];
 
+        // Collect all attachments
         for (const part of parts) {
           if (part.filename?.toLowerCase().endsWith(".xml")) {
-            xmlPart = part;
+            xmlParts.push(part);
           }
           if (part.filename?.toLowerCase().endsWith(".pdf")) {
             pdfPart = part;
           }
         }
 
-        if (xmlPart?.body?.attachmentId) {
+        // Check each XML part to find the actual invoice (not MensajeHacienda)
+        for (const xmlPart of xmlParts) {
+          if (!xmlPart?.body?.attachmentId) continue;
+          
           // Download XML to check invoice number
           const attachmentResponse = await fetch(
             `https://gmail.googleapis.com/gmail/v1/users/me/messages/${msg.id}/attachments/${xmlPart.body.attachmentId}`,
             { headers: { Authorization: `Bearer ${accessToken}` } }
           );
 
-          if (attachmentResponse.ok) {
-            const attachmentData = await attachmentResponse.json();
-            const xmlContent = atob(attachmentData.data.replace(/-/g, "+").replace(/_/g, "/"));
-            const docNumber = parseNumeroConsecutivo(xmlContent);
-            
-            console.log(`📄 Found XML with doc_number: ${docNumber}`);
+          if (!attachmentResponse.ok) continue;
+          
+          const attachmentData = await attachmentResponse.json();
+          const xmlContent = atob(attachmentData.data.replace(/-/g, "+").replace(/_/g, "/"));
+          const docNumber = parseNumeroConsecutivo(xmlContent);
+          
+          console.log(`📄 Found XML: ${xmlPart.filename} with doc_number: ${docNumber}`);
 
-            // Check if this is the invoice we're looking for
-            if (docNumber === invoice_number || 
-                docNumber.includes(invoice_number) || 
-                invoice_number.includes(docNumber) ||
-                xmlContent.includes(invoice_number)) {
-              console.log(`✅ MATCH FOUND! Invoice ${invoice_number}`);
-              foundMessage = { id: msg.id, xmlContent };
-              foundXmlPart = xmlPart;
-              foundPdfPart = pdfPart;
-              break;
-            }
+          // CRITICAL: Skip MensajeHacienda (response XMLs) - they don't have invoice data
+          const isMensajeHacienda = xmlContent.includes('<MensajeHacienda') || 
+                                     xmlContent.includes('mensajeHacienda');
+          
+          if (isMensajeHacienda) {
+            console.log(`⏭️ Skipping MensajeHacienda (response XML): ${xmlPart.filename}`);
+            continue;
+          }
+
+          // Verify it's an actual invoice document
+          const isActualInvoice = xmlContent.includes('<FacturaElectronica') || 
+                                  xmlContent.includes('<NotaCreditoElectronica') ||
+                                  xmlContent.includes('<NotaDebitoElectronica') ||
+                                  xmlContent.includes('<TiqueteElectronico') ||
+                                  xmlContent.includes('<Emisor>');
+          
+          if (!isActualInvoice) {
+            console.log(`⏭️ Skipping non-invoice XML: ${xmlPart.filename}`);
+            continue;
+          }
+
+          // Check if this is the invoice we're looking for
+          if (docNumber === invoice_number || 
+              docNumber.includes(invoice_number) || 
+              invoice_number.includes(docNumber) ||
+              xmlContent.includes(invoice_number)) {
+            console.log(`✅ MATCH FOUND! Invoice ${invoice_number} in ${xmlPart.filename}`);
+            foundMessage = { id: msg.id, xmlContent };
+            foundXmlPart = xmlPart;
+            foundPdfPart = pdfPart;
+            break;
           }
         }
 
