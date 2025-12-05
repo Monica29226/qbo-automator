@@ -1,5 +1,5 @@
-import { useState, useRef } from "react";
-import { Upload, Loader2, CheckCircle2, XCircle, AlertCircle, FileText } from "lucide-react";
+import { useState, useRef, useEffect } from "react";
+import { Upload, Loader2, CheckCircle2, XCircle, AlertCircle, FileText, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
@@ -12,10 +12,20 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { Badge } from "@/components/ui/badge";
 
+const STORAGE_KEY = "batch_import_progress";
+const PARALLEL_COUNT = 3;
+
 interface ImportStatus {
   invoiceNumber: string;
   status: "pending" | "processing" | "success" | "error" | "existing";
   message?: string;
+}
+
+interface SavedProgress {
+  organizationId: string;
+  autoPublish: boolean;
+  statuses: ImportStatus[];
+  timestamp: number;
 }
 
 export function BatchImportInvoices() {
@@ -25,9 +35,45 @@ export function BatchImportInvoices() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [progress, setProgress] = useState(0);
   const [importStatuses, setImportStatuses] = useState<ImportStatus[]>([]);
+  const [hasSavedProgress, setHasSavedProgress] = useState(false);
   const { toast } = useToast();
   const { activeOrganization } = useAuth();
   const abortRef = useRef(false);
+
+  // Check for saved progress on mount
+  useEffect(() => {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved) {
+      try {
+        const data: SavedProgress = JSON.parse(saved);
+        // Only restore if same org and less than 24h old
+        if (
+          data.organizationId === activeOrganization &&
+          Date.now() - data.timestamp < 24 * 60 * 60 * 1000 &&
+          data.statuses.some(s => s.status === "pending")
+        ) {
+          setHasSavedProgress(true);
+        }
+      } catch {
+        localStorage.removeItem(STORAGE_KEY);
+      }
+    }
+  }, [activeOrganization]);
+
+  const saveProgress = (statuses: ImportStatus[], orgId: string, autoPub: boolean) => {
+    const data: SavedProgress = {
+      organizationId: orgId,
+      autoPublish: autoPub,
+      statuses,
+      timestamp: Date.now(),
+    };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  };
+
+  const clearSavedProgress = () => {
+    localStorage.removeItem(STORAGE_KEY);
+    setHasSavedProgress(false);
+  };
 
   const parseInvoiceNumbers = (text: string): string[] => {
     return text
@@ -36,114 +82,167 @@ export function BatchImportInvoices() {
       .filter(line => line.length > 0);
   };
 
-  const handleStartImport = async () => {
-    const numbers = parseInvoiceNumbers(invoiceNumbers);
-    
-    if (numbers.length === 0) {
-      toast({
-        title: "Error",
-        description: "No hay números de factura válidos",
-        variant: "destructive",
+  const processInvoice = async (
+    invoiceNumber: string,
+    index: number,
+    orgId: string,
+    autoPub: boolean
+  ): Promise<ImportStatus> => {
+    try {
+      const { data, error } = await supabase.functions.invoke("search-import-invoice", {
+        body: {
+          organization_id: orgId,
+          invoice_number: invoiceNumber,
+          auto_publish: autoPub,
+        },
       });
-      return;
-    }
 
-    if (!activeOrganization) {
-      toast({
-        title: "Error",
-        description: "No hay organización activa",
-        variant: "destructive",
-      });
-      return;
+      if (error) throw error;
+
+      if (data.success) {
+        return { invoiceNumber, status: "success", message: data.message };
+      } else if (data.existing) {
+        return { invoiceNumber, status: "existing", message: "Ya existe en el sistema" };
+      } else {
+        return { invoiceNumber, status: "error", message: data.message };
+      }
+    } catch (error: any) {
+      return { invoiceNumber, status: "error", message: error.message || "Error desconocido" };
+    }
+  };
+
+  const handleStartImport = async (resumeFromSaved = false) => {
+    let statuses: ImportStatus[];
+    let orgId = activeOrganization!;
+    let autoPub = autoPublish;
+
+    if (resumeFromSaved) {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (!saved) return;
+      const data: SavedProgress = JSON.parse(saved);
+      statuses = data.statuses;
+      orgId = data.organizationId;
+      autoPub = data.autoPublish;
+      setAutoPublish(autoPub);
+    } else {
+      const numbers = parseInvoiceNumbers(invoiceNumbers);
+      
+      if (numbers.length === 0) {
+        toast({
+          title: "Error",
+          description: "No hay números de factura válidos",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      if (!activeOrganization) {
+        toast({
+          title: "Error",
+          description: "No hay organización activa",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      statuses = numbers.map(num => ({
+        invoiceNumber: num,
+        status: "pending" as const,
+      }));
     }
 
     setIsProcessing(true);
-    setProgress(0);
+    setImportStatuses(statuses);
     abortRef.current = false;
 
-    // Initialize all statuses as pending
-    const initialStatuses: ImportStatus[] = numbers.map(num => ({
-      invoiceNumber: num,
-      status: "pending",
-    }));
-    setImportStatuses(initialStatuses);
+    // Get pending invoices
+    const pendingIndices = statuses
+      .map((s, idx) => (s.status === "pending" ? idx : -1))
+      .filter(idx => idx !== -1);
 
-    let successCount = 0;
-    let errorCount = 0;
-    let existingCount = 0;
+    const totalToProcess = pendingIndices.length;
+    let processedCount = statuses.filter(s => s.status !== "pending").length;
 
-    for (let i = 0; i < numbers.length; i++) {
+    // Update progress initially
+    setProgress((processedCount / statuses.length) * 100);
+
+    // Process in parallel batches
+    for (let i = 0; i < pendingIndices.length; i += PARALLEL_COUNT) {
       if (abortRef.current) break;
 
-      const invoiceNumber = numbers[i];
+      const batchIndices = pendingIndices.slice(i, i + PARALLEL_COUNT);
       
-      // Update status to processing
-      setImportStatuses(prev => 
-        prev.map((s, idx) => 
-          idx === i ? { ...s, status: "processing" } : s
+      // Mark batch as processing
+      setImportStatuses(prev => {
+        const updated = [...prev];
+        batchIndices.forEach(idx => {
+          updated[idx] = { ...updated[idx], status: "processing" };
+        });
+        return updated;
+      });
+
+      // Process batch in parallel
+      const results = await Promise.all(
+        batchIndices.map(idx => 
+          processInvoice(statuses[idx].invoiceNumber, idx, orgId, autoPub)
         )
       );
 
-      try {
-        const { data, error } = await supabase.functions.invoke("search-import-invoice", {
-          body: {
-            organization_id: activeOrganization,
-            invoice_number: invoiceNumber,
-            auto_publish: autoPublish,
-          },
+      // Update statuses with results
+      setImportStatuses(prev => {
+        const updated = [...prev];
+        batchIndices.forEach((idx, resultIdx) => {
+          updated[idx] = results[resultIdx];
         });
+        // Save progress after each batch
+        saveProgress(updated, orgId, autoPub);
+        return updated;
+      });
 
-        if (error) throw error;
+      processedCount += batchIndices.length;
+      setProgress((processedCount / statuses.length) * 100);
 
-        if (data.success) {
-          successCount++;
-          setImportStatuses(prev =>
-            prev.map((s, idx) =>
-              idx === i ? { ...s, status: "success", message: data.message } : s
-            )
-          );
-        } else if (data.existing) {
-          existingCount++;
-          setImportStatuses(prev =>
-            prev.map((s, idx) =>
-              idx === i ? { ...s, status: "existing", message: "Ya existe en el sistema" } : s
-            )
-          );
-        } else {
-          errorCount++;
-          setImportStatuses(prev =>
-            prev.map((s, idx) =>
-              idx === i ? { ...s, status: "error", message: data.message } : s
-            )
-          );
-        }
-      } catch (error: any) {
-        errorCount++;
-        setImportStatuses(prev =>
-          prev.map((s, idx) =>
-            idx === i ? { ...s, status: "error", message: error.message || "Error desconocido" } : s
-          )
-        );
-      }
-
-      setProgress(((i + 1) / numbers.length) * 100);
-      
-      // Small delay to avoid overwhelming the API
-      if (i < numbers.length - 1) {
-        await new Promise(resolve => setTimeout(resolve, 500));
+      // Small delay between batches to avoid rate limiting
+      if (i + PARALLEL_COUNT < pendingIndices.length && !abortRef.current) {
+        await new Promise(resolve => setTimeout(resolve, 300));
       }
     }
 
     setIsProcessing(false);
     
+    // Get final counts
+    const finalStatuses = await new Promise<ImportStatus[]>(resolve => {
+      setImportStatuses(prev => {
+        resolve(prev);
+        return prev;
+      });
+    });
+
+    const counts = finalStatuses.reduce(
+      (acc, s) => {
+        acc[s.status] = (acc[s.status] || 0) + 1;
+        return acc;
+      },
+      {} as Record<string, number>
+    );
+
+    // Clear saved progress if complete
+    if (!finalStatuses.some(s => s.status === "pending")) {
+      clearSavedProgress();
+    }
+    
     toast({
-      title: "Importación completada",
-      description: `Éxito: ${successCount}, Ya existían: ${existingCount}, Errores: ${errorCount}`,
+      title: abortRef.current ? "Importación pausada" : "Importación completada",
+      description: `Éxito: ${counts.success || 0}, Ya existían: ${counts.existing || 0}, Errores: ${counts.error || 0}`,
     });
   };
 
   const handleAbort = () => {
     abortRef.current = true;
+    toast({
+      title: "Pausando importación",
+      description: "El progreso se guardó. Puede continuar después.",
+    });
   };
 
   const handleClose = () => {
@@ -151,7 +250,20 @@ export function BatchImportInvoices() {
       abortRef.current = true;
     }
     setOpen(false);
-    setInvoiceNumbers("");
+    // Don't clear statuses if there are pending - they're saved
+    if (!importStatuses.some(s => s.status === "pending")) {
+      setInvoiceNumbers("");
+      setImportStatuses([]);
+      setProgress(0);
+    }
+  };
+
+  const handleResumeFromSaved = () => {
+    handleStartImport(true);
+  };
+
+  const handleDiscardSaved = () => {
+    clearSavedProgress();
     setImportStatuses([]);
     setProgress(0);
   };
@@ -194,12 +306,17 @@ export function BatchImportInvoices() {
     {} as Record<string, number>
   );
 
+  const pendingCount = counts.pending || 0;
+
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button variant="outline" className="gap-2">
+        <Button variant="outline" className="gap-2 relative">
           <Upload className="h-4 w-4" />
           Importar Lote
+          {hasSavedProgress && (
+            <span className="absolute -top-1 -right-1 h-3 w-3 bg-orange-500 rounded-full animate-pulse" />
+          )}
         </Button>
       </DialogTrigger>
       <DialogContent className="sm:max-w-[700px] max-h-[90vh]">
@@ -207,6 +324,9 @@ export function BatchImportInvoices() {
           <DialogTitle className="flex items-center gap-2">
             <Upload className="h-5 w-5" />
             Importación Masiva de Facturas
+            <Badge variant="secondary" className="ml-2">
+              {PARALLEL_COUNT}x paralelo
+            </Badge>
           </DialogTitle>
           <DialogDescription>
             Pegue los números de factura (uno por línea) para buscarlos en Gmail e importarlos a QuickBooks.
@@ -214,7 +334,29 @@ export function BatchImportInvoices() {
         </DialogHeader>
 
         <div className="space-y-4 py-4">
-          {!isProcessing && importStatuses.length === 0 && (
+          {/* Saved progress recovery */}
+          {hasSavedProgress && !isProcessing && importStatuses.length === 0 && (
+            <div className="p-4 border border-orange-200 bg-orange-50 dark:bg-orange-950 dark:border-orange-800 rounded-lg space-y-3">
+              <div className="flex items-center gap-2 text-orange-700 dark:text-orange-300">
+                <RotateCcw className="h-5 w-5" />
+                <span className="font-medium">Progreso guardado encontrado</span>
+              </div>
+              <p className="text-sm text-muted-foreground">
+                Hay una importación incompleta. ¿Desea continuar donde se quedó?
+              </p>
+              <div className="flex gap-2">
+                <Button onClick={handleResumeFromSaved} size="sm">
+                  <RotateCcw className="mr-2 h-4 w-4" />
+                  Continuar
+                </Button>
+                <Button variant="outline" size="sm" onClick={handleDiscardSaved}>
+                  Descartar
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {!isProcessing && importStatuses.length === 0 && !hasSavedProgress && (
             <>
               <div className="space-y-2">
                 <Label htmlFor="invoice-numbers">Números de Factura (uno por línea)</Label>
@@ -269,6 +411,12 @@ export function BatchImportInvoices() {
                   <XCircle className="h-3 w-3 text-red-500" />
                   Errores: {counts.error || 0}
                 </Badge>
+                {pendingCount > 0 && (
+                  <Badge variant="outline" className="gap-1">
+                    <FileText className="h-3 w-3 text-muted-foreground" />
+                    Pendientes: {pendingCount}
+                  </Badge>
+                )}
               </div>
 
               <ScrollArea className="h-[300px] border rounded-md">
@@ -300,13 +448,13 @@ export function BatchImportInvoices() {
           )}
         </div>
 
-        <DialogFooter>
+        <DialogFooter className="gap-2">
           <Button variant="outline" onClick={handleClose}>
-            {isProcessing ? "Cancelar" : "Cerrar"}
+            {isProcessing ? "Pausar" : "Cerrar"}
           </Button>
-          {!isProcessing && importStatuses.length === 0 && (
+          {!isProcessing && importStatuses.length === 0 && !hasSavedProgress && (
             <Button 
-              onClick={handleStartImport} 
+              onClick={() => handleStartImport(false)} 
               disabled={parseInvoiceNumbers(invoiceNumbers).length === 0}
             >
               <Upload className="mr-2 h-4 w-4" />
@@ -315,13 +463,20 @@ export function BatchImportInvoices() {
           )}
           {isProcessing && (
             <Button variant="destructive" onClick={handleAbort}>
-              Detener
+              Pausar y Guardar
             </Button>
           )}
-          {!isProcessing && importStatuses.length > 0 && (
+          {!isProcessing && importStatuses.length > 0 && pendingCount > 0 && (
+            <Button onClick={() => handleStartImport(true)}>
+              <RotateCcw className="mr-2 h-4 w-4" />
+              Continuar ({pendingCount} pendientes)
+            </Button>
+          )}
+          {!isProcessing && importStatuses.length > 0 && pendingCount === 0 && (
             <Button onClick={() => {
               setImportStatuses([]);
               setProgress(0);
+              clearSavedProgress();
             }}>
               Nueva Importación
             </Button>
