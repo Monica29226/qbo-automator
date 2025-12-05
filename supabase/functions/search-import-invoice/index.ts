@@ -75,7 +75,7 @@ serve(async (req) => {
     // Check if invoice already exists
     const { data: existing } = await supabase
       .from("processed_documents")
-      .select("id, doc_number, status, qbo_entity_id")
+      .select("id, doc_number, status, qbo_entity_id, default_account_ref")
       .eq("organization_id", organization_id)
       .or(`doc_number.eq.${invoice_number},doc_number.ilike.%${invoice_number}%`)
       .limit(1);
@@ -83,12 +83,47 @@ serve(async (req) => {
     if (existing && existing.length > 0) {
       const doc = existing[0];
       log(`📋 Already exists: ${doc.doc_number}`);
+      
+      // Si ya está publicada en QB, retornar
+      if (doc.qbo_entity_id) {
+        return new Response(
+          JSON.stringify({
+            success: false,
+            message: `Ya publicada en QB (ID: ${doc.qbo_entity_id})`,
+            existing: doc
+          }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+      
+      // Si existe pero NO está en QB, publicarla ahora
+      if (auto_publish && doc.default_account_ref) {
+        log(`📤 Existe sin QB, publicando: ${doc.id}`);
+        
+        // Fire-and-forget QB publishing
+        supabase.functions.invoke("publish-to-quickbooks", {
+          body: { 
+            organization_id, 
+            document_ids: [doc.id] 
+          }
+        }).catch(e => log(`⚠️ QB publish error: ${e}`));
+        
+        return new Response(
+          JSON.stringify({
+            success: true,
+            message: "Existente → QB en cola",
+            existing: doc,
+            qbQueued: true
+          }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+      
+      // Existe pero sin cuenta configurada
       return new Response(
         JSON.stringify({
           success: false,
-          message: doc.qbo_entity_id 
-            ? `Ya publicada en QB (ID: ${doc.qbo_entity_id})`
-            : `Ya existe (estado: ${doc.status})`,
+          message: `Ya existe (estado: ${doc.status}, sin cuenta QB)`,
           existing: doc
         }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
