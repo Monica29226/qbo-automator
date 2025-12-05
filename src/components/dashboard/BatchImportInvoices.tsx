@@ -19,6 +19,12 @@ interface ImportStatus {
   invoiceNumber: string;
   status: "pending" | "processing" | "success" | "error" | "existing";
   message?: string;
+  // Detalles de la factura importada
+  supplierName?: string;
+  issueDate?: string;
+  docNumber?: string;
+  totalAmount?: number;
+  currency?: string;
 }
 
 interface SavedProgress {
@@ -100,9 +106,26 @@ export function BatchImportInvoices() {
       if (error) throw error;
 
       if (data.success) {
-        return { invoiceNumber, status: "success", message: data.message };
+        // Extraer detalles del documento importado
+        const doc = data.document;
+        return { 
+          invoiceNumber, 
+          status: "success", 
+          message: data.message,
+          supplierName: doc?.supplier_name,
+          issueDate: doc?.issue_date,
+          docNumber: doc?.doc_number,
+          totalAmount: doc?.total_amount,
+          currency: doc?.currency,
+        };
       } else if (data.existing) {
-        return { invoiceNumber, status: "existing", message: "Ya existe en el sistema" };
+        const existing = data.existing;
+        return { 
+          invoiceNumber, 
+          status: "existing", 
+          message: "Ya existe en el sistema",
+          docNumber: existing?.doc_number,
+        };
       } else {
         return { invoiceNumber, status: "error", message: data.message };
       }
@@ -419,27 +442,53 @@ export function BatchImportInvoices() {
                 )}
               </div>
 
-              <ScrollArea className="h-[300px] border rounded-md">
+              <ScrollArea className="h-[350px] border rounded-md">
                 <div className="p-2 space-y-1">
                   {importStatuses.map((status, idx) => (
                     <div
                       key={idx}
-                      className={`flex items-center justify-between p-2 rounded text-sm ${
-                        status.status === "processing" ? "bg-blue-50 dark:bg-blue-950" : ""
+                      className={`flex flex-col gap-1 p-3 rounded text-sm border-b last:border-0 ${
+                        status.status === "processing" ? "bg-blue-50 dark:bg-blue-950" : 
+                        status.status === "success" ? "bg-green-50/50 dark:bg-green-950/30" :
+                        status.status === "error" ? "bg-red-50/50 dark:bg-red-950/30" : ""
                       }`}
                     >
-                      <div className="flex items-center gap-2 min-w-0">
-                        {getStatusIcon(status.status)}
-                        <span className="font-mono truncate">{status.invoiceNumber}</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        {status.message && (
-                          <span className="text-xs text-muted-foreground max-w-[200px] truncate" title={status.message}>
-                            {status.message}
-                          </span>
-                        )}
+                      {/* Header row: status icon + invoice number + badge */}
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2 min-w-0">
+                          {getStatusIcon(status.status)}
+                          <span className="font-mono font-medium text-xs">{status.invoiceNumber}</span>
+                        </div>
                         {getStatusBadge(status.status)}
                       </div>
+                      
+                      {/* Detail row: vendor name, date, amount */}
+                      {(status.supplierName || status.issueDate || status.totalAmount) && (
+                        <div className="flex items-center gap-3 pl-6 text-xs">
+                          {status.supplierName && (
+                            <span className="text-foreground font-medium truncate max-w-[200px]" title={status.supplierName}>
+                              {status.supplierName}
+                            </span>
+                          )}
+                          {status.issueDate && (
+                            <span className="text-muted-foreground whitespace-nowrap">
+                              {new Date(status.issueDate).toLocaleDateString('es-CR')}
+                            </span>
+                          )}
+                          {status.totalAmount && (
+                            <span className="text-muted-foreground font-mono whitespace-nowrap">
+                              {status.currency || 'CRC'} {status.totalAmount.toLocaleString('es-CR', { minimumFractionDigits: 2 })}
+                            </span>
+                          )}
+                        </div>
+                      )}
+                      
+                      {/* Error/message row */}
+                      {status.message && status.status === "error" && (
+                        <div className="pl-6 text-xs text-destructive truncate" title={status.message}>
+                          {status.message}
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
