@@ -37,6 +37,7 @@ const CleanIrrecoverableErrorsButton = lazy(() => import("@/components/dashboard
 const ProcessAllNowButton = lazy(() => import("@/components/dashboard/ProcessAllNowButton").then(m => ({ default: m.ProcessAllNowButton })));
 const VendorsWithoutRules = lazy(() => import("@/components/dashboard/VendorsWithoutRules").then(m => ({ default: m.VendorsWithoutRules })));
 const ErrorDiagnostic = lazy(() => import("@/components/dashboard/ErrorDiagnostic").then(m => ({ default: m.ErrorDiagnostic })));
+const SearchImportInvoice = lazy(() => import("@/components/dashboard/SearchImportInvoice").then(m => ({ default: m.SearchImportInvoice })));
 
 // Componente de loading para lazy components
 const LazyFallback = () => (
@@ -506,6 +507,9 @@ const Dashboard = () => {
                   </Button>
                   <Suspense fallback={<div className="h-9 bg-muted animate-pulse rounded" />}>
                     <SyncFromExcelDialog />
+                  </Suspense>
+                  <Suspense fallback={<div className="h-9 bg-muted animate-pulse rounded" />}>
+                    <SearchImportInvoice />
                   </Suspense>
                 </div>
                 
