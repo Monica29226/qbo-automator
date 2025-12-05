@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
+import { useMemo } from "react";
 
 export interface QBOAccount {
   id: string;
@@ -41,32 +42,36 @@ export const useQBOAccounts = () => {
     queryKey: ["qbo-accounts", activeOrganization],
     queryFn: () => fetchQBOAccountsFromAPI(activeOrganization!),
     enabled: !!activeOrganization,
-    staleTime: 5 * 60 * 1000, // 5 minutos - NO refetch si datos son recientes
+    staleTime: 10 * 60 * 1000, // 10 minutos - cuentas no cambian frecuentemente
     gcTime: 30 * 60 * 1000, // 30 minutos en cache
     refetchOnWindowFocus: false, // NO refetch al enfocar ventana
     refetchOnMount: false, // NO refetch al montar si hay datos en cache
     retry: 2,
   });
 
-  // Crear mapas memoizados para búsquedas rápidas O(1)
-  const accountsMap = new Map<string, QBOAccount>();
-  const accountsByCode = new Map<string, string>();
-  
-  if (query.data) {
-    query.data.forEach(acc => {
-      accountsMap.set(acc.id, acc);
-      if (acc.accountNumber) {
-        accountsByCode.set(acc.accountNumber, acc.id);
-        accountsByCode.set(acc.accountNumber.split(' ')[0], acc.id);
-      }
-      const match = acc.name.match(/^(\d+[\-\d]*)/);
-      if (match) {
-        accountsByCode.set(match[1], acc.id);
-      }
-    });
-  }
+  // Memoizar mapas para búsquedas O(1) - SOLO recalcular si query.data cambia
+  const { accountsMap, accountsByCode } = useMemo(() => {
+    const aMap = new Map<string, QBOAccount>();
+    const cMap = new Map<string, string>();
+    
+    if (query.data) {
+      query.data.forEach(acc => {
+        aMap.set(acc.id, acc);
+        if (acc.accountNumber) {
+          cMap.set(acc.accountNumber, acc.id);
+          cMap.set(acc.accountNumber.split(' ')[0], acc.id);
+        }
+        const match = acc.name.match(/^(\d+[\-\d]*)/);
+        if (match) {
+          cMap.set(match[1], acc.id);
+        }
+      });
+    }
+    
+    return { accountsMap: aMap, accountsByCode: cMap };
+  }, [query.data]);
 
-  const getAccountIdFromCode = (accountCode: string | undefined): string => {
+  const getAccountIdFromCode = useMemo(() => (accountCode: string | undefined): string => {
     if (!accountCode) return "";
     const cleanCode = accountCode.split(' ')[0].trim();
     const accountId = accountsByCode.get(cleanCode);
@@ -77,11 +82,11 @@ export const useQBOAccounts = () => {
       return accountsByCode.get(baseCode) || "";
     }
     return "";
-  };
+  }, [accountsByCode]);
 
-  const getAccountById = (id: string): QBOAccount | undefined => {
+  const getAccountById = useMemo(() => (id: string): QBOAccount | undefined => {
     return accountsMap.get(id);
-  };
+  }, [accountsMap]);
 
   return {
     accounts: query.data || [],

@@ -94,12 +94,13 @@ const InvoicesPendingLog = () => {
     getAccountIdFromCode,
   } = useQBOAccounts();
   
-  // Hook optimizado con React Query (caching de 30s)
+  // Hook optimizado con React Query (caching de 60s)
   const { 
     invoices: rawInvoices, 
     isLoading, 
     refetch: refetchInvoices,
     removeInvoicesByVendor,
+    updateInvoiceOptimistic,
     invalidate: invalidateInvoices 
   } = usePendingInvoicesOptimized();
   
@@ -444,152 +445,138 @@ const InvoicesPendingLog = () => {
     
     console.log('🎯 handleUpdateInvoice llamado con ID:', id, 'Field:', field);
 
-    try {
-      const invoice = rawInvoices.find((inv) => inv.id === id) || filteredInvoices.find((inv) => inv.id === id);
-      if (!invoice) {
-        console.error('❌ Factura no encontrada con ID:', id);
-        console.log('📋 IDs en rawInvoices:', rawInvoices.slice(0, 5).map(i => i.id));
-        toast.error("Error: Factura no encontrada. Recargue la página.");
+    const invoice = rawInvoices.find((inv) => inv.id === id) || filteredInvoices.find((inv) => inv.id === id);
+    if (!invoice) {
+      console.error('❌ Factura no encontrada con ID:', id);
+      toast.error("Error: Factura no encontrada. Recargue la página.");
+      updatingInvoicesRef.current.delete(updateKey);
+      return;
+    }
+
+    // Si estamos actualizando default_account_ref, resolver la cuenta PRIMERO
+    let valueToSave = value;
+    let account: QBOAccount | undefined;
+    
+    if (field === "default_account_ref" && typeof value === "string") {
+      account = qboAccounts.find(acc => acc.id === value);
+      if (!account) {
+        console.error('❌ Cuenta no encontrada:', value);
+        toast.error("No se pudo encontrar la cuenta seleccionada.");
         updatingInvoicesRef.current.delete(updateKey);
         return;
       }
-
-      console.log('✅ Factura encontrada:', invoice.doc_number, '-', invoice.supplier_name);
-      toast.loading(`Guardando cuenta para ${invoice.supplier_name}...`, { id: `saving-${id}` });
-
-      // Si estamos actualizando default_account_ref, convertir el ID a código
-      let valueToSave = value;
-      if (field === "default_account_ref" && typeof value === "string") {
-        // VALIDACIÓN: Si no hay cuentas cargadas, intentar recargar
-        let accountsList = qboAccounts;
-        console.log(`📊 Cuentas QBO disponibles: ${accountsList.length}`);
-        
-        if (accountsList.length === 0) {
-          toast.loading("Cargando cuentas de QuickBooks...", { id: "loading-accounts" });
-          try {
-            const result = await refetchQBOAccounts();
-            toast.dismiss("loading-accounts");
-            accountsList = result.data || [];
-            console.log(`📊 Cuentas recargadas: ${accountsList.length}`);
-          } catch (refetchError) {
-            toast.dismiss("loading-accounts");
-            console.error('❌ Error recargando cuentas:', refetchError);
-            toast.error("Error al cargar cuentas. Verifique la conexión con QuickBooks.");
-            return;
-          }
-          
-          if (accountsList.length === 0) {
-            toast.error("Las cuentas de QuickBooks no se han cargado. Verifique la conexión.");
-            return;
-          }
-        }
-        
-        // Buscar la cuenta por ID para obtener su código
-        const account = accountsList.find(acc => acc.id === value);
-        console.log(`🔍 Buscando cuenta con ID "${value}":`, account ? `Encontrada: ${account.name}` : 'NO ENCONTRADA');
-        
-        if (account) {
-          // CRÍTICO: Guardar el código en formato correcto "XXXX-XX - Nombre"
-          valueToSave = account.accountNumber 
-            ? `${account.accountNumber} - ${account.name}` 
-            : account.name;
-          console.log(`✅ Cuenta encontrada: "${valueToSave}"`);
-        } else {
-          console.error('❌ Cuenta no encontrada. ID buscado:', value, 'Cuentas disponibles:', accountsList.map(a => a.id).slice(0, 5));
-          toast.error("No se pudo encontrar la cuenta seleccionada. Intente de nuevo.");
-          return;
-        }
-      }
-
-      console.log(`📝 Guardando en DB - Campo: ${field}, Valor: "${valueToSave}"`);
-
-      // PARALELO: Ejecutar actualizaciones de BD simultáneamente
-      const updateDoc = async () => {
-        return supabase
-          .from("processed_documents")
-          .update({ [field]: valueToSave })
-          .eq("id", id)
-          .select();
-      };
-
-      const updateVendor = async () => {
-        if ((field === "default_account_ref" || field === "default_class_ref") && invoice.vendor_id) {
-          return supabase
-            .from("vendors")
-            .update({ [field]: valueToSave })
-            .eq("id", invoice.vendor_id)
-            .select();
-        }
-        return null;
-      };
-
-      const [docResult] = await Promise.all([updateDoc(), updateVendor()]);
-      
-      if (docResult.error) {
-        console.error('❌ Error actualizando:', docResult.error);
-        toast.error(`Error al guardar: ${docResult.error.message}`);
-        throw docResult.error;
-      }
-
-      console.log('✅ BD actualizada');
-
-      // Guardar default en background (no bloquea)
-      if (field === "default_account_ref" && typeof valueToSave === 'string') {
-        // Guardar regla sin await (en background)
-        saveVendorDefault(invoice.supplier_name, valueToSave, invoice.uses_tax ?? true);
-        
-        // AUTO-PUBLICAR: Si se asignó una cuenta contable válida
-        if (valueToSave.trim() !== '' && activeOrganization) {
-          const vendorInvoices = rawInvoices.filter(inv => 
-            inv.supplier_name === invoice.supplier_name && 
-            !inv.qbo_entity_id &&
-            (inv.status === 'pending' || inv.status === 'pending_config')
-          );
-          
-          const documentIds = vendorInvoices.map(inv => inv.id);
-          const vendorName = invoice.supplier_name;
-          const count = documentIds.length;
-          
-          // Optimistic update - remover de UI inmediatamente
-          removeInvoicesByVendor(vendorName);
-          setFilteredInvoices((prev) => prev.filter((inv) => inv.supplier_name !== vendorName));
-          
-          // Cerrar toast de guardando
-          toast.dismiss(`saving-${id}`);
-          toast.success(`✓ ${count} factura${count > 1 ? 's' : ''} de ${vendorName} en cola de publicación`);
-          
-          // Agregar a cola de publicación (NO BLOQUEA)
-          addToQueue({
-            documentIds,
-            vendorName,
-            organizationId: activeOrganization
-          });
-        }
-      }
-
-      // If updating uses_tax, also save as vendor default
-      if (field === "uses_tax") {
-        await saveVendorDefault(
-          invoice.supplier_name,
-          invoice.default_account_ref || null,
-          value as boolean
-        );
-      }
-
-      if (field !== "default_account_ref") {
-        toast.dismiss(`saving-${id}`);
-        toast.success("Actualizado correctamente");
-      }
-      
-      // Limpiar guard
-      updatingInvoicesRef.current.delete(updateKey);
-    } catch (error: any) {
-      console.error("Error updating invoice:", error);
-      toast.dismiss(`saving-${id}`);
-      toast.error(`Error al actualizar: ${error.message || 'Error desconocido'}`);
-      // Limpiar guard en caso de error
-      updatingInvoicesRef.current.delete(updateKey);
+      valueToSave = account.accountNumber 
+        ? `${account.accountNumber} - ${account.name}` 
+        : account.name;
     }
+
+    // ===== OPTIMISTIC UPDATE INMEDIATO - UI responde al instante =====
+    const vendorName = invoice.supplier_name;
+    const vendorInvoices = rawInvoices.filter(inv => 
+      inv.supplier_name === vendorName && 
+      !inv.qbo_entity_id &&
+      (inv.status === 'pending' || inv.status === 'pending_config')
+    );
+    const documentIds = vendorInvoices.map(inv => inv.id);
+    const count = documentIds.length;
+
+    if (field === "default_account_ref" && typeof valueToSave === 'string' && valueToSave.trim() !== '') {
+      // Remover de UI INMEDIATAMENTE (antes de BD)
+      removeInvoicesByVendor(vendorName);
+      setFilteredInvoices((prev) => prev.filter((inv) => inv.supplier_name !== vendorName));
+      
+      // Toast de éxito INMEDIATO
+      toast.success(`✓ ${count} factura${count > 1 ? 's' : ''} de ${vendorName} en cola de publicación`);
+      
+      // Agregar a cola de publicación INMEDIATAMENTE (no bloquea)
+      if (activeOrganization) {
+        addToQueue({
+          documentIds,
+          vendorName,
+          organizationId: activeOrganization
+        });
+      }
+    } else {
+      // Para otros campos, solo actualizar la factura individual
+      updateInvoiceOptimistic(id, { [field]: valueToSave });
+      toast.success("Actualizado correctamente");
+    }
+
+    // Limpiar guard inmediatamente para permitir otras operaciones
+    updatingInvoicesRef.current.delete(updateKey);
+
+    // ===== OPERACIONES BD EN BACKGROUND (fire-and-forget) =====
+    // Todas las operaciones de BD corren en paralelo sin bloquear UI
+    (async () => {
+      try {
+        const promises: PromiseLike<any>[] = [];
+
+        // 1. Actualizar documento
+        promises.push(
+          supabase
+            .from("processed_documents")
+            .update({ [field]: valueToSave })
+            .eq("id", id)
+            .select()
+        );
+
+        // 2. Actualizar vendor si existe
+        if ((field === "default_account_ref" || field === "default_class_ref") && invoice.vendor_id) {
+          promises.push(
+            supabase
+              .from("vendors")
+              .update({ [field]: valueToSave })
+              .eq("id", invoice.vendor_id)
+              .select()
+          );
+        }
+
+        // 3. Guardar vendor_defaults
+        if (field === "default_account_ref" && typeof valueToSave === 'string') {
+          promises.push(
+            supabase
+              .from("vendor_defaults")
+              .upsert({
+                organization_id: activeOrganization,
+                vendor_name: vendorName,
+                default_account_ref: valueToSave,
+                default_uses_tax: invoice.uses_tax ?? true,
+              }, { onConflict: "organization_id,vendor_name" })
+              .select()
+          );
+
+          // 4. Guardar classification_rules
+          if (account) {
+            promises.push(
+              supabase
+                .from("vendor_classification_rules")
+                .upsert({
+                  organization_id: activeOrganization,
+                  vendor_name: vendorName,
+                  account_code: account.accountNumber || valueToSave as string,
+                  account_description: account.name || "Cuenta configurada",
+                  is_active: true,
+                }, { onConflict: "organization_id,vendor_name" })
+                .select()
+            );
+          }
+        }
+
+        // Ejecutar todas las operaciones BD en paralelo
+        const results = await Promise.allSettled(promises);
+        
+        // Log errores en background (no afecta UI)
+        results.forEach((result, idx) => {
+          if (result.status === 'rejected') {
+            console.error(`❌ Error en operación BD ${idx}:`, result.reason);
+          }
+        });
+
+        console.log('✅ Todas las operaciones BD completadas en background');
+      } catch (error) {
+        console.error('❌ Error en operaciones BD background:', error);
+      }
+    })();
   };
 
   const handleDeleteInvoice = async (id: string) => {

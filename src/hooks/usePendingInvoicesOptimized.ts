@@ -67,7 +67,7 @@ export const usePendingInvoicesOptimized = () => {
     queryKey: ["pending-invoices-optimized", activeOrganization],
     queryFn: () => fetchPendingInvoicesOptimized(activeOrganization!),
     enabled: !!activeOrganization && !authLoading,
-    staleTime: 30 * 1000, // 30 segundos
+    staleTime: 60 * 1000, // 60 segundos - reducir refetch innecesarios
     gcTime: 5 * 60 * 1000, // 5 minutos en cache
     refetchOnWindowFocus: false,
     refetchOnMount: false, // No refetch innecesario al montar
@@ -85,6 +85,14 @@ export const usePendingInvoicesOptimized = () => {
     queryClient.setQueryData<PendingInvoice[]>(
       ["pending-invoices-optimized", activeOrganization],
       (old) => old?.filter(inv => inv.supplier_name !== supplierName) || EMPTY_INVOICES
+    );
+  }, [queryClient, activeOrganization]);
+
+  // NUEVO: Actualizar una factura en cache inmediatamente (optimistic update)
+  const updateInvoiceOptimistic = useCallback((id: string, updates: Partial<PendingInvoice>) => {
+    queryClient.setQueryData<PendingInvoice[]>(
+      ["pending-invoices-optimized", activeOrganization],
+      (old) => old?.map(inv => inv.id === id ? { ...inv, ...updates } : inv) || EMPTY_INVOICES
     );
   }, [queryClient, activeOrganization]);
 
@@ -106,6 +114,7 @@ export const usePendingInvoicesOptimized = () => {
     refetch: query.refetch,
     removeInvoice,
     removeInvoicesByVendor,
+    updateInvoiceOptimistic,
     invalidate,
     isFetched: query.isFetched,
   };
