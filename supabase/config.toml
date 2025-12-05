@@ -131,3 +131,6 @@ verify_jwt = true
 
 [functions.batch-upload-to-drive]
 verify_jwt = true
+
+[functions.search-import-invoice]
+verify_jwt = true
