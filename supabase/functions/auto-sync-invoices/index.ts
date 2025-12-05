@@ -100,12 +100,11 @@ serve(async (req) => {
           throw new Error("Gmail fetch returned no data");
         }
 
-        console.log(`Gmail sync for ${org.name}: ${gmailData.invoices_processed} processed, ${gmailData.invoices_failed} failed`);
-
         const invoicesSkipped = gmailData.invoices_skipped || 0;
         const realFailures = gmailData.invoices_failed || 0;
+        const wasPartial = gmailData.status === "partial" || gmailData.time_limit_reached;
         
-        console.log(`📧 Gmail sync for ${org.name}: ${gmailData.invoices_processed} processed, ${invoicesSkipped} skipped, ${realFailures} failed`);
+        console.log(`📧 Gmail sync for ${org.name}: ${gmailData.invoices_processed} processed, ${invoicesSkipped} skipped, ${realFailures} failed${wasPartial ? ' (PARTIAL - time limit)' : ''}`);
 
         // 2. Publish to QuickBooks (si hay facturas procesadas)
         if (gmailData.invoices_processed > 0) {
@@ -136,19 +135,22 @@ serve(async (req) => {
           }
           console.log(`✅ QuickBooks sync for ${org.name}: ${qboData.published} published, ${qboData.failed} failed`);
 
-          // Actualizar log de sincronización - solo errores reales, no skipped
+          // Actualizar log de sincronización - considerar partial por timeout
+          const syncStatus = wasPartial ? "partial" : (realFailures > 0 || qboData.failed > 0 ? "partial" : "success");
+          
           if (syncLog) {
             await supabase
               .from("sync_logs")
               .update({
-                status: realFailures > 0 ? "partial" : "success",
+                status: syncStatus,
                 gmail_fetched: gmailData.messages_found || 0,
                 gmail_processed: gmailData.invoices_processed,
-                gmail_failed: realFailures, // Solo errores reales
+                gmail_failed: realFailures,
                 qbo_published: qboData.published,
                 qbo_failed: qboData.failed,
                 completed_at: new Date().toISOString(),
                 execution_time_ms: Date.now() - syncStartTime,
+                error_message: wasPartial ? "Sincronización parcial por límite de tiempo" : null,
               })
               .eq("id", syncLog.id);
           }
@@ -161,19 +163,22 @@ serve(async (req) => {
             gmail_failed: realFailures,
             qbo_published: qboData.published,
             qbo_failed: qboData.failed,
-            status: "success",
+            status: syncStatus,
+            partial: wasPartial,
           });
         } else {
-          // Actualizar log con 0 facturas nuevas - solo marcar error si hay fallos REALES
+          // Actualizar log con 0 facturas nuevas - considerar partial por timeout
+          const syncStatus = wasPartial ? "partial" : (realFailures > 0 ? "partial" : "success");
+          
           if (syncLog) {
             await supabase
               .from("sync_logs")
               .update({
-                status: realFailures > 0 ? "partial" : "success",
+                status: syncStatus,
                 gmail_fetched: gmailData.messages_found || 0,
                 gmail_processed: 0,
                 gmail_failed: realFailures,
-                error_message: realFailures > 0 ? `${realFailures} facturas con errores reales` : null,
+                error_message: wasPartial ? "Sincronización parcial por límite de tiempo" : (realFailures > 0 ? `${realFailures} facturas con errores reales` : null),
                 completed_at: new Date().toISOString(),
                 execution_time_ms: Date.now() - syncStartTime,
               })
@@ -186,8 +191,9 @@ serve(async (req) => {
             gmail_processed: 0,
             gmail_skipped: invoicesSkipped,
             gmail_failed: realFailures,
-            status: realFailures > 0 ? "partial" : "success",
-            message: invoicesSkipped > 0 ? `${invoicesSkipped} facturas ya procesadas (duplicados)` : "Sin facturas nuevas",
+            status: syncStatus,
+            partial: wasPartial,
+            message: wasPartial ? "Límite de tiempo alcanzado" : (invoicesSkipped > 0 ? `${invoicesSkipped} facturas ya procesadas (duplicados)` : "Sin facturas nuevas"),
           });
         }
       } catch (error) {

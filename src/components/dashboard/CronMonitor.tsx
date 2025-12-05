@@ -174,6 +174,8 @@ export const CronMonitor = () => {
     switch (status) {
       case "success":
         return <CheckCircle className="h-4 w-4 text-green-600" />;
+      case "partial":
+        return <Clock className="h-4 w-4 text-yellow-600" />;
       case "error":
         return <AlertCircle className="h-4 w-4 text-red-600" />;
       case "running":
@@ -184,20 +186,25 @@ export const CronMonitor = () => {
   };
 
   const getStatusBadge = (status: string) => {
-    const variants: Record<string, "default" | "secondary" | "destructive"> = {
+    const variants: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
       success: "default",
+      partial: "outline",
       error: "destructive",
       running: "secondary",
     };
     
     const labels: Record<string, string> = {
       success: "Exitoso",
+      partial: "Parcial",
       error: "Error",
       running: "En curso",
     };
 
     return (
-      <Badge variant={variants[status] || "secondary"}>
+      <Badge 
+        variant={variants[status] || "secondary"}
+        className={status === "partial" ? "border-yellow-500 text-yellow-600" : ""}
+      >
         {labels[status] || status}
       </Badge>
     );
@@ -301,6 +308,15 @@ export const CronMonitor = () => {
                     {lastSync.error_message || "Error en sincronización"}
                   </p>
                 </>
+              ) : lastSync.status === "partial" ? (
+                <>
+                  <p className="text-lg font-bold text-yellow-600">
+                    {lastSync.gmail_processed} procesadas (parcial)
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {lastSync.qbo_published} publicadas • {lastSync.error_message || "Continuará en próxima ejecución"}
+                  </p>
+                </>
               ) : lastSync.status === "success" ? (
                 <>
                   <p className="text-lg font-bold">
@@ -360,10 +376,10 @@ export const CronMonitor = () => {
                   </div>
                 </div>
                 
-                {log.status === "success" && (
+                {(log.status === "success" || log.status === "partial") && (
                   <div className="flex items-center gap-4 text-xs text-muted-foreground">
                     <div className="text-right">
-                      <p className="font-medium text-foreground">{log.gmail_processed}</p>
+                      <p className={`font-medium ${log.status === "partial" ? "text-yellow-600" : "text-foreground"}`}>{log.gmail_processed}</p>
                       <p>Procesadas</p>
                     </div>
                     <div className="text-right">
