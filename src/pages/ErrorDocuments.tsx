@@ -1,7 +1,7 @@
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { AlertCircle, ArrowLeft, RefreshCw, FileText, Database } from "lucide-react";
+import { AlertCircle, ArrowLeft, RefreshCw, FileText, Database, Wrench } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
@@ -97,6 +97,21 @@ const ErrorDocuments = () => {
         type: "Sin regla de clasificación",
         description: "El proveedor no tiene configurada una cuenta contable",
         solution: "Ir a Configuración → Reglas de Vendors y agregar regla"
+      };
+    }
+    if (errorMessage.includes("no existe en QuickBooks") && errorMessage.includes("Cuenta")) {
+      const match = errorMessage.match(/Cuenta\s+(\d+)/i);
+      return {
+        type: "Código de cuenta incorrecto",
+        description: `El código "${match?.[1] || '?'}" no corresponde a una cuenta válida en QuickBooks`,
+        solution: "Usar botón 'Corregir Cuentas Auto' para mapear automáticamente"
+      };
+    }
+    if (errorMessage.includes("No account configured")) {
+      return {
+        type: "Sin cuenta configurada",
+        description: "La factura no tiene una cuenta contable asignada",
+        solution: "Ir a Facturas Pendientes y asignar cuenta al proveedor"
       };
     }
     return {
@@ -196,6 +211,42 @@ const ErrorDocuments = () => {
     }
   };
 
+  const handleFixAccountCodes = async () => {
+    if (!activeOrganization) return;
+
+    const toastId = toast.loading("Corrigiendo códigos de cuenta automáticamente...");
+
+    try {
+      const { data, error } = await supabase.functions.invoke("fix-account-codes", {
+        body: { organization_id: activeOrganization },
+      });
+
+      if (error) throw error;
+
+      const { fixed, noAccountConfigured, notFixable } = data;
+
+      if (fixed > 0) {
+        toast.success(
+          `✅ ${fixed} factura${fixed !== 1 ? 's' : ''} corregida${fixed !== 1 ? 's' : ''} y republicada${fixed !== 1 ? 's' : ''}` +
+          (noAccountConfigured > 0 ? ` (${noAccountConfigured} sin cuenta configurada)` : ''),
+          { id: toastId, duration: 6000 }
+        );
+      } else if (noAccountConfigured > 0) {
+        toast.warning(
+          `${noAccountConfigured} factura${noAccountConfigured !== 1 ? 's' : ''} requieren configuración manual de cuenta`,
+          { id: toastId, duration: 5000 }
+        );
+      } else {
+        toast.info("No se encontraron errores de código de cuenta para corregir", { id: toastId });
+      }
+
+      setTimeout(() => fetchErrorDocuments(), 1500);
+    } catch (error: any) {
+      console.error("Error fixing account codes:", error);
+      toast.error(`Error al corregir: ${error.message}`, { id: toastId });
+    }
+  };
+
   const handleRepublishFromData = async () => {
     if (!activeOrganization) return;
 
@@ -273,10 +324,18 @@ const ErrorDocuments = () => {
               </div>
             </div>
             {documents.length > 0 && (
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
+                <Button 
+                  onClick={handleFixAccountCodes}
+                  variant="default"
+                  className="gap-2"
+                >
+                  <Wrench className="h-4 w-4" />
+                  Corregir Cuentas Auto
+                </Button>
                 <Button 
                   onClick={handleRepublishFromData}
-                  variant="default"
+                  variant="outline"
                   className="gap-2"
                 >
                   <Database className="h-4 w-4" />

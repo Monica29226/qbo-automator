@@ -137,3 +137,6 @@ verify_jwt = true
 
 [functions.search-delete-qbo-bills]
 verify_jwt = true
+
+[functions.fix-account-codes]
+verify_jwt = true
