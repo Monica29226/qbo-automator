@@ -238,10 +238,18 @@ serve(async (req) => {
       console.log(`Using default Gmail query: ${mailQuery}`);
     }
 
+    // ============================================================
+    // LÍMITE DE TIEMPO PARA EVITAR TIMEOUTS (120 segundos)
+    // ============================================================
+    const MAX_EXECUTION_TIME_MS = 120000; // 2 minutos (buffer de 30s antes del timeout de 150s)
+    const executionStartTime = Date.now();
+    let wasTimeLimitReached = false;
+
     // Buscar mensajes en Gmail con reintentos en caso de error de autenticación
-    // Aumentado a 200 para procesar más facturas
+    // Reducido a 50 para evitar timeouts
+    const maxResults = force_resync ? 100 : 50;
     let searchResponse = await fetch(
-      `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(mailQuery)}&maxResults=200`,
+      `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(mailQuery)}&maxResults=${maxResults}`,
       {
         headers: { Authorization: `Bearer ${accessToken}` },
       }
@@ -256,7 +264,7 @@ serve(async (req) => {
         
         // Reintentar la búsqueda con el nuevo token
         searchResponse = await fetch(
-          `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(mailQuery)}&maxResults=200`,
+          `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(mailQuery)}&maxResults=${maxResults}`,
           {
             headers: { Authorization: `Bearer ${accessToken}` },
           }
@@ -323,11 +331,21 @@ serve(async (req) => {
       }
     };
 
-    // Procesar mensajes - límite aumentado para procesamiento completo
-    const messageLimit = force_resync ? 200 : 200;
-    console.log(`Processing up to ${messageLimit} messages`);
+    // Procesar mensajes con límite de tiempo
+    const messageLimit = messages.length;
+    console.log(`Processing up to ${messageLimit} messages (max execution time: ${MAX_EXECUTION_TIME_MS / 1000}s)`);
     
     for (const message of messages.slice(0, messageLimit)) {
+      // ============================================================
+      // VERIFICAR LÍMITE DE TIEMPO ANTES DE PROCESAR CADA MENSAJE
+      // ============================================================
+      const elapsedTime = Date.now() - executionStartTime;
+      if (elapsedTime > MAX_EXECUTION_TIME_MS) {
+        console.log(`⏱️ Límite de tiempo alcanzado (${(elapsedTime / 1000).toFixed(1)}s). Procesados: ${processedInvoices.length}, Pendientes: ${messages.length - processedInvoices.length - skippedInvoices.length - errors.length}`);
+        wasTimeLimitReached = true;
+        break;
+      }
+      
       try {
         const messageResponse = await fetch(
           `https://gmail.googleapis.com/gmail/v1/users/me/messages/${message.id}`,
@@ -524,18 +542,24 @@ serve(async (req) => {
       }
     }
 
-    console.log(`📊 Summary: ${processedInvoices.length} processed, ${skippedInvoices.length} skipped (duplicates/response XMLs), ${errors.length} real errors`);
+    const totalExecutionTime = Date.now() - executionStartTime;
+    const status = wasTimeLimitReached ? "partial" : "success";
+    
+    console.log(`📊 Summary [${status}]: ${processedInvoices.length} processed, ${skippedInvoices.length} skipped, ${errors.length} errors. Time: ${(totalExecutionTime / 1000).toFixed(1)}s`);
     
     return new Response(
       JSON.stringify({
         success: true,
+        status, // "success" o "partial"
         messages_found: messages.length,
         invoices_processed: processedInvoices.length,
         invoices_skipped: skippedInvoices.length,
-        invoices_failed: errors.length, // Solo errores reales
+        invoices_failed: errors.length,
         invoices: processedInvoices,
         skipped: skippedInvoices.length > 0 ? skippedInvoices : undefined,
         errors: errors.length > 0 ? errors : undefined,
+        time_limit_reached: wasTimeLimitReached,
+        execution_time_ms: totalExecutionTime,
       }),
       {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
