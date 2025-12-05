@@ -259,13 +259,16 @@ export const RecentDocuments = () => {
       const document = documents.find((doc) => doc.id === id);
       if (!document) return;
 
-      console.log("🔄 Asignando cuenta y publicando facturas del proveedor:", document.supplier_name);
+      console.log("🔄 Asignando cuenta para proveedor:", document.supplier_name);
 
       // OPTIMISTIC UPDATE: Remover inmediatamente de la lista
       setDocuments(prev => prev.filter(doc => doc.supplier_name !== document.supplier_name));
-      toast.loading(`Procesando ${document.supplier_name}...`, { id: `processing-${id}` });
+      toast.loading(`Guardando ${document.supplier_name}...`, { id: `processing-${id}` });
 
-      // Update vendor record if exists
+      // 1. Save as vendor default
+      await saveVendorDefault(document.supplier_name, accountRef);
+
+      // 2. Update vendor record if exists
       if (document.vendor_id) {
         await supabase
           .from("vendors")
@@ -273,57 +276,33 @@ export const RecentDocuments = () => {
           .eq("id", document.vendor_id);
       }
 
-      // Save as vendor default
-      await saveVendorDefault(document.supplier_name, accountRef);
-
-      // Update all pending documents from this vendor with the account
-      await supabase
+      // 3. Update all pending documents from this vendor: set account AND status='processed'
+      const { data: updatedDocs, error: updateError } = await supabase
         .from("processed_documents")
-        .update({ default_account_ref: accountRef })
+        .update({ 
+          default_account_ref: accountRef,
+          status: "processed"
+        })
         .eq("organization_id", activeOrganization)
         .eq("supplier_name", document.supplier_name)
         .eq("status", "pending")
-        .is("qbo_entity_id", null);
+        .is("qbo_entity_id", null)
+        .select("id");
 
-      // Get all pending invoices from this vendor
-      const { data: vendorInvoices } = await supabase
-        .from("processed_documents")
-        .select("id, doc_number")
-        .eq("organization_id", activeOrganization)
-        .eq("supplier_name", document.supplier_name)
-        .eq("status", "pending")
-        .is("qbo_entity_id", null);
+      toast.dismiss(`processing-${id}`);
 
-      if (vendorInvoices && vendorInvoices.length > 0) {
-        const invoiceIds = vendorInvoices.map(inv => inv.id);
-        
-        const { data: publishResult, error: publishError } = await supabase.functions.invoke(
-          "publish-to-quickbooks",
-          {
-            body: { 
-              organization_id: activeOrganization,
-              document_ids: invoiceIds
-            }
-          }
-        );
-
-        toast.dismiss(`processing-${id}`);
-        
-        if (publishError || publishResult?.error) {
-          toast.error(`Error al publicar: ${publishError?.message || publishResult?.error}`);
-          fetchDocuments(); // Refetch on error to restore state
-        } else {
-          toast.success(`✅ ${invoiceIds.length} factura${invoiceIds.length > 1 ? 's' : ''} de ${document.supplier_name} publicada${invoiceIds.length > 1 ? 's' : ''}`);
-        }
+      if (updateError) {
+        toast.error(`Error: ${updateError.message}`);
+        fetchDocuments();
       } else {
-        toast.dismiss(`processing-${id}`);
-        toast.success(`✅ Cuenta asignada para ${document.supplier_name}`);
+        const count = updatedDocs?.length || 1;
+        toast.success(`✅ ${count} factura${count > 1 ? 's' : ''} de ${document.supplier_name} procesada${count > 1 ? 's' : ''}`);
       }
     } catch (error: any) {
       console.error("Error updating account:", error);
       toast.dismiss(`processing-${id}`);
       toast.error("Error al actualizar cuenta");
-      fetchDocuments(); // Refetch on error to restore state
+      fetchDocuments();
     }
   };
 
