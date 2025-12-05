@@ -63,12 +63,14 @@ serve(async (req) => {
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    const { organization_id, invoice_number, auto_publish } = await req.json();
+    const { organization_id, invoice_number, auto_publish, expected_vendor, expected_amount, validate_november_2025 } = await req.json();
     
     if (!organization_id) throw new Error("organization_id required");
     if (!invoice_number) throw new Error("invoice_number required");
 
     console.log(`🔍 [${Date.now() - startTime}ms] Searching for invoice: ${invoice_number}`);
+    if (expected_vendor) console.log(`   Expected vendor: ${expected_vendor}`);
+    if (expected_amount) console.log(`   Expected amount: ${expected_amount}`);
 
     // Check if invoice already exists
     const { data: existing } = await supabase
@@ -337,6 +339,65 @@ serve(async (req) => {
     }
 
     const documentId = processResult.document?.id;
+    const issueDate = processResult.document?.issue_date;
+    const supplierName = processResult.document?.supplier_name;
+    const totalAmount = processResult.document?.total_amount;
+
+    // ===== VALIDACIÓN NOVIEMBRE 2025 =====
+    if (validate_november_2025 && issueDate) {
+      const date = new Date(issueDate);
+      const isNovember2025 = date.getMonth() === 10 && date.getFullYear() === 2025; // Month is 0-indexed
+      
+      if (!isNovember2025) {
+        console.log(`❌ Factura ${invoice_number} tiene fecha ${issueDate} - NO es de noviembre 2025`);
+        
+        // Delete the document that was just created
+        if (documentId) {
+          await supabase.from("processed_documents").delete().eq("id", documentId);
+          console.log(`🗑️ Documento eliminado: ${documentId}`);
+        }
+        
+        return new Response(
+          JSON.stringify({
+            success: false,
+            message: `Factura rechazada: fecha ${new Date(issueDate).toLocaleDateString('es-CR')} no es de noviembre 2025`,
+            dateValidation: {
+              issueDate,
+              expectedMonth: 'noviembre 2025',
+              actualMonth: `${date.toLocaleDateString('es-CR', { month: 'long', year: 'numeric' })}`
+            }
+          }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+      console.log(`✅ Fecha validada: ${issueDate} es de noviembre 2025`);
+    }
+
+    // ===== VALIDACIÓN OPCIONAL DE MONTO =====
+    if (expected_amount && expected_amount > 0 && totalAmount) {
+      const tolerance = 0.01; // 1 centavo de tolerancia
+      const amountDiff = Math.abs(totalAmount - expected_amount);
+      if (amountDiff > tolerance) {
+        console.log(`⚠️ Monto difiere: esperado ${expected_amount}, encontrado ${totalAmount} (diff: ${amountDiff})`);
+        // Solo advertencia, no rechazamos
+      } else {
+        console.log(`✅ Monto validado: ${totalAmount}`);
+      }
+    }
+
+    // ===== VALIDACIÓN OPCIONAL DE PROVEEDOR =====
+    if (expected_vendor && supplierName) {
+      const normalizeVendor = (name: string) => name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, "");
+      const expectedNorm = normalizeVendor(expected_vendor);
+      const actualNorm = normalizeVendor(supplierName);
+      const vendorMatches = actualNorm.includes(expectedNorm.substring(0, 10)) || expectedNorm.includes(actualNorm.substring(0, 10));
+      if (!vendorMatches) {
+        console.log(`⚠️ Proveedor difiere: esperado "${expected_vendor}", encontrado "${supplierName}"`);
+        // Solo advertencia, no rechazamos
+      } else {
+        console.log(`✅ Proveedor validado: ${supplierName}`);
+      }
+    }
     
     // Validate totals from XML match what was extracted
     const xmlContent = foundMessage.xmlContent;

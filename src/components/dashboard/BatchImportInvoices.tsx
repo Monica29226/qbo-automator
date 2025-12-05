@@ -19,12 +19,21 @@ interface ImportStatus {
   invoiceNumber: string;
   status: "pending" | "processing" | "success" | "error" | "existing";
   message?: string;
+  // Datos de entrada del Excel
+  inputVendorName?: string;
+  inputAmount?: number;
   // Detalles de la factura importada
   supplierName?: string;
   issueDate?: string;
   docNumber?: string;
   totalAmount?: number;
   currency?: string;
+}
+
+interface ParsedInvoiceLine {
+  vendorName: string;
+  invoiceNumber: string;
+  amount: number;
 }
 
 interface SavedProgress {
@@ -81,15 +90,38 @@ export function BatchImportInvoices() {
     setHasSavedProgress(false);
   };
 
-  const parseInvoiceNumbers = (text: string): string[] => {
+  // Parse lines with format: VendorName | InvoiceNumber | Amount
+  const parseInvoiceLines = (text: string): ParsedInvoiceLine[] => {
     return text
-      .split(/[\n,;]+/)
+      .split(/[\n]+/)
       .map(line => line.trim())
-      .filter(line => line.length > 0);
+      .filter(line => line.length > 0)
+      .map(line => {
+        // Try tab-separated first, then pipe, then multiple spaces
+        let parts = line.split('\t');
+        if (parts.length < 3) parts = line.split('|');
+        if (parts.length < 3) parts = line.split(/\s{2,}/);
+        
+        if (parts.length >= 3) {
+          const vendorName = parts[0].trim();
+          const invoiceNumber = parts[1].trim();
+          // Parse amount: remove currency symbols, commas as thousand separators
+          const amountStr = parts[2].trim().replace(/[^\d.,\-]/g, '').replace(',', '');
+          const amount = parseFloat(amountStr) || 0;
+          
+          return { vendorName, invoiceNumber, amount };
+        }
+        
+        // Fallback: just invoice number
+        return { vendorName: '', invoiceNumber: line.trim(), amount: 0 };
+      })
+      .filter(item => item.invoiceNumber.length > 0);
   };
+  
+  const parsedLines = parseInvoiceLines(invoiceNumbers);
 
   const processInvoice = async (
-    invoiceNumber: string,
+    invoiceLine: ParsedInvoiceLine,
     index: number,
     orgId: string,
     autoPub: boolean
@@ -98,8 +130,11 @@ export function BatchImportInvoices() {
       const { data, error } = await supabase.functions.invoke("search-import-invoice", {
         body: {
           organization_id: orgId,
-          invoice_number: invoiceNumber,
+          invoice_number: invoiceLine.invoiceNumber,
+          expected_vendor: invoiceLine.vendorName,
+          expected_amount: invoiceLine.amount,
           auto_publish: autoPub,
+          validate_november_2025: true, // Solo facturas de noviembre 2025
         },
       });
 
@@ -109,7 +144,9 @@ export function BatchImportInvoices() {
         // Extraer detalles del documento importado
         const doc = data.document;
         return { 
-          invoiceNumber, 
+          invoiceNumber: invoiceLine.invoiceNumber,
+          inputVendorName: invoiceLine.vendorName,
+          inputAmount: invoiceLine.amount,
           status: "success", 
           message: data.message,
           supplierName: doc?.supplier_name,
@@ -121,16 +158,30 @@ export function BatchImportInvoices() {
       } else if (data.existing) {
         const existing = data.existing;
         return { 
-          invoiceNumber, 
+          invoiceNumber: invoiceLine.invoiceNumber,
+          inputVendorName: invoiceLine.vendorName,
+          inputAmount: invoiceLine.amount,
           status: "existing", 
           message: "Ya existe en el sistema",
           docNumber: existing?.doc_number,
         };
       } else {
-        return { invoiceNumber, status: "error", message: data.message };
+        return { 
+          invoiceNumber: invoiceLine.invoiceNumber,
+          inputVendorName: invoiceLine.vendorName,
+          inputAmount: invoiceLine.amount,
+          status: "error", 
+          message: data.message 
+        };
       }
     } catch (error: any) {
-      return { invoiceNumber, status: "error", message: error.message || "Error desconocido" };
+      return { 
+        invoiceNumber: invoiceLine.invoiceNumber,
+        inputVendorName: invoiceLine.vendorName,
+        inputAmount: invoiceLine.amount,
+        status: "error", 
+        message: error.message || "Error desconocido" 
+      };
     }
   };
 
@@ -148,12 +199,12 @@ export function BatchImportInvoices() {
       autoPub = data.autoPublish;
       setAutoPublish(autoPub);
     } else {
-      const numbers = parseInvoiceNumbers(invoiceNumbers);
+      const lines = parseInvoiceLines(invoiceNumbers);
       
-      if (numbers.length === 0) {
+      if (lines.length === 0) {
         toast({
           title: "Error",
-          description: "No hay números de factura válidos",
+          description: "No hay facturas válidas. Formato: Nombre | Número | Monto",
           variant: "destructive",
         });
         return;
@@ -168,8 +219,10 @@ export function BatchImportInvoices() {
         return;
       }
 
-      statuses = numbers.map(num => ({
-        invoiceNumber: num,
+      statuses = lines.map(line => ({
+        invoiceNumber: line.invoiceNumber,
+        inputVendorName: line.vendorName,
+        inputAmount: line.amount,
         status: "pending" as const,
       }));
     }
@@ -206,9 +259,15 @@ export function BatchImportInvoices() {
 
       // Process batch in parallel
       const results = await Promise.all(
-        batchIndices.map(idx => 
-          processInvoice(statuses[idx].invoiceNumber, idx, orgId, autoPub)
-        )
+        batchIndices.map(idx => {
+          const status = statuses[idx];
+          const line: ParsedInvoiceLine = {
+            vendorName: status.inputVendorName || '',
+            invoiceNumber: status.invoiceNumber,
+            amount: status.inputAmount || 0,
+          };
+          return processInvoice(line, idx, orgId, autoPub);
+        })
       );
 
       // Update statuses with results
@@ -382,17 +441,17 @@ export function BatchImportInvoices() {
           {!isProcessing && importStatuses.length === 0 && !hasSavedProgress && (
             <>
               <div className="space-y-2">
-                <Label htmlFor="invoice-numbers">Números de Factura (uno por línea)</Label>
+                <Label htmlFor="invoice-numbers">Facturas de Noviembre 2025 (Nombre | Número | Monto)</Label>
                 <Textarea
                   id="invoice-numbers"
-                  placeholder="00100004010000143249&#10;00100004010000143256&#10;00100004010000143255&#10;..."
+                  placeholder="PETROLEOS DELTA COSTA RICA, S.A.	05800104010005503	21302&#10;1-130-671556 SRL	00100001010000101223	32026&#10;AMERICAN DATA NETWORKS S.A.	00100001041026182	258284635&#10;..."
                   value={invoiceNumbers}
                   onChange={(e) => setInvoiceNumbers(e.target.value)}
-                  rows={10}
-                  className="font-mono text-sm"
+                  rows={12}
+                  className="font-mono text-xs"
                 />
                 <p className="text-xs text-muted-foreground">
-                  {parseInvoiceNumbers(invoiceNumbers).length} facturas detectadas
+                  {parsedLines.length} facturas detectadas - Solo se importarán facturas de Nov 2025
                 </p>
               </div>
 
@@ -504,10 +563,10 @@ export function BatchImportInvoices() {
           {!isProcessing && importStatuses.length === 0 && !hasSavedProgress && (
             <Button 
               onClick={() => handleStartImport(false)} 
-              disabled={parseInvoiceNumbers(invoiceNumbers).length === 0}
+              disabled={parsedLines.length === 0}
             >
               <Upload className="mr-2 h-4 w-4" />
-              Iniciar Importación ({parseInvoiceNumbers(invoiceNumbers).length})
+              Iniciar Importación ({parsedLines.length})
             </Button>
           )}
           {isProcessing && (
