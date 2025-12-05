@@ -126,7 +126,13 @@ export function BatchImportInvoices() {
     orgId: string,
     autoPub: boolean
   ): Promise<ImportStatus> => {
+    console.log(`🔄 [${index}] Iniciando proceso para: ${invoiceLine.invoiceNumber}`);
+    console.log(`   Vendor: ${invoiceLine.vendorName}, Monto: ${invoiceLine.amount}`);
+    
     try {
+      console.log(`📡 [${index}] Llamando edge function search-import-invoice...`);
+      const startTime = Date.now();
+      
       const { data, error } = await supabase.functions.invoke("search-import-invoice", {
         body: {
           organization_id: orgId,
@@ -138,10 +144,18 @@ export function BatchImportInvoices() {
         },
       });
 
-      if (error) throw error;
+      const elapsed = Date.now() - startTime;
+      console.log(`⏱️ [${index}] Respuesta recibida en ${elapsed}ms`);
+
+      if (error) {
+        console.error(`❌ [${index}] Error de supabase:`, error);
+        throw error;
+      }
+
+      console.log(`📦 [${index}] Data recibida:`, data);
 
       if (data.success) {
-        // Extraer detalles del documento importado
+        console.log(`✅ [${index}] Éxito: ${data.message}`);
         const doc = data.document;
         return { 
           invoiceNumber: invoiceLine.invoiceNumber,
@@ -156,6 +170,7 @@ export function BatchImportInvoices() {
           currency: doc?.currency,
         };
       } else if (data.existing) {
+        console.log(`📋 [${index}] Ya existe en sistema`);
         const existing = data.existing;
         return { 
           invoiceNumber: invoiceLine.invoiceNumber,
@@ -166,6 +181,7 @@ export function BatchImportInvoices() {
           docNumber: existing?.doc_number,
         };
       } else {
+        console.log(`⚠️ [${index}] Fallo: ${data.message}`);
         return { 
           invoiceNumber: invoiceLine.invoiceNumber,
           inputVendorName: invoiceLine.vendorName,
@@ -175,6 +191,7 @@ export function BatchImportInvoices() {
         };
       }
     } catch (error: any) {
+      console.error(`💥 [${index}] Exception:`, error);
       return { 
         invoiceNumber: invoiceLine.invoiceNumber,
         inputVendorName: invoiceLine.vendorName,
@@ -248,6 +265,8 @@ export function BatchImportInvoices() {
 
       const batchIndices = pendingIndices.slice(i, i + PARALLEL_COUNT);
       
+      console.log(`📦 Procesando lote ${Math.floor(i/PARALLEL_COUNT) + 1}: indices ${batchIndices.join(', ')}`);
+      
       // Mark batch as processing
       setImportStatuses(prev => {
         const updated = [...prev];
@@ -258,6 +277,9 @@ export function BatchImportInvoices() {
       });
 
       // Process batch in parallel
+      console.log(`🚀 Iniciando ${batchIndices.length} procesos en paralelo...`);
+      const batchStart = Date.now();
+      
       const results = await Promise.all(
         batchIndices.map(idx => {
           const status = statuses[idx];
@@ -266,9 +288,12 @@ export function BatchImportInvoices() {
             invoiceNumber: status.invoiceNumber,
             amount: status.inputAmount || 0,
           };
+          console.log(`   → [${idx}] ${line.invoiceNumber} (${line.vendorName})`);
           return processInvoice(line, idx, orgId, autoPub);
         })
       );
+      
+      console.log(`✅ Lote completado en ${Date.now() - batchStart}ms`);
 
       // Update statuses with results
       setImportStatuses(prev => {
