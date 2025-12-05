@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { Upload, Loader2, CheckCircle2, XCircle, AlertCircle, FileText, RotateCcw } from "lucide-react";
+import { Upload, Loader2, CheckCircle2, XCircle, AlertCircle, FileText, RotateCcw, Square } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
@@ -511,8 +511,9 @@ export function BatchImportInvoices() {
             </Button>
           )}
           {isProcessing && (
-            <Button variant="destructive" onClick={handleAbort}>
-              Pausar y Guardar
+            <Button variant="destructive" onClick={handleAbort} className="gap-2">
+              <Square className="h-4 w-4 fill-current" />
+              Cancelar Importación
             </Button>
           )}
           {!isProcessing && importStatuses.length > 0 && pendingCount > 0 && (
