@@ -163,122 +163,98 @@ serve(async (req) => {
       }
     }
 
-    // Search Gmail for the specific invoice number
-    // Try multiple search patterns to find the invoice
+    // Search Gmail - use single optimized query
     console.log(`⏱️ [${Date.now() - startTime}ms] Starting Gmail search...`);
     
-    const searchPatterns = [
-      `has:attachment filename:xml ${invoice_number}`,
-      `subject:${invoice_number} has:attachment`,
-    ];
+    const query = `has:attachment filename:xml ${invoice_number}`;
+    console.log(`📧 Searching: ${query}`);
+    
+    const searchResponse = await fetchWithTimeout(
+      `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(query)}&maxResults=5`,
+      { headers: { Authorization: `Bearer ${accessToken}` } },
+      8000
+    );
+
+    if (!searchResponse.ok) {
+      throw new Error(`Gmail search failed: ${searchResponse.status}`);
+    }
+
+    const searchData = await searchResponse.json();
+    const messages = searchData.messages || [];
+    
+    console.log(`⏱️ [${Date.now() - startTime}ms] Found ${messages.length} messages`);
 
     let foundMessage: { id: string; xmlContent: string } | null = null;
-    let foundXmlPart: any = null;
     let foundPdfPart: any = null;
 
-    for (const query of searchPatterns) {
-      if (foundMessage) break;
-      console.log(`📧 [${Date.now() - startTime}ms] Searching: ${query}`);
-      
-      const searchResponse = await fetchWithTimeout(
-        `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(query)}&maxResults=10`,
+    // Fetch all messages in parallel for speed
+    const messagePromises = messages.slice(0, 3).map((msg: any) =>
+      fetchWithTimeout(
+        `https://gmail.googleapis.com/gmail/v1/users/me/messages/${msg.id}`,
         { headers: { Authorization: `Bearer ${accessToken}` } },
-        10000
-      );
+        6000
+      ).then(r => r.ok ? r.json() : null).catch(() => null)
+    );
 
-      if (!searchResponse.ok) {
-        console.error(`Gmail search failed: ${searchResponse.status}`);
-        continue;
-      }
+    const messageResults = await Promise.all(messagePromises);
+    console.log(`⏱️ [${Date.now() - startTime}ms] Fetched ${messageResults.filter(Boolean).length} messages`);
 
-      const searchData = await searchResponse.json();
-      const messages = searchData.messages || [];
+    // Process each message to find the invoice
+    for (const messageData of messageResults) {
+      if (!messageData || foundMessage) continue;
       
-      console.log(`[${Date.now() - startTime}ms] Found ${messages.length} messages with pattern`);
+      const parts = messageData.payload?.parts || [];
+      const xmlParts = parts.filter((p: any) => p.filename?.toLowerCase().endsWith(".xml"));
+      const pdfPart = parts.find((p: any) => p.filename?.toLowerCase().endsWith(".pdf"));
 
-      // Check each message for the invoice number in XML
-      for (const msg of messages) {
-        const messageResponse = await fetchWithTimeout(
-          `https://gmail.googleapis.com/gmail/v1/users/me/messages/${msg.id}`,
-          { headers: { Authorization: `Bearer ${accessToken}` } },
-          8000
-        );
-
-        if (!messageResponse.ok) continue;
-
-        const messageData = await messageResponse.json();
-        const parts = messageData.payload?.parts || [];
-
-        let pdfPart = null;
-        const xmlParts: any[] = [];
-
-        // Collect all attachments
-        for (const part of parts) {
-          if (part.filename?.toLowerCase().endsWith(".xml")) {
-            xmlParts.push(part);
-          }
-          if (part.filename?.toLowerCase().endsWith(".pdf")) {
-            pdfPart = part;
-          }
-        }
-
-        // Check each XML part to find the actual invoice (not MensajeHacienda)
-        for (const xmlPart of xmlParts) {
-          if (!xmlPart?.body?.attachmentId) continue;
-          
-          // Download XML to check invoice number
-          const attachmentResponse = await fetchWithTimeout(
-            `https://gmail.googleapis.com/gmail/v1/users/me/messages/${msg.id}/attachments/${xmlPart.body.attachmentId}`,
+      // Download XMLs in parallel
+      const xmlPromises = xmlParts.map(async (xmlPart: any) => {
+        if (!xmlPart?.body?.attachmentId) return null;
+        try {
+          const resp = await fetchWithTimeout(
+            `https://gmail.googleapis.com/gmail/v1/users/me/messages/${messageData.id}/attachments/${xmlPart.body.attachmentId}`,
             { headers: { Authorization: `Bearer ${accessToken}` } },
-            8000
+            5000
           );
+          if (!resp.ok) return null;
+          const data = await resp.json();
+          return { xmlPart, content: atob(data.data.replace(/-/g, "+").replace(/_/g, "/")) };
+        } catch { return null; }
+      });
 
-          if (!attachmentResponse.ok) continue;
-          
-          const attachmentData = await attachmentResponse.json();
-          const xmlContent = atob(attachmentData.data.replace(/-/g, "+").replace(/_/g, "/"));
-          const docNumber = parseNumeroConsecutivo(xmlContent);
-          
-          console.log(`📄 Found XML: ${xmlPart.filename} with doc_number: ${docNumber}`);
-
-          // CRITICAL: Skip MensajeHacienda (response XMLs) - they don't have invoice data
-          const isMensajeHacienda = xmlContent.includes('<MensajeHacienda') || 
-                                     xmlContent.includes('mensajeHacienda');
-          
-          if (isMensajeHacienda) {
-            console.log(`⏭️ Skipping MensajeHacienda (response XML): ${xmlPart.filename}`);
-            continue;
-          }
-
-          // Verify it's an actual invoice document
-          const isActualInvoice = xmlContent.includes('<FacturaElectronica') || 
-                                  xmlContent.includes('<NotaCreditoElectronica') ||
-                                  xmlContent.includes('<NotaDebitoElectronica') ||
-                                  xmlContent.includes('<TiqueteElectronico') ||
-                                  xmlContent.includes('<Emisor>');
-          
-          if (!isActualInvoice) {
-            console.log(`⏭️ Skipping non-invoice XML: ${xmlPart.filename}`);
-            continue;
-          }
-
-          // Check if this is the invoice we're looking for
-          if (docNumber === invoice_number || 
-              docNumber.includes(invoice_number) || 
-              invoice_number.includes(docNumber) ||
-              xmlContent.includes(invoice_number)) {
-            console.log(`✅ MATCH FOUND! Invoice ${invoice_number} in ${xmlPart.filename}`);
-            foundMessage = { id: msg.id, xmlContent };
-            foundXmlPart = xmlPart;
-            foundPdfPart = pdfPart;
-            break;
-          }
+      const xmlResults = await Promise.all(xmlPromises);
+      
+      for (const result of xmlResults) {
+        if (!result || foundMessage) continue;
+        
+        const { content: xmlContent, xmlPart } = result;
+        const docNumber = parseNumeroConsecutivo(xmlContent);
+        
+        // Skip MensajeHacienda
+        if (xmlContent.includes('<MensajeHacienda') || xmlContent.includes('mensajeHacienda')) {
+          console.log(`⏭️ Skip MensajeHacienda: ${xmlPart.filename}`);
+          continue;
         }
 
-        if (foundMessage) break;
-      }
+        // Verify it's an actual invoice
+        const isInvoice = xmlContent.includes('<FacturaElectronica') || 
+                          xmlContent.includes('<NotaCreditoElectronica') ||
+                          xmlContent.includes('<NotaDebitoElectronica') ||
+                          xmlContent.includes('<TiqueteElectronico') ||
+                          xmlContent.includes('<Emisor>');
+        
+        if (!isInvoice) continue;
 
-      if (foundMessage) break;
+        // Check match
+        if (docNumber === invoice_number || 
+            docNumber.includes(invoice_number) || 
+            invoice_number.includes(docNumber)) {
+          console.log(`✅ [${Date.now() - startTime}ms] MATCH: ${invoice_number}`);
+          foundMessage = { id: messageData.id, xmlContent };
+          foundPdfPart = pdfPart;
+          break;
+        }
+      }
     }
 
     if (!foundMessage) {
