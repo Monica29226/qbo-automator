@@ -88,20 +88,20 @@ Deno.serve(async (req) => {
     const supabase = createClient(supabaseUrl, supabaseKey);
 
     const authHeader = req.headers.get("Authorization");
-    if (!authHeader) {
-      throw new Error("No authorization header");
-    }
-
-    const token = authHeader.replace("Bearer ", "");
-    const isServiceRole = token === supabaseKey;
     let userId: string | null = null;
     
-    if (!isServiceRole) {
-      const { data: { user }, error: authError } = await supabase.auth.getUser(token);
-      if (authError || !user) {
-        throw new Error("Authentication failed");
+    // Allow internal calls without auth header (for batch operations)
+    if (authHeader) {
+      const token = authHeader.replace("Bearer ", "");
+      const isServiceRole = token === supabaseKey;
+      
+      if (!isServiceRole) {
+        const { data: { user }, error: authError } = await supabase.auth.getUser(token);
+        if (authError || !user) {
+          throw new Error("Authentication failed");
+        }
+        userId = user.id;
       }
-      userId = user.id;
     }
 
     const { organization_id, document_ids } = await req.json();
