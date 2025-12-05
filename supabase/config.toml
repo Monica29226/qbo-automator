@@ -134,3 +134,6 @@ verify_jwt = true
 
 [functions.search-import-invoice]
 verify_jwt = true
+
+[functions.search-delete-qbo-bills]
+verify_jwt = false
