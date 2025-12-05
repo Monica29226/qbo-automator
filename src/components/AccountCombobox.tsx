@@ -44,12 +44,22 @@ export function AccountCombobox({
   const isSelectingRef = React.useRef(false); // Prevenir múltiples selecciones
 
   const isEmpty = accounts.length === 0;
-  const selectedAccount = accounts.find((account) => account.id === value);
+  
+  // Buscar cuenta por código de cuenta (accountNumber) O por ID para compatibilidad
+  const selectedAccount = accounts.find((account) => {
+    const code = account.accountNumber || account.id;
+    return code === value || account.id === value;
+  });
 
   const getDisplayText = (account: Account) => {
     return account.accountNumber
       ? `${account.accountNumber} - ${account.name}`
       : account.name;
+  };
+  
+  // Obtener el código de cuenta para guardar (usar accountNumber, no id interno de QB)
+  const getAccountCode = (account: Account): string => {
+    return account.accountNumber || account.id;
   };
 
   const normalizeText = (text: string) => {
@@ -117,8 +127,10 @@ export function AccountCombobox({
                     }
                     isSelectingRef.current = true;
                     
-                    console.log('✅ AccountCombobox: Cuenta seleccionada -', account.id, getDisplayText(account));
-                    onValueChange(account.id);
+                    // Enviar código de cuenta (accountNumber) no ID interno de QuickBooks
+                    const accountCode = getAccountCode(account);
+                    console.log('✅ AccountCombobox: Cuenta seleccionada -', accountCode, getDisplayText(account));
+                    onValueChange(accountCode);
                     setOpen(false);
                     setSearchQuery("");
                     
@@ -128,10 +140,10 @@ export function AccountCombobox({
                     }, 500);
                   }}
                 >
-                  <Check
+                <Check
                     className={cn(
                       "mr-2 h-4 w-4",
-                      value === account.id ? "opacity-100" : "opacity-0"
+                      value === getAccountCode(account) || value === account.id ? "opacity-100" : "opacity-0"
                     )}
                   />
                   <span className="flex-1 truncate">{getDisplayText(account)}</span>

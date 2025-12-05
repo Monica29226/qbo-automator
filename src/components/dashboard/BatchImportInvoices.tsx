@@ -37,7 +37,7 @@ interface SavedProgress {
 export function BatchImportInvoices() {
   const [open, setOpen] = useState(false);
   const [invoiceNumbers, setInvoiceNumbers] = useState("");
-  const [autoPublish, setAutoPublish] = useState(true);
+  const [autoPublish, setAutoPublish] = useState(false); // Desactivado por defecto para importación rápida
   const [isProcessing, setIsProcessing] = useState(false);
   const [progress, setProgress] = useState(0);
   const [importStatuses, setImportStatuses] = useState<ImportStatus[]>([]);
