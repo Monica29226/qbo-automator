@@ -169,15 +169,8 @@ export function BatchImportInvoices() {
     const invoiceShort = invoiceLine.invoiceNumber.slice(-10);
     
     addLog(`[${index}] 🔄 Iniciando: ${invoiceShort}`, "info");
-    
-    // Create abort controller for timeout
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => {
-      controller.abort();
-      addLog(`[${index}] ⏱️ TIMEOUT después de ${INVOICE_TIMEOUT_MS/1000}s`, "error");
-    }, INVOICE_TIMEOUT_MS);
 
-    // Update progress in real-time (faster intervals for shorter timeouts)
+    // Update progress in real-time
     const progressInterval = setInterval(() => {
       const elapsed = Date.now() - startTime;
       const seconds = Math.round(elapsed / 1000);
@@ -195,7 +188,12 @@ export function BatchImportInvoices() {
     try {
       updateStep(index, "📡 Conectando...", 0);
       
-      const { data, error } = await supabase.functions.invoke("search-import-invoice", {
+      // Use Promise.race for proper timeout handling (supabase.functions.invoke doesn't support AbortController)
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error("TIMEOUT")), INVOICE_TIMEOUT_MS);
+      });
+      
+      const invokePromise = supabase.functions.invoke("search-import-invoice", {
         body: {
           organization_id: orgId,
           invoice_number: invoiceLine.invoiceNumber,
@@ -205,8 +203,9 @@ export function BatchImportInvoices() {
         },
       });
 
+      const { data, error } = await Promise.race([invokePromise, timeoutPromise]);
+
       clearInterval(progressInterval);
-      clearTimeout(timeoutId);
 
       const elapsed = Date.now() - startTime;
       
@@ -269,11 +268,11 @@ export function BatchImportInvoices() {
       }
     } catch (error: any) {
       clearInterval(progressInterval);
-      clearTimeout(timeoutId);
       
       const elapsed = Date.now() - startTime;
-      const errorMsg = error.name === "AbortError" ? "Timeout - muy lento" : (error.message || "Error desconocido");
-      addLog(`[${index}] 💥 ${errorMsg}`, "error");
+      const isTimeout = error.message === "TIMEOUT";
+      const errorMsg = isTimeout ? `Timeout después de ${INVOICE_TIMEOUT_MS/1000}s` : (error.message || "Error desconocido");
+      addLog(`[${index}] ${isTimeout ? '⏱️' : '💥'} ${errorMsg}`, "error");
       
       return { 
         invoiceNumber: invoiceLine.invoiceNumber,
