@@ -36,8 +36,8 @@ function parseNumeroConsecutivo(xml: string): string {
   return directValue || '';
 }
 
-// Helper function with timeout
-async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs = 15000): Promise<Response> {
+// Helper function with aggressive timeout
+async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs = 8000): Promise<Response> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -50,6 +50,7 @@ async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs = 1
 
 serve(async (req) => {
   const startTime = Date.now();
+  const log = (msg: string) => console.log(`[${Date.now() - startTime}ms] ${msg}`);
   
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -63,14 +64,13 @@ serve(async (req) => {
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    const { organization_id, invoice_number, auto_publish, expected_vendor, expected_amount, validate_november_2025 } = await req.json();
+    const { organization_id, invoice_number, auto_publish, expected_vendor, validate_november_2025 } = await req.json();
     
     if (!organization_id) throw new Error("organization_id required");
     if (!invoice_number) throw new Error("invoice_number required");
 
-    console.log(`🔍 [${Date.now() - startTime}ms] Searching for invoice: ${invoice_number}`);
-    if (expected_vendor) console.log(`   Expected vendor: ${expected_vendor}`);
-    if (expected_amount) console.log(`   Expected amount: ${expected_amount}`);
+    log(`🔍 Searching: ${invoice_number}`);
+    if (expected_vendor) log(`   Vendor: ${expected_vendor}`);
 
     // Check if invoice already exists
     const { data: existing } = await supabase
@@ -82,20 +82,13 @@ serve(async (req) => {
 
     if (existing && existing.length > 0) {
       const doc = existing[0];
-      if (doc.qbo_entity_id) {
-        return new Response(
-          JSON.stringify({
-            success: false,
-            message: `La factura ${invoice_number} ya existe y está publicada en QuickBooks (ID: ${doc.qbo_entity_id})`,
-            existing: doc
-          }),
-          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
+      log(`📋 Already exists: ${doc.doc_number}`);
       return new Response(
         JSON.stringify({
           success: false,
-          message: `La factura ${invoice_number} ya existe en el sistema con estado: ${doc.status}`,
+          message: doc.qbo_entity_id 
+            ? `Ya publicada en QB (ID: ${doc.qbo_entity_id})`
+            : `Ya existe (estado: ${doc.status})`,
           existing: doc
         }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -103,6 +96,7 @@ serve(async (req) => {
     }
 
     // Get Gmail account
+    log("📧 Getting Gmail account...");
     const { data: gmailAccount, error: accountError } = await supabase
       .from("integration_accounts")
       .select("*")
@@ -114,14 +108,14 @@ serve(async (req) => {
       .single();
 
     if (accountError || !gmailAccount) {
-      throw new Error("No active Gmail account found");
+      throw new Error("No Gmail account found");
     }
 
     const credentials = gmailAccount.credentials as any;
     let accessToken = credentials?.access_token;
     
     if (!accessToken) {
-      throw new Error("No access token found");
+      throw new Error("No access token");
     }
 
     // Refresh token if needed
@@ -130,51 +124,53 @@ serve(async (req) => {
       : credentials.expires_at;
     
     if (expiresAt && (expiresAt - Date.now()) < 2 * 60 * 60 * 1000) {
-      console.log("🔄 Refreshing Gmail token...");
+      log("🔄 Refreshing token...");
       const GOOGLE_CLIENT_ID = Deno.env.get("GOOGLE_CLIENT_ID");
       const GOOGLE_CLIENT_SECRET = Deno.env.get("GOOGLE_CLIENT_SECRET");
 
       if (credentials.refresh_token && GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET) {
-        const refreshResponse = await fetch("https://oauth2.googleapis.com/token", {
-          method: "POST",
-          headers: { "Content-Type": "application/x-www-form-urlencoded" },
-          body: new URLSearchParams({
-            client_id: GOOGLE_CLIENT_ID,
-            client_secret: GOOGLE_CLIENT_SECRET,
-            refresh_token: credentials.refresh_token,
-            grant_type: "refresh_token",
-          }),
-        });
+        try {
+          const refreshResponse = await fetchWithTimeout("https://oauth2.googleapis.com/token", {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: new URLSearchParams({
+              client_id: GOOGLE_CLIENT_ID,
+              client_secret: GOOGLE_CLIENT_SECRET,
+              refresh_token: credentials.refresh_token,
+              grant_type: "refresh_token",
+            }),
+          }, 5000);
 
-        if (refreshResponse.ok) {
-          const refreshData = await refreshResponse.json();
-          accessToken = refreshData.access_token;
-          
-          await supabase
-            .from("integration_accounts")
-            .update({
-              credentials: {
-                ...credentials,
-                access_token: refreshData.access_token,
-                expires_at: Date.now() + (refreshData.expires_in * 1000),
-              },
-              updated_at: new Date().toISOString(),
-            })
-            .eq("id", gmailAccount.id);
+          if (refreshResponse.ok) {
+            const refreshData = await refreshResponse.json();
+            accessToken = refreshData.access_token;
+            
+            await supabase
+              .from("integration_accounts")
+              .update({
+                credentials: {
+                  ...credentials,
+                  access_token: refreshData.access_token,
+                  expires_at: Date.now() + (refreshData.expires_in * 1000),
+                },
+                updated_at: new Date().toISOString(),
+              })
+              .eq("id", gmailAccount.id);
+          }
+        } catch (e) {
+          log(`⚠️ Token refresh failed: ${e}`);
         }
       }
     }
 
-    // Search Gmail - use single optimized query
-    console.log(`⏱️ [${Date.now() - startTime}ms] Starting Gmail search...`);
-    
+    // Search Gmail with aggressive timeout
+    log("🔍 Gmail search...");
     const query = `has:attachment filename:xml ${invoice_number}`;
-    console.log(`📧 Searching: ${query}`);
     
     const searchResponse = await fetchWithTimeout(
-      `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(query)}&maxResults=5`,
+      `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(query)}&maxResults=3`,
       { headers: { Authorization: `Bearer ${accessToken}` } },
-      8000
+      6000
     );
 
     if (!searchResponse.ok) {
@@ -184,22 +180,32 @@ serve(async (req) => {
     const searchData = await searchResponse.json();
     const messages = searchData.messages || [];
     
-    console.log(`⏱️ [${Date.now() - startTime}ms] Found ${messages.length} messages`);
+    log(`📬 Found ${messages.length} messages`);
+
+    if (messages.length === 0) {
+      return new Response(
+        JSON.stringify({
+          success: false,
+          message: `No se encontró en Gmail: ${invoice_number}`
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
 
     let foundMessage: { id: string; xmlContent: string } | null = null;
     let foundPdfPart: any = null;
 
-    // Fetch all messages in parallel for speed
-    const messagePromises = messages.slice(0, 3).map((msg: any) =>
+    // Fetch messages in parallel (max 2 for speed)
+    const messagePromises = messages.slice(0, 2).map((msg: any) =>
       fetchWithTimeout(
         `https://gmail.googleapis.com/gmail/v1/users/me/messages/${msg.id}`,
         { headers: { Authorization: `Bearer ${accessToken}` } },
-        6000
+        5000
       ).then(r => r.ok ? r.json() : null).catch(() => null)
     );
 
     const messageResults = await Promise.all(messagePromises);
-    console.log(`⏱️ [${Date.now() - startTime}ms] Fetched ${messageResults.filter(Boolean).length} messages`);
+    log(`📩 Fetched ${messageResults.filter(Boolean).length} messages`);
 
     // Process each message to find the invoice
     for (const messageData of messageResults) {
@@ -209,14 +215,14 @@ serve(async (req) => {
       const xmlParts = parts.filter((p: any) => p.filename?.toLowerCase().endsWith(".xml"));
       const pdfPart = parts.find((p: any) => p.filename?.toLowerCase().endsWith(".pdf"));
 
-      // Download XMLs in parallel
-      const xmlPromises = xmlParts.map(async (xmlPart: any) => {
+      // Download XMLs in parallel (max 2)
+      const xmlPromises = xmlParts.slice(0, 2).map(async (xmlPart: any) => {
         if (!xmlPart?.body?.attachmentId) return null;
         try {
           const resp = await fetchWithTimeout(
             `https://gmail.googleapis.com/gmail/v1/users/me/messages/${messageData.id}/attachments/${xmlPart.body.attachmentId}`,
             { headers: { Authorization: `Bearer ${accessToken}` } },
-            5000
+            4000
           );
           if (!resp.ok) return null;
           const data = await resp.json();
@@ -230,11 +236,10 @@ serve(async (req) => {
         if (!result || foundMessage) continue;
         
         const { content: xmlContent, xmlPart } = result;
-        const docNumber = parseNumeroConsecutivo(xmlContent);
         
-        // Skip MensajeHacienda
+        // Skip MensajeHacienda (not an invoice)
         if (xmlContent.includes('<MensajeHacienda') || xmlContent.includes('mensajeHacienda')) {
-          console.log(`⏭️ Skip MensajeHacienda: ${xmlPart.filename}`);
+          log(`⏭️ Skip MensajeHacienda: ${xmlPart.filename}`);
           continue;
         }
 
@@ -245,13 +250,18 @@ serve(async (req) => {
                           xmlContent.includes('<TiqueteElectronico') ||
                           xmlContent.includes('<Emisor>');
         
-        if (!isInvoice) continue;
+        if (!isInvoice) {
+          log(`⏭️ Not an invoice: ${xmlPart.filename}`);
+          continue;
+        }
 
+        const docNumber = parseNumeroConsecutivo(xmlContent);
+        
         // Check match
         if (docNumber === invoice_number || 
             docNumber.includes(invoice_number) || 
             invoice_number.includes(docNumber)) {
-          console.log(`✅ [${Date.now() - startTime}ms] MATCH: ${invoice_number}`);
+          log(`✅ MATCH: ${docNumber}`);
           foundMessage = { id: messageData.id, xmlContent };
           foundPdfPart = pdfPart;
           break;
@@ -263,19 +273,20 @@ serve(async (req) => {
       return new Response(
         JSON.stringify({
           success: false,
-          message: `No se encontró la factura ${invoice_number} en Gmail. Verifique el número e intente nuevamente.`
+          message: `XML no encontrado para: ${invoice_number}`
         }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    // Download PDF if available
+    // Download PDF if available (non-blocking)
     let pdfUrl = null;
     if (foundPdfPart?.body?.attachmentId) {
       try {
-        const pdfAttachmentResponse = await fetch(
+        const pdfAttachmentResponse = await fetchWithTimeout(
           `https://gmail.googleapis.com/gmail/v1/users/me/messages/${foundMessage.id}/attachments/${foundPdfPart.body.attachmentId}`,
-          { headers: { Authorization: `Bearer ${accessToken}` } }
+          { headers: { Authorization: `Bearer ${accessToken}` } },
+          5000
         );
 
         if (pdfAttachmentResponse.ok) {
@@ -296,15 +307,15 @@ serve(async (req) => {
             });
           
           pdfUrl = pdfPath;
-          console.log(`✓ PDF saved: ${pdfPath}`);
+          log(`✓ PDF saved`);
         }
-      } catch (pdfError) {
-        console.error("Error downloading PDF:", pdfError);
+      } catch (e) {
+        log(`⚠️ PDF error: ${e}`);
       }
     }
 
-    // Process the XML through process-document-xml
-    console.log(`⏱️ [${Date.now() - startTime}ms] Processing XML...`);
+    // Process the XML
+    log("⚙️ Processing XML...");
     
     const processResponse = await fetchWithTimeout(
       `${supabaseUrl}/functions/v1/process-document-xml`,
@@ -320,18 +331,17 @@ serve(async (req) => {
           pdf_attachment_url: pdfUrl,
         }),
       },
-      20000
+      15000
     );
 
-    console.log(`⏱️ [${Date.now() - startTime}ms] XML processed`);
-
     const processResult = await processResponse.json();
+    log(`⚙️ Process result: ${processResult.success ? 'OK' : processResult.message}`);
     
     if (!processResult.success) {
       return new Response(
         JSON.stringify({
           success: false,
-          message: `Error procesando factura: ${processResult.message || 'Error desconocido'}`,
+          message: processResult.message || 'Error procesando XML',
           details: processResult
         }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -340,89 +350,36 @@ serve(async (req) => {
 
     const documentId = processResult.document?.id;
     const issueDate = processResult.document?.issue_date;
-    const supplierName = processResult.document?.supplier_name;
-    const totalAmount = processResult.document?.total_amount;
 
-    // ===== VALIDACIÓN NOVIEMBRE 2025 =====
+    // Validate November 2025
     if (validate_november_2025 && issueDate) {
       const date = new Date(issueDate);
-      const isNovember2025 = date.getMonth() === 10 && date.getFullYear() === 2025; // Month is 0-indexed
+      const isNovember2025 = date.getMonth() === 10 && date.getFullYear() === 2025;
       
       if (!isNovember2025) {
-        console.log(`❌ Factura ${invoice_number} tiene fecha ${issueDate} - NO es de noviembre 2025`);
+        log(`❌ Wrong date: ${issueDate}`);
         
-        // Delete the document that was just created
         if (documentId) {
           await supabase.from("processed_documents").delete().eq("id", documentId);
-          console.log(`🗑️ Documento eliminado: ${documentId}`);
+          log(`🗑️ Deleted: ${documentId}`);
         }
         
         return new Response(
           JSON.stringify({
             success: false,
-            message: `Factura rechazada: fecha ${new Date(issueDate).toLocaleDateString('es-CR')} no es de noviembre 2025`,
-            dateValidation: {
-              issueDate,
-              expectedMonth: 'noviembre 2025',
-              actualMonth: `${date.toLocaleDateString('es-CR', { month: 'long', year: 'numeric' })}`
-            }
+            message: `Fecha inválida: ${new Date(issueDate).toLocaleDateString('es-CR')} (solo Nov 2025)`,
           }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
-      console.log(`✅ Fecha validada: ${issueDate} es de noviembre 2025`);
+      log(`✅ Date OK: Nov 2025`);
     }
 
-    // ===== VALIDACIÓN OPCIONAL DE MONTO =====
-    if (expected_amount && expected_amount > 0 && totalAmount) {
-      const tolerance = 0.01; // 1 centavo de tolerancia
-      const amountDiff = Math.abs(totalAmount - expected_amount);
-      if (amountDiff > tolerance) {
-        console.log(`⚠️ Monto difiere: esperado ${expected_amount}, encontrado ${totalAmount} (diff: ${amountDiff})`);
-        // Solo advertencia, no rechazamos
-      } else {
-        console.log(`✅ Monto validado: ${totalAmount}`);
-      }
-    }
-
-    // ===== VALIDACIÓN OPCIONAL DE PROVEEDOR =====
-    if (expected_vendor && supplierName) {
-      const normalizeVendor = (name: string) => name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, "");
-      const expectedNorm = normalizeVendor(expected_vendor);
-      const actualNorm = normalizeVendor(supplierName);
-      const vendorMatches = actualNorm.includes(expectedNorm.substring(0, 10)) || expectedNorm.includes(actualNorm.substring(0, 10));
-      if (!vendorMatches) {
-        console.log(`⚠️ Proveedor difiere: esperado "${expected_vendor}", encontrado "${supplierName}"`);
-        // Solo advertencia, no rechazamos
-      } else {
-        console.log(`✅ Proveedor validado: ${supplierName}`);
-      }
-    }
-    
-    // Validate totals from XML match what was extracted
-    const xmlContent = foundMessage.xmlContent;
-    const xmlSubtotal = parseFloat(parseXMLValue(xmlContent, 'TotalGravado') || parseXMLValue(xmlContent, 'TotalVenta') || '0');
-    const xmlTax = parseFloat(parseXMLValue(xmlContent, 'TotalImpuesto') || '0');
-    const xmlTotal = parseFloat(parseXMLValue(xmlContent, 'TotalComprobante') || '0');
-    const xmlOtrosCargos = parseFloat(parseXMLValue(xmlContent, 'TotalOtrosCargos') || '0');
-    
-    const validationResult = {
-      xmlSubtotal,
-      xmlTax,
-      xmlOtrosCargos,
-      xmlTotal,
-      extractedTotal: processResult.document?.total_amount,
-      extractedTax: processResult.document?.total_tax,
-      matches: Math.abs(xmlTotal - (processResult.document?.total_amount || 0)) < 0.01
-    };
-
-    console.log(`⏱️ [${Date.now() - startTime}ms] Validation complete`);
-
-    // Auto-publish to QuickBooks if requested and vendor has account configured
+    // Auto-publish to QuickBooks if requested
     let publishResult = null;
     
     if (auto_publish && documentId) {
-      console.log(`⏱️ [${Date.now() - startTime}ms] Auto-publishing to QuickBooks...`);
+      log("📤 Publishing to QB...");
       
       try {
         const publishResponse = await fetchWithTimeout(
@@ -438,25 +395,24 @@ serve(async (req) => {
               document_ids: [documentId],
             }),
           },
-          30000
+          25000
         );
 
         publishResult = await publishResponse.json();
-        console.log(`⏱️ [${Date.now() - startTime}ms] Publish complete:`, publishResult);
-      } catch (pubError: any) {
-        console.error("Error publishing:", pubError);
-        publishResult = { error: pubError?.message || "Error desconocido" };
+        log(`📤 Publish: ${publishResult.success ? 'OK' : publishResult.error || 'failed'}`);
+      } catch (e: any) {
+        log(`⚠️ Publish error: ${e.message}`);
+        publishResult = { error: e.message };
       }
     }
 
-    console.log(`⏱️ [${Date.now() - startTime}ms] Total time - returning response`);
+    log(`✅ DONE in ${Date.now() - startTime}ms`);
     
     return new Response(
       JSON.stringify({
         success: true,
-        message: `Factura ${invoice_number} importada correctamente`,
+        message: `Importada: ${invoice_number}`,
         document: processResult.document,
-        validation: validationResult,
         publishResult,
         pdfSaved: !!pdfUrl
       }),
@@ -464,13 +420,13 @@ serve(async (req) => {
     );
 
   } catch (error: any) {
-    console.error("Error in search-import-invoice:", error);
+    console.error("Error:", error);
     return new Response(
-      JSON.stringify({
-        success: false,
-        error: error?.message || "Error desconocido"
+      JSON.stringify({ 
+        success: false, 
+        message: error.message || "Error desconocido" 
       }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }
 });
