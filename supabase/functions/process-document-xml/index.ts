@@ -368,21 +368,51 @@ Deno.serve(async (req) => {
       doc_type, esNotaCredito, aceptada, detalle: detalle.length 
     });
 
-    // Check for duplicates
-    const { data: duplicates } = await supabase
+    // Check for duplicates - use doc_key (unique 50-char Clave) OR doc_number+supplier combination
+    // Same doc_number can exist from different suppliers, so we must check by vendor too
+    const { data: duplicatesByKey } = await supabase
       .from('processed_documents')
-      .select('id, doc_number')
+      .select('id, doc_number, supplier_name, supplier_tax_id')
       .eq('organization_id', payload.organization_id)
-      .eq('doc_number', doc_number);
+      .eq('doc_key', doc_key);
 
-    if (duplicates && duplicates.length > 0) {
+    if (duplicatesByKey && duplicatesByKey.length > 0) {
       return new Response(
         JSON.stringify({
           success: false,
-          message: `Documento duplicado: ${doc_number} ya existe`
+          message: `Documento duplicado (Clave): ${doc_number} ya existe`
         }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
+    }
+
+    // Also check by doc_number + supplier_tax_id (for safety)
+    if (supplier_tax_id) {
+      const normalizedTaxId = supplier_tax_id.replace(/[^0-9]/g, '');
+      const { data: duplicatesByVendor } = await supabase
+        .from('processed_documents')
+        .select('id, doc_number, supplier_name, supplier_tax_id')
+        .eq('organization_id', payload.organization_id)
+        .eq('doc_number', doc_number);
+      
+      const exactMatch = duplicatesByVendor?.find(d => 
+        d.supplier_tax_id?.replace(/[^0-9]/g, '') === normalizedTaxId
+      );
+      
+      if (exactMatch) {
+        return new Response(
+          JSON.stringify({
+            success: false,
+            message: `Documento duplicado: ${doc_number} de ${supplier_name} ya existe`
+          }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+      
+      // Log if same doc_number exists but different vendor (this is OK)
+      if (duplicatesByVendor && duplicatesByVendor.length > 0) {
+        console.log(`ℹ️ Mismo número ${doc_number} existe pero de diferente proveedor: ${duplicatesByVendor[0].supplier_name} (actual: ${supplier_name})`);
+      }
     }
 
     // Look up vendor by tax ID for automatic assignment

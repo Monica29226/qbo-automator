@@ -70,64 +70,82 @@ serve(async (req) => {
     if (!invoice_number) throw new Error("invoice_number required");
 
     log(`🔍 Searching: ${invoice_number}`);
-    if (expected_vendor) log(`   Vendor: ${expected_vendor}`);
+    if (expected_vendor) log(`   Vendor esperado: ${expected_vendor}`);
 
-    // Check if invoice already exists
-    const { data: existing } = await supabase
-      .from("processed_documents")
-      .select("id, doc_number, status, qbo_entity_id, default_account_ref")
-      .eq("organization_id", organization_id)
-      .or(`doc_number.eq.${invoice_number},doc_number.ilike.%${invoice_number}%`)
-      .limit(1);
-
-    if (existing && existing.length > 0) {
-      const doc = existing[0];
-      log(`📋 Already exists: ${doc.doc_number}`);
+    // Helper function to check for existing invoice by doc_number AND vendor
+    const checkExistingInvoice = async (docNumber: string, vendorTaxId: string | null, vendorName: string | null) => {
+      // Build query - check by doc_number first
+      let query = supabase
+        .from("processed_documents")
+        .select("id, doc_number, supplier_name, supplier_tax_id, status, qbo_entity_id, default_account_ref")
+        .eq("organization_id", organization_id)
+        .or(`doc_number.eq.${docNumber},doc_number.ilike.%${docNumber}%`);
       
-      // Si ya está publicada en QB, retornar
-      if (doc.qbo_entity_id) {
+      const { data } = await query;
+      
+      if (!data || data.length === 0) return null;
+      
+      // Check if any match the vendor (by tax_id or name)
+      for (const doc of data) {
+        const taxIdMatch = vendorTaxId && doc.supplier_tax_id && 
+          doc.supplier_tax_id.replace(/[^0-9]/g, '') === vendorTaxId.replace(/[^0-9]/g, '');
+        const nameMatch = vendorName && doc.supplier_name && 
+          doc.supplier_name.toLowerCase().includes(vendorName.toLowerCase().substring(0, 10));
+        
+        if (taxIdMatch || nameMatch) {
+          log(`📋 Duplicado encontrado: ${doc.doc_number} de ${doc.supplier_name}`);
+          return doc;
+        }
+      }
+      
+      // No matching vendor found - different invoice with same number
+      if (data.length > 0) {
+        log(`⚠️ Mismo número pero diferente proveedor: ${data[0].supplier_name} vs ${vendorName || vendorTaxId}`);
+      }
+      return null;
+    };
+
+    // If expected_vendor provided, check for duplicates early
+    if (expected_vendor) {
+      const existingDoc = await checkExistingInvoice(invoice_number, null, expected_vendor);
+      if (existingDoc) {
+        if (existingDoc.qbo_entity_id) {
+          return new Response(
+            JSON.stringify({
+              success: false,
+              message: `Ya publicada en QB (ID: ${existingDoc.qbo_entity_id})`,
+              existing: existingDoc
+            }),
+            { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
+        
+        if (auto_publish && existingDoc.default_account_ref) {
+          log(`📤 Existe sin QB, publicando: ${existingDoc.id}`);
+          supabase.functions.invoke("publish-to-quickbooks", {
+            body: { organization_id, document_ids: [existingDoc.id] }
+          }).catch(e => log(`⚠️ QB publish error: ${e}`));
+          
+          return new Response(
+            JSON.stringify({
+              success: true,
+              message: "Existente → QB en cola",
+              existing: existingDoc,
+              qbQueued: true
+            }),
+            { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
+        
         return new Response(
           JSON.stringify({
             success: false,
-            message: `Ya publicada en QB (ID: ${doc.qbo_entity_id})`,
-            existing: doc
+            message: `Ya existe (estado: ${existingDoc.status}, sin cuenta QB)`,
+            existing: existingDoc
           }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
-      
-      // Si existe pero NO está en QB, publicarla ahora
-      if (auto_publish && doc.default_account_ref) {
-        log(`📤 Existe sin QB, publicando: ${doc.id}`);
-        
-        // Fire-and-forget QB publishing
-        supabase.functions.invoke("publish-to-quickbooks", {
-          body: { 
-            organization_id, 
-            document_ids: [doc.id] 
-          }
-        }).catch(e => log(`⚠️ QB publish error: ${e}`));
-        
-        return new Response(
-          JSON.stringify({
-            success: true,
-            message: "Existente → QB en cola",
-            existing: doc,
-            qbQueued: true
-          }),
-          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
-      
-      // Existe pero sin cuenta configurada
-      return new Response(
-        JSON.stringify({
-          success: false,
-          message: `Ya existe (estado: ${doc.status}, sin cuenta QB)`,
-          existing: doc
-        }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
     }
 
     // Get Gmail account
