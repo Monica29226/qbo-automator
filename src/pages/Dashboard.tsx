@@ -38,6 +38,7 @@ const ProcessAllNowButton = lazy(() => import("@/components/dashboard/ProcessAll
 const VendorsWithoutRules = lazy(() => import("@/components/dashboard/VendorsWithoutRules").then(m => ({ default: m.VendorsWithoutRules })));
 const ErrorDiagnostic = lazy(() => import("@/components/dashboard/ErrorDiagnostic").then(m => ({ default: m.ErrorDiagnostic })));
 const SearchImportInvoice = lazy(() => import("@/components/dashboard/SearchImportInvoice").then(m => ({ default: m.SearchImportInvoice })));
+const BatchImportInvoices = lazy(() => import("@/components/dashboard/BatchImportInvoices").then(m => ({ default: m.BatchImportInvoices })));
 
 // Componente de loading para lazy components
 const LazyFallback = () => (
@@ -510,6 +511,9 @@ const Dashboard = () => {
                   </Suspense>
                   <Suspense fallback={<div className="h-9 bg-muted animate-pulse rounded" />}>
                     <SearchImportInvoice />
+                  </Suspense>
+                  <Suspense fallback={<div className="h-9 bg-muted animate-pulse rounded" />}>
+                    <BatchImportInvoices />
                   </Suspense>
                 </div>
                 
