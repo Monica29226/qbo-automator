@@ -19,6 +19,8 @@ interface ImportStatus {
   invoiceNumber: string;
   status: "pending" | "processing" | "success" | "error" | "existing";
   message?: string;
+  processingStep?: string; // Paso actual del proceso
+  processingStartTime?: number; // Para mostrar tiempo transcurrido
   // Datos de entrada del Excel
   inputVendorName?: string;
   inputAmount?: number;
@@ -124,14 +126,31 @@ export function BatchImportInvoices() {
     invoiceLine: ParsedInvoiceLine,
     index: number,
     orgId: string,
-    autoPub: boolean
+    autoPub: boolean,
+    updateStep?: (idx: number, step: string) => void
   ): Promise<ImportStatus> => {
     console.log(`🔄 [${index}] Iniciando proceso para: ${invoiceLine.invoiceNumber}`);
     console.log(`   Vendor: ${invoiceLine.vendorName}, Monto: ${invoiceLine.amount}`);
     
     try {
+      // Paso 1: Llamar edge function
+      updateStep?.(index, "📡 Llamando servidor...");
       console.log(`📡 [${index}] Llamando edge function search-import-invoice...`);
       const startTime = Date.now();
+      
+      // Simular progreso mientras esperamos la respuesta
+      const progressInterval = setInterval(() => {
+        const elapsed = Math.round((Date.now() - startTime) / 1000);
+        if (elapsed < 5) {
+          updateStep?.(index, `🔍 Buscando en Gmail... (${elapsed}s)`);
+        } else if (elapsed < 15) {
+          updateStep?.(index, `📄 Procesando XML... (${elapsed}s)`);
+        } else if (elapsed < 25) {
+          updateStep?.(index, `✅ Validando datos... (${elapsed}s)`);
+        } else {
+          updateStep?.(index, `📤 Publicando a QB... (${elapsed}s)`);
+        }
+      }, 1000);
       
       const { data, error } = await supabase.functions.invoke("search-import-invoice", {
         body: {
@@ -143,6 +162,8 @@ export function BatchImportInvoices() {
           validate_november_2025: true, // Solo facturas de noviembre 2025
         },
       });
+      
+      clearInterval(progressInterval);
 
       const elapsed = Date.now() - startTime;
       console.log(`⏱️ [${index}] Respuesta recibida en ${elapsed}ms`);
@@ -267,21 +288,37 @@ export function BatchImportInvoices() {
       
       console.log(`📦 Procesando lote ${Math.floor(i/PARALLEL_COUNT) + 1}: indices ${batchIndices.join(', ')}`);
       
-      // Mark batch as processing
+      // Mark batch as processing with initial step
       setImportStatuses(prev => {
         const updated = [...prev];
         batchIndices.forEach(idx => {
-          updated[idx] = { ...updated[idx], status: "processing" };
+          updated[idx] = { 
+            ...updated[idx], 
+            status: "processing",
+            processingStep: "Conectando...",
+            processingStartTime: Date.now()
+          };
         });
         return updated;
       });
 
-      // Process batch in parallel
+      // Process batch in parallel with step updates
       console.log(`🚀 Iniciando ${batchIndices.length} procesos en paralelo...`);
       const batchStart = Date.now();
       
+      // Función para actualizar paso de una factura específica
+      const updateStep = (idx: number, step: string) => {
+        setImportStatuses(prev => {
+          const updated = [...prev];
+          if (updated[idx]?.status === "processing") {
+            updated[idx] = { ...updated[idx], processingStep: step };
+          }
+          return updated;
+        });
+      };
+      
       const results = await Promise.all(
-        batchIndices.map(idx => {
+        batchIndices.map(async (idx) => {
           const status = statuses[idx];
           const line: ParsedInvoiceLine = {
             vendorName: status.inputVendorName || '',
@@ -289,7 +326,12 @@ export function BatchImportInvoices() {
             amount: status.inputAmount || 0,
           };
           console.log(`   → [${idx}] ${line.invoiceNumber} (${line.vendorName})`);
-          return processInvoice(line, idx, orgId, autoPub);
+          
+          // Actualizar paso: Buscando en Gmail
+          updateStep(idx, "🔍 Buscando en Gmail...");
+          
+          const result = await processInvoice(line, idx, orgId, autoPub, updateStep);
+          return result;
         })
       );
       
@@ -390,7 +432,7 @@ export function BatchImportInvoices() {
     }
   };
 
-  const getStatusBadge = (status: ImportStatus["status"]) => {
+  const getStatusBadge = (status: ImportStatus["status"], processingStep?: string) => {
     switch (status) {
       case "success":
         return <Badge className="bg-green-500">Importada</Badge>;
@@ -399,7 +441,11 @@ export function BatchImportInvoices() {
       case "existing":
         return <Badge variant="secondary">Existente</Badge>;
       case "processing":
-        return <Badge className="bg-blue-500">Procesando...</Badge>;
+        return (
+          <Badge className="bg-blue-500 max-w-[200px] truncate animate-pulse">
+            {processingStep || "Procesando..."}
+          </Badge>
+        );
       default:
         return <Badge variant="outline">Pendiente</Badge>;
     }
@@ -543,8 +589,18 @@ export function BatchImportInvoices() {
                           {getStatusIcon(status.status)}
                           <span className="font-mono font-medium text-xs">{status.invoiceNumber}</span>
                         </div>
-                        {getStatusBadge(status.status)}
+                        {getStatusBadge(status.status, status.processingStep)}
                       </div>
+                      
+                      {/* Processing step detail row */}
+                      {status.status === "processing" && status.inputVendorName && (
+                        <div className="flex items-center gap-2 pl-6 text-xs text-muted-foreground">
+                          <span className="truncate max-w-[250px]">{status.inputVendorName}</span>
+                          {status.inputAmount && (
+                            <span className="font-mono">₡{status.inputAmount.toLocaleString('es-CR')}</span>
+                          )}
+                        </div>
+                      )}
                       
                       {/* Detail row: vendor name, date, amount */}
                       {(status.supplierName || status.issueDate || status.totalAmount) && (
