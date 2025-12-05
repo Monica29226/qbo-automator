@@ -14,7 +14,7 @@ import { Badge } from "@/components/ui/badge";
 
 const STORAGE_KEY = "batch_import_progress";
 const PARALLEL_COUNT = 3;
-const INVOICE_TIMEOUT_MS = 20000; // 20s max per invoice
+const INVOICE_TIMEOUT_MS = 12000; // 12s max per invoice (QB is now async)
 
 interface ImportStatus {
   invoiceNumber: string;
@@ -29,6 +29,7 @@ interface ImportStatus {
   totalAmount?: number;
   currency?: string;
   elapsedMs?: number;
+  qbQueued?: boolean;
 }
 
 interface ParsedInvoiceLine {
@@ -176,20 +177,20 @@ export function BatchImportInvoices() {
       addLog(`[${index}] ⏱️ TIMEOUT después de ${INVOICE_TIMEOUT_MS/1000}s`, "error");
     }, INVOICE_TIMEOUT_MS);
 
-    // Update progress in real-time
+    // Update progress in real-time (faster intervals for shorter timeouts)
     const progressInterval = setInterval(() => {
       const elapsed = Date.now() - startTime;
       const seconds = Math.round(elapsed / 1000);
-      if (seconds < 5) {
+      if (seconds < 3) {
         updateStep(index, `🔍 Gmail... (${seconds}s)`, elapsed);
-      } else if (seconds < 12) {
+      } else if (seconds < 6) {
         updateStep(index, `📄 XML... (${seconds}s)`, elapsed);
-      } else if (seconds < 18) {
-        updateStep(index, `✅ Validando... (${seconds}s)`, elapsed);
+      } else if (seconds < 10) {
+        updateStep(index, `⚙️ Procesando... (${seconds}s)`, elapsed);
       } else {
-        updateStep(index, `📤 QB... (${seconds}s)`, elapsed);
+        updateStep(index, `⏳ Finalizando... (${seconds}s)`, elapsed);
       }
-    }, 500);
+    }, 400);
 
     try {
       updateStep(index, "📡 Conectando...", 0);
@@ -222,7 +223,8 @@ export function BatchImportInvoices() {
 
       if (data.success) {
         const doc = data.document;
-        addLog(`[${index}] ✅ OK: ${doc?.supplier_name || invoiceShort} (${elapsed}ms)`, "success");
+        const qbStatus = data.qbQueued ? " (QB→)" : "";
+        addLog(`[${index}] ✅ OK${qbStatus}: ${doc?.supplier_name || invoiceShort} (${Math.round(elapsed/1000)}s)`, "success");
         return { 
           invoiceNumber: invoiceLine.invoiceNumber,
           inputVendorName: invoiceLine.vendorName,
@@ -233,7 +235,8 @@ export function BatchImportInvoices() {
           docNumber: doc?.doc_number,
           totalAmount: doc?.total_amount,
           currency: doc?.currency,
-          elapsedMs: elapsed
+          elapsedMs: elapsed,
+          qbQueued: data.qbQueued
         };
       } else if (data.existing) {
         addLog(`[${index}] 📋 Ya existe: ${invoiceShort}`, "warning");
@@ -486,11 +489,17 @@ export function BatchImportInvoices() {
     }
   };
 
-  const getStatusBadge = (status: ImportStatus["status"], processingStep?: string, elapsedMs?: number) => {
-    const elapsedStr = elapsedMs ? ` (${Math.round(elapsedMs/1000)}s)` : "";
+  const getStatusBadge = (item: ImportStatus) => {
+    const { status, processingStep, elapsedMs, qbQueued } = item;
+    const elapsedStr = elapsedMs ? ` ${Math.round(elapsedMs/1000)}s` : "";
     switch (status) {
       case "success":
-        return <Badge className="bg-green-500">OK{elapsedStr}</Badge>;
+        return (
+          <div className="flex gap-1">
+            <Badge className="bg-green-500">✓{elapsedStr}</Badge>
+            {qbQueued && <Badge variant="outline" className="text-xs">QB→</Badge>}
+          </div>
+        );
       case "error":
         return <Badge variant="destructive">Error{elapsedStr}</Badge>;
       case "existing":
@@ -716,7 +725,7 @@ export function BatchImportInvoices() {
                           {status.currency || 'CRC'} {status.totalAmount.toLocaleString('es-CR')}
                         </span>
                       )}
-                      {getStatusBadge(status.status, status.processingStep, status.elapsedMs)}
+                      {getStatusBadge(status)}
                     </div>
                   ))}
                 </div>

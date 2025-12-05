@@ -37,7 +37,7 @@ function parseNumeroConsecutivo(xml: string): string {
 }
 
 // Helper function with aggressive timeout
-async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs = 8000): Promise<Response> {
+async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs = 5000): Promise<Response> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -170,7 +170,7 @@ serve(async (req) => {
     const searchResponse = await fetchWithTimeout(
       `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(query)}&maxResults=3`,
       { headers: { Authorization: `Bearer ${accessToken}` } },
-      6000
+      4000
     );
 
     if (!searchResponse.ok) {
@@ -200,7 +200,7 @@ serve(async (req) => {
       fetchWithTimeout(
         `https://gmail.googleapis.com/gmail/v1/users/me/messages/${msg.id}`,
         { headers: { Authorization: `Bearer ${accessToken}` } },
-        5000
+        3000
       ).then(r => r.ok ? r.json() : null).catch(() => null)
     );
 
@@ -244,7 +244,7 @@ const messageResults = await Promise.all(messagePromises);
           const resp = await fetchWithTimeout(
             `https://gmail.googleapis.com/gmail/v1/users/me/messages/${messageData.id}/attachments/${xmlPart.body.attachmentId}`,
             { headers: { Authorization: `Bearer ${accessToken}` } },
-            4000
+            2500
           );
           if (!resp.ok) return null;
           const data = await resp.json();
@@ -301,14 +301,15 @@ const messageResults = await Promise.all(messagePromises);
       );
     }
 
-    // Download PDF if available (non-blocking)
+    // Download PDF in parallel with XML processing (non-blocking)
     let pdfUrl = null;
-    if (foundPdfPart?.body?.attachmentId) {
+    const pdfPromise = (async () => {
+      if (!foundPdfPart?.body?.attachmentId) return null;
       try {
         const pdfAttachmentResponse = await fetchWithTimeout(
           `https://gmail.googleapis.com/gmail/v1/users/me/messages/${foundMessage.id}/attachments/${foundPdfPart.body.attachmentId}`,
           { headers: { Authorization: `Bearer ${accessToken}` } },
-          5000
+          3000
         );
 
         if (pdfAttachmentResponse.ok) {
@@ -328,33 +329,39 @@ const messageResults = await Promise.all(messagePromises);
               upsert: true
             });
           
-          pdfUrl = pdfPath;
           log(`✓ PDF saved`);
+          return pdfPath;
         }
       } catch (e) {
         log(`⚠️ PDF error: ${e}`);
       }
-    }
+      return null;
+    })();
 
-    // Process the XML
+    // Process the XML (wait for PDF in parallel)
     log("⚙️ Processing XML...");
     
-    const processResponse = await fetchWithTimeout(
-      `${supabaseUrl}/functions/v1/process-document-xml`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${supabaseKey}`,
-          "Content-Type": "application/json",
+    const [processResponse, resolvedPdfUrl] = await Promise.all([
+      fetchWithTimeout(
+        `${supabaseUrl}/functions/v1/process-document-xml`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${supabaseKey}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            organization_id,
+            xml_content: foundMessage.xmlContent,
+            pdf_attachment_url: null, // Will update after
+          }),
         },
-        body: JSON.stringify({
-          organization_id,
-          xml_content: foundMessage.xmlContent,
-          pdf_attachment_url: pdfUrl,
-        }),
-      },
-      15000
-    );
+        8000
+      ),
+      pdfPromise
+    ]);
+
+    pdfUrl = resolvedPdfUrl;
 
     const processResult = await processResponse.json();
     log(`⚙️ Process result: ${processResult.success ? 'OK' : processResult.message}`);
@@ -368,6 +375,14 @@ const messageResults = await Promise.all(messagePromises);
         }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
+    }
+    
+    // Update PDF URL if we got it
+    if (pdfUrl && processResult.document?.id) {
+      await supabase
+        .from("processed_documents")
+        .update({ pdf_attachment_url: pdfUrl })
+        .eq("id", processResult.document.id);
     }
 
     const documentId = processResult.document?.id;
@@ -397,35 +412,26 @@ const messageResults = await Promise.all(messagePromises);
       log(`✅ Date OK: Nov 2025`);
     }
 
-    // Auto-publish to QuickBooks if requested
-    let publishResult = null;
-    
+    // Auto-publish to QuickBooks - fire and forget (don't wait)
     if (auto_publish && documentId) {
-      log("📤 Publishing to QB...");
+      log("📤 QB queued (background)...");
       
-      try {
-        const publishResponse = await fetchWithTimeout(
-          `${supabaseUrl}/functions/v1/publish-to-quickbooks`,
-          {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${supabaseKey}`,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              organization_id,
-              document_ids: [documentId],
-            }),
-          },
-          25000
-        );
-
-        publishResult = await publishResponse.json();
-        log(`📤 Publish: ${publishResult.success ? 'OK' : publishResult.error || 'failed'}`);
-      } catch (e: any) {
-        log(`⚠️ Publish error: ${e.message}`);
-        publishResult = { error: e.message };
-      }
+      // Fire and forget - don't await
+      fetch(`${supabaseUrl}/functions/v1/publish-to-quickbooks`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${supabaseKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          organization_id,
+          document_ids: [documentId],
+        }),
+      }).then(r => r.json()).then(result => {
+        console.log(`[BG] QB publish ${documentId}: ${result.success ? 'OK' : result.error || 'failed'}`);
+      }).catch(e => {
+        console.log(`[BG] QB publish error: ${e.message}`);
+      });
     }
 
     log(`✅ DONE in ${Date.now() - startTime}ms`);
@@ -433,9 +439,9 @@ const messageResults = await Promise.all(messagePromises);
     return new Response(
       JSON.stringify({
         success: true,
-        message: `Importada: ${invoice_number}`,
+        message: auto_publish ? `Importada (QB en cola): ${invoice_number}` : `Importada: ${invoice_number}`,
         document: processResult.document,
-        publishResult,
+        qbQueued: auto_publish,
         pdfSaved: !!pdfUrl
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
