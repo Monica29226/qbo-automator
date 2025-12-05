@@ -419,38 +419,58 @@ Deno.serve(async (req) => {
       } else {
         console.log("⚠️  No vendor found for tax_id:", supplier_tax_id);
         
-        // Fallback: check vendor_categories for account code
-        const { data: category, error: catError } = await supabase
-          .from('vendor_categories')
+        // ============================================================
+        // NUEVO: Buscar en vendor_defaults por nombre de proveedor
+        // Esta es la tabla donde se guardan las configuraciones de cuenta
+        // ============================================================
+        const normalizedSupplierName = supplier_name.toLowerCase().trim()
+          .normalize("NFD").replace(/[\u0300-\u036f]/g, ""); // Remove accents
+        
+        const { data: vendorDefaults, error: vdError } = await supabase
+          .from('vendor_defaults')
           .select('*')
-          .eq('organization_id', payload.organization_id)
-          .eq('vendor_identification', supplier_tax_id)
-          .eq('is_active', true)
-          .maybeSingle();
+          .eq('organization_id', payload.organization_id);
         
-        console.log(`🔍 [CATEGORY LOOKUP] category=${category ? 'FOUND' : 'NOT FOUND'}, error=${catError ? catError.message : 'none'}`);
-        
-        if (catError) {
-          console.error("❌ Error buscando category:", catError);
-        } else if (category) {
-          accountCode = category.account_code;
-          status = "review";
-          console.log("✅ Category found (needs manual review):", category.vendor_name, "→", accountCode);
-        } else {
-          console.log("⚠️  No category found for tax_id:", supplier_tax_id);
+        if (vdError) {
+          console.error("❌ Error buscando vendor_defaults:", vdError);
+        } else if (vendorDefaults && vendorDefaults.length > 0) {
+          // Buscar coincidencia por nombre normalizado
+          const matchedDefault = vendorDefaults.find(vd => {
+            const normalizedVdName = vd.vendor_name.toLowerCase().trim()
+              .normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+            return normalizedVdName === normalizedSupplierName;
+          });
           
-          // Debug: List vendors to compare
-          const { data: allVendors, error: listError } = await supabase
-            .from('vendors')
-            .select('vendor_tax_id, vendor_name, default_account_ref')
-            .eq('organization_id', payload.organization_id)
-            .eq('is_active', true)
-            .limit(5);
-          
-          if (listError) {
-            console.error("❌ Error listing vendors:", listError);
+          if (matchedDefault && matchedDefault.default_account_ref) {
+            accountCode = matchedDefault.default_account_ref;
+            status = "processed"; // Auto-procesar porque tiene cuenta configurada
+            console.log("✅ [VENDOR_DEFAULTS] Cuenta encontrada:", supplier_name, "→", accountCode);
           } else {
-            console.log("📋 Sample vendors in DB:", JSON.stringify(allVendors));
+            console.log("⚠️  No vendor_default encontrado para:", supplier_name);
+          }
+        }
+        
+        // Si aún no tiene cuenta, buscar en vendor_categories
+        if (status !== "processed") {
+          const { data: category, error: catError } = await supabase
+            .from('vendor_categories')
+            .select('*')
+            .eq('organization_id', payload.organization_id)
+            .eq('vendor_identification', supplier_tax_id)
+            .eq('is_active', true)
+            .maybeSingle();
+          
+          console.log(`🔍 [CATEGORY LOOKUP] category=${category ? 'FOUND' : 'NOT FOUND'}, error=${catError ? catError.message : 'none'}`);
+          
+          if (catError) {
+            console.error("❌ Error buscando category:", catError);
+          } else if (category) {
+            accountCode = category.account_code;
+            status = "review";
+            console.log("✅ Category found (needs manual review):", category.vendor_name, "→", accountCode);
+          } else {
+            console.log("⚠️  No category found for tax_id:", supplier_tax_id);
+            status = "review"; // Sin configuración, necesita revisión manual
           }
         }
       }
@@ -475,6 +495,7 @@ Deno.serve(async (req) => {
         exchange_rate,
         vendor_id: vendorId,
         status,
+        default_account_ref: status === "processed" ? accountCode : null, // Guardar cuenta si está configurada
         processed_at: status === "processed" ? new Date().toISOString() : null,
         xml_data: {
           emisor: {
