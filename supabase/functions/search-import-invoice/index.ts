@@ -36,7 +36,21 @@ function parseNumeroConsecutivo(xml: string): string {
   return directValue || '';
 }
 
+// Helper function with timeout
+async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs = 15000): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, { ...options, signal: controller.signal });
+    return response;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 serve(async (req) => {
+  const startTime = Date.now();
+  
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
@@ -54,7 +68,7 @@ serve(async (req) => {
     if (!organization_id) throw new Error("organization_id required");
     if (!invoice_number) throw new Error("invoice_number required");
 
-    console.log(`🔍 Searching for invoice: ${invoice_number} in org ${organization_id}`);
+    console.log(`🔍 [${Date.now() - startTime}ms] Searching for invoice: ${invoice_number}`);
 
     // Check if invoice already exists
     const { data: existing } = await supabase
@@ -151,22 +165,25 @@ serve(async (req) => {
 
     // Search Gmail for the specific invoice number
     // Try multiple search patterns to find the invoice
+    console.log(`⏱️ [${Date.now() - startTime}ms] Starting Gmail search...`);
+    
     const searchPatterns = [
       `has:attachment filename:xml ${invoice_number}`,
-      `has:attachment ${invoice_number}`,
       `subject:${invoice_number} has:attachment`,
     ];
 
-    let foundMessage = null;
-    let foundXmlPart = null;
-    let foundPdfPart = null;
+    let foundMessage: { id: string; xmlContent: string } | null = null;
+    let foundXmlPart: any = null;
+    let foundPdfPart: any = null;
 
     for (const query of searchPatterns) {
-      console.log(`📧 Searching Gmail with: ${query}`);
+      if (foundMessage) break;
+      console.log(`📧 [${Date.now() - startTime}ms] Searching: ${query}`);
       
-      const searchResponse = await fetch(
-        `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(query)}&maxResults=50`,
-        { headers: { Authorization: `Bearer ${accessToken}` } }
+      const searchResponse = await fetchWithTimeout(
+        `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(query)}&maxResults=10`,
+        { headers: { Authorization: `Bearer ${accessToken}` } },
+        10000
       );
 
       if (!searchResponse.ok) {
@@ -177,13 +194,14 @@ serve(async (req) => {
       const searchData = await searchResponse.json();
       const messages = searchData.messages || [];
       
-      console.log(`Found ${messages.length} messages with pattern`);
+      console.log(`[${Date.now() - startTime}ms] Found ${messages.length} messages with pattern`);
 
       // Check each message for the invoice number in XML
       for (const msg of messages) {
-        const messageResponse = await fetch(
+        const messageResponse = await fetchWithTimeout(
           `https://gmail.googleapis.com/gmail/v1/users/me/messages/${msg.id}`,
-          { headers: { Authorization: `Bearer ${accessToken}` } }
+          { headers: { Authorization: `Bearer ${accessToken}` } },
+          8000
         );
 
         if (!messageResponse.ok) continue;
@@ -209,9 +227,10 @@ serve(async (req) => {
           if (!xmlPart?.body?.attachmentId) continue;
           
           // Download XML to check invoice number
-          const attachmentResponse = await fetch(
+          const attachmentResponse = await fetchWithTimeout(
             `https://gmail.googleapis.com/gmail/v1/users/me/messages/${msg.id}/attachments/${xmlPart.body.attachmentId}`,
-            { headers: { Authorization: `Bearer ${accessToken}` } }
+            { headers: { Authorization: `Bearer ${accessToken}` } },
+            8000
           );
 
           if (!attachmentResponse.ok) continue;
@@ -307,9 +326,9 @@ serve(async (req) => {
     }
 
     // Process the XML through process-document-xml
-    console.log("📊 Processing XML...");
+    console.log(`⏱️ [${Date.now() - startTime}ms] Processing XML...`);
     
-    const processResponse = await fetch(
+    const processResponse = await fetchWithTimeout(
       `${supabaseUrl}/functions/v1/process-document-xml`,
       {
         method: "POST",
@@ -322,8 +341,11 @@ serve(async (req) => {
           xml_content: foundMessage.xmlContent,
           pdf_attachment_url: pdfUrl,
         }),
-      }
+      },
+      20000
     );
+
+    console.log(`⏱️ [${Date.now() - startTime}ms] XML processed`);
 
     const processResult = await processResponse.json();
     
@@ -357,16 +379,16 @@ serve(async (req) => {
       matches: Math.abs(xmlTotal - (processResult.document?.total_amount || 0)) < 0.01
     };
 
-    console.log("📋 Validation result:", validationResult);
+    console.log(`⏱️ [${Date.now() - startTime}ms] Validation complete`);
 
     // Auto-publish to QuickBooks if requested and vendor has account configured
     let publishResult = null;
     
     if (auto_publish && documentId) {
-      console.log("📤 Auto-publishing to QuickBooks...");
+      console.log(`⏱️ [${Date.now() - startTime}ms] Auto-publishing to QuickBooks...`);
       
       try {
-        const publishResponse = await fetch(
+        const publishResponse = await fetchWithTimeout(
           `${supabaseUrl}/functions/v1/publish-to-quickbooks`,
           {
             method: "POST",
@@ -378,17 +400,20 @@ serve(async (req) => {
               organization_id,
               document_ids: [documentId],
             }),
-          }
+          },
+          30000
         );
 
         publishResult = await publishResponse.json();
-        console.log("📤 Publish result:", publishResult);
+        console.log(`⏱️ [${Date.now() - startTime}ms] Publish complete:`, publishResult);
       } catch (pubError: any) {
         console.error("Error publishing:", pubError);
         publishResult = { error: pubError?.message || "Error desconocido" };
       }
     }
 
+    console.log(`⏱️ [${Date.now() - startTime}ms] Total time - returning response`);
+    
     return new Response(
       JSON.stringify({
         success: true,
