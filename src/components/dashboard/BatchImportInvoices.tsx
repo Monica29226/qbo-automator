@@ -93,28 +93,61 @@ export function BatchImportInvoices() {
   };
 
   // Parse lines with format: VendorName | InvoiceNumber | Amount
+  // Supports: tab-separated, pipe-separated, or smart detection using invoice number pattern
   const parseInvoiceLines = (text: string): ParsedInvoiceLine[] => {
     return text
       .split(/[\n]+/)
       .map(line => line.trim())
       .filter(line => line.length > 0)
       .map(line => {
-        // Try tab-separated first, then pipe, then multiple spaces
+        // Try tab-separated first (most common from Excel)
         let parts = line.split('\t');
-        if (parts.length < 3) parts = line.split('|');
-        if (parts.length < 3) parts = line.split(/\s{2,}/);
-        
         if (parts.length >= 3) {
           const vendorName = parts[0].trim();
           const invoiceNumber = parts[1].trim();
-          // Parse amount: remove currency symbols, commas as thousand separators
           const amountStr = parts[2].trim().replace(/[^\d.,\-]/g, '').replace(',', '');
           const amount = parseFloat(amountStr) || 0;
-          
+          console.log(`✅ Tab-parsed: vendor="${vendorName}", invoice="${invoiceNumber}", amount=${amount}`);
+          return { vendorName, invoiceNumber, amount };
+        }
+        
+        // Try pipe-separated
+        parts = line.split('|');
+        if (parts.length >= 3) {
+          const vendorName = parts[0].trim();
+          const invoiceNumber = parts[1].trim();
+          const amountStr = parts[2].trim().replace(/[^\d.,\-]/g, '').replace(',', '');
+          const amount = parseFloat(amountStr) || 0;
+          console.log(`✅ Pipe-parsed: vendor="${vendorName}", invoice="${invoiceNumber}", amount=${amount}`);
+          return { vendorName, invoiceNumber, amount };
+        }
+        
+        // Smart detection: find invoice number (20 digits starting with 00)
+        const invoiceMatch = line.match(/\b(00\d{18})\b/);
+        if (invoiceMatch) {
+          const invoiceNumber = invoiceMatch[1];
+          const invoiceIndex = line.indexOf(invoiceNumber);
+          const vendorName = line.substring(0, invoiceIndex).trim();
+          const afterInvoice = line.substring(invoiceIndex + invoiceNumber.length).trim();
+          const amountStr = afterInvoice.replace(/[^\d.,\-]/g, '').replace(',', '');
+          const amount = parseFloat(amountStr) || 0;
+          console.log(`✅ Smart-parsed: vendor="${vendorName}", invoice="${invoiceNumber}", amount=${amount}`);
+          return { vendorName, invoiceNumber, amount };
+        }
+        
+        // Try multiple spaces
+        parts = line.split(/\s{2,}/);
+        if (parts.length >= 3) {
+          const vendorName = parts[0].trim();
+          const invoiceNumber = parts[1].trim();
+          const amountStr = parts[2].trim().replace(/[^\d.,\-]/g, '').replace(',', '');
+          const amount = parseFloat(amountStr) || 0;
+          console.log(`✅ Space-parsed: vendor="${vendorName}", invoice="${invoiceNumber}", amount=${amount}`);
           return { vendorName, invoiceNumber, amount };
         }
         
         // Fallback: just invoice number
+        console.log(`⚠️ Fallback (no parse): line="${line}"`);
         return { vendorName: '', invoiceNumber: line.trim(), amount: 0 };
       })
       .filter(item => item.invoiceNumber.length > 0);
@@ -518,13 +551,48 @@ export function BatchImportInvoices() {
                   placeholder="PETROLEOS DELTA COSTA RICA, S.A.	05800104010005503	21302&#10;1-130-671556 SRL	00100001010000101223	32026&#10;AMERICAN DATA NETWORKS S.A.	00100001041026182	258284635&#10;..."
                   value={invoiceNumbers}
                   onChange={(e) => setInvoiceNumbers(e.target.value)}
-                  rows={12}
+                  rows={8}
                   className="font-mono text-xs"
                 />
                 <p className="text-xs text-muted-foreground">
                   {parsedLines.length} facturas detectadas - Solo se importarán facturas de Nov 2025
                 </p>
               </div>
+
+              {/* Vista previa de datos parseados */}
+              {parsedLines.length > 0 && (
+                <div className="border rounded-md p-3 bg-muted/30">
+                  <Label className="text-xs font-semibold mb-2 block">Vista Previa (verificar parsing):</Label>
+                  <ScrollArea className="h-[150px]">
+                    <div className="space-y-1 text-xs">
+                      {parsedLines.slice(0, 10).map((line, idx) => (
+                        <div key={idx} className="grid grid-cols-12 gap-2 p-1 bg-background rounded border">
+                          <div className="col-span-5 truncate" title={line.vendorName}>
+                            <span className="text-muted-foreground">Proveedor:</span>{" "}
+                            <span className={line.vendorName ? "font-medium" : "text-red-500"}>
+                              {line.vendorName || "⚠️ NO DETECTADO"}
+                            </span>
+                          </div>
+                          <div className="col-span-4 font-mono">
+                            <span className="text-muted-foreground">Número:</span>{" "}
+                            <span className="font-bold text-primary">{line.invoiceNumber}</span>
+                          </div>
+                          <div className="col-span-3 font-mono text-right">
+                            <span className={line.amount ? "" : "text-red-500"}>
+                              {line.amount ? `₡${line.amount.toLocaleString('es-CR')}` : "⚠️ $0"}
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                      {parsedLines.length > 10 && (
+                        <p className="text-muted-foreground text-center py-2">
+                          ... y {parsedLines.length - 10} más
+                        </p>
+                      )}
+                    </div>
+                  </ScrollArea>
+                </div>
+              )}
 
               <div className="flex items-center space-x-2">
                 <Checkbox
@@ -577,28 +645,34 @@ export function BatchImportInvoices() {
                   {importStatuses.map((status, idx) => (
                     <div
                       key={idx}
-                      className={`flex flex-col gap-1 p-3 rounded text-sm border-b last:border-0 ${
-                        status.status === "processing" ? "bg-blue-50 dark:bg-blue-950" : 
+                      className={`flex flex-col gap-2 p-3 rounded text-sm border-b last:border-0 ${
+                        status.status === "processing" ? "bg-blue-50 dark:bg-blue-950 border-blue-200" : 
                         status.status === "success" ? "bg-green-50/50 dark:bg-green-950/30" :
                         status.status === "error" ? "bg-red-50/50 dark:bg-red-950/30" : ""
                       }`}
                     >
-                      {/* Header row: status icon + invoice number + badge */}
+                      {/* Header row: invoice number + status badge */}
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2 min-w-0">
                           {getStatusIcon(status.status)}
-                          <span className="font-mono font-medium text-xs">{status.invoiceNumber}</span>
+                          <span className="font-mono font-bold text-xs text-primary">{status.invoiceNumber}</span>
                         </div>
                         {getStatusBadge(status.status, status.processingStep)}
                       </div>
                       
-                      {/* Processing step detail row */}
-                      {status.status === "processing" && status.inputVendorName && (
-                        <div className="flex items-center gap-2 pl-6 text-xs text-muted-foreground">
-                          <span className="truncate max-w-[250px]">{status.inputVendorName}</span>
-                          {status.inputAmount && (
-                            <span className="font-mono">₡{status.inputAmount.toLocaleString('es-CR')}</span>
-                          )}
+                      {/* Input data row - always show for pending/processing */}
+                      {(status.status === "pending" || status.status === "processing") && (
+                        <div className="grid grid-cols-2 gap-2 pl-6 text-xs border-l-2 border-blue-300 ml-2">
+                          <div>
+                            <span className="text-muted-foreground">Proveedor: </span>
+                            <span className="font-medium">{status.inputVendorName || "(sin nombre)"}</span>
+                          </div>
+                          <div>
+                            <span className="text-muted-foreground">Monto: </span>
+                            <span className="font-mono font-medium">
+                              {status.inputAmount ? `₡${status.inputAmount.toLocaleString('es-CR')}` : "(sin monto)"}
+                            </span>
+                          </div>
                         </div>
                       )}
                       
