@@ -204,16 +204,38 @@ serve(async (req) => {
       ).then(r => r.ok ? r.json() : null).catch(() => null)
     );
 
-    const messageResults = await Promise.all(messagePromises);
+const messageResults = await Promise.all(messagePromises);
     log(`📩 Fetched ${messageResults.filter(Boolean).length} messages`);
+
+    // Helper function to recursively find all attachments (handles nested multipart)
+    function findAllParts(part: any, result: any[] = []): any[] {
+      if (!part) return result;
+      
+      // If this part has a filename, it's an attachment
+      if (part.filename && part.filename.length > 0) {
+        result.push(part);
+      }
+      
+      // Recursively search nested parts
+      if (part.parts && Array.isArray(part.parts)) {
+        for (const subPart of part.parts) {
+          findAllParts(subPart, result);
+        }
+      }
+      
+      return result;
+    }
 
     // Process each message to find the invoice
     for (const messageData of messageResults) {
       if (!messageData || foundMessage) continue;
       
-      const parts = messageData.payload?.parts || [];
-      const xmlParts = parts.filter((p: any) => p.filename?.toLowerCase().endsWith(".xml"));
-      const pdfPart = parts.find((p: any) => p.filename?.toLowerCase().endsWith(".pdf"));
+      // Find all attachments recursively (handles nested multipart structures)
+      const allParts = findAllParts(messageData.payload);
+      log(`📎 Found ${allParts.length} attachments: ${allParts.map((p: any) => p.filename).join(', ')}`);
+      
+      const xmlParts = allParts.filter((p: any) => p.filename?.toLowerCase().endsWith(".xml"));
+      const pdfPart = allParts.find((p: any) => p.filename?.toLowerCase().endsWith(".pdf"));
 
       // Download XMLs in parallel (max 2)
       const xmlPromises = xmlParts.slice(0, 2).map(async (xmlPart: any) => {
