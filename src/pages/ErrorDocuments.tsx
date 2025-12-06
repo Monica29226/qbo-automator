@@ -36,24 +36,39 @@ const ErrorDocuments = () => {
   useEffect(() => {
     if (activeOrganization) {
       fetchErrorDocuments();
+    } else {
+      // If no org selected, stop loading and show empty state
+      setIsLoading(false);
     }
   }, [activeOrganization]);
 
   const fetchErrorDocuments = async () => {
-    if (!activeOrganization) return;
+    if (!activeOrganization) {
+      setIsLoading(false);
+      return;
+    }
 
     setIsLoading(true);
-    const { data, error } = await supabase
-      .from("processed_documents")
-      .select("id, doc_number, supplier_name, issue_date, total_amount, error_message, created_at")
-      .eq("organization_id", activeOrganization)
-      .eq("status", "error")
-      .order("created_at", { ascending: false });
+    try {
+      const { data, error } = await supabase
+        .from("processed_documents")
+        .select("id, doc_number, supplier_name, issue_date, total_amount, error_message, created_at")
+        .eq("organization_id", activeOrganization)
+        .eq("status", "error")
+        .order("created_at", { ascending: false });
 
-    if (!error && data) {
-      setDocuments(data);
+      if (error) {
+        console.error("Error fetching error documents:", error);
+        toast.error("Error al cargar documentos: " + error.message);
+      } else if (data) {
+        setDocuments(data);
+      }
+    } catch (err: any) {
+      console.error("Exception fetching error documents:", err);
+      toast.error("Error inesperado al cargar documentos");
+    } finally {
+      setIsLoading(false);
     }
-    setIsLoading(false);
   };
 
   const getErrorSummary = (errorMessage: string) => {
