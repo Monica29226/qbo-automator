@@ -367,8 +367,9 @@ const messageResults = await Promise.all(messagePromises);
         );
       }
       
-      if (auto_publish && existingDoc.default_account_ref) {
-        log(`📤 Existe sin QB, publicando: ${existingDoc.id}`);
+      // ALWAYS publish existing invoices that aren't in QB yet (if they have account configured)
+      if (existingDoc.default_account_ref) {
+        log(`📤 Existe sin QB, publicando automáticamente: ${existingDoc.id}`);
         supabase.functions.invoke("publish-to-quickbooks", {
           body: { organization_id, document_ids: [existingDoc.id] }
         }).catch(e => log(`⚠️ QB publish error: ${e}`));
@@ -384,11 +385,12 @@ const messageResults = await Promise.all(messagePromises);
         );
       }
       
-      log(`📋 Ya existe sin QB: ${existingDoc.doc_number} de ${existingDoc.supplier_name}`);
+      // No account configured - can't publish
+      log(`📋 Ya existe sin cuenta configurada: ${existingDoc.doc_number} de ${existingDoc.supplier_name}`);
       return new Response(
         JSON.stringify({
           success: false,
-          message: `Ya existe (${existingDoc.status}) - ${existingDoc.supplier_name}`,
+          message: `Ya existe sin cuenta - ${existingDoc.supplier_name}`,
           existing: existingDoc
         }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
