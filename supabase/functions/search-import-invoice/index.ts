@@ -248,29 +248,11 @@ serve(async (req) => {
       }
     }
 
-    // Strategy 3: If still no results, try searching in subject/body only
-    if (messages.length === 0) {
-      const query3 = `${invoice_number}`;
-      log(`   Query 3 (minimal): ${query3}`);
-      
-      searchResponse = await fetchWithTimeout(
-        `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(query3)}&maxResults=5`,
-        { headers: { Authorization: `Bearer ${accessToken}` } },
-        4000
-      );
-      
-      if (searchResponse.ok) {
-        searchData = await searchResponse.json();
-        messages = searchData.messages || [];
-        log(`📬 Query 3 found ${messages.length} messages`);
-      }
-    }
-
     if (messages.length === 0) {
       return new Response(
         JSON.stringify({
           success: false,
-          message: `No se encontró en Gmail después de 3 intentos de búsqueda: ${invoice_number}`
+          message: `No se encontró en Gmail: ${invoice_number}`
         }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
