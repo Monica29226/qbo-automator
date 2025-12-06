@@ -63,6 +63,11 @@ export function SearchImportInvoice() {
     setResult(null);
 
     try {
+      console.log("[SearchImportInvoice] Iniciando búsqueda:", invoiceNumber.trim());
+      
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 60000); // 60s timeout
+      
       const { data, error } = await supabase.functions.invoke("search-import-invoice", {
         body: {
           organization_id: activeOrganization,
@@ -70,14 +75,18 @@ export function SearchImportInvoice() {
           auto_publish: autoPublish,
         },
       });
+      
+      clearTimeout(timeoutId);
+      console.log("[SearchImportInvoice] Respuesta recibida:", data, error);
 
       if (error) {
         throw error;
       }
 
       setResult(data);
+      setIsSearching(false);
 
-      if (data.success) {
+      if (data?.success) {
         toast({
           title: "Factura importada",
           description: data.message,
@@ -85,23 +94,27 @@ export function SearchImportInvoice() {
       } else {
         toast({
           title: "Atención",
-          description: data.message,
-          variant: data.existing ? "default" : "destructive",
+          description: data?.message || "No se encontró la factura",
+          variant: data?.existing ? "default" : "destructive",
         });
       }
     } catch (error: any) {
-      console.error("Search error:", error);
+      console.error("[SearchImportInvoice] Error:", error);
+      setIsSearching(false);
+      
+      const errorMessage = error.name === 'AbortError' 
+        ? "Tiempo de espera agotado (60s)"
+        : error.message || "Error buscando factura";
+        
       toast({
         title: "Error",
-        description: error.message || "Error buscando factura",
+        description: errorMessage,
         variant: "destructive",
       });
       setResult({
         success: false,
-        message: error.message || "Error desconocido",
+        message: errorMessage,
       });
-    } finally {
-      setIsSearching(false);
     }
   };
 
