@@ -66,9 +66,9 @@ export function SearchImportInvoice() {
       const trimmedNumber = invoiceNumber.trim();
       console.log("[SearchImportInvoice] Iniciando búsqueda:", trimmedNumber, "org:", activeOrganization);
       
-      // Create a timeout promise - reduced from 60s to 30s for better UX
+      // Create a timeout promise - reduced to 20s for faster feedback
       const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => reject(new Error("TIMEOUT")), 30000);
+        setTimeout(() => reject(new Error("TIMEOUT")), 20000);
       });
       
       // Create the search promise
