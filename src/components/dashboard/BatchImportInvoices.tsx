@@ -1,10 +1,29 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Upload, Loader2, CheckCircle2, XCircle, AlertCircle, FileText, RotateCcw, Square, Clock, Terminal } from "lucide-react";
+import {
+  Upload,
+  Loader2,
+  CheckCircle2,
+  XCircle,
+  AlertCircle,
+  FileText,
+  RotateCcw,
+  Square,
+  Clock,
+  Terminal,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+  DialogFooter,
+} from "@/components/ui/dialog";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useToast } from "@/hooks/use-toast";
@@ -14,7 +33,7 @@ import { Badge } from "@/components/ui/badge";
 
 const STORAGE_KEY = "batch_import_progress";
 const PARALLEL_COUNT = 2; // Reduced from 3 to avoid overwhelming edge function cold starts
-const INVOICE_TIMEOUT_MS = 90000; // 90s max per invoice - edge functions need time for cold start + Gmail search + QB
+const INVOICE_TIMEOUT_MS = 60000; // 90s max per invoice - edge functions need time for cold start + Gmail search + QB
 const MAX_RETRIES = 2; // Retry twice on timeout
 
 interface ImportStatus {
@@ -74,7 +93,7 @@ export function BatchImportInvoices() {
   }, [liveLog]);
 
   const addLog = useCallback((message: string, type: LogEntry["type"] = "info") => {
-    setLiveLog(prev => [...prev.slice(-100), { timestamp: Date.now(), message, type }]);
+    setLiveLog((prev) => [...prev.slice(-100), { timestamp: Date.now(), message, type }]);
   }, []);
 
   // Check for saved progress on mount
@@ -86,7 +105,7 @@ export function BatchImportInvoices() {
         if (
           data.organizationId === activeOrganization &&
           Date.now() - data.timestamp < 24 * 60 * 60 * 1000 &&
-          data.statuses.some(s => s.status === "pending")
+          data.statuses.some((s) => s.status === "pending")
         ) {
           setHasSavedProgress(true);
         }
@@ -115,25 +134,25 @@ export function BatchImportInvoices() {
   const parseInvoiceLines = (text: string): ParsedInvoiceLine[] => {
     return text
       .split(/[\n]+/)
-      .map(line => line.trim())
-      .filter(line => line.length > 0)
-      .map(line => {
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0)
+      .map((line) => {
         // Try tab-separated first (from Excel)
-        let parts = line.split('\t');
+        let parts = line.split("\t");
         if (parts.length >= 2) {
           const vendorName = parts[0].trim();
           const invoiceNumber = parts[1].trim();
           return { vendorName, invoiceNumber };
         }
-        
+
         // Try pipe-separated
-        parts = line.split('|');
+        parts = line.split("|");
         if (parts.length >= 2) {
           const vendorName = parts[0].trim();
           const invoiceNumber = parts[1].trim();
           return { vendorName, invoiceNumber };
         }
-        
+
         // Smart detection: find invoice number (20 digits starting with 00)
         const invoiceMatch = line.match(/\b(00\d{18})\b/);
         if (invoiceMatch) {
@@ -142,7 +161,7 @@ export function BatchImportInvoices() {
           const vendorName = line.substring(0, invoiceIndex).trim();
           return { vendorName, invoiceNumber };
         }
-        
+
         // Try multiple spaces
         parts = line.split(/\s{2,}/);
         if (parts.length >= 2) {
@@ -150,13 +169,13 @@ export function BatchImportInvoices() {
           const invoiceNumber = parts[1].trim();
           return { vendorName, invoiceNumber };
         }
-        
+
         // Fallback: just invoice number
-        return { vendorName: '', invoiceNumber: line.trim() };
+        return { vendorName: "", invoiceNumber: line.trim() };
       })
-      .filter(item => item.invoiceNumber.length > 0);
+      .filter((item) => item.invoiceNumber.length > 0);
   };
-  
+
   const parsedLines = parseInvoiceLines(invoiceNumbers);
 
   const processInvoice = async (
@@ -165,11 +184,11 @@ export function BatchImportInvoices() {
     orgId: string,
     autoPub: boolean,
     updateStep: (idx: number, step: string, elapsed?: number) => void,
-    retryCount = 0
+    retryCount = 0,
   ): Promise<ImportStatus> => {
     const startTime = Date.now();
     const invoiceShort = invoiceLine.invoiceNumber.slice(-10);
-    
+
     const retryLabel = retryCount > 0 ? ` (retry ${retryCount})` : "";
     addLog(`[${index}] 🔄 Iniciando: ${invoiceShort}${retryLabel}`, "info");
     console.log(`[BatchImport] Starting invoice ${invoiceLine.invoiceNumber}, org=${orgId}, retry=${retryCount}`);
@@ -191,12 +210,12 @@ export function BatchImportInvoices() {
 
     try {
       updateStep(index, "📡 Conectando...", 0);
-      
+
       // Use Promise.race for proper timeout handling (supabase.functions.invoke doesn't support AbortController)
       const timeoutPromise = new Promise<never>((_, reject) => {
         setTimeout(() => reject(new Error("TIMEOUT")), INVOICE_TIMEOUT_MS);
       });
-      
+
       console.log(`[BatchImport] Invoking edge function for ${invoiceLine.invoiceNumber}...`);
       const invokePromise = supabase.functions.invoke("search-import-invoice", {
         body: {
@@ -214,26 +233,29 @@ export function BatchImportInvoices() {
       clearInterval(progressInterval);
 
       const elapsed = Date.now() - startTime;
-      
+
       if (error) {
         addLog(`[${index}] ❌ Error: ${error.message}`, "error");
-        return { 
+        return {
           invoiceNumber: invoiceLine.invoiceNumber,
           inputVendorName: invoiceLine.vendorName,
-          status: "error", 
+          status: "error",
           message: error.message,
-          elapsedMs: elapsed
+          elapsedMs: elapsed,
         };
       }
 
       if (data.success) {
         const doc = data.document;
         const qbStatus = data.qbQueued ? " (QB→)" : "";
-        addLog(`[${index}] ✅ OK${qbStatus}: ${doc?.supplier_name || invoiceShort} (${Math.round(elapsed/1000)}s)`, "success");
-        return { 
+        addLog(
+          `[${index}] ✅ OK${qbStatus}: ${doc?.supplier_name || invoiceShort} (${Math.round(elapsed / 1000)}s)`,
+          "success",
+        );
+        return {
           invoiceNumber: invoiceLine.invoiceNumber,
           inputVendorName: invoiceLine.vendorName,
-          status: "success", 
+          status: "success",
           message: data.message,
           supplierName: doc?.supplier_name,
           issueDate: doc?.issue_date,
@@ -241,62 +263,66 @@ export function BatchImportInvoices() {
           totalAmount: doc?.total_amount,
           currency: doc?.currency,
           elapsedMs: elapsed,
-          qbQueued: data.qbQueued
+          qbQueued: data.qbQueued,
         };
       } else if (data.existing) {
         addLog(`[${index}] 📋 Ya existe: ${invoiceShort}`, "warning");
-        return { 
+        return {
           invoiceNumber: invoiceLine.invoiceNumber,
           inputVendorName: invoiceLine.vendorName,
-          status: "existing", 
+          status: "existing",
           message: "Ya existe en el sistema",
           docNumber: data.existing?.doc_number,
-          elapsedMs: elapsed
+          elapsedMs: elapsed,
         };
       } else if (data.skipped) {
         addLog(`[${index}] ⏭️ Omitido: ${data.message}`, "warning");
-        return { 
+        return {
           invoiceNumber: invoiceLine.invoiceNumber,
           inputVendorName: invoiceLine.vendorName,
-          status: "skipped", 
+          status: "skipped",
           message: data.message,
-          elapsedMs: elapsed
+          elapsedMs: elapsed,
         };
       } else {
         addLog(`[${index}] ⚠️ Fallo: ${data.message}`, "error");
-        return { 
+        return {
           invoiceNumber: invoiceLine.invoiceNumber,
           inputVendorName: invoiceLine.vendorName,
-          status: "error", 
+          status: "error",
           message: data.message,
-          elapsedMs: elapsed
+          elapsedMs: elapsed,
         };
       }
     } catch (error: any) {
       clearInterval(progressInterval);
-      
+
       const elapsed = Date.now() - startTime;
       const isTimeout = error.message === "TIMEOUT";
-      
+
       // Retry on timeout if we haven't exceeded max retries
       if (isTimeout && retryCount < MAX_RETRIES) {
         addLog(`[${index}] ⏱️ Timeout, reintentando...`, "warning");
-        console.log(`[BatchImport] Timeout for ${invoiceLine.invoiceNumber}, retrying (${retryCount + 1}/${MAX_RETRIES})`);
+        console.log(
+          `[BatchImport] Timeout for ${invoiceLine.invoiceNumber}, retrying (${retryCount + 1}/${MAX_RETRIES})`,
+        );
         // Wait 3 seconds before retry to allow edge function to warm up
-        await new Promise(resolve => setTimeout(resolve, 3000));
+        await new Promise((resolve) => setTimeout(resolve, 3000));
         return processInvoice(invoiceLine, index, orgId, autoPub, updateStep, retryCount + 1);
       }
-      
-      const errorMsg = isTimeout ? `Timeout después de ${INVOICE_TIMEOUT_MS/1000}s` : (error.message || "Error desconocido");
-      addLog(`[${index}] ${isTimeout ? '⏱️' : '💥'} ${errorMsg}`, "error");
+
+      const errorMsg = isTimeout
+        ? `Timeout después de ${INVOICE_TIMEOUT_MS / 1000}s`
+        : error.message || "Error desconocido";
+      addLog(`[${index}] ${isTimeout ? "⏱️" : "💥"} ${errorMsg}`, "error");
       console.error(`[BatchImport] Final error for ${invoiceLine.invoiceNumber}:`, errorMsg);
-      
-      return { 
+
+      return {
         invoiceNumber: invoiceLine.invoiceNumber,
         inputVendorName: invoiceLine.vendorName,
-        status: "error", 
+        status: "error",
         message: errorMsg,
-        elapsedMs: elapsed
+        elapsedMs: elapsed,
       };
     }
   };
@@ -317,10 +343,10 @@ export function BatchImportInvoices() {
       orgId = data.organizationId;
       autoPub = data.autoPublish;
       setAutoPublish(autoPub);
-      addLog(`📂 Restaurando progreso: ${statuses.filter(s => s.status === "pending").length} pendientes`, "info");
+      addLog(`📂 Restaurando progreso: ${statuses.filter((s) => s.status === "pending").length} pendientes`, "info");
     } else {
       const lines = parseInvoiceLines(invoiceNumbers);
-      
+
       if (lines.length === 0) {
         toast({
           title: "Error",
@@ -339,12 +365,12 @@ export function BatchImportInvoices() {
         return;
       }
 
-      statuses = lines.map(line => ({
+      statuses = lines.map((line) => ({
         invoiceNumber: line.invoiceNumber,
         inputVendorName: line.vendorName,
         status: "pending" as const,
       }));
-      
+
       addLog(`📋 ${statuses.length} facturas a procesar`, "info");
     }
 
@@ -352,11 +378,9 @@ export function BatchImportInvoices() {
     setImportStatuses(statuses);
     abortRef.current = false;
 
-    const pendingIndices = statuses
-      .map((s, idx) => (s.status === "pending" ? idx : -1))
-      .filter(idx => idx !== -1);
+    const pendingIndices = statuses.map((s, idx) => (s.status === "pending" ? idx : -1)).filter((idx) => idx !== -1);
 
-    let processedCount = statuses.filter(s => s.status !== "pending").length;
+    let processedCount = statuses.filter((s) => s.status !== "pending").length;
     setProgress((processedCount / statuses.length) * 100);
 
     // Process in parallel batches
@@ -369,18 +393,18 @@ export function BatchImportInvoices() {
       const batchIndices = pendingIndices.slice(i, i + PARALLEL_COUNT);
       const batchNum = Math.floor(i / PARALLEL_COUNT) + 1;
       const totalBatches = Math.ceil(pendingIndices.length / PARALLEL_COUNT);
-      
+
       addLog(`📦 Lote ${batchNum}/${totalBatches}: procesando ${batchIndices.length} facturas`, "info");
-      
+
       // Mark batch as processing
-      setImportStatuses(prev => {
+      setImportStatuses((prev) => {
         const updated = [...prev];
-        batchIndices.forEach(idx => {
-          updated[idx] = { 
-            ...updated[idx], 
+        batchIndices.forEach((idx) => {
+          updated[idx] = {
+            ...updated[idx],
             status: "processing",
             processingStep: "Conectando...",
-            processingStartTime: Date.now()
+            processingStartTime: Date.now(),
           };
         });
         return updated;
@@ -388,7 +412,7 @@ export function BatchImportInvoices() {
 
       // Function to update step for specific invoice
       const updateStep = (idx: number, step: string, elapsed?: number) => {
-        setImportStatuses(prev => {
+        setImportStatuses((prev) => {
           const updated = [...prev];
           if (updated[idx]?.status === "processing") {
             updated[idx] = { ...updated[idx], processingStep: step, elapsedMs: elapsed };
@@ -396,20 +420,20 @@ export function BatchImportInvoices() {
           return updated;
         });
       };
-      
+
       const results = await Promise.all(
         batchIndices.map(async (idx) => {
           const status = statuses[idx];
           const line: ParsedInvoiceLine = {
-            vendorName: status.inputVendorName || '',
+            vendorName: status.inputVendorName || "",
             invoiceNumber: status.invoiceNumber,
           };
           return processInvoice(line, idx, orgId, autoPub, updateStep);
-        })
+        }),
       );
 
       // Update statuses with results
-      setImportStatuses(prev => {
+      setImportStatuses((prev) => {
         const updated = [...prev];
         batchIndices.forEach((idx, resultIdx) => {
           updated[idx] = results[resultIdx];
@@ -423,14 +447,14 @@ export function BatchImportInvoices() {
 
       // Small delay between batches
       if (i + PARALLEL_COUNT < pendingIndices.length && !abortRef.current) {
-        await new Promise(resolve => setTimeout(resolve, 300));
+        await new Promise((resolve) => setTimeout(resolve, 300));
       }
     }
 
     setIsProcessing(false);
-    
-    const finalStatuses = await new Promise<ImportStatus[]>(resolve => {
-      setImportStatuses(prev => {
+
+    const finalStatuses = await new Promise<ImportStatus[]>((resolve) => {
+      setImportStatuses((prev) => {
         resolve(prev);
         return prev;
       });
@@ -441,15 +465,18 @@ export function BatchImportInvoices() {
         acc[s.status] = (acc[s.status] || 0) + 1;
         return acc;
       },
-      {} as Record<string, number>
+      {} as Record<string, number>,
     );
 
-    if (!finalStatuses.some(s => s.status === "pending")) {
+    if (!finalStatuses.some((s) => s.status === "pending")) {
       clearSavedProgress();
     }
-    
-    addLog(`✅ Completado: ${counts.success || 0} éxito, ${counts.existing || 0} existentes, ${counts.error || 0} errores`, "success");
-    
+
+    addLog(
+      `✅ Completado: ${counts.success || 0} éxito, ${counts.existing || 0} existentes, ${counts.error || 0} errores`,
+      "success",
+    );
+
     toast({
       title: abortRef.current ? "Importación pausada" : "Importación completada",
       description: `Éxito: ${counts.success || 0}, Ya existían: ${counts.existing || 0}, Errores: ${counts.error || 0}`,
@@ -470,7 +497,7 @@ export function BatchImportInvoices() {
       abortRef.current = true;
     }
     setOpen(false);
-    if (!importStatuses.some(s => s.status === "pending")) {
+    if (!importStatuses.some((s) => s.status === "pending")) {
       setInvoiceNumbers("");
       setImportStatuses([]);
       setProgress(0);
@@ -507,13 +534,17 @@ export function BatchImportInvoices() {
 
   const getStatusBadge = (item: ImportStatus) => {
     const { status, processingStep, elapsedMs, qbQueued } = item;
-    const elapsedStr = elapsedMs ? ` ${Math.round(elapsedMs/1000)}s` : "";
+    const elapsedStr = elapsedMs ? ` ${Math.round(elapsedMs / 1000)}s` : "";
     switch (status) {
       case "success":
         return (
           <div className="flex gap-1">
             <Badge className="bg-green-500">✓{elapsedStr}</Badge>
-            {qbQueued && <Badge variant="outline" className="text-xs">QB→</Badge>}
+            {qbQueued && (
+              <Badge variant="outline" className="text-xs">
+                QB→
+              </Badge>
+            )}
           </div>
         );
       case "error":
@@ -538,7 +569,7 @@ export function BatchImportInvoices() {
       acc[s.status] = (acc[s.status] || 0) + 1;
       return acc;
     },
-    {} as Record<string, number>
+    {} as Record<string, number>,
   );
 
   const pendingCount = counts.pending || 0;
@@ -563,9 +594,7 @@ export function BatchImportInvoices() {
               {PARALLEL_COUNT}x paralelo
             </Badge>
           </DialogTitle>
-          <DialogDescription>
-            Pegue: Proveedor | Número de Factura (uno por línea)
-          </DialogDescription>
+          <DialogDescription>Pegue: Proveedor | Número de Factura (uno por línea)</DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4 py-4">
@@ -621,15 +650,11 @@ export function BatchImportInvoices() {
                               {line.vendorName || "⚠️ Sin proveedor"}
                             </span>
                           </div>
-                          <div className="font-mono text-primary font-bold truncate">
-                            {line.invoiceNumber}
-                          </div>
+                          <div className="font-mono text-primary font-bold truncate">{line.invoiceNumber}</div>
                         </div>
                       ))}
                       {parsedLines.length > 8 && (
-                        <p className="text-muted-foreground text-center py-1">
-                          ... y {parsedLines.length - 8} más
-                        </p>
+                        <p className="text-muted-foreground text-center py-1">... y {parsedLines.length - 8} más</p>
                       )}
                     </div>
                   </ScrollArea>
@@ -656,7 +681,8 @@ export function BatchImportInvoices() {
                 <div className="flex items-center justify-between text-sm">
                   <span>Progreso: {Math.round(progress)}%</span>
                   <span className="text-muted-foreground">
-                    {importStatuses.filter(s => s.status !== "pending" && s.status !== "processing").length} / {importStatuses.length}
+                    {importStatuses.filter((s) => s.status !== "pending" && s.status !== "processing").length} /{" "}
+                    {importStatuses.length}
                   </span>
                 </div>
                 <Progress value={progress} className="h-2" />
@@ -695,22 +721,24 @@ export function BatchImportInvoices() {
 
               {/* Live Log Panel */}
               {showLog && liveLog.length > 0 && (
-                <div 
+                <div
                   ref={logScrollRef}
                   className="h-[100px] bg-black/90 text-green-400 font-mono text-[10px] p-2 rounded overflow-y-auto"
                 >
                   {liveLog.map((entry, idx) => (
-                    <div 
-                      key={idx} 
+                    <div
+                      key={idx}
                       className={`${
-                        entry.type === "error" ? "text-red-400" : 
-                        entry.type === "success" ? "text-green-400" : 
-                        entry.type === "warning" ? "text-yellow-400" : "text-gray-300"
+                        entry.type === "error"
+                          ? "text-red-400"
+                          : entry.type === "success"
+                            ? "text-green-400"
+                            : entry.type === "warning"
+                              ? "text-yellow-400"
+                              : "text-gray-300"
                       }`}
                     >
-                      <span className="text-gray-500">
-                        [{new Date(entry.timestamp).toLocaleTimeString('es-CR')}]
-                      </span>{" "}
+                      <span className="text-gray-500">[{new Date(entry.timestamp).toLocaleTimeString("es-CR")}]</span>{" "}
                       {entry.message}
                     </div>
                   ))}
@@ -724,9 +752,13 @@ export function BatchImportInvoices() {
                     <div
                       key={idx}
                       className={`flex items-center gap-2 p-2 rounded text-xs border-b last:border-0 ${
-                        status.status === "processing" ? "bg-blue-50 dark:bg-blue-950" : 
-                        status.status === "success" ? "bg-green-50/50 dark:bg-green-950/30" :
-                        status.status === "error" ? "bg-red-50/50 dark:bg-red-950/30" : ""
+                        status.status === "processing"
+                          ? "bg-blue-50 dark:bg-blue-950"
+                          : status.status === "success"
+                            ? "bg-green-50/50 dark:bg-green-950/30"
+                            : status.status === "error"
+                              ? "bg-red-50/50 dark:bg-red-950/30"
+                              : ""
                       }`}
                     >
                       {getStatusIcon(status.status)}
@@ -738,7 +770,7 @@ export function BatchImportInvoices() {
                       </span>
                       {status.totalAmount && (
                         <span className="font-mono text-xs whitespace-nowrap">
-                          {status.currency || 'CRC'} {status.totalAmount.toLocaleString('es-CR')}
+                          {status.currency || "CRC"} {status.totalAmount.toLocaleString("es-CR")}
                         </span>
                       )}
                       {getStatusBadge(status)}
@@ -755,10 +787,7 @@ export function BatchImportInvoices() {
             {isProcessing ? "Pausar" : "Cerrar"}
           </Button>
           {!isProcessing && importStatuses.length === 0 && !hasSavedProgress && (
-            <Button 
-              onClick={() => handleStartImport(false)} 
-              disabled={parsedLines.length === 0}
-            >
+            <Button onClick={() => handleStartImport(false)} disabled={parsedLines.length === 0}>
               <Upload className="mr-2 h-4 w-4" />
               Importar ({parsedLines.length})
             </Button>
@@ -776,12 +805,14 @@ export function BatchImportInvoices() {
             </Button>
           )}
           {!isProcessing && importStatuses.length > 0 && pendingCount === 0 && (
-            <Button onClick={() => {
-              setImportStatuses([]);
-              setProgress(0);
-              clearSavedProgress();
-              setLiveLog([]);
-            }}>
+            <Button
+              onClick={() => {
+                setImportStatuses([]);
+                setProgress(0);
+                clearSavedProgress();
+                setLiveLog([]);
+              }}
+            >
               Nueva Importación
             </Button>
           )}
