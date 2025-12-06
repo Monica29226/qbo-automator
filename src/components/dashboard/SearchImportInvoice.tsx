@@ -66,9 +66,9 @@ export function SearchImportInvoice() {
       const trimmedNumber = invoiceNumber.trim();
       console.log("[SearchImportInvoice] Iniciando búsqueda:", trimmedNumber, "org:", activeOrganization);
       
-      // Create a timeout promise
+      // Create a timeout promise - reduced from 60s to 30s for better UX
       const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => reject(new Error("TIMEOUT")), 60000);
+        setTimeout(() => reject(new Error("TIMEOUT")), 30000);
       });
       
       // Create the search promise
@@ -108,8 +108,8 @@ export function SearchImportInvoice() {
       console.error("[SearchImportInvoice] Error:", error);
       setIsSearching(false);
       
-      const errorMessage = error.name === 'AbortError' 
-        ? "Tiempo de espera agotado (60s)"
+      const errorMessage = error.message === 'TIMEOUT'
+        ? "Tiempo de espera agotado (30s)"
         : error.message || "Error buscando factura";
         
       toast({

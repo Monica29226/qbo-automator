@@ -208,45 +208,36 @@ serve(async (req) => {
       }
     }
 
-    // Search Gmail with aggressive timeout - try multiple query strategies
+// Search Gmail - PARALLEL queries for speed
     log("🔍 Gmail search...");
     
-    // Strategy 1: Search by invoice number anywhere (body, subject, attachment name)
-    let query = `has:attachment filename:xml ${invoice_number}`;
-    log(`   Query 1: ${query}`);
+    const query1 = `has:attachment filename:xml ${invoice_number}`;
+    const query2 = `has:attachment ${invoice_number}`;
     
-    let searchResponse = await fetchWithTimeout(
-      `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(query)}&maxResults=5`,
-      { headers: { Authorization: `Bearer ${accessToken}` } },
-      4000
-    );
-
-    if (!searchResponse.ok) {
-      throw new Error(`Gmail search failed: ${searchResponse.status}`);
-    }
-
-    let searchData = await searchResponse.json();
-    let messages = searchData.messages || [];
-    
-    log(`📬 Query 1 found ${messages.length} messages`);
-
-    // Strategy 2: If no results, try broader search (just the number + attachments)
-    if (messages.length === 0) {
-      const query2 = `has:attachment ${invoice_number}`;
-      log(`   Query 2 (broad): ${query2}`);
-      
-      searchResponse = await fetchWithTimeout(
-        `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(query2)}&maxResults=5`,
+    // Run BOTH queries in parallel
+    const [search1, search2] = await Promise.all([
+      fetchWithTimeout(
+        `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(query1)}&maxResults=3`,
         { headers: { Authorization: `Bearer ${accessToken}` } },
-        4000
-      );
-      
-      if (searchResponse.ok) {
-        searchData = await searchResponse.json();
-        messages = searchData.messages || [];
-        log(`📬 Query 2 found ${messages.length} messages`);
+        3000
+      ).then(r => r.ok ? r.json() : { messages: [] }).catch(() => ({ messages: [] })),
+      fetchWithTimeout(
+        `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(query2)}&maxResults=3`,
+        { headers: { Authorization: `Bearer ${accessToken}` } },
+        3000
+      ).then(r => r.ok ? r.json() : { messages: [] }).catch(() => ({ messages: [] }))
+    ]);
+    
+    // Merge and dedupe results (prefer query1)
+    const seenIds = new Set<string>();
+    let messages: any[] = [];
+    for (const msg of [...(search1.messages || []), ...(search2.messages || [])]) {
+      if (!seenIds.has(msg.id)) {
+        seenIds.add(msg.id);
+        messages.push(msg);
       }
     }
+    log(`📬 Found ${messages.length} messages (q1:${search1.messages?.length || 0}, q2:${search2.messages?.length || 0})`)
 
     if (messages.length === 0) {
       return new Response(
@@ -261,16 +252,16 @@ serve(async (req) => {
     let foundMessage: { id: string; xmlContent: string } | null = null;
     let foundPdfPart: any = null;
 
-    // Fetch messages in parallel (max 2 for speed)
+    // Fetch messages in parallel - reduced timeout for speed
     const messagePromises = messages.slice(0, 2).map((msg: any) =>
       fetchWithTimeout(
         `https://gmail.googleapis.com/gmail/v1/users/me/messages/${msg.id}`,
         { headers: { Authorization: `Bearer ${accessToken}` } },
-        3000
+        2500
       ).then(r => r.ok ? r.json() : null).catch(() => null)
     );
 
-const messageResults = await Promise.all(messagePromises);
+    const messageResults = await Promise.all(messagePromises);
     log(`📩 Fetched ${messageResults.filter(Boolean).length} messages`);
 
     // Helper function to recursively find all attachments (handles nested multipart)
@@ -303,14 +294,14 @@ const messageResults = await Promise.all(messagePromises);
       const xmlParts = allParts.filter((p: any) => p.filename?.toLowerCase().endsWith(".xml"));
       const pdfPart = allParts.find((p: any) => p.filename?.toLowerCase().endsWith(".pdf"));
 
-      // Download XMLs in parallel (max 2)
+      // Download XMLs in parallel - reduced timeout
       const xmlPromises = xmlParts.slice(0, 2).map(async (xmlPart: any) => {
         if (!xmlPart?.body?.attachmentId) return null;
         try {
           const resp = await fetchWithTimeout(
             `https://gmail.googleapis.com/gmail/v1/users/me/messages/${messageData.id}/attachments/${xmlPart.body.attachmentId}`,
             { headers: { Authorization: `Bearer ${accessToken}` } },
-            2500
+            2000
           );
           if (!resp.ok) return null;
           const data = await resp.json();
