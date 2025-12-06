@@ -14,7 +14,7 @@ import { Badge } from "@/components/ui/badge";
 
 const STORAGE_KEY = "batch_import_progress";
 const PARALLEL_COUNT = 3;
-const INVOICE_TIMEOUT_MS = 12000; // 12s max per invoice (QB is now async)
+const INVOICE_TIMEOUT_MS = 25000; // 25s max per invoice to allow Gmail search + XML processing
 
 interface ImportStatus {
   invoiceNumber: string;
