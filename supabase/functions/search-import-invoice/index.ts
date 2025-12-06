@@ -369,7 +369,15 @@ const messageResults = await Promise.all(messagePromises);
       
       // ALWAYS publish existing invoices that aren't in QB yet (if they have account configured)
       if (existingDoc.default_account_ref) {
-        log(`📤 Existe sin QB, publicando automáticamente: ${existingDoc.id}`);
+        log(`📤 Existe sin QB, marcando pending y publicando: ${existingDoc.id}`);
+        
+        // First update status to pending
+        await supabase
+          .from("processed_documents")
+          .update({ status: "pending" })
+          .eq("id", existingDoc.id);
+        
+        // Then trigger QB publish
         supabase.functions.invoke("publish-to-quickbooks", {
           body: { organization_id, document_ids: [existingDoc.id] }
         }).catch(e => log(`⚠️ QB publish error: ${e}`));
@@ -384,6 +392,13 @@ const messageResults = await Promise.all(messagePromises);
           { headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
+      
+      // No account - mark as pending so user can configure and publish later
+      log(`📋 Existe sin cuenta, marcando pending: ${existingDoc.id}`);
+      await supabase
+        .from("processed_documents")
+        .update({ status: "pending" })
+        .eq("id", existingDoc.id);
       
       // No account configured - can't publish
       log(`📋 Ya existe sin cuenta configurada: ${existingDoc.doc_number} de ${existingDoc.supplier_name}`);
