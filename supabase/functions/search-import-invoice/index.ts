@@ -436,9 +436,14 @@ const messageResults = await Promise.all(messagePromises);
           .update({ status: "pending" })
           .eq("id", existingDoc.id);
         
-        // Then trigger QB publish
-        supabase.functions.invoke("publish-to-quickbooks", {
-          body: { organization_id, document_ids: [existingDoc.id] }
+        // Then trigger QB publish - TRUE fire-and-forget using fetch, don't use supabase.functions.invoke
+        fetch(`${supabaseUrl}/functions/v1/publish-to-quickbooks`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${supabaseKey}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ organization_id, document_ids: [existingDoc.id] }),
         }).catch(e => log(`⚠️ QB publish error: ${e}`));
         
         return new Response(
@@ -528,7 +533,7 @@ const messageResults = await Promise.all(messagePromises);
             pdf_attachment_url: null, // Will update after
           }),
         },
-        8000
+        15000 // Increased from 8s to 15s for cold starts
       ),
       pdfPromise
     ]);
