@@ -109,7 +109,7 @@ export function SearchImportInvoice() {
       setIsSearching(false);
       
       const errorMessage = error.message === 'TIMEOUT'
-        ? "Tiempo de espera agotado (30s)"
+        ? "Tiempo de espera agotado (20s). La factura puede no existir en Gmail."
         : error.message || "Error buscando factura";
         
       toast({
