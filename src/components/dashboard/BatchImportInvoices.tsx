@@ -13,8 +13,9 @@ import { useAuth } from "@/hooks/useAuth";
 import { Badge } from "@/components/ui/badge";
 
 const STORAGE_KEY = "batch_import_progress";
-const PARALLEL_COUNT = 3;
-const INVOICE_TIMEOUT_MS = 25000; // 25s max per invoice to allow Gmail search + XML processing
+const PARALLEL_COUNT = 2; // Reduced from 3 to avoid overwhelming edge function cold starts
+const INVOICE_TIMEOUT_MS = 60000; // 60s max per invoice - edge functions need time for cold start + Gmail search
+const MAX_RETRIES = 1; // Retry once on timeout
 
 interface ImportStatus {
   invoiceNumber: string;
@@ -163,27 +164,30 @@ export function BatchImportInvoices() {
     index: number,
     orgId: string,
     autoPub: boolean,
-    updateStep: (idx: number, step: string, elapsed?: number) => void
+    updateStep: (idx: number, step: string, elapsed?: number) => void,
+    retryCount = 0
   ): Promise<ImportStatus> => {
     const startTime = Date.now();
     const invoiceShort = invoiceLine.invoiceNumber.slice(-10);
     
-    addLog(`[${index}] 🔄 Iniciando: ${invoiceShort}`, "info");
+    const retryLabel = retryCount > 0 ? ` (retry ${retryCount})` : "";
+    addLog(`[${index}] 🔄 Iniciando: ${invoiceShort}${retryLabel}`, "info");
+    console.log(`[BatchImport] Starting invoice ${invoiceLine.invoiceNumber}, org=${orgId}, retry=${retryCount}`);
 
-    // Update progress in real-time
+    // Update progress in real-time with adjusted timing for 60s timeout
     const progressInterval = setInterval(() => {
       const elapsed = Date.now() - startTime;
       const seconds = Math.round(elapsed / 1000);
-      if (seconds < 3) {
+      if (seconds < 8) {
         updateStep(index, `🔍 Gmail... (${seconds}s)`, elapsed);
-      } else if (seconds < 6) {
+      } else if (seconds < 20) {
         updateStep(index, `📄 XML... (${seconds}s)`, elapsed);
-      } else if (seconds < 10) {
+      } else if (seconds < 40) {
         updateStep(index, `⚙️ Procesando... (${seconds}s)`, elapsed);
       } else {
-        updateStep(index, `⏳ Finalizando... (${seconds}s)`, elapsed);
+        updateStep(index, `⏳ Esperando... (${seconds}s)`, elapsed);
       }
-    }, 400);
+    }, 500);
 
     try {
       updateStep(index, "📡 Conectando...", 0);
@@ -193,6 +197,7 @@ export function BatchImportInvoices() {
         setTimeout(() => reject(new Error("TIMEOUT")), INVOICE_TIMEOUT_MS);
       });
       
+      console.log(`[BatchImport] Invoking edge function for ${invoiceLine.invoiceNumber}...`);
       const invokePromise = supabase.functions.invoke("search-import-invoice", {
         body: {
           organization_id: orgId,
@@ -204,6 +209,7 @@ export function BatchImportInvoices() {
       });
 
       const { data, error } = await Promise.race([invokePromise, timeoutPromise]);
+      console.log(`[BatchImport] Response for ${invoiceLine.invoiceNumber}:`, { data, error });
 
       clearInterval(progressInterval);
 
@@ -271,8 +277,19 @@ export function BatchImportInvoices() {
       
       const elapsed = Date.now() - startTime;
       const isTimeout = error.message === "TIMEOUT";
+      
+      // Retry on timeout if we haven't exceeded max retries
+      if (isTimeout && retryCount < MAX_RETRIES) {
+        addLog(`[${index}] ⏱️ Timeout, reintentando...`, "warning");
+        console.log(`[BatchImport] Timeout for ${invoiceLine.invoiceNumber}, retrying (${retryCount + 1}/${MAX_RETRIES})`);
+        // Wait 3 seconds before retry to allow edge function to warm up
+        await new Promise(resolve => setTimeout(resolve, 3000));
+        return processInvoice(invoiceLine, index, orgId, autoPub, updateStep, retryCount + 1);
+      }
+      
       const errorMsg = isTimeout ? `Timeout después de ${INVOICE_TIMEOUT_MS/1000}s` : (error.message || "Error desconocido");
       addLog(`[${index}] ${isTimeout ? '⏱️' : '💥'} ${errorMsg}`, "error");
+      console.error(`[BatchImport] Final error for ${invoiceLine.invoiceNumber}:`, errorMsg);
       
       return { 
         invoiceNumber: invoiceLine.invoiceNumber,
