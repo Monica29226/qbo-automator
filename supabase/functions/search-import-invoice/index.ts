@@ -355,33 +355,16 @@ const messageResults = await Promise.all(messagePromises);
     // Check for duplicates using the doc_key (the ONLY truly unique identifier)
     const existingDoc = await checkExistingInvoice(extractedDocNumber, extractedVendorTaxId, extractedVendorName, extractedDocKey);
     if (existingDoc) {
-      // Check if already published in QB - if so, still trigger republish since user is explicitly requesting import
+      // If already published in QB - just confirm success, don't change status
       if (existingDoc.qbo_entity_id) {
-        log(`📋 Ya publicada en QB (${existingDoc.qbo_entity_id}): ${existingDoc.doc_number} de ${existingDoc.supplier_name}`);
-        
-        // If user explicitly imported again, they want to republish - trigger it
-        log(`🔄 Usuario solicitó reimportar, republicando a QB: ${existingDoc.id}`);
-        
-        // Update status to pending and clear the old QB ID to force republish
-        await supabase
-          .from("processed_documents")
-          .update({ 
-            status: "pending",
-            // Keep the qbo_entity_id so we know it was published before
-          })
-          .eq("id", existingDoc.id);
-        
-        // Trigger QB publish
-        supabase.functions.invoke("publish-to-quickbooks", {
-          body: { organization_id, document_ids: [existingDoc.id] }
-        }).catch(e => log(`⚠️ QB publish error: ${e}`));
+        log(`✅ Ya publicada en QB (${existingDoc.qbo_entity_id}): ${existingDoc.doc_number} de ${existingDoc.supplier_name}`);
         
         return new Response(
           JSON.stringify({
             success: true,
-            message: `Republicando a QB: ${existingDoc.supplier_name}`,
+            message: `Ya en QB (ID: ${existingDoc.qbo_entity_id}): ${existingDoc.supplier_name}`,
             existing: existingDoc,
-            qbQueued: true
+            alreadyPublished: true
           }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
