@@ -355,13 +355,33 @@ const messageResults = await Promise.all(messagePromises);
     // Check for duplicates using the doc_key (the ONLY truly unique identifier)
     const existingDoc = await checkExistingInvoice(extractedDocNumber, extractedVendorTaxId, extractedVendorName, extractedDocKey);
     if (existingDoc) {
+      // Check if already published in QB - if so, still trigger republish since user is explicitly requesting import
       if (existingDoc.qbo_entity_id) {
-        log(`📋 Ya publicada en QB: ${existingDoc.doc_number} de ${existingDoc.supplier_name}`);
+        log(`📋 Ya publicada en QB (${existingDoc.qbo_entity_id}): ${existingDoc.doc_number} de ${existingDoc.supplier_name}`);
+        
+        // If user explicitly imported again, they want to republish - trigger it
+        log(`🔄 Usuario solicitó reimportar, republicando a QB: ${existingDoc.id}`);
+        
+        // Update status to pending and clear the old QB ID to force republish
+        await supabase
+          .from("processed_documents")
+          .update({ 
+            status: "pending",
+            // Keep the qbo_entity_id so we know it was published before
+          })
+          .eq("id", existingDoc.id);
+        
+        // Trigger QB publish
+        supabase.functions.invoke("publish-to-quickbooks", {
+          body: { organization_id, document_ids: [existingDoc.id] }
+        }).catch(e => log(`⚠️ QB publish error: ${e}`));
+        
         return new Response(
           JSON.stringify({
-            success: false,
-            message: `Ya publicada en QB (ID: ${existingDoc.qbo_entity_id}) - ${existingDoc.supplier_name}`,
-            existing: existingDoc
+            success: true,
+            message: `Republicando a QB: ${existingDoc.supplier_name}`,
+            existing: existingDoc,
+            qbQueued: true
           }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
@@ -400,13 +420,13 @@ const messageResults = await Promise.all(messagePromises);
         .update({ status: "pending" })
         .eq("id", existingDoc.id);
       
-      // No account configured - can't publish
-      log(`📋 Ya existe sin cuenta configurada: ${existingDoc.doc_number} de ${existingDoc.supplier_name}`);
+      // No account configured - return success anyway since we updated status
       return new Response(
         JSON.stringify({
-          success: false,
-          message: `Ya existe sin cuenta - ${existingDoc.supplier_name}`,
-          existing: existingDoc
+          success: true,
+          message: `Pendiente configurar cuenta: ${existingDoc.supplier_name}`,
+          existing: existingDoc,
+          needsConfig: true
         }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
