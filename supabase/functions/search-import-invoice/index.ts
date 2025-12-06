@@ -48,9 +48,19 @@ async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs = 5
   }
 }
 
+// Global timeout for the entire function - 20 seconds max
+const GLOBAL_TIMEOUT_MS = 20000;
+
 serve(async (req) => {
   const startTime = Date.now();
   const log = (msg: string) => console.log(`[${Date.now() - startTime}ms] ${msg}`);
+  
+  // Check global timeout helper
+  const checkTimeout = () => {
+    if (Date.now() - startTime > GLOBAL_TIMEOUT_MS - 2000) {
+      throw new Error("TIMEOUT_GLOBAL");
+    }
+  };
   
   console.log("🚀 search-import-invoice STARTED");
   
