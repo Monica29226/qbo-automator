@@ -281,8 +281,11 @@ Deno.serve(async (req) => {
     };
 
     // Helper para verificar duplicados en QBO (con retry)
-    const checkDuplicateBill = async (docNumber: string) => {
-      const query = `SELECT * FROM Bill WHERE DocNumber = '${docNumber.replace(/'/g, "\\'")}'`;
+    // CRITICAL: Now checks both DocNumber AND VendorRef to avoid false matches
+    // Different vendors can have the same invoice number (e.g., both have invoice #231)
+    const checkDuplicateBill = async (docNumber: string, vendorId: string | null) => {
+      // Build query - if we have vendorId, include it in the search
+      let query = `SELECT * FROM Bill WHERE DocNumber = '${docNumber.replace(/'/g, "\\'")}'`;
       const url = `https://quickbooks.api.intuit.com/v3/company/${realmId}/query?query=${encodeURIComponent(query)}`;
 
       const response = await fetchWithRetry(url, {
@@ -294,8 +297,25 @@ Deno.serve(async (req) => {
 
       if (response.ok) {
         const data = await response.json();
-        if (data.QueryResponse?.Bill?.length > 0) {
-          return data.QueryResponse.Bill[0].Id;
+        const bills = data.QueryResponse?.Bill || [];
+        
+        if (bills.length > 0) {
+          // If we have a vendorId, only match bills from the SAME vendor
+          if (vendorId) {
+            const matchingBill = bills.find((bill: any) => 
+              bill.VendorRef?.value === vendorId
+            );
+            if (matchingBill) {
+              log(`✓ Found existing bill ${docNumber} for vendor ${vendorId}: ${matchingBill.Id}`);
+              return matchingBill.Id;
+            }
+            // Bill exists but for DIFFERENT vendor - this is NOT a duplicate!
+            log(`⚠️ Bill ${docNumber} exists in QBO but for different vendor (${bills[0].VendorRef?.value}), not vendor ${vendorId} - NOT a duplicate`);
+            return null;
+          }
+          
+          // No vendorId provided - return first match (legacy behavior)
+          return bills[0].Id;
         }
       }
       return null;
@@ -331,17 +351,17 @@ Deno.serve(async (req) => {
       try {
         log(`${progress} 📄 Processing ${doc.doc_number}`);
         
-        // Verificar duplicado en DB
+        // Verificar duplicado en DB por doc_key (único) o doc_number + supplier_tax_id
         const { data: duplicateInDB } = await supabase
           .from("processed_documents")
-          .select("id, doc_number, status, qbo_entity_id")
+          .select("id, doc_number, doc_key, supplier_tax_id, status, qbo_entity_id")
           .eq("organization_id", organization_id)
-          .eq("doc_number", doc.doc_number)
+          .eq("doc_key", doc.doc_key)
           .neq("id", doc.id)
           .maybeSingle();
         
         if (duplicateInDB) {
-          logError(`⚠️ Duplicate in DB: ${doc.doc_number}`);
+          logError(`⚠️ Duplicate in DB by doc_key: ${doc.doc_number}`);
           
           await supabase
             .from("processed_documents")
@@ -354,10 +374,14 @@ Deno.serve(async (req) => {
           return { success: false, docNumber: doc.doc_number, error: "Factura duplicada" };
         }
         
-        // Verificar duplicado en QBO
-        const existingBillId = await checkDuplicateBill(doc.doc_number);
+        // FIRST: Get or create the vendor - we need vendorId BEFORE checking QB duplicates
+        const vendorId = await findOrCreateVendor(doc.supplier_name, doc.supplier_tax_id);
+        
+        // Verificar duplicado en QBO - CRITICAL: now checks vendor too!
+        // This prevents false matches when same invoice number exists for different vendors
+        const existingBillId = await checkDuplicateBill(doc.doc_number, vendorId);
         if (existingBillId) {
-          log(`Bill ${doc.doc_number} exists in QBO: ${existingBillId}`);
+          log(`Bill ${doc.doc_number} exists in QBO for same vendor: ${existingBillId}`);
           
           await supabase
             .from("processed_documents")
@@ -371,8 +395,6 @@ Deno.serve(async (req) => {
 
           return { success: true, docNumber: doc.doc_number };
         }
-
-        const vendorId = await findOrCreateVendor(doc.supplier_name, doc.supplier_tax_id);
 
         // Cache global para TaxCodes (evitar múltiples llamadas)
         let allTaxCodes: any[] = [];
