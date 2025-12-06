@@ -53,7 +53,7 @@ interface LogEntry {
 export function BatchImportInvoices() {
   const [open, setOpen] = useState(false);
   const [invoiceNumbers, setInvoiceNumbers] = useState("");
-  const [autoPublish, setAutoPublish] = useState(false);
+  const [autoPublish, setAutoPublish] = useState(true); // Default to auto-publish
   const [isProcessing, setIsProcessing] = useState(false);
   const [progress, setProgress] = useState(0);
   const [importStatuses, setImportStatuses] = useState<ImportStatus[]>([]);
