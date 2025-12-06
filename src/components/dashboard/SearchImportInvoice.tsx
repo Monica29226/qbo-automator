@@ -64,11 +64,16 @@ export function SearchImportInvoice() {
 
     try {
       const trimmedNumber = invoiceNumber.trim();
-      console.log("[SearchImportInvoice] Iniciando búsqueda:", trimmedNumber, "org:", activeOrganization);
+      const startTime = Date.now();
+      console.log("[SearchImportInvoice] Iniciando búsqueda:", trimmedNumber, "org:", activeOrganization, "tiempo:", new Date().toISOString());
       
-      // Create a timeout promise - reduced to 20s for faster feedback
+      // Create a timeout promise - 45s to handle cold starts
+      const TIMEOUT_MS = 45000;
       const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => reject(new Error("TIMEOUT")), 20000);
+        setTimeout(() => {
+          console.log("[SearchImportInvoice] TIMEOUT alcanzado después de", Date.now() - startTime, "ms");
+          reject(new Error("TIMEOUT"));
+        }, TIMEOUT_MS);
       });
       
       // Create the search promise
@@ -83,7 +88,7 @@ export function SearchImportInvoice() {
       // Race between search and timeout
       const { data, error } = await Promise.race([searchPromise, timeoutPromise]) as any;
       
-      console.log("[SearchImportInvoice] Respuesta recibida:", data, error);
+      console.log("[SearchImportInvoice] Respuesta recibida en", Date.now() - startTime, "ms:", data, error);
 
       if (error) {
         throw error;
@@ -109,7 +114,7 @@ export function SearchImportInvoice() {
       setIsSearching(false);
       
       const errorMessage = error.message === 'TIMEOUT'
-        ? "Tiempo de espera agotado (20s). La factura puede no existir en Gmail."
+        ? "Tiempo de espera agotado (45s). Intenta de nuevo."
         : error.message || "Error buscando factura";
         
       toast({
