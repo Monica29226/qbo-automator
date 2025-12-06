@@ -119,48 +119,9 @@ serve(async (req) => {
       return null;
     };
 
-    // If expected_vendor provided, check for duplicates early
-    if (expected_vendor) {
-      const existingDoc = await checkExistingInvoice(invoice_number, null, expected_vendor, null);
-      if (existingDoc) {
-        if (existingDoc.qbo_entity_id) {
-          return new Response(
-            JSON.stringify({
-              success: false,
-              message: `Ya publicada en QB (ID: ${existingDoc.qbo_entity_id})`,
-              existing: existingDoc
-            }),
-            { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-          );
-        }
-        
-        if (auto_publish && existingDoc.default_account_ref) {
-          log(`📤 Existe sin QB, publicando: ${existingDoc.id}`);
-          supabase.functions.invoke("publish-to-quickbooks", {
-            body: { organization_id, document_ids: [existingDoc.id] }
-          }).catch(e => log(`⚠️ QB publish error: ${e}`));
-          
-          return new Response(
-            JSON.stringify({
-              success: true,
-              message: "Existente → QB en cola",
-              existing: existingDoc,
-              qbQueued: true
-            }),
-            { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-          );
-        }
-        
-        return new Response(
-          JSON.stringify({
-            success: false,
-            message: `Ya existe (estado: ${existingDoc.status}, sin cuenta QB)`,
-            existing: existingDoc
-          }),
-          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
-    }
+    // NOTE: We NO LONGER check for duplicates here before downloading the XML
+    // This was causing false positives when the same invoice number exists from different vendors
+    // The duplicate check will happen in process-document-xml using the doc_key (unique 50-char Clave)
 
     // Get Gmail account
     log("📧 Getting Gmail account...");
@@ -367,6 +328,74 @@ const messageResults = await Promise.all(messagePromises);
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
+
+    // CRITICAL: Now that we have the XML, extract doc_key and check for REAL duplicates
+    // doc_key is a 50-character unique identifier that includes the vendor's tax ID
+    const extractedDocKey = parseXMLValue(foundMessage.xmlContent, 'Clave');
+    const extractedDocNumber = parseNumeroConsecutivo(foundMessage.xmlContent);
+    
+    // Parse vendor info from XML for accurate duplicate checking
+    const emisorMatch = foundMessage.xmlContent.match(/<Emisor[^>]*>([\s\S]*?)<\/Emisor>/i);
+    let extractedVendorTaxId = '';
+    let extractedVendorName = '';
+    if (emisorMatch) {
+      extractedVendorName = parseXMLValue(emisorMatch[1], 'Nombre');
+      extractedVendorTaxId = parseXMLValue(emisorMatch[1], 'Numero') || 
+                            parseXMLValue(emisorMatch[1], 'NumeroIdentificacion');
+      if (!extractedVendorTaxId) {
+        const identMatch = emisorMatch[1].match(/<Identificacion[^>]*>([\s\S]*?)<\/Identificacion>/i);
+        if (identMatch) {
+          extractedVendorTaxId = parseXMLValue(identMatch[1], 'Numero');
+        }
+      }
+    }
+    
+    log(`📋 XML encontrado - Clave: ${extractedDocKey?.substring(0, 20)}..., Proveedor: ${extractedVendorName} (${extractedVendorTaxId})`);
+    
+    // Check for duplicates using the doc_key (the ONLY truly unique identifier)
+    const existingDoc = await checkExistingInvoice(extractedDocNumber, extractedVendorTaxId, extractedVendorName, extractedDocKey);
+    if (existingDoc) {
+      if (existingDoc.qbo_entity_id) {
+        log(`📋 Ya publicada en QB: ${existingDoc.doc_number} de ${existingDoc.supplier_name}`);
+        return new Response(
+          JSON.stringify({
+            success: false,
+            message: `Ya publicada en QB (ID: ${existingDoc.qbo_entity_id}) - ${existingDoc.supplier_name}`,
+            existing: existingDoc
+          }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+      
+      if (auto_publish && existingDoc.default_account_ref) {
+        log(`📤 Existe sin QB, publicando: ${existingDoc.id}`);
+        supabase.functions.invoke("publish-to-quickbooks", {
+          body: { organization_id, document_ids: [existingDoc.id] }
+        }).catch(e => log(`⚠️ QB publish error: ${e}`));
+        
+        return new Response(
+          JSON.stringify({
+            success: true,
+            message: `Existente → QB en cola: ${existingDoc.supplier_name}`,
+            existing: existingDoc,
+            qbQueued: true
+          }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+      
+      log(`📋 Ya existe sin QB: ${existingDoc.doc_number} de ${existingDoc.supplier_name}`);
+      return new Response(
+        JSON.stringify({
+          success: false,
+          message: `Ya existe (${existingDoc.status}) - ${existingDoc.supplier_name}`,
+          existing: existingDoc
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+    
+    log(`✅ No duplicado, procesando factura de: ${extractedVendorName}`);
 
     // Download PDF in parallel with XML processing (non-blocking)
     let pdfUrl = null;
