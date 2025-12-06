@@ -48,8 +48,8 @@ async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs = 5
   }
 }
 
-// Global timeout for the entire function - 20 seconds max
-const GLOBAL_TIMEOUT_MS = 20000;
+// Global timeout for the entire function - 35 seconds max (frontend has 45s)
+const GLOBAL_TIMEOUT_MS = 35000;
 
 serve(async (req) => {
   const startTime = Date.now();
@@ -224,18 +224,24 @@ serve(async (req) => {
     const query1 = `has:attachment filename:xml ${invoice_number}`;
     const query2 = `has:attachment ${invoice_number}`;
     
-    // Run BOTH queries in parallel
+    // Run BOTH queries in parallel - increased timeout to 8s for Gmail API
     const [search1, search2] = await Promise.all([
       fetchWithTimeout(
         `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(query1)}&maxResults=3`,
         { headers: { Authorization: `Bearer ${accessToken}` } },
-        3000
-      ).then(r => r.ok ? r.json() : { messages: [] }).catch(() => ({ messages: [] })),
+        8000
+      ).then(r => r.ok ? r.json() : { messages: [] }).catch((e) => {
+        log(`⚠️ Query1 error: ${e.message}`);
+        return { messages: [] };
+      }),
       fetchWithTimeout(
         `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(query2)}&maxResults=3`,
         { headers: { Authorization: `Bearer ${accessToken}` } },
-        3000
-      ).then(r => r.ok ? r.json() : { messages: [] }).catch(() => ({ messages: [] }))
+        8000
+      ).then(r => r.ok ? r.json() : { messages: [] }).catch((e) => {
+        log(`⚠️ Query2 error: ${e.message}`);
+        return { messages: [] };
+      })
     ]);
     
     // Merge and dedupe results (prefer query1)
@@ -262,13 +268,16 @@ serve(async (req) => {
     let foundMessage: { id: string; xmlContent: string } | null = null;
     let foundPdfPart: any = null;
 
-    // Fetch messages in parallel - reduced timeout for speed
+    // Fetch messages in parallel - increased timeout to 6s
     const messagePromises = messages.slice(0, 2).map((msg: any) =>
       fetchWithTimeout(
         `https://gmail.googleapis.com/gmail/v1/users/me/messages/${msg.id}`,
         { headers: { Authorization: `Bearer ${accessToken}` } },
-        2500
-      ).then(r => r.ok ? r.json() : null).catch(() => null)
+        6000
+      ).then(r => r.ok ? r.json() : null).catch((e) => {
+        log(`⚠️ Message fetch error: ${e.message}`);
+        return null;
+      })
     );
 
     const messageResults = await Promise.all(messagePromises);
