@@ -32,7 +32,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { Badge } from "@/components/ui/badge";
 
 const STORAGE_KEY = "batch_import_progress";
-const PARALLEL_COUNT = 2; // Reduced from 3 to avoid overwhelming edge function cold starts
+const PARALLEL_COUNT = 3; // Reduced from 3 to avoid overwhelming edge function cold starts
 const INVOICE_TIMEOUT_MS = 60000; // 90s max per invoice - edge functions need time for cold start + Gmail search + QB
 const MAX_RETRIES = 2; // Retry twice on timeout
 
