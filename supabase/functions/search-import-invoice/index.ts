@@ -72,42 +72,56 @@ serve(async (req) => {
     log(`🔍 Searching: ${invoice_number}`);
     if (expected_vendor) log(`   Vendor esperado: ${expected_vendor}`);
 
-    // Helper function to check for existing invoice by doc_number AND vendor
-    const checkExistingInvoice = async (docNumber: string, vendorTaxId: string | null, vendorName: string | null) => {
-      // Build query - check by doc_number first
-      let query = supabase
-        .from("processed_documents")
-        .select("id, doc_number, supplier_name, supplier_tax_id, status, qbo_entity_id, default_account_ref")
-        .eq("organization_id", organization_id)
-        .or(`doc_number.eq.${docNumber},doc_number.ilike.%${docNumber}%`);
-      
-      const { data } = await query;
-      
-      if (!data || data.length === 0) return null;
-      
-      // Check if any match the vendor (by tax_id or name)
-      for (const doc of data) {
-        const taxIdMatch = vendorTaxId && doc.supplier_tax_id && 
-          doc.supplier_tax_id.replace(/[^0-9]/g, '') === vendorTaxId.replace(/[^0-9]/g, '');
-        const nameMatch = vendorName && doc.supplier_name && 
-          doc.supplier_name.toLowerCase().includes(vendorName.toLowerCase().substring(0, 10));
+    // Helper function to check for existing invoice by doc_key (unique 50-char Clave) 
+    // CRITICAL: doc_number alone is NOT unique - different vendors can have same invoice numbers
+    // The doc_key contains the vendor's tax_id embedded in it, making it truly unique
+    const checkExistingInvoice = async (docNumber: string, vendorTaxId: string | null, vendorName: string | null, docKey: string | null) => {
+      // FIRST: Check by doc_key (the only truly unique identifier)
+      if (docKey && docKey.length === 50) {
+        const { data: byKey } = await supabase
+          .from("processed_documents")
+          .select("id, doc_key, doc_number, supplier_name, supplier_tax_id, status, qbo_entity_id, default_account_ref")
+          .eq("organization_id", organization_id)
+          .eq("doc_key", docKey);
         
-        if (taxIdMatch || nameMatch) {
-          log(`📋 Duplicado encontrado: ${doc.doc_number} de ${doc.supplier_name}`);
-          return doc;
+        if (byKey && byKey.length > 0) {
+          log(`📋 Duplicado por doc_key: ${byKey[0].doc_number} de ${byKey[0].supplier_name}`);
+          return byKey[0];
         }
       }
       
-      // No matching vendor found - different invoice with same number
-      if (data.length > 0) {
-        log(`⚠️ Mismo número pero diferente proveedor: ${data[0].supplier_name} vs ${vendorName || vendorTaxId}`);
+      // SECOND: If no doc_key provided, check by doc_number + vendor combination
+      // This is a fallback - doc_number alone is NOT reliable for duplicate detection
+      if (vendorTaxId) {
+        const normalizedTaxId = vendorTaxId.replace(/[^0-9]/g, '');
+        const { data: byNumber } = await supabase
+          .from("processed_documents")
+          .select("id, doc_key, doc_number, supplier_name, supplier_tax_id, status, qbo_entity_id, default_account_ref")
+          .eq("organization_id", organization_id)
+          .eq("doc_number", docNumber);
+        
+        const exactMatch = byNumber?.find(doc => 
+          doc.supplier_tax_id?.replace(/[^0-9]/g, '') === normalizedTaxId
+        );
+        
+        if (exactMatch) {
+          log(`📋 Duplicado por número+cédula: ${exactMatch.doc_number} de ${exactMatch.supplier_name}`);
+          return exactMatch;
+        }
+        
+        // Log if same number exists but different vendor (this is OK - NOT a duplicate!)
+        if (byNumber && byNumber.length > 0) {
+          log(`ℹ️ Mismo número ${docNumber} existe de OTRO proveedor: ${byNumber[0].supplier_name} (buscando: ${vendorName || vendorTaxId}) - NO es duplicado`);
+        }
       }
+      
+      // No duplicate found - this invoice can be imported
       return null;
     };
 
     // If expected_vendor provided, check for duplicates early
     if (expected_vendor) {
-      const existingDoc = await checkExistingInvoice(invoice_number, null, expected_vendor);
+      const existingDoc = await checkExistingInvoice(invoice_number, null, expected_vendor, null);
       if (existingDoc) {
         if (existingDoc.qbo_entity_id) {
           return new Response(
