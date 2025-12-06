@@ -344,35 +344,31 @@ const InvoicesPendingLog = () => {
         await saveVendorDefault(vendorName, accountRef, true);
       }
       
-      toast.success(`✓ ${selectedInvoices.length} facturas clasificadas. Publicando a QuickBooks...`);
+      toast.success(`✓ ${selectedInvoices.length} facturas clasificadas. Publicando en segundo plano...`);
       
-      // Publicar todas las facturas
-      const { data: publishResult, error: publishError } = await supabase.functions.invoke(
-        "publish-to-quickbooks",
-        {
-          body: { 
-            organization_id: activeOrganization, 
-            document_ids: documentIds 
-          },
-        }
-      );
-      
-      if (publishError) throw publishError;
-      
-      const published = publishResult?.published || 0;
-      const errors = publishResult?.errors?.length || 0;
-      
-      if (errors > 0) {
-        toast.warning(`⚠️ ${published} publicadas, ${errors} con errores`);
-      } else {
-        toast.success(`✅ ${published} facturas publicadas a QuickBooks`);
-      }
-      
-      // Optimistic update - remover inmediatamente de UI
+      // Optimistic update - remover inmediatamente de UI (ANTES de publicar)
       setFilteredInvoices((prev) => prev.filter((inv) => !documentIds.includes(inv.id)));
       setSelectedIds(new Set());
       setShowBulkClassifyDialog(false);
       setBulkAccountId("");
+      
+      // Publicar en BACKGROUND (fire-and-forget) - NO bloquea UI
+      supabase.functions.invoke("publish-to-quickbooks", {
+        body: { organization_id: activeOrganization, document_ids: documentIds },
+      }).then(({ data, error }) => {
+        if (error) {
+          console.error("Error publicando:", error);
+          toast.warning(`⚠️ Error publicando algunas facturas. Revise el log.`);
+        } else {
+          const published = data?.published || 0;
+          const errors = data?.errors?.length || 0;
+          if (errors > 0) {
+            toast.warning(`⚠️ ${published} publicadas, ${errors} con errores`);
+          } else if (published > 0) {
+            toast.success(`✅ ${published} facturas publicadas a QuickBooks`);
+          }
+        }
+      }).catch(e => console.error("Background publish error:", e));
       
       // Refrescar en background
       invalidateInvoices();
