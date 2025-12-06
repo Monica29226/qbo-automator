@@ -368,38 +368,51 @@ Deno.serve(async (req) => {
       doc_type, esNotaCredito, aceptada, detalle: detalle.length 
     });
 
-    // Check for duplicates - use doc_key (unique 50-char Clave) OR doc_number+supplier combination
-    // Same doc_number can exist from different suppliers, so we must check by vendor too
-    const { data: duplicatesByKey } = await supabase
-      .from('processed_documents')
-      .select('id, doc_number, supplier_name, supplier_tax_id')
-      .eq('organization_id', payload.organization_id)
-      .eq('doc_key', doc_key);
+    // ============================================================
+    // DUPLICATE DETECTION: Use doc_key (50-char Clave) as THE ONLY truly unique identifier
+    // CRITICAL: Same doc_number CAN exist from different vendors - NOT a duplicate!
+    // ============================================================
+    
+    console.log(`🔍 [DUPLICATE CHECK] doc_key: ${doc_key?.substring(0, 20)}... | doc_number: ${doc_number} | vendor: ${supplier_name} (${supplier_tax_id})`);
+    
+    // FIRST: Check by doc_key (the ONLY truly unique identifier for Costa Rican invoices)
+    if (doc_key && doc_key.length === 50) {
+      const { data: duplicatesByKey } = await supabase
+        .from('processed_documents')
+        .select('id, doc_number, supplier_name, supplier_tax_id, qbo_entity_id')
+        .eq('organization_id', payload.organization_id)
+        .eq('doc_key', doc_key);
 
-    if (duplicatesByKey && duplicatesByKey.length > 0) {
-      return new Response(
-        JSON.stringify({
-          success: false,
-          message: `Documento duplicado (Clave): ${doc_number} ya existe`
-        }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      if (duplicatesByKey && duplicatesByKey.length > 0) {
+        const existing = duplicatesByKey[0];
+        console.log(`❌ DUPLICATE by doc_key: ${existing.doc_number} from ${existing.supplier_name} (QB: ${existing.qbo_entity_id || 'not published'})`);
+        return new Response(
+          JSON.stringify({
+            success: false,
+            message: `Documento duplicado (Clave): ${doc_number} de ${supplier_name} ya existe`
+          }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
     }
 
-    // Also check by doc_number + supplier_tax_id (for safety)
+    // SECOND: Check by doc_number + supplier_tax_id combination (for cases where doc_key might differ slightly)
+    // This is a SAFETY fallback - same doc_number from DIFFERENT vendors is NOT a duplicate!
     if (supplier_tax_id) {
       const normalizedTaxId = supplier_tax_id.replace(/[^0-9]/g, '');
       const { data: duplicatesByVendor } = await supabase
         .from('processed_documents')
-        .select('id, doc_number, supplier_name, supplier_tax_id')
+        .select('id, doc_key, doc_number, supplier_name, supplier_tax_id, qbo_entity_id')
         .eq('organization_id', payload.organization_id)
         .eq('doc_number', doc_number);
       
+      // Only match if SAME vendor (same tax ID)
       const exactMatch = duplicatesByVendor?.find(d => 
         d.supplier_tax_id?.replace(/[^0-9]/g, '') === normalizedTaxId
       );
       
       if (exactMatch) {
+        console.log(`❌ DUPLICATE by doc_number+vendor: ${exactMatch.doc_number} from ${exactMatch.supplier_name} (QB: ${exactMatch.qbo_entity_id || 'not published'})`);
         return new Response(
           JSON.stringify({
             success: false,
@@ -409,11 +422,14 @@ Deno.serve(async (req) => {
         );
       }
       
-      // Log if same doc_number exists but different vendor (this is OK)
+      // Log if same doc_number exists but from DIFFERENT vendor - this is OK, NOT a duplicate!
       if (duplicatesByVendor && duplicatesByVendor.length > 0) {
-        console.log(`ℹ️ Mismo número ${doc_number} existe pero de diferente proveedor: ${duplicatesByVendor[0].supplier_name} (actual: ${supplier_name})`);
+        console.log(`ℹ️ SAME doc_number ${doc_number} exists from DIFFERENT vendor: ${duplicatesByVendor[0].supplier_name} (${duplicatesByVendor[0].supplier_tax_id})`);
+        console.log(`   Current vendor: ${supplier_name} (${supplier_tax_id}) - PROCEEDING, not a duplicate`);
       }
     }
+    
+    console.log(`✅ No duplicate found - proceeding with import`);
 
     // Look up vendor by tax ID for automatic assignment
     let accountCode = "Gastos por clasificar";
