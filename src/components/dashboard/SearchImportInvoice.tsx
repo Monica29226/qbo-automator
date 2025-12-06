@@ -63,20 +63,26 @@ export function SearchImportInvoice() {
     setResult(null);
 
     try {
-      console.log("[SearchImportInvoice] Iniciando búsqueda:", invoiceNumber.trim());
+      const trimmedNumber = invoiceNumber.trim();
+      console.log("[SearchImportInvoice] Iniciando búsqueda:", trimmedNumber, "org:", activeOrganization);
       
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 60000); // 60s timeout
+      // Create a timeout promise
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error("TIMEOUT")), 60000);
+      });
       
-      const { data, error } = await supabase.functions.invoke("search-import-invoice", {
+      // Create the search promise
+      const searchPromise = supabase.functions.invoke("search-import-invoice", {
         body: {
           organization_id: activeOrganization,
-          invoice_number: invoiceNumber.trim(),
+          invoice_number: trimmedNumber,
           auto_publish: autoPublish,
         },
       });
       
-      clearTimeout(timeoutId);
+      // Race between search and timeout
+      const { data, error } = await Promise.race([searchPromise, timeoutPromise]) as any;
+      
       console.log("[SearchImportInvoice] Respuesta recibida:", data, error);
 
       if (error) {
