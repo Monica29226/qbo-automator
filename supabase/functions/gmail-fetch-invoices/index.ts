@@ -382,15 +382,33 @@ serve(async (req) => {
         console.log(`📎 Message ${message.id}: Found ${allParts.length} attachments: ${allParts.map((p: any) => p.filename).join(', ')}`);
 
         // Find XML and PDF files
-        const xmlParts = allParts.filter((p: any) => p.filename?.toLowerCase().endsWith(".xml"));
+        // IMPORTANTE: Filtrar XMLs que NO son facturas (respuestas de Hacienda)
+        // AHC = Acuse Hacienda Confirmación, RMH = Respuesta Mensaje Hacienda, MH = Mensaje Hacienda
+        const allXmlParts = allParts.filter((p: any) => p.filename?.toLowerCase().endsWith(".xml"));
+        const xmlParts = allXmlParts.filter((p: any) => {
+          const filename = p.filename?.toUpperCase() || '';
+          // Excluir respuestas de Hacienda - estos NO son facturas
+          if (filename.startsWith('AHC-') || filename.startsWith('RMH-') || filename.startsWith('MH-') || 
+              filename.includes('RESPUESTA') || filename.includes('HACIENDA')) {
+            console.log(`⏭️ Ignorando respuesta de Hacienda: ${p.filename}`);
+            return false;
+          }
+          return true;
+        });
+        
         const pdfPart = allParts.find((p: any) => p.filename?.toLowerCase().endsWith(".pdf"));
+        
+        // Si no hay XMLs de factura válidos, saltar este mensaje
+        if (xmlParts.length === 0) {
+          console.log(`📭 No invoice XMLs found in message ${message.id} (${allXmlParts.length} response XMLs skipped)`);
+          continue;
+        }
         
         let pdfAttachmentId = pdfPart?.body?.attachmentId;
         let pdfFilename = pdfPart?.filename;
         
-        // Procesar cada XML encontrado
+        // Procesar cada XML de FACTURA encontrado
         for (const xmlPart of xmlParts) {
-          if (xmlPart.filename?.toLowerCase().endsWith(".xml")) {
             const attachmentId = xmlPart.body?.attachmentId;
             if (!attachmentId) continue;
 
@@ -550,7 +568,6 @@ serve(async (req) => {
                 error: xmlError instanceof Error ? xmlError.message : "Unknown error" 
               });
             }
-          }
         }
       } catch (error) {
         console.error(`Error processing message ${message.id}:`, error);
