@@ -313,10 +313,21 @@ export function SearchImportInvoice() {
           )}
         </div>
 
-        <DialogFooter>
+        <DialogFooter className="gap-2 sm:gap-0">
           <Button variant="outline" onClick={handleClose}>
             Cerrar
           </Button>
+          {result && (
+            <Button 
+              variant="secondary" 
+              onClick={() => {
+                setInvoiceNumber("");
+                setResult(null);
+              }}
+            >
+              Nuevo
+            </Button>
+          )}
           <Button onClick={handleSearch} disabled={isSearching || !invoiceNumber.trim()}>
             {isSearching ? (
               <>
