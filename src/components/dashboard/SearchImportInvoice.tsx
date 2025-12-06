@@ -62,37 +62,51 @@ export function SearchImportInvoice() {
     setIsSearching(true);
     setResult(null);
 
-    try {
-      const trimmedNumber = invoiceNumber.trim();
-      const startTime = Date.now();
-      console.log("[SearchImportInvoice] Iniciando búsqueda:", trimmedNumber, "org:", activeOrganization, "tiempo:", new Date().toISOString());
-      
-      // Create a timeout promise - 45s to handle cold starts
-      const TIMEOUT_MS = 45000;
-      const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => {
-          console.log("[SearchImportInvoice] TIMEOUT alcanzado después de", Date.now() - startTime, "ms");
-          reject(new Error("TIMEOUT"));
-        }, TIMEOUT_MS);
-      });
-      
-      // Create the search promise
-      const searchPromise = supabase.functions.invoke("search-import-invoice", {
-        body: {
-          organization_id: activeOrganization,
-          invoice_number: trimmedNumber,
-          auto_publish: autoPublish,
-        },
-      });
-      
-      // Race between search and timeout
-      const { data, error } = await Promise.race([searchPromise, timeoutPromise]) as any;
-      
-      console.log("[SearchImportInvoice] Respuesta recibida en", Date.now() - startTime, "ms:", data, error);
+    const trimmedNumber = invoiceNumber.trim();
+    const startTime = Date.now();
+    console.log("[SearchImportInvoice] Iniciando búsqueda:", trimmedNumber, "org:", activeOrganization);
+    
+    // Use AbortController for proper timeout handling
+    const controller = new AbortController();
+    const TIMEOUT_MS = 60000; // 60 seconds for cold starts
+    
+    const timeoutId = setTimeout(() => {
+      console.log("[SearchImportInvoice] TIMEOUT alcanzado después de", Date.now() - startTime, "ms");
+      controller.abort();
+    }, TIMEOUT_MS);
 
-      if (error) {
-        throw error;
+    try {
+      // Use fetch directly with AbortController for better control
+      const response = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/search-import-invoice`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${(await supabase.auth.getSession()).data.session?.access_token}`,
+            'apikey': import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+          },
+          body: JSON.stringify({
+            organization_id: activeOrganization,
+            invoice_number: trimmedNumber,
+            auto_publish: autoPublish,
+          }),
+          signal: controller.signal,
+        }
+      );
+      
+      clearTimeout(timeoutId);
+      
+      const elapsed = Date.now() - startTime;
+      console.log("[SearchImportInvoice] Respuesta recibida en", elapsed, "ms, status:", response.status);
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(errorText || `Error ${response.status}`);
       }
+
+      const data = await response.json();
+      console.log("[SearchImportInvoice] Data:", data);
 
       setResult(data);
       setIsSearching(false);
@@ -110,12 +124,16 @@ export function SearchImportInvoice() {
         });
       }
     } catch (error: any) {
+      clearTimeout(timeoutId);
       console.error("[SearchImportInvoice] Error:", error);
       setIsSearching(false);
       
-      const errorMessage = error.message === 'TIMEOUT'
-        ? "Tiempo de espera agotado (45s). Intenta de nuevo."
-        : error.message || "Error buscando factura";
+      let errorMessage: string;
+      if (error.name === 'AbortError') {
+        errorMessage = "Tiempo de espera agotado (60s). La conexión tardó demasiado. Intenta de nuevo.";
+      } else {
+        errorMessage = error.message || "Error buscando factura";
+      }
         
       toast({
         title: "Error",
