@@ -52,19 +52,36 @@ serve(async (req) => {
   const startTime = Date.now();
   const log = (msg: string) => console.log(`[${Date.now() - startTime}ms] ${msg}`);
   
+  console.log("🚀 search-import-invoice STARTED");
+  
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
 
   try {
     const authHeader = req.headers.get("Authorization");
+    console.log("📋 Auth header present:", !!authHeader);
+    
     if (!authHeader) throw new Error("No authorization header");
 
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    
+    console.log("🔧 Supabase URL:", supabaseUrl ? "SET" : "MISSING");
+    console.log("🔧 Supabase Key:", supabaseKey ? "SET" : "MISSING");
+    
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    const { organization_id, invoice_number, auto_publish, expected_vendor, validate_november_2025 } = await req.json();
+    let requestBody;
+    try {
+      requestBody = await req.json();
+      console.log("📥 Request body parsed:", JSON.stringify(requestBody));
+    } catch (parseError) {
+      console.error("❌ Failed to parse request body:", parseError);
+      throw new Error("Invalid request body");
+    }
+    
+    const { organization_id, invoice_number, auto_publish, expected_vendor, validate_november_2025 } = requestBody;
     
     if (!organization_id) throw new Error("organization_id required");
     if (!invoice_number) throw new Error("invoice_number required");
