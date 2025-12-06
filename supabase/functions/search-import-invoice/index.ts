@@ -191,12 +191,15 @@ serve(async (req) => {
       }
     }
 
-    // Search Gmail with aggressive timeout
+    // Search Gmail with aggressive timeout - try multiple query strategies
     log("🔍 Gmail search...");
-    const query = `has:attachment filename:xml ${invoice_number}`;
     
-    const searchResponse = await fetchWithTimeout(
-      `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(query)}&maxResults=3`,
+    // Strategy 1: Search by invoice number anywhere (body, subject, attachment name)
+    let query = `has:attachment filename:xml ${invoice_number}`;
+    log(`   Query 1: ${query}`);
+    
+    let searchResponse = await fetchWithTimeout(
+      `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(query)}&maxResults=5`,
       { headers: { Authorization: `Bearer ${accessToken}` } },
       4000
     );
@@ -205,16 +208,52 @@ serve(async (req) => {
       throw new Error(`Gmail search failed: ${searchResponse.status}`);
     }
 
-    const searchData = await searchResponse.json();
-    const messages = searchData.messages || [];
+    let searchData = await searchResponse.json();
+    let messages = searchData.messages || [];
     
-    log(`📬 Found ${messages.length} messages`);
+    log(`📬 Query 1 found ${messages.length} messages`);
+
+    // Strategy 2: If no results, try broader search (just the number + attachments)
+    if (messages.length === 0) {
+      const query2 = `has:attachment ${invoice_number}`;
+      log(`   Query 2 (broad): ${query2}`);
+      
+      searchResponse = await fetchWithTimeout(
+        `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(query2)}&maxResults=5`,
+        { headers: { Authorization: `Bearer ${accessToken}` } },
+        4000
+      );
+      
+      if (searchResponse.ok) {
+        searchData = await searchResponse.json();
+        messages = searchData.messages || [];
+        log(`📬 Query 2 found ${messages.length} messages`);
+      }
+    }
+
+    // Strategy 3: If still no results, try searching in subject/body only
+    if (messages.length === 0) {
+      const query3 = `${invoice_number}`;
+      log(`   Query 3 (minimal): ${query3}`);
+      
+      searchResponse = await fetchWithTimeout(
+        `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(query3)}&maxResults=5`,
+        { headers: { Authorization: `Bearer ${accessToken}` } },
+        4000
+      );
+      
+      if (searchResponse.ok) {
+        searchData = await searchResponse.json();
+        messages = searchData.messages || [];
+        log(`📬 Query 3 found ${messages.length} messages`);
+      }
+    }
 
     if (messages.length === 0) {
       return new Response(
         JSON.stringify({
           success: false,
-          message: `No se encontró en Gmail: ${invoice_number}`
+          message: `No se encontró en Gmail después de 3 intentos de búsqueda: ${invoice_number}`
         }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
