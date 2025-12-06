@@ -14,8 +14,8 @@ import { Badge } from "@/components/ui/badge";
 
 const STORAGE_KEY = "batch_import_progress";
 const PARALLEL_COUNT = 2; // Reduced from 3 to avoid overwhelming edge function cold starts
-const INVOICE_TIMEOUT_MS = 60000; // 60s max per invoice - edge functions need time for cold start + Gmail search
-const MAX_RETRIES = 1; // Retry once on timeout
+const INVOICE_TIMEOUT_MS = 90000; // 90s max per invoice - edge functions need time for cold start + Gmail search + QB
+const MAX_RETRIES = 2; // Retry twice on timeout
 
 interface ImportStatus {
   invoiceNumber: string;
@@ -54,7 +54,7 @@ interface LogEntry {
 export function BatchImportInvoices() {
   const [open, setOpen] = useState(false);
   const [invoiceNumbers, setInvoiceNumbers] = useState("");
-  const [autoPublish, setAutoPublish] = useState(true); // Default to auto-publish
+  const [autoPublish, setAutoPublish] = useState(false); // DISABLED by default - QB publishing blocks import
   const [isProcessing, setIsProcessing] = useState(false);
   const [progress, setProgress] = useState(0);
   const [importStatuses, setImportStatuses] = useState<ImportStatus[]>([]);
