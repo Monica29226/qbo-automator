@@ -315,6 +315,25 @@ serve(async (req) => {
     const skippedInvoices: any[] = [];
     const errors: any[] = [];
 
+    // Helper function to recursively find all attachments (handles nested multipart)
+    function findAllParts(part: any, result: any[] = []): any[] {
+      if (!part) return result;
+      
+      // If this part has a filename, it's an attachment
+      if (part.filename && part.filename.length > 0) {
+        result.push(part);
+      }
+      
+      // Recursively search nested parts
+      if (part.parts && Array.isArray(part.parts)) {
+        for (const subPart of part.parts) {
+          findAllParts(subPart, result);
+        }
+      }
+      
+      return result;
+    }
+
     // Helper para validar y limpiar fechas
     const parseIssueDate = (dateString: string): string | null => {
       if (!dateString || dateString.trim() === "") return null;
@@ -357,27 +376,22 @@ serve(async (req) => {
         if (!messageResponse.ok) continue;
 
         const messageData = await messageResponse.json();
-        const parts = messageData.payload?.parts || [];
+        
+        // Find all attachments recursively (handles nested multipart structures)
+        const allParts = findAllParts(messageData.payload);
+        console.log(`📎 Message ${message.id}: Found ${allParts.length} attachments: ${allParts.map((p: any) => p.filename).join(', ')}`);
 
-        // Buscar archivos adjuntos XML y PDF
-        let xmlFilename = null;
-        let pdfAttachmentId = null;
-        let pdfFilename = null;
+        // Find XML and PDF files
+        const xmlParts = allParts.filter((p: any) => p.filename?.toLowerCase().endsWith(".xml"));
+        const pdfPart = allParts.find((p: any) => p.filename?.toLowerCase().endsWith(".pdf"));
         
-        for (const part of parts) {
-          if (part.filename?.toLowerCase().endsWith(".xml")) {
-            xmlFilename = part.filename;
-          }
-          if (part.filename?.toLowerCase().endsWith(".pdf")) {
-            pdfAttachmentId = part.body?.attachmentId;
-            pdfFilename = part.filename;
-          }
-        }
+        let pdfAttachmentId = pdfPart?.body?.attachmentId;
+        let pdfFilename = pdfPart?.filename;
         
-        // Procesar XML
-        for (const part of parts) {
-          if (part.filename?.toLowerCase().endsWith(".xml")) {
-            const attachmentId = part.body?.attachmentId;
+        // Procesar cada XML encontrado
+        for (const xmlPart of xmlParts) {
+          if (xmlPart.filename?.toLowerCase().endsWith(".xml")) {
+            const attachmentId = xmlPart.body?.attachmentId;
             if (!attachmentId) continue;
 
             try {
@@ -394,7 +408,7 @@ serve(async (req) => {
               const attachmentData = await attachmentResponse.json();
               const xmlContent = atob(attachmentData.data.replace(/-/g, "+").replace(/_/g, "/"));
 
-              console.log(`Processing invoice: ${part.filename}`);
+              console.log(`Processing invoice: ${xmlPart.filename}`);
 
               // Descargar y guardar PDF si existe (antes de procesar)
               let pdfUrl = null;
@@ -457,19 +471,19 @@ serve(async (req) => {
                     Authorization: `Bearer ${supabaseKey}`,
                     "Content-Type": "application/json",
                   },
-                  body: JSON.stringify({
-                    organization_id,
-                    xml_content: xmlContent,
-                    pdf_attachment_url: pdfUrl,
-                    file_path: part.filename,
-                  }),
+                    body: JSON.stringify({
+                      organization_id,
+                      xml_content: xmlContent,
+                      pdf_attachment_url: pdfUrl,
+                      file_path: xmlPart.filename,
+                    }),
                 }
               );
 
               if (!processResponse.ok) {
                 const errorText = await processResponse.text();
-                console.error(`XML processing failed for ${part.filename}:`, errorText);
-                errors.push({ filename: part.filename, error: "XML processing failed" });
+                console.error(`XML processing failed for ${xmlPart.filename}:`, errorText);
+                errors.push({ filename: xmlPart.filename, error: "XML processing failed" });
                 continue;
               }
 
@@ -480,20 +494,21 @@ serve(async (req) => {
                 // Distinguir entre duplicados/skipped y errores reales
                 const isDuplicate = errorMsg?.includes("duplicado") || errorMsg?.includes("ya existe");
                 const isResponseXml = errorMsg?.includes("FechaEmision") || errorMsg?.includes("not found");
+                const isReceptorMismatch = errorMsg?.includes("rechazada") || errorMsg?.includes("receptor");
                 
-                if (isDuplicate || isResponseXml) {
-                  console.log(`⏭️ Skipped ${part.filename}: ${errorMsg}`);
-                  skippedInvoices.push({ filename: part.filename, reason: errorMsg });
+                if (isDuplicate || isResponseXml || isReceptorMismatch) {
+                  console.log(`⏭️ Skipped ${xmlPart.filename}: ${errorMsg}`);
+                  skippedInvoices.push({ filename: xmlPart.filename, reason: errorMsg });
                 } else {
-                  console.error(`❌ Processing error for ${part.filename}:`, errorMsg);
-                  errors.push({ filename: part.filename, error: errorMsg });
+                  console.error(`❌ Processing error for ${xmlPart.filename}:`, errorMsg);
+                  errors.push({ filename: xmlPart.filename, error: errorMsg });
                 }
                 continue;
               }
 
-              console.log(`✅ Successfully processed: ${part.filename} (${processResult.status})`);
+              console.log(`✅ Successfully processed: ${xmlPart.filename} (${processResult.status})`);
               processedInvoices.push({
-                filename: part.filename,
+                filename: xmlPart.filename,
                 doc_id: processResult.doc_id,
                 status: processResult.status,
                 account_code: processResult.account_code,
@@ -517,7 +532,7 @@ serve(async (req) => {
                 );
 
                 if (uploadResponse.ok) {
-                  console.log(`Uploaded to Google Drive: ${part.filename}`);
+                  console.log(`Uploaded to Google Drive: ${xmlPart.filename}`);
                 } else {
                   const errorText = await uploadResponse.text();
                   console.log(`Google Drive upload skipped or failed: ${errorText}`);
@@ -529,9 +544,9 @@ serve(async (req) => {
               // La función process-document-xml ya manejó todo el procesamiento
               // No necesitamos guardar nada adicional aquí
             } catch (xmlError) {
-              console.error(`Error processing XML ${part.filename}:`, xmlError);
+              console.error(`Error processing XML ${xmlPart.filename}:`, xmlError);
               errors.push({ 
-                filename: part.filename, 
+                filename: xmlPart.filename, 
                 error: xmlError instanceof Error ? xmlError.message : "Unknown error" 
               });
             }
