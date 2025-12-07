@@ -5,8 +5,8 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-const BATCH_SIZE = 15;
-const TIMEOUT_MS = 25000;
+const BATCH_SIZE = 10;
+const TIMEOUT_MS = 45000; // Increased from 25s to 45s per invoice
 
 interface ProcessResult {
   doc_id: string;
@@ -251,25 +251,98 @@ async function processSingleDocument(
       console.log(`📄 ${docNumber}: ${otrosCargos.length} otros cargos detectados`);
     }
     
-    // 5. Find vendor in QuickBooks
+    // 5. Find vendor in QuickBooks (with timeout protection)
     let vendorRef = doc.vendor?.qbo_vendor_ref;
     if (!vendorRef) {
-      // Search vendor by name
-      const vendorQuery = encodeURIComponent(`SELECT * FROM Vendor WHERE DisplayName LIKE '%${supplierName.substring(0, 20)}%'`);
-      const vendorResponse = await fetch(
-        `https://quickbooks.api.intuit.com/v3/company/${realmId}/query?query=${vendorQuery}`,
-        {
-          headers: {
-            'Authorization': `Bearer ${accessToken}`,
-            'Accept': 'application/json'
+      // Search vendor by name with timeout
+      const vendorSearchTimeout = 8000; // 8 second timeout for vendor search
+      const vendorController = new AbortController();
+      const vendorTimeoutId = setTimeout(() => vendorController.abort(), vendorSearchTimeout);
+      
+      try {
+        // Simplified search - just look for exact match first
+        const normalizedName = supplierName
+          .normalize('NFD')
+          .replace(/[\u0300-\u036f]/g, '')
+          .substring(0, 100)
+          .trim();
+        
+        const vendorQuery = encodeURIComponent(`SELECT * FROM Vendor WHERE DisplayName = '${normalizedName.replace(/'/g, "\\'")}'`);
+        const vendorResponse = await fetch(
+          `https://quickbooks.api.intuit.com/v3/company/${realmId}/query?query=${vendorQuery}`,
+          {
+            headers: {
+              'Authorization': `Bearer ${accessToken}`,
+              'Accept': 'application/json'
+            },
+            signal: vendorController.signal
+          }
+        );
+        
+        clearTimeout(vendorTimeoutId);
+        
+        if (vendorResponse.ok) {
+          const vendorData = await vendorResponse.json();
+          if (vendorData.QueryResponse?.Vendor?.[0]) {
+            vendorRef = vendorData.QueryResponse.Vendor[0].Id;
           }
         }
-      );
-      
-      if (vendorResponse.ok) {
-        const vendorData = await vendorResponse.json();
-        if (vendorData.QueryResponse?.Vendor?.[0]) {
-          vendorRef = vendorData.QueryResponse.Vendor[0].Id;
+        
+        // If not found, try creating the vendor
+        if (!vendorRef) {
+          console.log(`➕ ${docNumber}: Creando proveedor "${normalizedName}"...`);
+          const createController = new AbortController();
+          const createTimeoutId = setTimeout(() => createController.abort(), 10000);
+          
+          const createResponse = await fetch(
+            `https://quickbooks.api.intuit.com/v3/company/${realmId}/vendor`,
+            {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${accessToken}`,
+                'Accept': 'application/json',
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({ DisplayName: normalizedName }),
+              signal: createController.signal
+            }
+          );
+          
+          clearTimeout(createTimeoutId);
+          
+          if (createResponse.ok) {
+            const vendorData = await createResponse.json();
+            vendorRef = vendorData.Vendor?.Id;
+            console.log(`✅ ${docNumber}: Proveedor creado (ID: ${vendorRef})`);
+          } else {
+            const errorText = await createResponse.text();
+            // If duplicate name error, try to find existing vendor
+            if (errorText.includes('Duplicate Name')) {
+              const retryQuery = encodeURIComponent(`SELECT * FROM Vendor WHERE DisplayName LIKE '%${normalizedName.substring(0, 15)}%'`);
+              const retryResponse = await fetch(
+                `https://quickbooks.api.intuit.com/v3/company/${realmId}/query?query=${retryQuery}`,
+                {
+                  headers: {
+                    'Authorization': `Bearer ${accessToken}`,
+                    'Accept': 'application/json'
+                  }
+                }
+              );
+              if (retryResponse.ok) {
+                const retryData = await retryResponse.json();
+                if (retryData.QueryResponse?.Vendor?.[0]) {
+                  vendorRef = retryData.QueryResponse.Vendor[0].Id;
+                }
+              }
+            }
+          }
+        }
+      } catch (e) {
+        clearTimeout(vendorTimeoutId);
+        if (e instanceof Error && e.name === 'AbortError') {
+          console.warn(`⏱️ ${docNumber}: Timeout buscando proveedor`);
+        } else {
+          console.warn(`⚠️ ${docNumber}: Error buscando proveedor:`, e);
         }
       }
       
@@ -279,7 +352,7 @@ async function processSingleDocument(
           doc_number: docNumber,
           supplier_name: supplierName,
           success: false,
-          reason: 'Proveedor no encontrado en QuickBooks',
+          reason: 'Proveedor no encontrado/creado en QuickBooks (timeout o error)',
           elapsed_ms: Date.now() - startTime
         };
       }
@@ -371,7 +444,7 @@ async function processSingleDocument(
       });
     }
     
-    // 9. Create Bill in QuickBooks
+    // 9. Create Bill in QuickBooks (with timeout protection)
     const billPayload = {
       VendorRef: { value: vendorRef },
       TxnDate: doc.issue_date,
@@ -385,6 +458,9 @@ async function processSingleDocument(
     
     console.log(`📤 ${docNumber}: Enviando a QuickBooks (${lines.length} líneas)...`);
     
+    const billController = new AbortController();
+    const billTimeoutId = setTimeout(() => billController.abort(), 15000); // 15s timeout for bill creation
+    
     const qbResponse = await fetch(
       `https://quickbooks.api.intuit.com/v3/company/${realmId}/bill?minorversion=65`,
       {
@@ -394,9 +470,12 @@ async function processSingleDocument(
           'Accept': 'application/json',
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify(billPayload)
+        body: JSON.stringify(billPayload),
+        signal: billController.signal
       }
     );
+    
+    clearTimeout(billTimeoutId);
     
     const qbResult = await qbResponse.json();
     
