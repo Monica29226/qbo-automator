@@ -127,10 +127,9 @@ export function AccountCombobox({
                     }
                     isSelectingRef.current = true;
                     
-                    // Enviar código de cuenta (accountNumber) no ID interno de QuickBooks
-                    const accountCode = getAccountCode(account);
-                    console.log('✅ AccountCombobox: Cuenta seleccionada -', accountCode, getDisplayText(account));
-                    onValueChange(accountCode);
+                    // SIEMPRE enviar el ID interno de QB - el formato del código se construye en handleUpdateInvoice
+                    console.log('✅ AccountCombobox: Cuenta seleccionada - ID:', account.id, 'Código:', account.accountNumber, 'Nombre:', account.name);
+                    onValueChange(account.id);
                     setOpen(false);
                     setSearchQuery("");
                     
