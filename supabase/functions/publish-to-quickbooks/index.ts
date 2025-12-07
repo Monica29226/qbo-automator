@@ -16,6 +16,9 @@ const corsHeaders = {
 // Helper: Delay function for rate limiting
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
+// Per-invoice timeout for processing
+const INVOICE_TIMEOUT_MS = 45000; // 45 seconds per invoice max
+
 // Helper: Fetch with retry for rate limiting (429 errors)
 const fetchWithRetry = async (
   url: string,
@@ -201,7 +204,7 @@ Deno.serve(async (req) => {
       errors: [] as any[],
     };
 
-    // Helper para buscar vendor en QBO (con retry)
+    // Helper para buscar vendor en QBO (con timeout)
     const findOrCreateVendor = async (supplierName: string, supplierTaxId: string) => {
       const normalizedName = supplierName
         .normalize('NFD')
@@ -211,114 +214,129 @@ Deno.serve(async (req) => {
       
       log(`🔍 Searching vendor: "${supplierName}"`);
       
-      let searchQuery = `SELECT * FROM Vendor WHERE DisplayName = '${supplierName.replace(/'/g, "\\'")}'`;
-      let searchUrl = `https://quickbooks.api.intuit.com/v3/company/${realmId}/query?query=${encodeURIComponent(searchQuery)}`;
-
-      let searchResponse = await fetchWithRetry(searchUrl, {
-        headers: {
-          "Authorization": `Bearer ${accessToken}`,
-          "Accept": "application/json",
-        },
-      });
-
-      if (searchResponse.ok) {
-        const searchData = await searchResponse.json();
-        if (searchData.QueryResponse?.Vendor?.length > 0) {
-          log(`✓ Found vendor: ${searchData.QueryResponse.Vendor[0].DisplayName}`);
-          return searchData.QueryResponse.Vendor[0].Id;
-        }
-      }
+      // Use AbortController for timeout
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 8000); // 8s timeout for vendor search
       
-      if (normalizedName !== supplierName) {
-        searchQuery = `SELECT * FROM Vendor WHERE DisplayName = '${normalizedName.replace(/'/g, "\\'")}'`;
-        searchUrl = `https://quickbooks.api.intuit.com/v3/company/${realmId}/query?query=${encodeURIComponent(searchQuery)}`;
+      try {
+        // Single search - exact match only (faster)
+        const searchQuery = `SELECT * FROM Vendor WHERE DisplayName = '${normalizedName.replace(/'/g, "\\'")}'`;
+        const searchUrl = `https://quickbooks.api.intuit.com/v3/company/${realmId}/query?query=${encodeURIComponent(searchQuery)}`;
 
-        searchResponse = await fetchWithRetry(searchUrl, {
+        const searchResponse = await fetch(searchUrl, {
           headers: {
             "Authorization": `Bearer ${accessToken}`,
             "Accept": "application/json",
           },
+          signal: controller.signal
         });
+
+        clearTimeout(timeoutId);
 
         if (searchResponse.ok) {
           const searchData = await searchResponse.json();
           if (searchData.QueryResponse?.Vendor?.length > 0) {
-            log(`✓ Found vendor (normalized): ${searchData.QueryResponse.Vendor[0].DisplayName}`);
+            log(`✓ Found vendor: ${searchData.QueryResponse.Vendor[0].DisplayName}`);
             return searchData.QueryResponse.Vendor[0].Id;
           }
         }
+      } catch (e) {
+        clearTimeout(timeoutId);
+        if (e instanceof Error && e.name === 'AbortError') {
+          logError(`⏱️ Timeout searching vendor: ${normalizedName}`);
+          throw new Error(`Timeout buscando proveedor "${supplierName}"`);
+        }
+        throw e;
       }
-
+      
+      // Create vendor with timeout
       log(`➕ Creating vendor: ${normalizedName}`);
       
-      const vendorBody: any = { DisplayName: normalizedName };
+      const createController = new AbortController();
+      const createTimeoutId = setTimeout(() => createController.abort(), 10000); // 10s for creation
       
-      // Small delay before creating vendor
-      await delay(500);
+      try {
+        const createResponse = await fetch(
+          `https://quickbooks.api.intuit.com/v3/company/${realmId}/vendor`,
+          {
+            method: "POST",
+            headers: {
+              "Authorization": `Bearer ${accessToken}`,
+              "Accept": "application/json",
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ DisplayName: normalizedName }),
+            signal: createController.signal
+          }
+        );
+
+        clearTimeout(createTimeoutId);
+
+        if (!createResponse.ok) {
+          const errorText = await createResponse.text();
+          logError(`❌ Failed to create vendor "${normalizedName}": ${errorText}`);
+          throw new Error(`No se pudo crear el proveedor "${supplierName}" en QuickBooks`);
+        }
+
+        const vendorData = await createResponse.json();
+        log(`✓ Created vendor: ${vendorData.Vendor.DisplayName} (ID: ${vendorData.Vendor.Id})`);
+        return vendorData.Vendor.Id;
+      } catch (e) {
+        clearTimeout(createTimeoutId);
+        if (e instanceof Error && e.name === 'AbortError') {
+          logError(`⏱️ Timeout creating vendor: ${normalizedName}`);
+          throw new Error(`Timeout creando proveedor "${supplierName}"`);
+        }
+        throw e;
+      }
+    };
+
+    // Helper para verificar duplicados en QBO (con timeout)
+    const checkDuplicateBill = async (docNumber: string, vendorId: string | null) => {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000); // 5s timeout
       
-      const createResponse = await fetchWithRetry(
-        `https://quickbooks.api.intuit.com/v3/company/${realmId}/vendor`,
-        {
-          method: "POST",
+      try {
+        const query = `SELECT * FROM Bill WHERE DocNumber = '${docNumber.replace(/'/g, "\\'")}'`;
+        const url = `https://quickbooks.api.intuit.com/v3/company/${realmId}/query?query=${encodeURIComponent(query)}`;
+
+        const response = await fetch(url, {
           headers: {
             "Authorization": `Bearer ${accessToken}`,
             "Accept": "application/json",
-            "Content-Type": "application/json",
           },
-          body: JSON.stringify(vendorBody),
-        }
-      );
+          signal: controller.signal
+        });
 
-      if (!createResponse.ok) {
-        const errorText = await createResponse.text();
-        logError(`❌ Failed to create vendor "${normalizedName}": ${errorText}`);
-        throw new Error(`No se pudo crear el proveedor "${supplierName}" en QuickBooks`);
-      }
+        clearTimeout(timeoutId);
 
-      const vendorData = await createResponse.json();
-      log(`✓ Created vendor: ${vendorData.Vendor.DisplayName} (ID: ${vendorData.Vendor.Id})`);
-      return vendorData.Vendor.Id;
-    };
-
-    // Helper para verificar duplicados en QBO (con retry)
-    // CRITICAL: Now checks both DocNumber AND VendorRef to avoid false matches
-    // Different vendors can have the same invoice number (e.g., both have invoice #231)
-    const checkDuplicateBill = async (docNumber: string, vendorId: string | null) => {
-      // Build query - if we have vendorId, include it in the search
-      let query = `SELECT * FROM Bill WHERE DocNumber = '${docNumber.replace(/'/g, "\\'")}'`;
-      const url = `https://quickbooks.api.intuit.com/v3/company/${realmId}/query?query=${encodeURIComponent(query)}`;
-
-      const response = await fetchWithRetry(url, {
-        headers: {
-          "Authorization": `Bearer ${accessToken}`,
-          "Accept": "application/json",
-        },
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        const bills = data.QueryResponse?.Bill || [];
-        
-        if (bills.length > 0) {
-          // If we have a vendorId, only match bills from the SAME vendor
-          if (vendorId) {
-            const matchingBill = bills.find((bill: any) => 
-              bill.VendorRef?.value === vendorId
-            );
-            if (matchingBill) {
-              log(`✓ Found existing bill ${docNumber} for vendor ${vendorId}: ${matchingBill.Id}`);
-              return matchingBill.Id;
-            }
-            // Bill exists but for DIFFERENT vendor - this is NOT a duplicate!
-            log(`⚠️ Bill ${docNumber} exists in QBO but for different vendor (${bills[0].VendorRef?.value}), not vendor ${vendorId} - NOT a duplicate`);
-            return null;
-          }
+        if (response.ok) {
+          const data = await response.json();
+          const bills = data.QueryResponse?.Bill || [];
           
-          // No vendorId provided - return first match (legacy behavior)
-          return bills[0].Id;
+          if (bills.length > 0) {
+            if (vendorId) {
+              const matchingBill = bills.find((bill: any) => 
+                bill.VendorRef?.value === vendorId
+              );
+              if (matchingBill) {
+                log(`✓ Found existing bill ${docNumber} for vendor ${vendorId}: ${matchingBill.Id}`);
+                return matchingBill.Id;
+              }
+              log(`⚠️ Bill ${docNumber} exists in QBO but for different vendor - NOT a duplicate`);
+              return null;
+            }
+            return bills[0].Id;
+          }
         }
+        return null;
+      } catch (e) {
+        clearTimeout(timeoutId);
+        if (e instanceof Error && e.name === 'AbortError') {
+          log(`⏱️ Timeout checking duplicate bill: ${docNumber}`);
+        }
+        return null; // On timeout, assume not duplicate and continue
       }
-      return null;
     };
 
     const batchStartTime = Date.now();
