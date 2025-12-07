@@ -352,23 +352,15 @@ const InvoicesPendingLog = () => {
       setShowBulkClassifyDialog(false);
       setBulkAccountId("");
       
-      // Publicar en BACKGROUND (fire-and-forget) - NO bloquea UI
-      supabase.functions.invoke("publish-to-quickbooks", {
-        body: { organization_id: activeOrganization, document_ids: documentIds },
-      }).then(({ data, error }) => {
-        if (error) {
-          console.error("Error publicando:", error);
-          toast.warning(`⚠️ Error publicando algunas facturas. Revise el log.`);
-        } else {
-          const published = data?.published || 0;
-          const errors = data?.errors?.length || 0;
-          if (errors > 0) {
-            toast.warning(`⚠️ ${published} publicadas, ${errors} con errores`);
-          } else if (published > 0) {
-            toast.success(`✅ ${published} facturas publicadas a QuickBooks`);
-          }
-        }
-      }).catch(e => console.error("Background publish error:", e));
+      // Usar el hook de cola de publicación para cada grupo de vendor
+      for (const [vendorName, invoices] of vendorGroups) {
+        const ids = invoices.map(inv => inv.id);
+        addToQueue({
+          documentIds: ids,
+          vendorName,
+          organizationId: activeOrganization
+        });
+      }
       
       // Refrescar en background
       invalidateInvoices();
