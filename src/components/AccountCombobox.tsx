@@ -52,9 +52,10 @@ export function AccountCombobox({
   });
 
   const getDisplayText = (account: Account) => {
+    const name = account.name || '';
     return account.accountNumber
-      ? `${account.accountNumber} - ${account.name}`
-      : account.name;
+      ? `${account.accountNumber} - ${name}`
+      : name;
   };
   
   // Obtener el código de cuenta para guardar (usar accountNumber, no id interno de QB)
@@ -62,7 +63,8 @@ export function AccountCombobox({
     return account.accountNumber || account.id;
   };
 
-  const normalizeText = (text: string) => {
+  const normalizeText = (text: string | undefined | null) => {
+    if (!text) return '';
     return text
       .toLowerCase()
       .normalize('NFD')
