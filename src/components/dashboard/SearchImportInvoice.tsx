@@ -305,22 +305,55 @@ export function SearchImportInvoice() {
               )}
 
               {result.existing && (
-                <Card>
+                <Card className={result.existing.status === "published" ? "border-green-500" : ""}>
                   <CardHeader className="py-3">
-                    <CardTitle className="text-sm">Documento Existente</CardTitle>
+                    <CardTitle className="text-sm flex items-center gap-2">
+                      {result.existing.status === "published" && (
+                        <CheckCircle2 className="h-4 w-4 text-green-600" />
+                      )}
+                      {result.existing.status === "published" ? "Ya publicada en QuickBooks" : "Documento Existente"}
+                    </CardTitle>
                   </CardHeader>
                   <CardContent className="py-2 text-sm">
                     <div className="grid grid-cols-2 gap-2">
+                      <div className="text-muted-foreground">Proveedor:</div>
+                      <div className="font-medium">{result.existing.supplier_name || "—"}</div>
+                      
                       <div className="text-muted-foreground">Número:</div>
-                      <div>{result.existing.doc_number}</div>
+                      <div className="font-mono text-xs">{result.existing.doc_number}</div>
+                      
+                      {result.existing.issue_date && (
+                        <>
+                          <div className="text-muted-foreground">Fecha:</div>
+                          <div>{new Date(result.existing.issue_date).toLocaleDateString("es-CR")}</div>
+                        </>
+                      )}
+                      
+                      {result.existing.total_amount && (
+                        <>
+                          <div className="text-muted-foreground">Monto:</div>
+                          <div className="font-mono font-medium">
+                            {formatCurrency(result.existing.total_amount)}
+                          </div>
+                        </>
+                      )}
                       
                       <div className="text-muted-foreground">Estado:</div>
-                      <div>{result.existing.status}</div>
+                      <div className={result.existing.status === "published" ? "text-green-600 font-medium" : "text-yellow-600"}>
+                        {result.existing.status === "published" ? "Publicada" : result.existing.status}
+                      </div>
                       
                       {result.existing.qbo_entity_id && (
                         <>
                           <div className="text-muted-foreground">QB ID:</div>
-                          <div>{result.existing.qbo_entity_id}</div>
+                          <div className="font-mono text-primary">{result.existing.qbo_entity_id}</div>
+                        </>
+                      )}
+                      
+                      {result.existing.default_account_ref && (
+                        <>
+                          <div className="text-muted-foreground">Cuenta:</div>
+                          <div className="font-mono">{result.existing.default_account_ref}</div>
                         </>
                       )}
                     </div>

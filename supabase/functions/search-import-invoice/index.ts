@@ -107,7 +107,7 @@ serve(async (req) => {
       if (docKey && docKey.length === 50) {
         const { data: byKey } = await supabase
           .from("processed_documents")
-          .select("id, doc_key, doc_number, supplier_name, supplier_tax_id, status, qbo_entity_id, default_account_ref")
+          .select("id, doc_key, doc_number, supplier_name, supplier_tax_id, status, qbo_entity_id, default_account_ref, issue_date, total_amount, currency")
           .eq("organization_id", organization_id)
           .eq("doc_key", docKey);
         
@@ -123,7 +123,7 @@ serve(async (req) => {
         const normalizedTaxId = vendorTaxId.replace(/[^0-9]/g, '');
         const { data: byNumber } = await supabase
           .from("processed_documents")
-          .select("id, doc_key, doc_number, supplier_name, supplier_tax_id, status, qbo_entity_id, default_account_ref")
+          .select("id, doc_key, doc_number, supplier_name, supplier_tax_id, status, qbo_entity_id, default_account_ref, issue_date, total_amount, currency")
           .eq("organization_id", organization_id)
           .eq("doc_number", docNumber);
         
