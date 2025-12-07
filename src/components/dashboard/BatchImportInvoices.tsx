@@ -311,8 +311,76 @@ export function BatchImportInvoices() {
         return processInvoice(invoiceLine, index, orgId, autoPub, updateStep, retryCount + 1);
       }
 
+      // ON FINAL TIMEOUT: Verify actual DB status instead of assuming failure
+      if (isTimeout) {
+        addLog(`[${index}] 🔍 Verificando estado real en BD...`, "warning");
+        console.log(`[BatchImport] Verifying DB status for ${invoiceLine.invoiceNumber}`);
+        
+        try {
+          // Wait a moment for any background processing to complete
+          await new Promise((resolve) => setTimeout(resolve, 2000));
+          
+          // Check database for actual status
+          const { data: dbDoc, error: dbError } = await supabase
+            .from("processed_documents")
+            .select("id, doc_number, supplier_name, status, qbo_entity_id, issue_date, total_amount, currency")
+            .like("doc_number", `%${invoiceLine.invoiceNumber.slice(-10)}%`)
+            .eq("organization_id", orgId)
+            .order("created_at", { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+          if (!dbError && dbDoc) {
+            // Invoice exists in DB - check if published to QB
+            if (dbDoc.qbo_entity_id) {
+              addLog(`[${index}] ✅ Verificado: Publicado en QB (${dbDoc.qbo_entity_id})`, "success");
+              return {
+                invoiceNumber: invoiceLine.invoiceNumber,
+                inputVendorName: invoiceLine.vendorName,
+                status: "success",
+                message: `Publicado en QB (verificado)`,
+                supplierName: dbDoc.supplier_name,
+                issueDate: dbDoc.issue_date,
+                docNumber: dbDoc.doc_number,
+                totalAmount: dbDoc.total_amount,
+                currency: dbDoc.currency,
+                elapsedMs: elapsed,
+                qbQueued: false,
+              };
+            } else if (dbDoc.status === "processed" || dbDoc.status === "pending") {
+              addLog(`[${index}] 📥 Verificado: Importado (pendiente QB)`, "success");
+              return {
+                invoiceNumber: invoiceLine.invoiceNumber,
+                inputVendorName: invoiceLine.vendorName,
+                status: "success",
+                message: `Importado (QB pendiente)`,
+                supplierName: dbDoc.supplier_name,
+                issueDate: dbDoc.issue_date,
+                docNumber: dbDoc.doc_number,
+                totalAmount: dbDoc.total_amount,
+                currency: dbDoc.currency,
+                elapsedMs: elapsed,
+                qbQueued: true,
+              };
+            } else if (dbDoc.status === "published") {
+              addLog(`[${index}] ✅ Verificado: Ya publicado`, "success");
+              return {
+                invoiceNumber: invoiceLine.invoiceNumber,
+                inputVendorName: invoiceLine.vendorName,
+                status: "existing",
+                message: `Ya publicado anteriormente`,
+                supplierName: dbDoc.supplier_name,
+                elapsedMs: elapsed,
+              };
+            }
+          }
+        } catch (verifyError) {
+          console.error(`[BatchImport] DB verification failed:`, verifyError);
+        }
+      }
+
       const errorMsg = isTimeout
-        ? `Timeout después de ${INVOICE_TIMEOUT_MS / 1000}s`
+        ? `Timeout ${INVOICE_TIMEOUT_MS / 1000}s (no verificado en BD)`
         : error.message || "Error desconocido";
       addLog(`[${index}] ${isTimeout ? "⏱️" : "💥"} ${errorMsg}`, "error");
       console.error(`[BatchImport] Final error for ${invoiceLine.invoiceNumber}:`, errorMsg);
