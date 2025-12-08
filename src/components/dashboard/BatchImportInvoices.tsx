@@ -489,29 +489,32 @@ export function BatchImportInvoices() {
         });
       };
 
-      const results = await Promise.all(
+      // Process in parallel, updating UI immediately as each completes
+      await Promise.all(
         batchIndices.map(async (idx) => {
           const status = statuses[idx];
           const line: ParsedInvoiceLine = {
             vendorName: status.inputVendorName || "",
             invoiceNumber: status.invoiceNumber,
           };
-          return processInvoice(line, idx, orgId, autoPub, updateStep);
+          
+          const result = await processInvoice(line, idx, orgId, autoPub, updateStep);
+          
+          // Update status immediately when this invoice finishes
+          setImportStatuses((prev) => {
+            const updated = [...prev];
+            updated[idx] = result;
+            saveProgress(updated, orgId, autoPub);
+            return updated;
+          });
+          
+          // Update progress immediately
+          processedCount++;
+          setProgress((processedCount / statuses.length) * 100);
+          
+          return result;
         }),
       );
-
-      // Update statuses with results
-      setImportStatuses((prev) => {
-        const updated = [...prev];
-        batchIndices.forEach((idx, resultIdx) => {
-          updated[idx] = results[resultIdx];
-        });
-        saveProgress(updated, orgId, autoPub);
-        return updated;
-      });
-
-      processedCount += batchIndices.length;
-      setProgress((processedCount / statuses.length) * 100);
 
       // Small delay between batches
       if (i + PARALLEL_COUNT < pendingIndices.length && !abortRef.current) {
