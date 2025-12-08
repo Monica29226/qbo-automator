@@ -540,6 +540,16 @@ Deno.serve(async (req) => {
             
             logInfo(`🔍 Buscando cuenta con código: "${searchCode}" entre ${allAccounts.length} cuentas`);
             
+            // 0. FIRST: Si es un número simple (1-3 dígitos), buscar DIRECTAMENTE por ID interno de QB
+            // Esto resuelve el bug donde vendor_defaults tiene IDs internos (97, 81, 93) en vez de códigos
+            if (/^\d{1,3}$/.test(searchCode)) {
+              const targetByInternalId = allAccounts.find((acc: any) => acc.Id === searchCode);
+              if (targetByInternalId) {
+                logInfo(`✅ Cuenta encontrada por ID interno de QB: ${targetByInternalId.Name} (ID: ${targetByInternalId.Id}, AcctNum: ${targetByInternalId.AcctNum || 'N/A'})`);
+                return targetByInternalId.Id;
+              }
+            }
+            
             // 1. Buscar match exacto por AcctNum
             let targetAccount = allAccounts.find((acc: any) => 
               acc.AcctNum && acc.AcctNum === searchCode
