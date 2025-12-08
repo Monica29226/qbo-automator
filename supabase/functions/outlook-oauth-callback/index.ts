@@ -96,28 +96,58 @@ serve(async (req) => {
     // Calculate token expiration
     const expiresAt = Date.now() + (tokens.expires_in * 1000);
 
-    // Store or update tokens in integration_accounts (upsert)
-    const { error: upsertError } = await supabase
+    // Check if account already exists for this org/email
+    const { data: existingAccount } = await supabase
       .from("integration_accounts")
-      .upsert({
-        organization_id,
-        service_type: "outlook",
-        account_email: userEmail,
-        account_name: userName,
-        created_by: user_id,
-        is_active: true,
-        credentials: {
-          access_token: tokens.access_token,
-          refresh_token: tokens.refresh_token,
-          expires_at: expiresAt,
-        },
-      }, {
-        onConflict: "organization_id,service_type,account_email"
-      });
+      .select("id")
+      .eq("organization_id", organization_id)
+      .eq("service_type", "outlook")
+      .eq("account_email", userEmail)
+      .maybeSingle();
 
-    if (upsertError) {
-      console.error("Error storing tokens:", upsertError);
-      throw upsertError;
+    let saveError = null;
+    
+    if (existingAccount) {
+      // Update existing account with new tokens
+      const { error } = await supabase
+        .from("integration_accounts")
+        .update({
+          account_name: userName,
+          is_active: true,
+          credentials: {
+            access_token: tokens.access_token,
+            refresh_token: tokens.refresh_token,
+            expires_at: expiresAt,
+          },
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", existingAccount.id);
+      saveError = error;
+      console.log("Updated existing Outlook account:", existingAccount.id);
+    } else {
+      // Insert new account
+      const { error } = await supabase
+        .from("integration_accounts")
+        .insert({
+          organization_id,
+          service_type: "outlook",
+          account_email: userEmail,
+          account_name: userName,
+          created_by: user_id,
+          is_active: true,
+          credentials: {
+            access_token: tokens.access_token,
+            refresh_token: tokens.refresh_token,
+            expires_at: expiresAt,
+          },
+        });
+      saveError = error;
+      console.log("Created new Outlook account for:", userEmail);
+    }
+
+    if (saveError) {
+      console.error("Error storing tokens:", saveError);
+      throw saveError;
     }
 
     // Update organization connection status
