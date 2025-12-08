@@ -42,25 +42,31 @@ serve(async (req) => {
       }
     }
 
-    // Obtener todas las organizaciones activas con Gmail y QuickBooks conectados
+    // Obtener todas las organizaciones activas con correo (Gmail O Outlook) y QuickBooks conectados
     const { data: orgs } = await supabase
       .from("organizations")
-      .select("id, name")
-      .eq("gmail_connected", true)
+      .select("id, name, gmail_connected, outlook_connected")
       .eq("quickbooks_connected", true)
       .eq("is_active", true);
 
-    if (!orgs || orgs.length === 0) {
-      console.log("No organizations with both Gmail and QuickBooks connected");
+    // Filtrar orgs que tengan al menos Gmail O Outlook conectado
+    const validOrgs = orgs?.filter(org => org.gmail_connected || org.outlook_connected) || [];
+
+    if (validOrgs.length === 0) {
+      console.log("No organizations with email (Gmail/Outlook) and QuickBooks connected");
       return new Response(
         JSON.stringify({ message: "No organizations to sync" }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
+    
+    console.log(`Found ${validOrgs.length} organizations to sync (Gmail: ${validOrgs.filter(o => o.gmail_connected).length}, Outlook: ${validOrgs.filter(o => o.outlook_connected).length})`);
+    
+    const orgsToProcess = validOrgs;
 
     const results = [];
 
-    for (const org of orgs) {
+    for (const org of orgsToProcess) {
       console.log(`Processing organization: ${org.name} (${org.id})`);
 
       // Crear log de sincronización
@@ -77,37 +83,41 @@ serve(async (req) => {
       const syncStartTime = Date.now();
 
       try {
-        // 1. Fetch invoices from Gmail
-        console.log(`Fetching Gmail invoices for ${org.name}...`);
-        const gmailResponse = await supabase.functions.invoke(
-          "gmail-fetch-invoices",
+        // Determinar qué proveedor de correo usar
+        const mailProvider = org.gmail_connected ? "gmail" : "outlook";
+        const fetchFunctionName = org.gmail_connected ? "gmail-fetch-invoices" : "outlook-fetch-invoices";
+        
+        console.log(`📧 Fetching invoices from ${mailProvider.toUpperCase()} for ${org.name}...`);
+        
+        const emailResponse = await supabase.functions.invoke(
+          fetchFunctionName,
           {
             body: { organization_id: org.id },
           }
         );
 
-        console.log("Gmail response status:", gmailResponse.error);
+        console.log(`${mailProvider} response status:`, emailResponse.error);
         
-        if (gmailResponse.error) {
-          const errorDetails = JSON.stringify(gmailResponse.error);
-          console.error("Gmail error details:", errorDetails);
-          throw new Error(`Gmail fetch failed: ${errorDetails}`);
+        if (emailResponse.error) {
+          const errorDetails = JSON.stringify(emailResponse.error);
+          console.error(`${mailProvider} error details:`, errorDetails);
+          throw new Error(`${mailProvider} fetch failed: ${errorDetails}`);
         }
 
-        const gmailData = gmailResponse.data;
+        const emailData = emailResponse.data;
         
-        if (!gmailData) {
-          throw new Error("Gmail fetch returned no data");
+        if (!emailData) {
+          throw new Error(`${mailProvider} fetch returned no data`);
         }
 
-        const invoicesSkipped = gmailData.invoices_skipped || 0;
-        const realFailures = gmailData.invoices_failed || 0;
-        const wasPartial = gmailData.status === "partial" || gmailData.time_limit_reached;
+        const invoicesSkipped = emailData.invoices_skipped || 0;
+        const realFailures = emailData.invoices_failed || 0;
+        const wasPartial = emailData.status === "partial" || emailData.time_limit_reached;
         
-        console.log(`📧 Gmail sync for ${org.name}: ${gmailData.invoices_processed} processed, ${invoicesSkipped} skipped, ${realFailures} failed${wasPartial ? ' (PARTIAL - time limit)' : ''}`);
+        console.log(`📧 ${mailProvider.toUpperCase()} sync for ${org.name}: ${emailData.invoices_processed} processed, ${invoicesSkipped} skipped, ${realFailures} failed${wasPartial ? ' (PARTIAL - time limit)' : ''}`);
 
         // 2. Publish to QuickBooks (si hay facturas procesadas)
-        if (gmailData.invoices_processed > 0) {
+        if (emailData.invoices_processed > 0) {
           console.log(`Publishing to QuickBooks for ${org.name}...`);
           
           // Esperar un poco para asegurar que las facturas están en la BD
@@ -143,8 +153,8 @@ serve(async (req) => {
               .from("sync_logs")
               .update({
                 status: syncStatus,
-                gmail_fetched: gmailData.messages_found || 0,
-                gmail_processed: gmailData.invoices_processed,
+                gmail_fetched: emailData.messages_found || 0,
+                gmail_processed: emailData.invoices_processed,
                 gmail_failed: realFailures,
                 qbo_published: qboData.published,
                 qbo_failed: qboData.failed,
@@ -158,7 +168,8 @@ serve(async (req) => {
           results.push({
             organization_id: org.id,
             organization_name: org.name,
-            gmail_processed: gmailData.invoices_processed,
+            mail_provider: mailProvider,
+            gmail_processed: emailData.invoices_processed,
             gmail_skipped: invoicesSkipped,
             gmail_failed: realFailures,
             qbo_published: qboData.published,
@@ -175,7 +186,7 @@ serve(async (req) => {
               .from("sync_logs")
               .update({
                 status: syncStatus,
-                gmail_fetched: gmailData.messages_found || 0,
+                gmail_fetched: emailData.messages_found || 0,
                 gmail_processed: 0,
                 gmail_failed: realFailures,
                 error_message: wasPartial ? "Sincronización parcial por límite de tiempo" : (realFailures > 0 ? `${realFailures} facturas con errores reales` : null),
@@ -188,6 +199,7 @@ serve(async (req) => {
           results.push({
             organization_id: org.id,
             organization_name: org.name,
+            mail_provider: mailProvider,
             gmail_processed: 0,
             gmail_skipped: invoicesSkipped,
             gmail_failed: realFailures,
@@ -227,7 +239,7 @@ serve(async (req) => {
       JSON.stringify({
         success: true,
         message: "Auto-sync completed",
-        organizations_processed: orgs.length,
+        organizations_processed: orgsToProcess.length,
         results,
       }),
       {
