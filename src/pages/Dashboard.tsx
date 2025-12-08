@@ -5,6 +5,7 @@ import { FileText, CheckCircle, AlertCircle, Clock, Upload, Mail, RefreshCw, Sen
 import { StatsCard } from "@/components/dashboard/StatsCard";
 import { OrganizationSwitcher } from "@/components/OrganizationSwitcher";
 import { GmailFetchDialog } from "@/components/GmailFetchDialog";
+import { OutlookFetchDialog } from "@/components/OutlookFetchDialog";
 import { GmailTokenAlert } from "@/components/dashboard/GmailTokenAlert";
 import { QuickBooksTokenAlert } from "@/components/dashboard/QuickBooksTokenAlert";
 import { DashboardSidebar } from "@/components/DashboardSidebar";
@@ -55,7 +56,7 @@ const Dashboard = () => {
   
   // React Query hooks for cached data
   const { data: stats = { processed: 0, review: 0, pending: 0, total: 0, errors: 0, published: 0, pendingConfig: 0 }, isLoading: statsLoading } = useDashboardStats(activeOrganization);
-  const { data: connections = { gmail: false, quickbooks: false }, isLoading: connectionsLoading } = useOrganizationConnections(activeOrganization);
+  const { data: connections = { gmail: false, quickbooks: false, outlook: false }, isLoading: connectionsLoading } = useOrganizationConnections(activeOrganization);
   
   const [isFetchingEmails, setIsFetchingEmails] = useState(false);
   const [isAutoSyncing, setIsAutoSyncing] = useState(false);
@@ -72,8 +73,10 @@ const Dashboard = () => {
   const hasRequiredConnections = useMemo(() => ({
     gmail: connections.gmail,
     quickbooks: connections.quickbooks,
-    both: connections.gmail && connections.quickbooks
-  }), [connections.gmail, connections.quickbooks]);
+    outlook: connections.outlook,
+    email: connections.gmail || connections.outlook,
+    both: (connections.gmail || connections.outlook) && connections.quickbooks
+  }), [connections.gmail, connections.quickbooks, connections.outlook]);
   
   // Helper to refresh data after actions
   const refreshData = useCallback(() => {
@@ -388,11 +391,20 @@ const Dashboard = () => {
                     Cargar XML
                   </Link>
                 </Button>
-                <GmailFetchDialog 
-                  onSuccess={() => {
-                    refreshData();
-                  }}
-                />
+                {hasRequiredConnections.gmail && (
+                  <GmailFetchDialog 
+                    onSuccess={() => {
+                      refreshData();
+                    }}
+                  />
+                )}
+                {hasRequiredConnections.outlook && (
+                  <OutlookFetchDialog 
+                    onSuccess={() => {
+                      refreshData();
+                    }}
+                  />
+                )}
                 <Button 
                   variant="default" 
                   size="sm" 
