@@ -15,6 +15,7 @@ interface DashboardStats {
 interface ConnectionStatus {
   gmail: boolean;
   quickbooks: boolean;
+  outlook: boolean;
 }
 
 export const useDashboardStats = (organizationId: string | null) => {
@@ -106,7 +107,7 @@ export const useOrganizationConnections = (organizationId: string | null) => {
     queryKey: ["organization-connections", organizationId],
     queryFn: async (): Promise<ConnectionStatus> => {
       if (!organizationId) {
-        return { gmail: false, quickbooks: false };
+        return { gmail: false, quickbooks: false, outlook: false };
       }
 
       const { data, error } = await supabase
@@ -121,6 +122,7 @@ export const useOrganizationConnections = (organizationId: string | null) => {
       return {
         gmail: accounts.some(a => a.service_type === "gmail"),
         quickbooks: accounts.some(a => a.service_type === "quickbooks"),
+        outlook: accounts.some(a => a.service_type === "outlook"),
       };
     },
     enabled: !!organizationId,
