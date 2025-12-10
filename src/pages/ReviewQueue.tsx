@@ -118,14 +118,29 @@ const ReviewQueue = () => {
       setVendors(vendorsResult.data || []);
     }
 
-    // Process accounts
+    // Process accounts - usar formato correcto
     if (accountsResult.data?.accounts) {
-      const formattedAccounts = accountsResult.data.accounts.map((acc: any) => ({
-        id: acc.AcctNum ? `${acc.AcctNum} ${acc.Name}` : acc.Name,
-        name: acc.Name,
-        accountNumber: acc.AcctNum || null
-      }));
+      const formattedAccounts = accountsResult.data.accounts
+        .filter((acc: any) => acc.active !== false) // Solo cuentas activas
+        .map((acc: any) => ({
+          id: acc.id, // ID interno de QB (ej: "158")
+          name: acc.name, // Nombre (ej: "Alimentos y Bebidas")
+          accountNumber: acc.accountNumber || null // AcctNum (ej: "6310")
+        }))
+        .sort((a: Account, b: Account) => {
+          // Ordenar por número de cuenta si existe, luego por nombre
+          if (a.accountNumber && b.accountNumber) {
+            return a.accountNumber.localeCompare(b.accountNumber, undefined, { numeric: true });
+          }
+          if (a.accountNumber) return -1;
+          if (b.accountNumber) return 1;
+          return a.name.localeCompare(b.name);
+        });
+      
+      console.log(`📊 Cuentas cargadas para Review: ${formattedAccounts.length}`);
       setAccounts(formattedAccounts);
+    } else {
+      console.warn('⚠️ No se recibieron cuentas de QuickBooks');
     }
 
     setIsLoading(false);
@@ -147,12 +162,20 @@ const ReviewQueue = () => {
     setIsProcessing(true);
 
     try {
+      // Obtener el código de cuenta formateado correctamente
+      const selectedAccountObj = accounts.find(acc => acc.id === selectedAccount);
+      const accountRef = selectedAccountObj?.accountNumber 
+        ? `${selectedAccountObj.accountNumber} ${selectedAccountObj.name}`
+        : selectedAccountObj?.name || selectedAccount;
+      
+      console.log('📌 Guardando cuenta:', { id: selectedAccount, ref: accountRef });
+
       // Update document with account
       const { error } = await supabase
         .from("processed_documents")
         .update({
           vendor_id: selectedVendor || null,
-          default_account_ref: selectedAccount,
+          default_account_ref: accountRef, // Guardar formato "6310 Nombre"
           status: "pending",
           error_message: null,
         })
@@ -165,7 +188,7 @@ const ReviewQueue = () => {
         .from("vendor_defaults")
         .upsert({
           vendor_name: selectedDoc.supplier_name,
-          default_account_ref: selectedAccount,
+          default_account_ref: accountRef, // Usar el formato correcto
           organization_id: activeOrganization,
         }, {
           onConflict: 'organization_id,vendor_name'
