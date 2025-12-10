@@ -168,27 +168,14 @@ const ReviewQueue = () => {
         ? `${selectedAccountObj.accountNumber} ${selectedAccountObj.name}`
         : selectedAccountObj?.name || selectedAccount;
       
-      console.log('📌 Guardando cuenta:', { id: selectedAccount, ref: accountRef });
+      console.log('📌 Guardando cuenta:', { id: selectedAccount, ref: accountRef, supplier: selectedDoc.supplier_name });
 
-      // Update document with account
-      const { error } = await supabase
-        .from("processed_documents")
-        .update({
-          vendor_id: selectedVendor || null,
-          default_account_ref: accountRef, // Guardar formato "6310 Nombre"
-          status: "pending",
-          error_message: null,
-        })
-        .eq("id", selectedDoc.id);
-
-      if (error) throw error;
-
-      // Save vendor default for future invoices
+      // 1. Guardar vendor default PRIMERO para aplicar a todas las facturas
       const { error: defaultError } = await supabase
         .from("vendor_defaults")
         .upsert({
           vendor_name: selectedDoc.supplier_name,
-          default_account_ref: accountRef, // Usar el formato correcto
+          default_account_ref: accountRef,
           organization_id: activeOrganization,
         }, {
           onConflict: 'organization_id,vendor_name'
@@ -198,7 +185,31 @@ const ReviewQueue = () => {
         console.warn("Error saving vendor default:", defaultError);
       }
 
-      toast.success("Documento clasificado - listo para publicar");
+      // 2. Actualizar TODAS las facturas del mismo proveedor en "review" 
+      const { data: updatedDocs, error: bulkError } = await supabase
+        .from("processed_documents")
+        .update({
+          vendor_id: selectedVendor || null,
+          default_account_ref: accountRef,
+          status: "pending",
+          error_message: null,
+        })
+        .eq("organization_id", activeOrganization)
+        .eq("supplier_name", selectedDoc.supplier_name)
+        .eq("status", "review")
+        .select("id");
+
+      if (bulkError) throw bulkError;
+
+      const updatedCount = updatedDocs?.length || 1;
+      console.log(`✅ Clasificadas ${updatedCount} facturas de ${selectedDoc.supplier_name}`);
+
+      toast.success(
+        updatedCount > 1 
+          ? `${updatedCount} facturas de ${selectedDoc.supplier_name} clasificadas`
+          : "Documento clasificado - listo para publicar"
+      );
+      
       setIsDialogOpen(false);
       fetchData();
     } catch (err) {
