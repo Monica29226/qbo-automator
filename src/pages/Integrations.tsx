@@ -224,23 +224,37 @@ const Integrations = () => {
   const handleGmailOAuth = async () => {
     console.log("handleGmailOAuth called");
     
+    if (isConnecting) {
+      console.log("Already connecting, ignoring click");
+      return;
+    }
+    
     if (!activeOrganization) {
       console.error("No active organization");
       toast.error("No hay organización activa");
       return;
     }
 
+    setIsConnecting(true);
+    
     try {
       console.log("Getting current user...");
       // Get current user
-      const { data: { user } } = await supabase.auth.getUser();
+      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      
+      if (userError) {
+        console.error("Error getting user:", userError);
+        toast.error("Error de autenticación");
+        return;
+      }
+      
       if (!user) {
         console.error("No user found");
         toast.error("Usuario no autenticado");
         return;
       }
 
-      console.log("User found, showing toast...");
+      console.log("User found:", user.email);
       toast.info("Iniciando conexión con Gmail...");
 
       // Create state with organization and user info
@@ -308,11 +322,15 @@ const Integrations = () => {
           console.log("Popup closed");
           clearInterval(checkPopup);
           window.removeEventListener("message", messageHandler);
+          setIsConnecting(false);
         }
       }, 500);
     } catch (error) {
       console.error("Error starting OAuth:", error);
       toast.error("Error al iniciar conexión con Gmail: " + (error instanceof Error ? error.message : "Error desconocido"));
+    } finally {
+      // Solo reseteamos si no abrimos popup
+      setTimeout(() => setIsConnecting(false), 1000);
     }
   };
 
