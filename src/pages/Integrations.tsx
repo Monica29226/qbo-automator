@@ -519,22 +519,38 @@ const Integrations = () => {
   const handleQuickBooksOAuth = async () => {
     console.log("handleQuickBooksOAuth called");
     
+    if (isConnecting) {
+      console.log("Already connecting, ignoring click");
+      return;
+    }
+    
     if (!activeOrganization) {
       console.error("No active organization");
       toast.error("No hay organización activa");
       return;
     }
 
+    setIsConnecting(true);
+
     try {
       console.log("Getting current user...");
-      const { data: { user } } = await supabase.auth.getUser();
+      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      
+      if (userError) {
+        console.error("Error getting user:", userError);
+        toast.error("Error de autenticación");
+        setIsConnecting(false);
+        return;
+      }
+      
       if (!user) {
         console.error("No user found");
         toast.error("Usuario no autenticado");
+        setIsConnecting(false);
         return;
       }
 
-      console.log("User found, showing toast...");
+      console.log("User found:", user.email);
       toast.info("Iniciando conexión con QuickBooks...");
 
       const state = btoa(JSON.stringify({
@@ -598,6 +614,7 @@ const Integrations = () => {
           console.log("Popup closed - refreshing data");
           clearInterval(checkPopup);
           window.removeEventListener("message", messageHandler);
+          setIsConnecting(false);
           setTimeout(() => {
             fetchData();
             setIsDialogOpen(false);
@@ -607,6 +624,8 @@ const Integrations = () => {
     } catch (error) {
       console.error("Error starting QuickBooks OAuth:", error);
       toast.error("Error al iniciar conexión con QuickBooks: " + (error instanceof Error ? error.message : "Error desconocido"));
+    } finally {
+      setTimeout(() => setIsConnecting(false), 1000);
     }
   };
 
