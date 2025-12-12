@@ -25,6 +25,7 @@ interface Settings {
   currency_fallback: string;
   duplicate_window_days: string;
   dry_run: string;
+  email_sender_address: string;
 }
 
 const Settings = () => {
@@ -37,6 +38,7 @@ const Settings = () => {
     currency_fallback: "CRC",
     duplicate_window_days: "120",
     dry_run: "true",
+    email_sender_address: "",
   });
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -186,6 +188,19 @@ const Settings = () => {
                   />
                   <p className="text-xs text-muted-foreground">
                     Query de búsqueda para filtrar correos con facturas
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="email_sender_address">Remitente de Email</Label>
+                  <Input
+                    id="email_sender_address"
+                    value={settings.email_sender_address}
+                    onChange={(e) => setSettings({ ...settings, email_sender_address: e.target.value })}
+                    placeholder="Mi Empresa <noreply@midominio.com>"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Dirección del remitente para invitaciones. Formato: Nombre &lt;email@dominio.com&gt;
                   </p>
                 </div>
               </div>
