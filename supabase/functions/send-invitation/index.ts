@@ -93,6 +93,18 @@ const handler = async (req: Request): Promise<Response> => {
       );
     }
 
+    // Obtener configuración del remitente de email
+    const { data: emailSenderSetting } = await supabaseClient
+      .from("system_settings")
+      .select("value")
+      .eq("organization_id", organizationId)
+      .eq("key", "email_sender_address")
+      .maybeSingle();
+
+    // Usar el dominio configurado o el default de Resend
+    const emailSenderAddress = emailSenderSetting?.value || "InvoiceFlow <onboarding@resend.dev>";
+    console.log("Using email sender:", emailSenderAddress);
+
     // Verificar si ya existe una invitación pendiente y eliminarla para permitir re-invitación
     const { data: existingInvitation } = await supabaseClient
       .from("organization_invitations")
@@ -150,7 +162,7 @@ const handler = async (req: Request): Promise<Response> => {
         "Authorization": `Bearer ${RESEND_API_KEY}`,
       },
       body: JSON.stringify({
-        from: "InvoiceFlow <onboarding@resend.dev>",
+        from: emailSenderAddress,
         to: [email],
         subject: `Invitación a ${org.name}`,
         html: `
