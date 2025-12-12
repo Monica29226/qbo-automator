@@ -47,15 +47,14 @@ export const OrganizationSwitcher = () => {
         return;
       }
 
-      // Step 1: Create organization
-      const { data: orgData, error: orgError } = await supabase
+      // Step 1: Create organization - use .select('id') to avoid RLS issue on full select
+      const { data: insertedOrgs, error: orgError } = await supabase
         .from("organizations")
-        .insert([{
+        .insert({
           name: newOrgName,
           is_active: true
-        }])
-        .select()
-        .single();
+        })
+        .select('id');
 
       if (orgError) {
         toast.error(`Error al crear organización: ${orgError.message}`);
@@ -63,6 +62,8 @@ export const OrganizationSwitcher = () => {
         setIsLoading(false);
         return;
       }
+
+      const orgData = insertedOrgs?.[0];
 
       if (!orgData) {
         toast.error("No se pudo crear la organización");
