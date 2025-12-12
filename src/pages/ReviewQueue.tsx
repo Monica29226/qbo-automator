@@ -92,6 +92,7 @@ const ReviewQueue = () => {
         .select("*")
         .eq("organization_id", activeOrganization)
         .eq("status", "review")
+        .gte("issue_date", "2025-11-01")
         .order("issue_date", { ascending: false }),
       supabase
         .from("vendors")
