@@ -316,10 +316,10 @@ Deno.serve(async (req) => {
       }
     };
 
-    // Helper para verificar duplicados en QBO (con timeout)
-    const checkDuplicateBill = async (docNumber: string, vendorId: string | null) => {
+    // Helper para verificar duplicados en QBO (con timeout) - CRITICAL: NO asumir "no duplicado" en timeout
+    const checkDuplicateBill = async (docNumber: string, vendorId: string | null): Promise<{ isDuplicate: boolean; billId: string | null; error?: string }> => {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 5000); // 5s timeout
+      const timeoutId = setTimeout(() => controller.abort(), 8000); // 8s timeout (increased)
       
       try {
         const query = `SELECT * FROM Bill WHERE DocNumber = '${docNumber.replace(/'/g, "\\'")}'`;
@@ -346,21 +346,23 @@ Deno.serve(async (req) => {
               );
               if (matchingBill) {
                 log(`✓ Found existing bill ${docNumber} for vendor ${vendorId}: ${matchingBill.Id}`);
-                return matchingBill.Id;
+                return { isDuplicate: true, billId: matchingBill.Id };
               }
               log(`⚠️ Bill ${docNumber} exists in QBO but for different vendor - NOT a duplicate`);
-              return null;
+              return { isDuplicate: false, billId: null };
             }
-            return bills[0].Id;
+            return { isDuplicate: true, billId: bills[0].Id };
           }
         }
-        return null;
+        return { isDuplicate: false, billId: null };
       } catch (e) {
         clearTimeout(timeoutId);
         if (e instanceof Error && e.name === 'AbortError') {
-          log(`⏱️ Timeout checking duplicate bill: ${docNumber}`);
+          logError(`⏱️ Timeout verificando duplicado: ${docNumber} - DETENIENDO para evitar duplicación`);
+          // CRITICAL: NO asumir que no es duplicado - lanzar error para evitar duplicación
+          return { isDuplicate: false, billId: null, error: `Timeout verificando duplicado - reintentar más tarde` };
         }
-        return null; // On timeout, assume not duplicate and continue
+        return { isDuplicate: false, billId: null, error: `Error verificando duplicado: ${e}` };
       }
     };
 
@@ -423,20 +425,47 @@ Deno.serve(async (req) => {
         
         // Verificar duplicado en QBO - CRITICAL: now checks vendor too!
         // This prevents false matches when same invoice number exists for different vendors
-        const existingBillId = await checkDuplicateBill(doc.doc_number, vendorId);
-        if (existingBillId) {
-          log(`Bill ${doc.doc_number} exists in QBO for same vendor: ${existingBillId}`);
+        const duplicateCheck = await checkDuplicateBill(doc.doc_number, vendorId);
+        
+        // Si hubo error verificando duplicado, NO continuar para evitar duplicación
+        if (duplicateCheck.error) {
+          logError(`❌ Error verificando duplicado para ${doc.doc_number}: ${duplicateCheck.error}`);
+          await supabase
+            .from("processed_documents")
+            .update({
+              status: "error",
+              error_message: duplicateCheck.error,
+            })
+            .eq("id", doc.id);
+          return { success: false, docNumber: doc.doc_number, error: duplicateCheck.error };
+        }
+        
+        if (duplicateCheck.isDuplicate && duplicateCheck.billId) {
+          log(`Bill ${doc.doc_number} exists in QBO for same vendor: ${duplicateCheck.billId}`);
           
           await supabase
             .from("processed_documents")
             .update({
-              qbo_entity_id: existingBillId,
+              qbo_entity_id: duplicateCheck.billId,
               qbo_entity_type: "Bill",
               status: "published",
               error_message: null,
             })
             .eq("id", doc.id);
 
+          return { success: true, docNumber: doc.doc_number };
+        }
+        
+        // RE-VERIFICACIÓN CRÍTICA: Verificar que el documento NO tiene qbo_entity_id antes de crear
+        // Esto previene duplicación cuando hay ejecuciones paralelas
+        const { data: freshDoc } = await supabase
+          .from("processed_documents")
+          .select("qbo_entity_id, status")
+          .eq("id", doc.id)
+          .single();
+        
+        if (freshDoc?.qbo_entity_id) {
+          logInfo(`⚠️ Documento ${doc.doc_number} ya fue publicado por otra ejecución: ${freshDoc.qbo_entity_id}`);
           return { success: true, docNumber: doc.doc_number };
         }
 
