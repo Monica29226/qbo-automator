@@ -205,14 +205,29 @@ Deno.serve(async (req) => {
     };
 
     // Helper para buscar vendor en QBO (con timeout)
-    const findOrCreateVendor = async (supplierName: string, supplierTaxId: string) => {
-      const normalizedName = supplierName
+    // MULTI-CURRENCY: Si currency es USD, busca/crea vendor con sufijo " USD"
+    const findOrCreateVendor = async (supplierName: string, supplierTaxId: string, currency: string = 'CRC') => {
+      // Determinar el nombre del vendor según la moneda
+      let baseNormalizedName = supplierName
         .normalize('NFD')
         .replace(/[\u0300-\u036f]/g, '')
-        .substring(0, 100)
         .trim();
       
-      log(`🔍 Searching vendor: "${supplierName}"`);
+      // Para USD, agregar sufijo " USD" al nombre del vendor
+      const isUSD = currency === 'USD';
+      let vendorDisplayName = baseNormalizedName;
+      
+      if (isUSD) {
+        // Quitar sufijo USD si ya existe para evitar duplicación
+        vendorDisplayName = baseNormalizedName.replace(/\s*USD$/i, '').trim();
+        vendorDisplayName = `${vendorDisplayName} USD`;
+        logInfo(`💱 Factura en USD - Buscando/creando vendor: "${vendorDisplayName}"`);
+      }
+      
+      // Truncar a 100 caracteres (límite de QB)
+      vendorDisplayName = vendorDisplayName.substring(0, 100).trim();
+      
+      log(`🔍 Searching vendor: "${vendorDisplayName}" (currency: ${currency})`);
       
       // Use AbortController for timeout
       const controller = new AbortController();
@@ -220,7 +235,7 @@ Deno.serve(async (req) => {
       
       try {
         // Single search - exact match only (faster)
-        const searchQuery = `SELECT * FROM Vendor WHERE DisplayName = '${normalizedName.replace(/'/g, "\\'")}'`;
+        const searchQuery = `SELECT * FROM Vendor WHERE DisplayName = '${vendorDisplayName.replace(/'/g, "\\'")}'`;
         const searchUrl = `https://quickbooks.api.intuit.com/v3/company/${realmId}/query?query=${encodeURIComponent(searchQuery)}`;
 
         const searchResponse = await fetch(searchUrl, {
@@ -243,19 +258,29 @@ Deno.serve(async (req) => {
       } catch (e) {
         clearTimeout(timeoutId);
         if (e instanceof Error && e.name === 'AbortError') {
-          logError(`⏱️ Timeout searching vendor: ${normalizedName}`);
-          throw new Error(`Timeout buscando proveedor "${supplierName}"`);
+          logError(`⏱️ Timeout searching vendor: ${vendorDisplayName}`);
+          throw new Error(`Timeout buscando proveedor "${vendorDisplayName}"`);
         }
         throw e;
       }
       
       // Create vendor with timeout
-      log(`➕ Creating vendor: ${normalizedName}`);
+      logInfo(`➕ Creating vendor: ${vendorDisplayName}${isUSD ? ' (para facturas USD)' : ''}`);
       
       const createController = new AbortController();
       const createTimeoutId = setTimeout(() => createController.abort(), 10000); // 10s for creation
       
       try {
+        // Para vendors USD, intentar configurar la moneda en la creación
+        const vendorPayload: any = { 
+          DisplayName: vendorDisplayName,
+        };
+        
+        // Si es USD, intentar establecer la moneda del vendor
+        if (isUSD) {
+          vendorPayload.CurrencyRef = { value: 'USD', name: 'United States Dollar' };
+        }
+        
         const createResponse = await fetch(
           `https://quickbooks.api.intuit.com/v3/company/${realmId}/vendor`,
           {
@@ -265,7 +290,7 @@ Deno.serve(async (req) => {
               "Accept": "application/json",
               "Content-Type": "application/json",
             },
-            body: JSON.stringify({ DisplayName: normalizedName }),
+            body: JSON.stringify(vendorPayload),
             signal: createController.signal
           }
         );
@@ -274,18 +299,18 @@ Deno.serve(async (req) => {
 
         if (!createResponse.ok) {
           const errorText = await createResponse.text();
-          logError(`❌ Failed to create vendor "${normalizedName}": ${errorText}`);
-          throw new Error(`No se pudo crear el proveedor "${supplierName}" en QuickBooks`);
+          logError(`❌ Failed to create vendor "${vendorDisplayName}": ${errorText}`);
+          throw new Error(`No se pudo crear el proveedor "${vendorDisplayName}" en QuickBooks`);
         }
 
         const vendorData = await createResponse.json();
-        log(`✓ Created vendor: ${vendorData.Vendor.DisplayName} (ID: ${vendorData.Vendor.Id})`);
+        logInfo(`✅ Created vendor: ${vendorData.Vendor.DisplayName} (ID: ${vendorData.Vendor.Id})${isUSD ? ' - Configurado para USD' : ''}`);
         return vendorData.Vendor.Id;
       } catch (e) {
         clearTimeout(createTimeoutId);
         if (e instanceof Error && e.name === 'AbortError') {
-          logError(`⏱️ Timeout creating vendor: ${normalizedName}`);
-          throw new Error(`Timeout creando proveedor "${supplierName}"`);
+          logError(`⏱️ Timeout creating vendor: ${vendorDisplayName}`);
+          throw new Error(`Timeout creando proveedor "${vendorDisplayName}"`);
         }
         throw e;
       }
@@ -393,7 +418,8 @@ Deno.serve(async (req) => {
         }
         
         // FIRST: Get or create the vendor - we need vendorId BEFORE checking QB duplicates
-        const vendorId = await findOrCreateVendor(doc.supplier_name, doc.supplier_tax_id);
+        // MULTI-CURRENCY: Pasar la moneda del documento para crear vendor USD si es necesario
+        const vendorId = await findOrCreateVendor(doc.supplier_name, doc.supplier_tax_id, doc.currency);
         
         // Verificar duplicado en QBO - CRITICAL: now checks vendor too!
         // This prevents false matches when same invoice number exists for different vendors
