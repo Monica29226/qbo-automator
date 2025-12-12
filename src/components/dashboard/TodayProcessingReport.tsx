@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { supabase } from "@/integrations/supabase/client";
 import { Calendar, CheckCircle2, XCircle, Clock, TrendingUp } from "lucide-react";
@@ -20,12 +20,9 @@ export const TodayProcessingReport = () => {
     total_amount: 0,
   });
   const [loading, setLoading] = useState(true);
+  const [organizationId, setOrganizationId] = useState<string | null>(null);
 
-  useEffect(() => {
-    fetchTodayStats();
-  }, []);
-
-  const fetchTodayStats = async () => {
+  const fetchTodayStats = useCallback(async () => {
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
@@ -38,9 +35,10 @@ export const TodayProcessingReport = () => {
 
       if (!activeOrg?.organization_id) return;
 
+      setOrganizationId(activeOrg.organization_id);
+
       const today = format(new Date(), "yyyy-MM-dd");
 
-      // Obtener estadísticas de hoy
       const { data: documents } = await supabase
         .from("processed_documents")
         .select("status, total_amount")
@@ -63,7 +61,38 @@ export const TodayProcessingReport = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    fetchTodayStats();
+  }, [fetchTodayStats]);
+
+  // Suscripción realtime para actualizar cuando cambien documentos
+  useEffect(() => {
+    if (!organizationId) return;
+
+    const channel = supabase
+      .channel(`today-stats-${organizationId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'processed_documents',
+          filter: `organization_id=eq.${organizationId}`
+        },
+        () => {
+          console.log('📊 TodayReport: documento actualizado, refrescando...');
+          fetchTodayStats();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [organizationId, fetchTodayStats]);
+
 
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat("es-CR", {
