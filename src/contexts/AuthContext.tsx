@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect, ReactNode } from "react";
+import { createContext, useContext, useState, useEffect, ReactNode, useRef } from "react";
 import { User, Session } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
 import { useNavigate } from "react-router-dom";
@@ -17,6 +17,60 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+// Cache keys para sessionStorage
+const CACHE_KEYS = {
+  ORGANIZATIONS: 'auth_orgs_cache',
+  ACTIVE_ORG: 'auth_active_org_cache',
+  IS_ADMIN: 'auth_is_admin_cache',
+  CACHE_TIME: 'auth_cache_time'
+};
+
+// Tiempo de validez del cache: 5 minutos
+const CACHE_TTL_MS = 5 * 60 * 1000;
+
+const getCachedData = () => {
+  try {
+    const cacheTime = sessionStorage.getItem(CACHE_KEYS.CACHE_TIME);
+    if (!cacheTime || Date.now() - parseInt(cacheTime) > CACHE_TTL_MS) {
+      return null;
+    }
+    
+    const orgs = sessionStorage.getItem(CACHE_KEYS.ORGANIZATIONS);
+    const activeOrg = sessionStorage.getItem(CACHE_KEYS.ACTIVE_ORG);
+    const isAdmin = sessionStorage.getItem(CACHE_KEYS.IS_ADMIN);
+    
+    if (orgs) {
+      return {
+        organizations: JSON.parse(orgs),
+        activeOrganization: activeOrg || null,
+        isAdmin: isAdmin === 'true'
+      };
+    }
+  } catch {
+    // Ignore cache errors
+  }
+  return null;
+};
+
+const setCachedData = (orgs: any[], activeOrg: string | null, isAdmin: boolean) => {
+  try {
+    sessionStorage.setItem(CACHE_KEYS.ORGANIZATIONS, JSON.stringify(orgs));
+    sessionStorage.setItem(CACHE_KEYS.ACTIVE_ORG, activeOrg || '');
+    sessionStorage.setItem(CACHE_KEYS.IS_ADMIN, isAdmin ? 'true' : 'false');
+    sessionStorage.setItem(CACHE_KEYS.CACHE_TIME, Date.now().toString());
+  } catch {
+    // Ignore cache errors
+  }
+};
+
+const clearCachedData = () => {
+  try {
+    Object.values(CACHE_KEYS).forEach(key => sessionStorage.removeItem(key));
+  } catch {
+    // Ignore cache errors
+  }
+};
+
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
@@ -25,57 +79,72 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [activeOrganization, setActiveOrganization] = useState<string | null>(null);
   const [organizations, setOrganizations] = useState<any[]>([]);
   const navigate = useNavigate();
+  const loadingRef = useRef(false);
 
   useEffect(() => {
     let isMounted = true;
-    let isInitialized = false;
-
-    // Solo cargar sesión inicial una vez
     const startTime = performance.now();
-    console.log('🚀 AuthContext: Iniciando carga de sesión');
-    
-    supabase.auth.getSession().then(async ({ data: { session } }) => {
-      if (!isMounted) return;
-      
-      console.log('⏱️ AuthContext: Sesión obtenida en', performance.now() - startTime, 'ms');
-      setSession(session);
-      setUser(session?.user ?? null);
-      
-      if (session?.user) {
-        try {
-          await loadUserData(session.user.id);
-        } catch (error) {
-          console.error('❌ Error loading user data:', error);
-        }
-      }
-      
-      isInitialized = true;
-      setIsLoading(false);
-      console.log('✅ AuthContext: Inicialización completa en', performance.now() - startTime, 'ms');
-    });
+    console.log('🚀 AuthContext: Iniciando');
 
-    // Escuchar cambios solo después de inicialización
+    // Intentar cargar desde cache inmediatamente
+    const cached = getCachedData();
+    if (cached) {
+      console.log('⚡ AuthContext: Datos cargados desde cache');
+      setOrganizations(cached.organizations);
+      setActiveOrganization(cached.activeOrganization);
+      setIsAdmin(cached.isAdmin);
+    }
+
+    // Configurar listener PRIMERO (sincrónico, no bloquea)
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
-        if (!isMounted || !isInitialized) return;
+      (event, session) => {
+        if (!isMounted) return;
         
-        console.log('🔄 AuthContext: Cambio de estado de auth:', event);
+        console.log('🔄 AuthContext: Auth event:', event);
         setSession(session);
         setUser(session?.user ?? null);
         
-        if (session?.user) {
-          try {
-            await loadUserData(session.user.id);
-          } catch (error) {
-            console.error('❌ Error loading user data:', error);
-          }
-        } else {
+        // Usar setTimeout para evitar deadlock con Supabase
+        if (session?.user && !loadingRef.current) {
+          loadingRef.current = true;
+          setTimeout(() => {
+            loadUserData(session.user.id).finally(() => {
+              loadingRef.current = false;
+              if (isMounted) setIsLoading(false);
+            });
+          }, 0);
+        } else if (!session) {
           setIsAdmin(false);
           setActiveOrganization(null);
           setOrganizations([]);
+          clearCachedData();
+          setIsLoading(false);
         }
       }
     );
+
+    // Verificar sesión existente
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (!isMounted) return;
+      
+      console.log('⏱️ AuthContext: getSession en', Math.round(performance.now() - startTime), 'ms');
+      setSession(session);
+      setUser(session?.user ?? null);
+      
+      if (session?.user && !loadingRef.current) {
+        loadingRef.current = true;
+        loadUserData(session.user.id).finally(() => {
+          loadingRef.current = false;
+          if (isMounted) {
+            setIsLoading(false);
+            console.log('✅ AuthContext: Listo en', Math.round(performance.now() - startTime), 'ms');
+          }
+        });
+      } else if (!session) {
+        setIsLoading(false);
+        console.log('✅ AuthContext: Sin sesión en', Math.round(performance.now() - startTime), 'ms');
+      }
+    });
 
     return () => {
       isMounted = false;
@@ -85,17 +154,17 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
   const loadUserData = async (userId: string) => {
     try {
-      console.log('📊 Cargando datos de usuario:', userId);
+      console.log('📊 Cargando datos:', userId);
       const startTime = performance.now();
       
-      // Ejecutar todas las queries en paralelo con selección mínima de campos
+      // Ejecutar todas las queries en paralelo
       const [membershipsResult, activeOrgResult, adminRoleResult] = await Promise.all([
         supabase
           .from("organization_members")
           .select("organization_id, role, organizations(id, name)")
           .eq("user_id", userId)
           .eq("is_active", true)
-          .limit(50), // Limitar a 50 organizaciones max
+          .limit(50),
         supabase
           .from("user_active_organization")
           .select("organization_id")
@@ -109,35 +178,42 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
           .limit(1)
       ]);
 
-      console.log('⏱️ Todas las queries completadas en:', performance.now() - startTime, 'ms');
+      console.log('⏱️ Queries en:', Math.round(performance.now() - startTime), 'ms');
+
+      let orgs: any[] = [];
+      let activeOrg: string | null = null;
+      let admin = false;
 
       // Procesar organizaciones
       if (!membershipsResult.error && membershipsResult.data) {
-        const orgs = membershipsResult.data.map((m: any) => ({
+        orgs = membershipsResult.data.map((m: any) => ({
           id: m.organization_id,
           name: m.organizations.name,
           role: m.role,
         }));
         setOrganizations(orgs);
-        console.log('✅ Organizaciones:', orgs.length);
 
         // Configurar organización activa
         if (!activeOrgResult.error && activeOrgResult.data) {
-          setActiveOrganization(activeOrgResult.data.organization_id);
-          console.log('✅ Org activa:', activeOrgResult.data.organization_id);
+          activeOrg = activeOrgResult.data.organization_id;
+          setActiveOrganization(activeOrg);
         } else if (orgs.length > 0) {
-          setActiveOrganization(orgs[0].id);
-          // Upsert en segundo plano, no bloquear el login
+          activeOrg = orgs[0].id;
+          setActiveOrganization(activeOrg);
+          // Upsert en segundo plano
           supabase
             .from("user_active_organization")
             .upsert({ user_id: userId, organization_id: orgs[0].id })
-            .then(() => console.log('✅ Primera org establecida como activa'));
+            .then(() => {});
         }
       }
 
       // Procesar rol admin
-      setIsAdmin(!adminRoleResult.error && !!adminRoleResult.data);
-      console.log('✅ Admin:', !adminRoleResult.error && !!adminRoleResult.data);
+      admin = !adminRoleResult.error && !!adminRoleResult.data;
+      setIsAdmin(admin);
+
+      // Guardar en cache
+      setCachedData(orgs, activeOrg, admin);
 
     } catch (error) {
       console.error("❌ Error cargando datos:", error);
@@ -146,8 +222,9 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   };
 
   const setActiveOrganizationLocal = (organizationId: string) => {
-    console.log('🔄 Actualizando organización local:', organizationId);
     setActiveOrganization(organizationId);
+    // Actualizar cache
+    setCachedData(organizations, organizationId, isAdmin);
   };
 
   const switchOrganization = async (organizationId: string) => {
@@ -160,8 +237,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
       if (!error) {
         setActiveOrganization(organizationId);
-        // No reload, solo navegar y dejar que React Query recargue los datos
-        console.log('✅ Organización cambiada sin reload');
+        setCachedData(organizations, organizationId, isAdmin);
       }
     } catch (error) {
       console.error("Error switching organization:", error);
@@ -169,6 +245,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   };
 
   const signOut = async () => {
+    clearCachedData();
     await supabase.auth.signOut();
     setUser(null);
     setSession(null);
