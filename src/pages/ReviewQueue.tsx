@@ -160,34 +160,42 @@ const ReviewQueue = () => {
       return;
     }
 
-    setIsProcessing(true);
+    // Obtener el código de cuenta formateado correctamente
+    const selectedAccountObj = accounts.find(acc => acc.id === selectedAccount);
+    const accountRef = selectedAccountObj?.accountNumber 
+      ? `${selectedAccountObj.accountNumber} ${selectedAccountObj.name}`
+      : selectedAccountObj?.name || selectedAccount;
+    
+    console.log('📌 Guardando cuenta:', { id: selectedAccount, ref: accountRef, supplier: selectedDoc.supplier_name });
 
-    try {
-      // Obtener el código de cuenta formateado correctamente
-      const selectedAccountObj = accounts.find(acc => acc.id === selectedAccount);
-      const accountRef = selectedAccountObj?.accountNumber 
-        ? `${selectedAccountObj.accountNumber} ${selectedAccountObj.name}`
-        : selectedAccountObj?.name || selectedAccount;
-      
-      console.log('📌 Guardando cuenta:', { id: selectedAccount, ref: accountRef, supplier: selectedDoc.supplier_name });
+    // OPTIMISTIC UI UPDATE - Cerrar diálogo y actualizar lista inmediatamente
+    const supplierName = selectedDoc.supplier_name;
+    const affectedDocs = documents.filter(d => d.supplier_name === supplierName);
+    
+    setDocuments(prev => prev.filter(d => d.supplier_name !== supplierName));
+    setIsDialogOpen(false);
+    
+    toast.success(
+      affectedDocs.length > 1 
+        ? `${affectedDocs.length} facturas de ${supplierName} clasificadas`
+        : "Documento clasificado - listo para publicar"
+    );
 
-      // 1. Guardar vendor default PRIMERO para aplicar a todas las facturas
-      const { error: defaultError } = await supabase
+    // BACKGROUND OPERATIONS - No bloquean el UI
+    Promise.allSettled([
+      // 1. Guardar vendor default
+      supabase
         .from("vendor_defaults")
         .upsert({
-          vendor_name: selectedDoc.supplier_name,
+          vendor_name: supplierName,
           default_account_ref: accountRef,
           organization_id: activeOrganization,
         }, {
           onConflict: 'organization_id,vendor_name'
-        });
-
-      if (defaultError) {
-        console.warn("Error saving vendor default:", defaultError);
-      }
-
-      // 2. Actualizar TODAS las facturas del mismo proveedor en "review" 
-      const { data: updatedDocs, error: bulkError } = await supabase
+        }),
+      
+      // 2. Actualizar TODAS las facturas del mismo proveedor
+      supabase
         .from("processed_documents")
         .update({
           vendor_id: selectedVendor || null,
@@ -196,29 +204,18 @@ const ReviewQueue = () => {
           error_message: null,
         })
         .eq("organization_id", activeOrganization)
-        .eq("supplier_name", selectedDoc.supplier_name)
+        .eq("supplier_name", supplierName)
         .eq("status", "review")
-        .select("id");
-
-      if (bulkError) throw bulkError;
-
-      const updatedCount = updatedDocs?.length || 1;
-      console.log(`✅ Clasificadas ${updatedCount} facturas de ${selectedDoc.supplier_name}`);
-
-      toast.success(
-        updatedCount > 1 
-          ? `${updatedCount} facturas de ${selectedDoc.supplier_name} clasificadas`
-          : "Documento clasificado - listo para publicar"
-      );
-      
-      setIsDialogOpen(false);
-      fetchData();
-    } catch (err) {
-      toast.error("Error al aprobar documento");
-      console.error(err);
-    } finally {
-      setIsProcessing(false);
-    }
+    ]).then(results => {
+      const errors = results.filter(r => r.status === 'rejected' || (r.status === 'fulfilled' && r.value?.error));
+      if (errors.length > 0) {
+        console.error('❌ Errores en operaciones background:', errors);
+        // Recargar datos si hubo errores para sincronizar estado
+        fetchData();
+      } else {
+        console.log(`✅ ${affectedDocs.length} facturas de ${supplierName} guardadas en BD`);
+      }
+    });
   };
 
   const handleReject = async () => {
