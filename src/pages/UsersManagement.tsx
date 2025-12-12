@@ -68,6 +68,8 @@ const UsersManagement = () => {
   const [selectedOrganizations, setSelectedOrganizations] = useState<string[]>([]);
   const [formData, setFormData] = useState({
     email: "",
+    password: "",
+    full_name: "",
     role: "member",
   });
 
@@ -87,7 +89,7 @@ const UsersManagement = () => {
     }
   }, [isAdmin, activeOrganization, authLoading, navigate]);
 
-  const handleSendInvitation = async () => {
+  const handleCreateUser = async () => {
     if (!formData.email) {
       toast.error("Ingrese el correo del usuario");
       return;
@@ -99,6 +101,11 @@ const UsersManagement = () => {
       return;
     }
 
+    if (!formData.password || formData.password.length < 8) {
+      toast.error("La contraseña debe tener al menos 8 caracteres");
+      return;
+    }
+
     if (selectedOrganizations.length === 0) {
       toast.error("Seleccione al menos una empresa");
       return;
@@ -107,60 +114,61 @@ const UsersManagement = () => {
     setIsSending(true);
 
     try {
-      // Get selected organizations
-      const orgsToInvite = organizations.filter(org => selectedOrganizations.includes(org.id));
+      const orgsToAdd = organizations.filter(org => selectedOrganizations.includes(org.id));
       
-      // Send invitations sequentially with delay to avoid rate limits
       let successCount = 0;
       let errorCount = 0;
+      let userId: string | null = null;
 
-      for (let i = 0; i < orgsToInvite.length; i++) {
-        const org = orgsToInvite[i];
+      for (let i = 0; i < orgsToAdd.length; i++) {
+        const org = orgsToAdd[i];
         
         try {
-          const result = await supabase.functions.invoke("send-invitation", {
+          const result = await supabase.functions.invoke("create-user", {
             body: {
               email: formData.email,
+              password: formData.password,
+              full_name: formData.full_name,
               role: formData.role,
-              organizationId: org.id,
+              organization_id: org.id,
             },
           });
 
           if (result.error || result.data?.error) {
             errorCount++;
-            console.error(`Error inviting to ${org.name}:`, result.error || result.data?.error);
+            console.error(`Error adding to ${org.name}:`, result.error || result.data?.error);
           } else {
             successCount++;
+            userId = result.data?.userId;
           }
 
-          // Add delay between requests to avoid rate limits
-          if (i < orgsToInvite.length - 1) {
-            await new Promise(resolve => setTimeout(resolve, 600));
+          if (i < orgsToAdd.length - 1) {
+            await new Promise(resolve => setTimeout(resolve, 300));
           }
         } catch (err) {
           errorCount++;
-          console.error(`Exception inviting to ${org.name}:`, err);
+          console.error(`Exception adding to ${org.name}:`, err);
         }
       }
 
       if (errorCount === 0) {
         toast.success(
-          `Usuario invitado a ${successCount} empresa${successCount > 1 ? 's' : ''}. Recibirá un correo para establecer su contraseña.`
+          `Usuario creado y agregado a ${successCount} empresa${successCount > 1 ? 's' : ''}. Se envió correo con credenciales.`
         );
         setIsInviteDialogOpen(false);
-        setFormData({ email: "", role: "member" });
+        setFormData({ email: "", password: "", full_name: "", role: "member" });
         setSelectedOrganizations([]);
         invalidate();
       } else if (successCount > 0) {
         toast.warning(
-          `Invitaciones enviadas a ${successCount} de ${orgsToInvite.length} empresas. ${errorCount} fallaron.`
+          `Usuario agregado a ${successCount} de ${orgsToAdd.length} empresas. ${errorCount} fallaron.`
         );
         invalidate();
       } else {
-        toast.error("No se pudo enviar ninguna invitación. Verifica tus permisos y la configuración de Resend.");
+        toast.error("No se pudo crear el usuario. Verifica tus permisos.");
       }
     } catch (error: any) {
-      toast.error(`Error al enviar invitaciones: ${error.message || "Error desconocido"}`);
+      toast.error(`Error al crear usuario: ${error.message || "Error desconocido"}`);
     } finally {
       setIsSending(false);
     }
@@ -256,7 +264,7 @@ const UsersManagement = () => {
           </div>
           <Button onClick={() => setIsInviteDialogOpen(true)}>
             <Plus className="h-4 w-4 mr-2" />
-            Invitar Usuario
+            Crear Usuario
           </Button>
         </div>
       </header>
@@ -422,18 +430,31 @@ const UsersManagement = () => {
         )}
       </main>
 
-      {/* Invitation Dialog */}
+      {/* Create User Dialog */}
       <Dialog open={isInviteDialogOpen} onOpenChange={setIsInviteDialogOpen}>
         <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Invitar Usuario de ACL</DialogTitle>
+            <DialogTitle>Crear Usuario</DialogTitle>
             <DialogDescription>
-              Selecciona las empresas a las que el usuario tendrá acceso.
-              Recibirá un correo para establecer su contraseña.
+              Crea un nuevo usuario con acceso a las empresas seleccionadas.
+              Recibirá un correo con sus credenciales de acceso.
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4">
+            <div>
+              <Label htmlFor="full_name">Nombre Completo</Label>
+              <Input
+                id="full_name"
+                type="text"
+                placeholder="Juan Pérez"
+                value={formData.full_name}
+                onChange={(e) =>
+                  setFormData((prev) => ({ ...prev, full_name: e.target.value }))
+                }
+              />
+            </div>
+
             <div>
               <Label htmlFor="email">Correo Electrónico *</Label>
               <Input
@@ -445,8 +466,21 @@ const UsersManagement = () => {
                   setFormData((prev) => ({ ...prev, email: e.target.value }))
                 }
               />
+            </div>
+
+            <div>
+              <Label htmlFor="password">Contraseña *</Label>
+              <Input
+                id="password"
+                type="password"
+                placeholder="Mínimo 8 caracteres"
+                value={formData.password}
+                onChange={(e) =>
+                  setFormData((prev) => ({ ...prev, password: e.target.value }))
+                }
+              />
               <p className="text-xs text-muted-foreground mt-1">
-                El usuario recibirá un correo con un enlace de invitación válido por 7 días
+                La contraseña se enviará al usuario por correo electrónico
               </p>
             </div>
 
@@ -540,23 +574,23 @@ const UsersManagement = () => {
               variant="outline"
               onClick={() => {
                 setIsInviteDialogOpen(false);
-                setFormData({ email: "", role: "member" });
+                setFormData({ email: "", password: "", full_name: "", role: "member" });
                 setSelectedOrganizations([]);
               }}
             >
               Cancelar
             </Button>
             <Button 
-              onClick={handleSendInvitation} 
-              disabled={isSending || selectedOrganizations.length === 0}
+              onClick={handleCreateUser} 
+              disabled={isSending || selectedOrganizations.length === 0 || !formData.password}
             >
               {isSending ? (
                 <>
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  Enviando...
+                  Creando...
                 </>
               ) : (
-                `Enviar Invitación (${selectedOrganizations.length})`
+                `Crear Usuario (${selectedOrganizations.length})`
               )}
             </Button>
           </DialogFooter>
