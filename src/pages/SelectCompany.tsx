@@ -84,72 +84,41 @@ const SelectCompany = () => {
     try {
       setIsCreating(true);
 
-      // DEBUG: Verificar sesión actual
-      const { data: sessionData } = await supabase.auth.getSession();
-      console.log('🔐 Sesión actual:', {
-        hasSession: !!sessionData.session,
-        userId: sessionData.session?.user?.id,
-        role: sessionData.session?.user?.role,
-        aud: sessionData.session?.user?.aud,
-        expiresAt: sessionData.session?.expires_at
-      });
-
-      // Refrescar sesión antes de crear para asegurar token válido
-      const { data: refreshData, error: refreshError } = await supabase.auth.refreshSession();
-      if (refreshError) {
-        console.error('⚠️ Error refrescando sesión:', refreshError);
-      } else {
-        console.log('✅ Sesión refrescada:', refreshData.session?.user?.id);
-      }
-
-      // Crear la organización
-      console.log('📝 Intentando crear organización:', newOrgName.trim());
+      // Crear la organización (única llamada bloqueante necesaria)
       const { data: org, error: orgError } = await supabase
         .from("organizations")
         .insert({ name: newOrgName.trim() })
-        .select()
+        .select("id")
         .single();
 
       if (orgError) {
-        console.error('❌ Error creando organización:', JSON.stringify(orgError, null, 2));
+        console.error('❌ Error creando organización:', orgError);
         throw orgError;
       }
-      
-      console.log('✅ Organización creada:', org.id);
 
-      // Agregar al usuario como owner
-      const { error: memberError } = await supabase
-        .from("organization_members")
-        .insert({
+      // Actualizar UI inmediatamente - optimistic update
+      setActiveOrganizationLocal(org.id);
+      setIsCreateDialogOpen(false);
+      setNewOrgName("");
+      toast.success("Empresa creada exitosamente");
+      navigate("/dashboard");
+
+      // Ejecutar operaciones secundarias en paralelo sin bloquear
+      Promise.all([
+        supabase.from("organization_members").insert({
           organization_id: org.id,
           user_id: user.id,
           role: "owner",
-        });
-
-      if (memberError) throw memberError;
-
-      // Establecer como organización activa
-      const { error: activeError } = await supabase
-        .from("user_active_organization")
-        .upsert({
+        }),
+        supabase.from("user_active_organization").upsert({
           user_id: user.id,
           organization_id: org.id,
-        });
+        })
+      ]).catch(err => console.error('Error en operaciones secundarias:', err));
 
-      if (activeError) throw activeError;
-
-      // Actualizar estado local y navegar
-      setActiveOrganizationLocal(org.id);
-      
-      toast.success("Empresa creada exitosamente");
-      setIsCreateDialogOpen(false);
-      setNewOrgName("");
-      
-      navigate("/dashboard");
     } catch (error) {
       console.error("Error creating organization:", error);
       toast.error("Error al crear la empresa");
-    } finally {
       setIsCreating(false);
     }
   };
