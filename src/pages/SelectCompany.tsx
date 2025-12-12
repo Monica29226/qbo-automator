@@ -84,14 +84,38 @@ const SelectCompany = () => {
     try {
       setIsCreating(true);
 
+      // DEBUG: Verificar sesión actual
+      const { data: sessionData } = await supabase.auth.getSession();
+      console.log('🔐 Sesión actual:', {
+        hasSession: !!sessionData.session,
+        userId: sessionData.session?.user?.id,
+        role: sessionData.session?.user?.role,
+        aud: sessionData.session?.user?.aud,
+        expiresAt: sessionData.session?.expires_at
+      });
+
+      // Refrescar sesión antes de crear para asegurar token válido
+      const { data: refreshData, error: refreshError } = await supabase.auth.refreshSession();
+      if (refreshError) {
+        console.error('⚠️ Error refrescando sesión:', refreshError);
+      } else {
+        console.log('✅ Sesión refrescada:', refreshData.session?.user?.id);
+      }
+
       // Crear la organización
+      console.log('📝 Intentando crear organización:', newOrgName.trim());
       const { data: org, error: orgError } = await supabase
         .from("organizations")
         .insert({ name: newOrgName.trim() })
         .select()
         .single();
 
-      if (orgError) throw orgError;
+      if (orgError) {
+        console.error('❌ Error creando organización:', JSON.stringify(orgError, null, 2));
+        throw orgError;
+      }
+      
+      console.log('✅ Organización creada:', org.id);
 
       // Agregar al usuario como owner
       const { error: memberError } = await supabase
