@@ -66,19 +66,15 @@ const Auth = () => {
     setIsResetting(true);
 
     try {
-      const { error } = await supabase.auth.resetPasswordForEmail(resetEmail, {
-        redirectTo: `${window.location.origin}/reset-password`,
+      const redirectUrl = `${window.location.origin}/reset-password`;
+      
+      const { data, error } = await supabase.functions.invoke("send-password-reset", {
+        body: { email: resetEmail, redirectUrl },
       });
 
       if (error) {
         console.error("Reset password error:", error);
-        if (error.message.includes("rate limit")) {
-          toast.error("Demasiados intentos. Espera unos minutos e intenta de nuevo.");
-        } else if (error.message.includes("not found") || error.message.includes("invalid")) {
-          toast.error("No se encontró una cuenta con ese correo electrónico");
-        } else {
-          toast.error(error.message || "Error al enviar el enlace de recuperación");
-        }
+        toast.error("Error al enviar el enlace de recuperación");
       } else {
         toast.success("Se ha enviado un enlace de recuperación a tu correo");
         setShowForgotPassword(false);
