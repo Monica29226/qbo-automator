@@ -29,6 +29,7 @@ import UsersManagement from "./pages/UsersManagement";
 import MyCompany from "./pages/MyCompany";
 import AllInvoices from "./pages/AllInvoices";
 import ResetPassword from "./pages/ResetPassword";
+import ForgotPassword from "./pages/ForgotPassword";
 import NotFound from "./pages/NotFound";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import { AuthProvider } from "./contexts/AuthContext";
@@ -53,6 +54,7 @@ const App = () => (
         <AuthProvider>
         <Routes>
           <Route path="/" element={<Auth />} />
+          <Route path="/forgot-password" element={<ForgotPassword />} />
           <Route path="/reset-password" element={<ResetPassword />} />
           <Route path="/select-company" element={<SelectCompany />} />
           <Route path="/multi-tenant" element={<MultiTenantDocs />} />
