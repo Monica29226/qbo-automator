@@ -68,11 +68,11 @@ export const useUserManagementData = (activeOrganization: string | null) => {
       const rolesMap = new Map<string, string>();
       (rolesResult.data || []).forEach((r: any) => rolesMap.set(r.user_id, r.role));
 
-      const membersMap = new Map<string, { name: string }[]>();
+      const membersMap = new Map<string, { name: string; id: string }[]>();
       (membersResult.data || []).forEach((m: any) => {
         const existing = membersMap.get(m.user_id) || [];
         if (m.organizations?.name) {
-          existing.push({ name: m.organizations.name });
+          existing.push({ name: m.organizations.name, id: m.organization_id });
         }
         membersMap.set(m.user_id, existing);
       });

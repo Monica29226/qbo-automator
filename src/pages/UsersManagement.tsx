@@ -32,7 +32,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, Users, Loader2, Plus, Trash2, Mail, Building2, CheckSquare, Square, AlertCircle } from "lucide-react";
+import { ArrowLeft, Users, Loader2, Plus, Trash2, Mail, Building2, CheckSquare, Square, AlertCircle, Pencil, X } from "lucide-react";
 import { toast } from "sonner";
 
 interface UserProfile {
@@ -41,7 +41,7 @@ interface UserProfile {
   full_name: string | null;
   role: string;
   created_at: string;
-  organizations: { name: string }[];
+  organizations: { name: string; id?: string }[];
 }
 
 interface PendingInvitation {
@@ -64,7 +64,11 @@ const UsersManagement = () => {
   const { users, organizations, pendingInvitations, isLoading, invalidate } = useUserManagementData(activeOrganization);
   
   const [isInviteDialogOpen, setIsInviteDialogOpen] = useState(false);
+  const [isEditOrgsDialogOpen, setIsEditOrgsDialogOpen] = useState(false);
+  const [editingUser, setEditingUser] = useState<UserProfile | null>(null);
+  const [editingUserOrgs, setEditingUserOrgs] = useState<string[]>([]);
   const [isSending, setIsSending] = useState(false);
+  const [isSavingOrgs, setIsSavingOrgs] = useState(false);
   const [selectedOrganizations, setSelectedOrganizations] = useState<string[]>([]);
   const [formData, setFormData] = useState({
     email: "",
@@ -205,6 +209,87 @@ const UsersManagement = () => {
       toast.success("Invitaciones eliminadas");
       invalidate();
     }
+  };
+
+  const handleEditUserOrgs = (user: UserProfile) => {
+    setEditingUser(user);
+    setEditingUserOrgs(user.organizations.map(org => org.id || '').filter(Boolean));
+    setIsEditOrgsDialogOpen(true);
+  };
+
+  const handleSaveUserOrgs = async () => {
+    if (!editingUser) return;
+    
+    setIsSavingOrgs(true);
+    
+    try {
+      // Get current org IDs for user
+      const currentOrgIds = editingUser.organizations.map(org => org.id).filter(Boolean);
+      const newOrgIds = editingUserOrgs;
+      
+      // Find orgs to add and remove
+      const orgsToAdd = newOrgIds.filter(id => !currentOrgIds.includes(id));
+      const orgsToRemove = currentOrgIds.filter(id => !newOrgIds.includes(id));
+      
+      // Remove user from organizations
+      for (const orgId of orgsToRemove) {
+        const { error } = await supabase
+          .from("organization_members")
+          .update({ is_active: false })
+          .eq("user_id", editingUser.id)
+          .eq("organization_id", orgId);
+          
+        if (error) {
+          console.error("Error removing org:", error);
+        }
+      }
+      
+      // Add user to new organizations  
+      for (const orgId of orgsToAdd) {
+        // Check if membership exists but is inactive
+        const { data: existing } = await supabase
+          .from("organization_members")
+          .select("id, is_active")
+          .eq("user_id", editingUser.id)
+          .eq("organization_id", orgId)
+          .maybeSingle();
+          
+        if (existing) {
+          // Reactivate existing membership
+          await supabase
+            .from("organization_members")
+            .update({ is_active: true })
+            .eq("id", existing.id);
+        } else {
+          // Create new membership
+          await supabase
+            .from("organization_members")
+            .insert({
+              user_id: editingUser.id,
+              organization_id: orgId,
+              role: "member",
+              is_active: true
+            });
+        }
+      }
+      
+      toast.success("Empresas actualizadas correctamente");
+      setIsEditOrgsDialogOpen(false);
+      setEditingUser(null);
+      invalidate();
+    } catch (error: any) {
+      toast.error(`Error al actualizar: ${error.message}`);
+    } finally {
+      setIsSavingOrgs(false);
+    }
+  };
+
+  const toggleEditingOrg = (orgId: string) => {
+    setEditingUserOrgs(prev => 
+      prev.includes(orgId) 
+        ? prev.filter(id => id !== orgId)
+        : [...prev, orgId]
+    );
   };
 
 
@@ -372,16 +457,18 @@ const UsersManagement = () => {
                   <TableHeader>
                     <TableRow>
                       <TableHead>Usuario</TableHead>
+                      <TableHead>Usuario</TableHead>
                       <TableHead>Correo</TableHead>
                       <TableHead>Rol Global</TableHead>
                       <TableHead>Empresas con Acceso</TableHead>
                       <TableHead>Fecha de Registro</TableHead>
+                      <TableHead className="w-[80px]">Acciones</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {users.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={5} className="text-center text-muted-foreground py-8">
+                        <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
                           No hay usuarios registrados
                         </TableCell>
                       </TableRow>
@@ -418,6 +505,16 @@ const UsersManagement = () => {
                           </TableCell>
                           <TableCell className="text-sm text-muted-foreground">
                             {formatDate(user.created_at)}
+                          </TableCell>
+                          <TableCell>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => handleEditUserOrgs(user)}
+                              title="Editar empresas"
+                            >
+                              <Pencil className="h-4 w-4" />
+                            </Button>
                           </TableCell>
                         </TableRow>
                       ))
@@ -591,6 +688,112 @@ const UsersManagement = () => {
                 </>
               ) : (
                 `Crear Usuario (${selectedOrganizations.length})`
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit User Organizations Dialog */}
+      <Dialog open={isEditOrgsDialogOpen} onOpenChange={(open) => {
+        if (!open) {
+          setEditingUser(null);
+          setEditingUserOrgs([]);
+        }
+        setIsEditOrgsDialogOpen(open);
+      }}>
+        <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Editar Empresas de Usuario</DialogTitle>
+            <DialogDescription>
+              {editingUser?.full_name || editingUser?.email} - Selecciona las empresas a las que tendrá acceso
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <Label>Empresas con acceso</Label>
+              <div className="flex gap-2">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setEditingUserOrgs(organizations.map(org => org.id))}
+                  className="text-xs h-7"
+                >
+                  <CheckSquare className="h-3 w-3 mr-1" />
+                  Todas
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setEditingUserOrgs([])}
+                  className="text-xs h-7"
+                >
+                  <Square className="h-3 w-3 mr-1" />
+                  Ninguna
+                </Button>
+              </div>
+            </div>
+            
+            <div className="border rounded-lg max-h-64 overflow-y-auto">
+              {organizations.length === 0 ? (
+                <p className="p-3 text-sm text-muted-foreground text-center">
+                  No hay empresas disponibles
+                </p>
+              ) : (
+                <div className="divide-y">
+                  {organizations.map((org) => (
+                    <label
+                      key={org.id}
+                      className="flex items-center gap-3 p-3 cursor-pointer hover:bg-muted/50 transition-colors"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={editingUserOrgs.includes(org.id)}
+                        onChange={() => toggleEditingOrg(org.id)}
+                        className="h-4 w-4 rounded border-input text-primary focus:ring-primary"
+                      />
+                      <div className="flex items-center gap-2 flex-1 min-w-0">
+                        <Building2 className="h-4 w-4 text-muted-foreground shrink-0" />
+                        <span className="text-sm truncate">{org.name}</span>
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
+            
+            <p className="text-xs text-muted-foreground">
+              {editingUserOrgs.length === 0 
+                ? "El usuario no tendrá acceso a ninguna empresa"
+                : `${editingUserOrgs.length} de ${organizations.length} empresas seleccionadas`}
+            </p>
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setIsEditOrgsDialogOpen(false);
+                setEditingUser(null);
+                setEditingUserOrgs([]);
+              }}
+            >
+              Cancelar
+            </Button>
+            <Button 
+              onClick={handleSaveUserOrgs} 
+              disabled={isSavingOrgs}
+            >
+              {isSavingOrgs ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Guardando...
+                </>
+              ) : (
+                "Guardar Cambios"
               )}
             </Button>
           </DialogFooter>
