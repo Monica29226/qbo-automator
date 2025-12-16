@@ -52,8 +52,6 @@ const Dashboard = () => {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   
-  console.log('📊 Dashboard render:', { activeOrganization, authLoading });
-  
   // React Query hooks for cached data
   const { data: stats = { processed: 0, review: 0, pending: 0, total: 0, errors: 0, published: 0, pendingConfig: 0 }, isLoading: statsLoading } = useDashboardStats(activeOrganization);
   const { data: connections = { gmail: false, quickbooks: false, outlook: false }, isLoading: connectionsLoading } = useOrganizationConnections(activeOrganization);
