@@ -19,39 +19,16 @@ const SelectCompany = () => {
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [newOrgName, setNewOrgName] = useState("");
-  const [hasWaitedForOrgs, setHasWaitedForOrgs] = useState(false);
-
   // Ordenar organizaciones alfabéticamente
   const sortedOrganizations = [...organizations].sort((a, b) => 
     a.name.localeCompare(b.name, 'es', { sensitivity: 'base' })
   );
 
-  // Esperar un momento adicional para que las organizaciones carguen completamente
   useEffect(() => {
-    if (!authLoading && user && organizations.length === 0 && !hasWaitedForOrgs) {
-      const timer = setTimeout(() => {
-        setHasWaitedForOrgs(true);
-      }, 2000); // Esperar 2 segundos adicionales
-      return () => clearTimeout(timer);
-    }
-  }, [authLoading, user, organizations.length, hasWaitedForOrgs]);
-
-  useEffect(() => {
-    console.log('🏢 SelectCompany: Estado actual', { authLoading, userExists: !!user, orgCount: organizations.length, hasWaitedForOrgs });
-    
     if (!authLoading && !user) {
-      console.log('⚠️ SelectCompany: No hay usuario, redirigiendo a login');
       navigate("/");
     }
-    
-    // Solo mostrar error después de esperar y confirmar que no hay organizaciones
-    if (!authLoading && user && organizations.length === 0 && hasWaitedForOrgs) {
-      console.log('⚠️ SelectCompany: Usuario sin organizaciones después de esperar');
-      toast.error("No tienes acceso a ninguna empresa. Contacta al administrador.");
-      supabase.auth.signOut();
-      navigate("/");
-    }
-  }, [authLoading, user, organizations, navigate, hasWaitedForOrgs]);
+  }, [authLoading, user, navigate]);
 
   const handleSelectCompany = async () => {
     if (!selectedOrg || !user) return;

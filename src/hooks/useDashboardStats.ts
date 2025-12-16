@@ -63,12 +63,12 @@ export const useDashboardStats = (organizationId: string | null) => {
       const [docsResult, pendingConfigResult] = await Promise.all([
         supabase
           .from("processed_documents")
-          .select("status, created_at, processed_at")
+          .select("status, processed_at")
           .eq("organization_id", organizationId)
           .gte("created_at", sevenDaysAgo.toISOString()),
         supabase
           .from("processed_documents")
-          .select("id")
+          .select("id", { count: "exact", head: true })
           .eq("organization_id", organizationId)
           .in("status", ["pending", "pending_config"])
           .is("qbo_entity_id", null)
@@ -82,9 +82,7 @@ export const useDashboardStats = (organizationId: string | null) => {
         (doc.status === "processed" || doc.status === "published")
       );
 
-      const pendingConfigCount = !pendingConfigResult.error && pendingConfigResult.data 
-        ? pendingConfigResult.data.length 
-        : 0;
+      const pendingConfigCount = !pendingConfigResult.error ? (pendingConfigResult.count || 0) : 0;
 
       return {
         processed: processedToday.length,

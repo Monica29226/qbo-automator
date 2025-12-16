@@ -83,13 +83,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
   useEffect(() => {
     let isMounted = true;
-    const startTime = performance.now();
-    console.log('🚀 AuthContext: Iniciando');
 
     // Intentar cargar desde cache inmediatamente
     const cached = getCachedData();
     if (cached) {
-      console.log('⚡ AuthContext: Datos cargados desde cache');
       setOrganizations(cached.organizations);
       setActiveOrganization(cached.activeOrganization);
       setIsAdmin(cached.isAdmin);
@@ -100,7 +97,6 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       (event, session) => {
         if (!isMounted) return;
         
-        console.log('🔄 AuthContext: Auth event:', event);
         setSession(session);
         setUser(session?.user ?? null);
         
@@ -127,7 +123,6 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (!isMounted) return;
       
-      console.log('⏱️ AuthContext: getSession en', Math.round(performance.now() - startTime), 'ms');
       setSession(session);
       setUser(session?.user ?? null);
       
@@ -135,14 +130,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         loadingRef.current = true;
         loadUserData(session.user.id).finally(() => {
           loadingRef.current = false;
-          if (isMounted) {
-            setIsLoading(false);
-            console.log('✅ AuthContext: Listo en', Math.round(performance.now() - startTime), 'ms');
-          }
+          if (isMounted) setIsLoading(false);
         });
       } else if (!session) {
         setIsLoading(false);
-        console.log('✅ AuthContext: Sin sesión en', Math.round(performance.now() - startTime), 'ms');
       }
     });
 
@@ -154,9 +145,6 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
   const loadUserData = async (userId: string) => {
     try {
-      console.log('📊 Cargando datos:', userId);
-      const startTime = performance.now();
-      
       // Ejecutar todas las queries en paralelo
       const [membershipsResult, activeOrgResult, adminRoleResult] = await Promise.all([
         supabase
@@ -177,8 +165,6 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
           .eq("role", "admin")
           .limit(1)
       ]);
-
-      console.log('⏱️ Queries en:', Math.round(performance.now() - startTime), 'ms');
 
       let orgs: any[] = [];
       let activeOrg: string | null = null;

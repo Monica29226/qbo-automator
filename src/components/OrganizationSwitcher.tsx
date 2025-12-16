@@ -21,9 +21,11 @@ import { Label } from "@/components/ui/label";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { useQueryClient } from "@tanstack/react-query";
 
 export const OrganizationSwitcher = () => {
-  const { organizations, activeOrganization, switchOrganization } = useAuth();
+  const { organizations, activeOrganization, switchOrganization, setActiveOrganizationLocal } = useAuth();
+  const queryClient = useQueryClient();
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [newOrgName, setNewOrgName] = useState("");
@@ -98,16 +100,20 @@ export const OrganizationSwitcher = () => {
 
       if (activeOrgError) {
         console.warn("Warning setting active org:", activeOrgError);
-        // No mostramos error porque la org se creó exitosamente
       }
+
+      // Actualizar estado local inmediatamente sin recargar página
+      setActiveOrganizationLocal(orgData.id);
+      
+      // Invalidar queries para refrescar datos
+      queryClient.invalidateQueries({ queryKey: ["dashboard-stats"] });
+      queryClient.invalidateQueries({ queryKey: ["organization-connections"] });
+      queryClient.invalidateQueries({ queryKey: ["recent-documents"] });
 
       toast.success("Organización creada exitosamente");
       setIsDialogOpen(false);
       setNewOrgName("");
       setIsLoading(false);
-      
-      // Reload to update organizations list
-      window.location.reload();
     } catch (error) {
       console.error("Unexpected error creating organization:", error);
       toast.error(`Error inesperado: ${error instanceof Error ? error.message : 'Error desconocido'}`);
