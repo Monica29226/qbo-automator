@@ -148,6 +148,9 @@ export const PdfViewer = ({ url, storagePath, fileName = 'documento' }: PdfViewe
     );
   }
 
+  // Use embed with PDF.js as fallback for better compatibility
+  const pdfViewerUrl = `${signedUrl}#toolbar=1&navpanes=0`;
+
   return (
     <div className="relative w-full h-full min-h-[500px]">
       <div className="absolute top-2 right-2 z-10 flex gap-2">
@@ -160,14 +163,27 @@ export const PdfViewer = ({ url, storagePath, fileName = 'documento' }: PdfViewe
           Descargar
         </Button>
       </div>
-      <iframe
+      <object
         key={iframeKey}
-        src={signedUrl}
+        data={pdfViewerUrl}
+        type="application/pdf"
         className="w-full h-full border-0"
         title={fileName}
-        onError={handleIframeError}
-        onLoad={handleIframeLoad}
-      />
+      >
+        <embed 
+          src={pdfViewerUrl} 
+          type="application/pdf" 
+          className="w-full h-full"
+        />
+        <div className="flex flex-col items-center justify-center h-full gap-4 p-8 text-center">
+          <FileText className="h-16 w-16 text-muted-foreground" />
+          <p className="text-muted-foreground">Tu navegador no puede mostrar el PDF</p>
+          <Button onClick={openInNewTab} variant="default" className="gap-2">
+            <ExternalLink className="h-4 w-4" />
+            Abrir en nueva pestaña
+          </Button>
+        </div>
+      </object>
     </div>
   );
 };
