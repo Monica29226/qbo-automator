@@ -1098,7 +1098,7 @@ const InvoicesPendingLog = () => {
                         {formatCurrency(invoice.total_amount, invoice.currency)}
                       </TableCell>
                       <TableCell>
-                        {new Date(invoice.issue_date).toLocaleDateString("es-CR")}
+                        {invoice.issue_date ? format(new Date(invoice.issue_date + 'T12:00:00'), 'd/M/yyyy') : '-'}
                       </TableCell>
                       <TableCell>
                         <div className="flex items-center gap-2">
