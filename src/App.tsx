@@ -53,11 +53,22 @@ const App = () => (
       <BrowserRouter>
         <AuthProvider>
         <Routes>
+          {/* Auth routes - both "/" and "/auth" point to login */}
           <Route path="/" element={<Auth />} />
+          <Route path="/auth" element={<Auth />} />
           <Route path="/forgot-password" element={<ForgotPassword />} />
           <Route path="/reset-password" element={<ResetPassword />} />
-          <Route path="/select-company" element={<SelectCompany />} />
           <Route path="/multi-tenant" element={<MultiTenantDocs />} />
+          
+          {/* Protected: Select company */}
+          <Route
+            path="/select-company"
+            element={
+              <ProtectedRoute>
+                <SelectCompany />
+              </ProtectedRoute>
+            }
+          />
           <Route
             path="/accept-invitation"
             element={

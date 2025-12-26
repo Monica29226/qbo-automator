@@ -238,7 +238,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     setIsAdmin(false);
     setActiveOrganization(null);
     setOrganizations([]);
-    navigate("/auth");
+    navigate("/");
   };
 
   return (
