@@ -73,7 +73,7 @@ const SelectCompany = () => {
     try {
       setIsCreating(true);
 
-      // Crear la organización (única llamada bloqueante necesaria)
+      // 1. Crear la organización
       const { data: org, error: orgError } = await supabase
         .from("organizations")
         .insert({ name: newOrgName.trim() })
@@ -85,29 +85,40 @@ const SelectCompany = () => {
         throw orgError;
       }
 
-      // Actualizar UI inmediatamente - optimistic update
+      // 2. CRÍTICO: Agregar usuario como owner ANTES de navegar
+      // Esto es necesario para que las políticas RLS funcionen correctamente
+      const { error: memberError } = await supabase
+        .from("organization_members")
+        .insert({
+          organization_id: org.id,
+          user_id: user.id,
+          role: "owner",
+        });
+
+      if (memberError) {
+        console.error('❌ Error agregando miembro:', memberError);
+        // Intentar eliminar la organización creada
+        await supabase.from("organizations").delete().eq("id", org.id);
+        throw memberError;
+      }
+
+      // 3. Actualizar user_active_organization
+      await supabase.from("user_active_organization").upsert({
+        user_id: user.id,
+        organization_id: org.id,
+      });
+
+      // 4. Actualizar UI y navegar
       setActiveOrganizationLocal(org.id);
       setIsCreateDialogOpen(false);
       setNewOrgName("");
       toast.success("Empresa creada exitosamente");
       navigate("/dashboard");
 
-      // Ejecutar operaciones secundarias en paralelo sin bloquear
-      Promise.all([
-        supabase.from("organization_members").insert({
-          organization_id: org.id,
-          user_id: user.id,
-          role: "owner",
-        }),
-        supabase.from("user_active_organization").upsert({
-          user_id: user.id,
-          organization_id: org.id,
-        })
-      ]).catch(err => console.error('Error en operaciones secundarias:', err));
-
     } catch (error) {
       console.error("Error creating organization:", error);
       toast.error("Error al crear la empresa");
+    } finally {
       setIsCreating(false);
     }
   };
