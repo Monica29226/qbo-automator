@@ -870,6 +870,21 @@ Deno.serve(async (req) => {
         const isCreditNote = doc.xml_data?.esNotaCredito === true || doc.doc_type === 'NotaCreditoElectronica';
         
         // ============================================
+        // NOTAS DE CRÉDITO: Asegurar montos negativos
+        // ============================================
+        if (isCreditNote) {
+          logInfo(`💳 NOTA DE CRÉDITO detectada: ${doc.doc_number}`);
+          // Verificar que los montos sean negativos
+          if (doc.total_amount > 0) {
+            logInfo(`⚠️ Nota de crédito con monto positivo (${doc.total_amount}), convirtiendo a negativo`);
+            // Actualizar en memoria para el procesamiento
+            doc.total_amount = -Math.abs(doc.total_amount);
+            doc.total_tax = -(Math.abs(doc.total_tax || 0));
+          }
+          logInfo(`💳 Montos NC: total=${doc.total_amount}, tax=${doc.total_tax}`);
+        }
+        
+        // ============================================
         // FIX ERROR 1: Detectar y usar UNA SOLA MONEDA
         // ============================================
         const xmlData = doc.xml_data as any;
@@ -906,8 +921,14 @@ Deno.serve(async (req) => {
         if (xmlData?.detalle && Array.isArray(xmlData.detalle) && xmlData.detalle.length > 0) {
           for (const item of xmlData.detalle) {
             const cantidad = parseFloat(item.cantidad) || 1;
-            const precioUnitario = parseFloat(item.precioUnitario) || 0;
-            const subtotal = parseFloat(item.subtotal) || (cantidad * precioUnitario);
+            let precioUnitario = parseFloat(item.precioUnitario) || 0;
+            let subtotal = parseFloat(item.subtotal) || (cantidad * precioUnitario);
+            
+            // NOTAS DE CRÉDITO: Asegurar que los montos de línea sean negativos
+            if (isCreditNote) {
+              precioUnitario = -Math.abs(precioUnitario);
+              subtotal = -Math.abs(subtotal);
+            }
             
             let tasaImpuesto = 0;
             let montoImpuesto = 0;
@@ -917,20 +938,27 @@ Deno.serve(async (req) => {
               if (ivaImpuesto) {
                 tasaImpuesto = parseFloat(ivaImpuesto.tarifa) || 0;
                 montoImpuesto = parseFloat(ivaImpuesto.monto) || 0;
+                // NOTAS DE CRÉDITO: Impuesto también negativo
+                if (isCreditNote) {
+                  montoImpuesto = -Math.abs(montoImpuesto);
+                }
               }
             } else {
               tasaImpuesto = parseFloat(item.tarifa) || 0;
               montoImpuesto = parseFloat(item.montoImpuesto) || 0;
+              if (isCreditNote) {
+                montoImpuesto = -Math.abs(montoImpuesto);
+              }
             }
             
             if (montoImpuesto === 0 && tasaImpuesto > 0) {
-              montoImpuesto = subtotal * (tasaImpuesto / 100);
+              montoImpuesto = subtotal * (tasaImpuesto / 100); // subtotal ya es negativo si es NC
             }
             
             // TREE OF LIFE: Incluir IVA en el monto de la línea
             let lineAmount = subtotal;
-            if (includeTaxInLines && montoImpuesto > 0) {
-              lineAmount = subtotal + montoImpuesto;
+            if (includeTaxInLines && Math.abs(montoImpuesto) > 0) {
+              lineAmount = subtotal + montoImpuesto; // Ambos negativos en NC
               log(`   💰 Línea con IVA incluido: ${subtotal} + ${montoImpuesto} = ${lineAmount}`);
             }
             
@@ -1048,13 +1076,19 @@ Deno.serve(async (req) => {
         // ============================================
         // Crear Bill con UNA SOLA moneda
         // ============================================
+        
+        // Log especial para notas de crédito
+        if (isCreditNote) {
+          logInfo(`💳 Creando Bill con montos NEGATIVOS para NC ${doc.doc_number}: ${subtotalLines} (${lines.length} líneas)`);
+        }
+        
         const billPayload: any = {
           VendorRef: { value: vendorId },
           TxnDate: doc.issue_date,
           DocNumber: qboDocNumber,
           Line: lines,
           DueDate: doc.issue_date,
-          PrivateNote: `Factura XML: ${doc.doc_number}\nProveedor: ${doc.supplier_name}\nMoneda: ${documentCurrency}${includeTaxInLines ? '\nIVA incluido en líneas' : ''}`,
+          PrivateNote: `${isCreditNote ? '⚠️ NOTA DE CRÉDITO - Montos negativos\n' : ''}Factura XML: ${doc.doc_number}\nProveedor: ${doc.supplier_name}\nMoneda: ${documentCurrency}${includeTaxInLines ? '\nIVA incluido en líneas' : ''}`,
           // TREE OF LIFE: Cambiar a TaxInclusive cuando IVA está en las líneas
           GlobalTaxCalculation: includeTaxInLines ? "TaxInclusive" : "TaxExcluded",
         };
