@@ -115,6 +115,20 @@ Deno.serve(async (req) => {
 
     logInfo(`📤 Publishing documents for org: ${organization_id}`);
 
+    // Obtener configuración de la organización para manejos especiales
+    const { data: orgSettings } = await supabase
+      .from("organizations")
+      .select("settings, name")
+      .eq("id", organization_id)
+      .maybeSingle();
+    
+    const settings = orgSettings?.settings as any || {};
+    const taxHandling = settings?.tax_handling || 'standard'; // 'standard' o 'included_in_line_items'
+    
+    if (taxHandling === 'included_in_line_items') {
+      logInfo(`🏷️ Organización "${orgSettings?.name}" - IVA incluido en líneas de producto`);
+    }
+
     // Obtener integración de QuickBooks
     const { data: qboAccount } = await supabase
       .from("integration_accounts")
@@ -882,15 +896,18 @@ Deno.serve(async (req) => {
         const lines = [];
         const taxCodeCache = new Map<number, string | null>();
         
+        // Tree of Life mode: IVA incluido en líneas de producto
+        const includeTaxInLines = taxHandling === 'included_in_line_items';
+        
+        if (includeTaxInLines) {
+          logInfo(`💰 Modo Tree of Life: IVA proporcional incluido en cada línea`);
+        }
+        
         if (xmlData?.detalle && Array.isArray(xmlData.detalle) && xmlData.detalle.length > 0) {
           for (const item of xmlData.detalle) {
             const cantidad = parseFloat(item.cantidad) || 1;
             const precioUnitario = parseFloat(item.precioUnitario) || 0;
             const subtotal = parseFloat(item.subtotal) || (cantidad * precioUnitario);
-            
-            // IMPORTANTE: Usar el subtotal en la moneda del documento
-            // NO mezclar monedas diferentes
-            let lineAmount = subtotal;
             
             let tasaImpuesto = 0;
             let montoImpuesto = 0;
@@ -910,6 +927,13 @@ Deno.serve(async (req) => {
               montoImpuesto = subtotal * (tasaImpuesto / 100);
             }
             
+            // TREE OF LIFE: Incluir IVA en el monto de la línea
+            let lineAmount = subtotal;
+            if (includeTaxInLines && montoImpuesto > 0) {
+              lineAmount = subtotal + montoImpuesto;
+              log(`   💰 Línea con IVA incluido: ${subtotal} + ${montoImpuesto} = ${lineAmount}`);
+            }
+            
             if (Math.abs(lineAmount) > 0) {
               const descripcionBase = item.descripcion || "";
               const codigoProducto = item.codigoProducto || item.codigo || "";
@@ -926,6 +950,11 @@ Deno.serve(async (req) => {
                 descripcionFinal += ` - Cant: ${cantidad}`;
               }
               
+              // TREE OF LIFE: Indicar en descripción que IVA está incluido
+              if (includeTaxInLines && montoImpuesto > 0) {
+                descripcionFinal += ` (IVA ${tasaImpuesto}% incluido)`;
+              }
+              
               descripcionFinal = descripcionFinal.substring(0, 4000);
 
               const lineDetail: any = {
@@ -937,17 +966,20 @@ Deno.serve(async (req) => {
                 },
               };
 
-              // SIEMPRE asignar TaxCodeRef (QuickBooks lo requiere cuando "Los importes son Impuestos no incluidos")
-              let taxCodeId = taxCodeCache.get(tasaImpuesto);
-              if (taxCodeId === undefined) {
-                taxCodeId = await getTaxCodeRef(tasaImpuesto);
-                taxCodeCache.set(tasaImpuesto, taxCodeId);
-              }
-              
-              if (taxCodeId) {
-                lineDetail.AccountBasedExpenseLineDetail.TaxCodeRef = { value: taxCodeId };
-              } else {
-                logInfo(`⚠️ Línea sin TaxCodeRef asignado para tasa ${tasaImpuesto}%`);
+              // TREE OF LIFE: NO agregar TaxCodeRef (impuesto ya incluido en monto)
+              if (!includeTaxInLines) {
+                // SIEMPRE asignar TaxCodeRef (QuickBooks lo requiere cuando "Los importes son Impuestos no incluidos")
+                let taxCodeId = taxCodeCache.get(tasaImpuesto);
+                if (taxCodeId === undefined) {
+                  taxCodeId = await getTaxCodeRef(tasaImpuesto);
+                  taxCodeCache.set(tasaImpuesto, taxCodeId);
+                }
+                
+                if (taxCodeId) {
+                  lineDetail.AccountBasedExpenseLineDetail.TaxCodeRef = { value: taxCodeId };
+                } else {
+                  logInfo(`⚠️ Línea sin TaxCodeRef asignado para tasa ${tasaImpuesto}%`);
+                }
               }
 
               lines.push(lineDetail);
@@ -957,39 +989,48 @@ Deno.serve(async (req) => {
         
         // Fallback: crear línea desde totales
         if (lines.length === 0) {
-          const subtotal = doc.uses_tax !== false 
-            ? doc.total_amount - (doc.total_tax || 0)
-            : doc.total_amount;
+          // TREE OF LIFE: Usar total_amount directamente (ya incluye IVA)
+          let subtotal: number;
+          if (includeTaxInLines) {
+            subtotal = doc.total_amount; // Total con IVA incluido
+          } else {
+            subtotal = doc.uses_tax !== false 
+              ? doc.total_amount - (doc.total_tax || 0)
+              : doc.total_amount;
+          }
           
           if (Math.abs(subtotal) <= 0) {
             throw new Error(`Invalid total amount: ${doc.total_amount}`);
           }
           
-          // Obtener TaxCodeRef para la línea fallback
-          const fallbackTaxRate = doc.uses_tax !== false && doc.total_tax && doc.total_tax > 0 ? 13 : 0;
-          const fallbackTaxCodeId = await getTaxCodeRef(fallbackTaxRate);
-          
           const fallbackLine: any = {
             DetailType: "AccountBasedExpenseLineDetail",
             Amount: subtotal,
-            Description: `${isCreditNote ? 'Nota de Crédito' : 'Factura'} ${doc.doc_number} - ${doc.supplier_name}`,
+            Description: `${isCreditNote ? 'Nota de Crédito' : 'Factura'} ${doc.doc_number} - ${doc.supplier_name}${includeTaxInLines ? ' (IVA incluido)' : ''}`,
             AccountBasedExpenseLineDetail: {
               AccountRef: { value: accountRef },
             },
           };
           
-          if (fallbackTaxCodeId) {
-            fallbackLine.AccountBasedExpenseLineDetail.TaxCodeRef = { value: fallbackTaxCodeId };
+          // TREE OF LIFE: NO agregar TaxCodeRef
+          if (!includeTaxInLines) {
+            // Obtener TaxCodeRef para la línea fallback
+            const fallbackTaxRate = doc.uses_tax !== false && doc.total_tax && doc.total_tax > 0 ? 13 : 0;
+            const fallbackTaxCodeId = await getTaxCodeRef(fallbackTaxRate);
+            
+            if (fallbackTaxCodeId) {
+              fallbackLine.AccountBasedExpenseLineDetail.TaxCodeRef = { value: fallbackTaxCodeId };
+            }
           }
           
           lines.push(fallbackLine);
         }
         
-        const documentUsesTax = doc.uses_tax !== false;
+        const documentUsesTax = doc.uses_tax !== false && !includeTaxInLines;
         const totalTax = documentUsesTax ? (parseFloat(doc.total_tax as any) || 0) : 0;
         const subtotalLines = lines.reduce((sum, l) => sum + l.Amount, 0);
         
-        log(`✓ Lines: ${lines.length}, subtotal: ${subtotalLines}, tax: ${totalTax}`);
+        log(`✓ Lines: ${lines.length}, subtotal: ${subtotalLines}, tax: ${totalTax}${includeTaxInLines ? ' (IVA en líneas)' : ''}`);
 
         // Preparar DocNumber
         if (doc.doc_number.length > 30) {
@@ -1013,8 +1054,9 @@ Deno.serve(async (req) => {
           DocNumber: qboDocNumber,
           Line: lines,
           DueDate: doc.issue_date,
-          PrivateNote: `Factura XML: ${doc.doc_number}\nProveedor: ${doc.supplier_name}\nMoneda: ${documentCurrency}`,
-          GlobalTaxCalculation: "TaxExcluded",
+          PrivateNote: `Factura XML: ${doc.doc_number}\nProveedor: ${doc.supplier_name}\nMoneda: ${documentCurrency}${includeTaxInLines ? '\nIVA incluido en líneas' : ''}`,
+          // TREE OF LIFE: Cambiar a TaxInclusive cuando IVA está en las líneas
+          GlobalTaxCalculation: includeTaxInLines ? "TaxInclusive" : "TaxExcluded",
         };
 
         // Solo agregar CurrencyRef si NO es CRC (moneda base)
@@ -1028,7 +1070,8 @@ Deno.serve(async (req) => {
           }
         }
 
-        if (documentUsesTax && totalTax > 0) {
+        // TREE OF LIFE: NO agregar TxnTaxDetail cuando IVA está en líneas
+        if (documentUsesTax && totalTax > 0 && !includeTaxInLines) {
           billPayload.TxnTaxDetail = { TotalTax: totalTax };
         }
 
