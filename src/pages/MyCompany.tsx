@@ -4,24 +4,19 @@ import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { ArrowLeft, Building2, Loader2, Plus, Check, Settings } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
+import { CreateOrganizationDialog } from "@/components/CreateOrganizationDialog";
 
 interface Organization {
   id: string;
   name: string;
   tax_id: string | null;
+  identification_type: string | null;
+  identification_number: string | null;
+  trade_name: string | null;
+  legal_name: string | null;
   email: string | null;
   is_active: boolean;
   created_at: string;
@@ -29,16 +24,10 @@ interface Organization {
 
 const MyCompany = () => {
   const navigate = useNavigate();
-  const { activeOrganization, organizations: userOrgs, switchOrganization } = useAuth();
+  const { activeOrganization, switchOrganization, setActiveOrganizationLocal } = useAuth();
   const [allOrganizations, setAllOrganizations] = useState<Organization[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
-  const [isCreating, setIsCreating] = useState(false);
-  const [newOrgForm, setNewOrgForm] = useState({
-    name: "",
-    tax_id: "",
-    email: "",
-  });
 
   useEffect(() => {
     fetchAllOrganizations();
@@ -49,7 +38,7 @@ const MyCompany = () => {
 
     const { data, error } = await supabase
       .from("organizations")
-      .select("id, name, tax_id, email, is_active, created_at")
+      .select("id, name, tax_id, identification_type, identification_number, trade_name, legal_name, email, is_active, created_at")
       .eq("is_active", true)
       .order("created_at", { ascending: false });
 
@@ -63,91 +52,12 @@ const MyCompany = () => {
     setIsLoading(false);
   };
 
-  const handleCreateOrganization = async () => {
-    if (!newOrgForm.name.trim()) {
-      toast.error("El nombre es requerido");
-      return;
-    }
-
-    setIsCreating(true);
-
-    try {
-      const { data: { user } } = await supabase.auth.getUser();
-      
-      if (!user) {
-        toast.error("Usuario no autenticado");
-        setIsCreating(false);
-        return;
-      }
-
-      // Create organization
-      const { data: orgData, error: orgError } = await supabase
-        .from("organizations")
-        .insert([{
-          name: newOrgForm.name,
-          tax_id: newOrgForm.tax_id || null,
-          email: newOrgForm.email || null,
-          is_active: true
-        }])
-        .select()
-        .single();
-
-      if (orgError) {
-        toast.error(`Error al crear organización: ${orgError.message}`);
-        console.error("Organization insert error:", orgError);
-        setIsCreating(false);
-        return;
-      }
-
-      if (!orgData) {
-        toast.error("No se pudo crear la organización");
-        setIsCreating(false);
-        return;
-      }
-
-      // Add user as owner
-      const { error: memberError } = await supabase
-        .from("organization_members")
-        .insert([{
-          organization_id: orgData.id,
-          user_id: user.id,
-          role: "owner",
-          is_active: true
-        }]);
-
-      if (memberError) {
-        toast.error(`Error al asignar rol: ${memberError.message}`);
-        console.error("Member insert error:", memberError);
-        setIsCreating(false);
-        return;
-      }
-
-      // Create default system settings
-      const defaultSettings = [
-        { key: 'qbo_company_id', value: '', description: 'QuickBooks Company ID (realmId)', organization_id: orgData.id },
-        { key: 'mail_provider', value: 'gmail', description: 'Proveedor de correo: gmail u outlook', organization_id: orgData.id },
-        { key: 'mail_query', value: 'has:attachment (filename:xml OR filename:pdf) newer_than:30d', description: 'Filtro de búsqueda de correos', organization_id: orgData.id },
-        { key: 'process_credit_notes', value: 'true', description: 'Procesar notas de crédito automáticamente', organization_id: orgData.id },
-        { key: 'currency_fallback', value: 'CRC', description: 'Moneda por defecto si falta en XML', organization_id: orgData.id },
-        { key: 'duplicate_window_days', value: '120', description: 'Ventana anti-duplicados en días', organization_id: orgData.id },
-        { key: 'dry_run', value: 'true', description: 'Modo prueba (no publica en QBO)', organization_id: orgData.id }
-      ];
-
-      await supabase.from('system_settings').insert(defaultSettings);
-
-      toast.success("Organización creada exitosamente");
-      setIsDialogOpen(false);
-      setNewOrgForm({ name: "", tax_id: "", email: "" });
-      setIsCreating(false);
-      
-      // Switch to new organization and reload
-      await switchOrganization(orgData.id);
-      fetchAllOrganizations();
-    } catch (error) {
-      console.error("Unexpected error creating organization:", error);
-      toast.error(`Error inesperado: ${error instanceof Error ? error.message : 'Error desconocido'}`);
-      setIsCreating(false);
-    }
+  const handleOrganizationCreated = async (organizationId: string) => {
+    // Update local state
+    setActiveOrganizationLocal(organizationId);
+    
+    // Refresh the list
+    fetchAllOrganizations();
   };
 
   const handleSelectOrganization = async (orgId: string) => {
@@ -205,7 +115,7 @@ const MyCompany = () => {
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() => navigate("/organizations")}
+                      onClick={() => navigate("/organization")}
                     >
                       <Settings className="h-4 w-4 mr-2" />
                       Configurar
@@ -219,15 +129,32 @@ const MyCompany = () => {
                   {allOrganizations
                     .filter((org) => org.id === activeOrganization)
                     .map((org) => (
-                      <div key={org.id} className="space-y-3">
+                      <div key={org.id} className="grid gap-4 sm:grid-cols-2">
                         <div>
                           <p className="text-sm text-muted-foreground">Nombre</p>
                           <p className="text-lg font-semibold">{org.name}</p>
                         </div>
-                        {org.tax_id && (
+                        {org.trade_name && (
                           <div>
-                            <p className="text-sm text-muted-foreground">Cédula Jurídica</p>
-                            <p className="font-medium">{org.tax_id}</p>
+                            <p className="text-sm text-muted-foreground">Nombre Comercial</p>
+                            <p className="font-medium">{org.trade_name}</p>
+                          </div>
+                        )}
+                        {org.legal_name && (
+                          <div>
+                            <p className="text-sm text-muted-foreground">Razón Social</p>
+                            <p className="font-medium">{org.legal_name}</p>
+                          </div>
+                        )}
+                        {(org.identification_number || org.tax_id) && (
+                          <div>
+                            <p className="text-sm text-muted-foreground">Identificación</p>
+                            <p className="font-medium">
+                              {org.identification_type && (
+                                <span className="capitalize">{org.identification_type}: </span>
+                              )}
+                              {org.identification_number || org.tax_id}
+                            </p>
                           </div>
                         )}
                         {org.email && (
@@ -288,8 +215,10 @@ const MyCompany = () => {
                           </div>
                           <h3 className="font-semibold text-lg mb-2">{org.name}</h3>
                           <div className="space-y-1 text-sm text-muted-foreground">
-                            {org.tax_id && (
-                              <p className="truncate">Cédula: {org.tax_id}</p>
+                            {(org.identification_number || org.tax_id) && (
+                              <p className="truncate">
+                                ID: {org.identification_number || org.tax_id}
+                              </p>
                             )}
                             {org.email && (
                               <p className="truncate">Email: {org.email}</p>
@@ -314,85 +243,11 @@ const MyCompany = () => {
         )}
       </main>
 
-      {/* Create Organization Dialog */}
-      <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Crear Nueva Empresa</DialogTitle>
-            <DialogDescription>
-              Ingresa la información básica de tu empresa. Podrás completar más detalles después.
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-4 py-4">
-            <div className="space-y-2">
-              <Label htmlFor="org-name">Nombre de la Empresa *</Label>
-              <Input
-                id="org-name"
-                placeholder="Ej: Mi Empresa S.A."
-                value={newOrgForm.name}
-                onChange={(e) =>
-                  setNewOrgForm((prev) => ({ ...prev, name: e.target.value }))
-                }
-                disabled={isCreating}
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="org-tax-id">Cédula Jurídica</Label>
-              <Input
-                id="org-tax-id"
-                placeholder="Ej: 3-101-123456"
-                value={newOrgForm.tax_id}
-                onChange={(e) =>
-                  setNewOrgForm((prev) => ({ ...prev, tax_id: e.target.value }))
-                }
-                disabled={isCreating}
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="org-email">Correo Electrónico</Label>
-              <Input
-                id="org-email"
-                type="email"
-                placeholder="contacto@empresa.com"
-                value={newOrgForm.email}
-                onChange={(e) =>
-                  setNewOrgForm((prev) => ({ ...prev, email: e.target.value }))
-                }
-                disabled={isCreating}
-              />
-            </div>
-          </div>
-
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => {
-                setIsDialogOpen(false);
-                setNewOrgForm({ name: "", tax_id: "", email: "" });
-              }}
-              disabled={isCreating}
-            >
-              Cancelar
-            </Button>
-            <Button onClick={handleCreateOrganization} disabled={isCreating}>
-              {isCreating ? (
-                <>
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  Creando...
-                </>
-              ) : (
-                <>
-                  <Plus className="h-4 w-4 mr-2" />
-                  Crear Empresa
-                </>
-              )}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <CreateOrganizationDialog
+        open={isDialogOpen}
+        onOpenChange={setIsDialogOpen}
+        onSuccess={handleOrganizationCreated}
+      />
     </div>
   );
 };

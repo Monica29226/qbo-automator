@@ -111,6 +111,106 @@ export type Database = {
           },
         ]
       }
+      billing_sequences: {
+        Row: {
+          branch_code: string | null
+          created_at: string
+          doc_type: string
+          id: string
+          is_active: boolean | null
+          next_number: number | null
+          organization_id: string
+          prefix: string | null
+          terminal_code: string | null
+          updated_at: string
+        }
+        Insert: {
+          branch_code?: string | null
+          created_at?: string
+          doc_type: string
+          id?: string
+          is_active?: boolean | null
+          next_number?: number | null
+          organization_id: string
+          prefix?: string | null
+          terminal_code?: string | null
+          updated_at?: string
+        }
+        Update: {
+          branch_code?: string | null
+          created_at?: string
+          doc_type?: string
+          id?: string
+          is_active?: boolean | null
+          next_number?: number | null
+          organization_id?: string
+          prefix?: string | null
+          terminal_code?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "billing_sequences_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      cabys_items: {
+        Row: {
+          cabys_code: string
+          created_at: string
+          created_by: string | null
+          default_price: number | null
+          description: string | null
+          id: string
+          is_active: boolean | null
+          is_service: boolean | null
+          name: string
+          organization_id: string
+          unit: string | null
+          updated_at: string
+        }
+        Insert: {
+          cabys_code: string
+          created_at?: string
+          created_by?: string | null
+          default_price?: number | null
+          description?: string | null
+          id?: string
+          is_active?: boolean | null
+          is_service?: boolean | null
+          name: string
+          organization_id: string
+          unit?: string | null
+          updated_at?: string
+        }
+        Update: {
+          cabys_code?: string
+          created_at?: string
+          created_by?: string | null
+          default_price?: number | null
+          description?: string | null
+          id?: string
+          is_active?: boolean | null
+          is_service?: boolean | null
+          name?: string
+          organization_id?: string
+          unit?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "cabys_items_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       customer_defaults: {
         Row: {
           created_at: string
@@ -153,6 +253,53 @@ export type Database = {
             foreignKeyName: "customer_defaults_organization_id_fkey"
             columns: ["organization_id"]
             isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      hacienda_certificates: {
+        Row: {
+          certificate_name: string
+          certificate_storage_path: string | null
+          created_at: string
+          created_by: string | null
+          expires_at: string | null
+          id: string
+          is_active: boolean | null
+          organization_id: string
+          pin_hash: string | null
+          updated_at: string
+        }
+        Insert: {
+          certificate_name: string
+          certificate_storage_path?: string | null
+          created_at?: string
+          created_by?: string | null
+          expires_at?: string | null
+          id?: string
+          is_active?: boolean | null
+          organization_id: string
+          pin_hash?: string | null
+          updated_at?: string
+        }
+        Update: {
+          certificate_name?: string
+          certificate_storage_path?: string | null
+          created_at?: string
+          created_by?: string | null
+          expires_at?: string | null
+          id?: string
+          is_active?: boolean | null
+          organization_id?: string
+          pin_hash?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "hacienda_certificates_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: true
             referencedRelation: "organizations"
             referencedColumns: ["id"]
           },
@@ -330,75 +477,111 @@ export type Database = {
           address: string | null
           bluehost_connected: boolean | null
           bluehost_email: string | null
+          canton: string | null
           created_at: string
+          district: string | null
+          economic_activity_code: string | null
           email: string | null
+          exact_address: string | null
           gmail_connected: boolean | null
           gmail_email: string | null
           google_drive_connected: boolean | null
           google_drive_enabled: boolean | null
           google_drive_folder_id: string | null
+          hacienda_notification_email: string | null
           id: string
+          identification_number: string | null
+          identification_type: string | null
           is_active: boolean
+          legal_name: string | null
+          main_economic_activity: string | null
           name: string
           outlook_connected: boolean | null
           outlook_email: string | null
           phone: string | null
+          province: string | null
           qbo_company_id: string | null
           qbo_realm_id: string | null
           quickbooks_connected: boolean | null
           quickbooks_realm_id: string | null
           settings: Json | null
           tax_id: string | null
+          tax_regime: string | null
+          trade_name: string | null
           updated_at: string
         }
         Insert: {
           address?: string | null
           bluehost_connected?: boolean | null
           bluehost_email?: string | null
+          canton?: string | null
           created_at?: string
+          district?: string | null
+          economic_activity_code?: string | null
           email?: string | null
+          exact_address?: string | null
           gmail_connected?: boolean | null
           gmail_email?: string | null
           google_drive_connected?: boolean | null
           google_drive_enabled?: boolean | null
           google_drive_folder_id?: string | null
+          hacienda_notification_email?: string | null
           id?: string
+          identification_number?: string | null
+          identification_type?: string | null
           is_active?: boolean
+          legal_name?: string | null
+          main_economic_activity?: string | null
           name: string
           outlook_connected?: boolean | null
           outlook_email?: string | null
           phone?: string | null
+          province?: string | null
           qbo_company_id?: string | null
           qbo_realm_id?: string | null
           quickbooks_connected?: boolean | null
           quickbooks_realm_id?: string | null
           settings?: Json | null
           tax_id?: string | null
+          tax_regime?: string | null
+          trade_name?: string | null
           updated_at?: string
         }
         Update: {
           address?: string | null
           bluehost_connected?: boolean | null
           bluehost_email?: string | null
+          canton?: string | null
           created_at?: string
+          district?: string | null
+          economic_activity_code?: string | null
           email?: string | null
+          exact_address?: string | null
           gmail_connected?: boolean | null
           gmail_email?: string | null
           google_drive_connected?: boolean | null
           google_drive_enabled?: boolean | null
           google_drive_folder_id?: string | null
+          hacienda_notification_email?: string | null
           id?: string
+          identification_number?: string | null
+          identification_type?: string | null
           is_active?: boolean
+          legal_name?: string | null
+          main_economic_activity?: string | null
           name?: string
           outlook_connected?: boolean | null
           outlook_email?: string | null
           phone?: string | null
+          province?: string | null
           qbo_company_id?: string | null
           qbo_realm_id?: string | null
           quickbooks_connected?: boolean | null
           quickbooks_realm_id?: string | null
           settings?: Json | null
           tax_id?: string | null
+          tax_regime?: string | null
+          trade_name?: string | null
           updated_at?: string
         }
         Relationships: []

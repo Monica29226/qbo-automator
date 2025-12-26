@@ -146,3 +146,6 @@ verify_jwt = false
 
 [functions.reset-password]
 verify_jwt = false
+
+[functions.create-organization]
+verify_jwt = true
