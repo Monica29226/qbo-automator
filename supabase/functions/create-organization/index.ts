@@ -73,6 +73,27 @@ Deno.serve(async (req) => {
     const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey);
 
+    // Check for duplicate organization name (case-insensitive)
+    const { data: existingOrg, error: checkError } = await supabaseAdmin
+      .from("organizations")
+      .select("id, name")
+      .ilike("name", body.name.trim())
+      .eq("is_active", true)
+      .limit(1)
+      .maybeSingle();
+
+    if (checkError) {
+      console.error("Error checking for duplicates:", checkError);
+    }
+
+    if (existingOrg) {
+      console.log(`⚠️ Organization "${body.name}" already exists with id: ${existingOrg.id}`);
+      return new Response(
+        JSON.stringify({ error: `Ya existe una empresa con el nombre "${existingOrg.name}"` }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
     // Generate a UUID for the new organization
     const orgId = crypto.randomUUID();
 
