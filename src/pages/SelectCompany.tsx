@@ -74,11 +74,13 @@ const SelectCompany = () => {
       setIsCreating(true);
 
       // 1. Crear la organización
-      const { data: org, error: orgError } = await supabase
+      // Nota: evitamos `.select()` aquí porque, con RLS, el `RETURNING` puede requerir permisos de SELECT
+      // y todavía no existe la membresía (organization_members) para esta nueva empresa.
+      const orgId = crypto.randomUUID();
+
+      const { error: orgError } = await supabase
         .from("organizations")
-        .insert({ name: newOrgName.trim() })
-        .select("id")
-        .single();
+        .insert({ id: orgId, name: newOrgName.trim() });
 
       if (orgError) {
         console.error('❌ Error creando organización:', orgError);
@@ -90,26 +92,26 @@ const SelectCompany = () => {
       const { error: memberError } = await supabase
         .from("organization_members")
         .insert({
-          organization_id: org.id,
+          organization_id: orgId,
           user_id: user.id,
           role: "owner",
         });
 
       if (memberError) {
         console.error('❌ Error agregando miembro:', memberError);
-        // Intentar eliminar la organización creada
-        await supabase.from("organizations").delete().eq("id", org.id);
+        // Intentar eliminar la organización creada (best-effort)
+        await supabase.from("organizations").delete().eq("id", orgId);
         throw memberError;
       }
 
       // 3. Actualizar user_active_organization
       await supabase.from("user_active_organization").upsert({
         user_id: user.id,
-        organization_id: org.id,
+        organization_id: orgId,
       });
 
       // 4. Actualizar UI y navegar
-      setActiveOrganizationLocal(org.id);
+      setActiveOrganizationLocal(orgId);
       setIsCreateDialogOpen(false);
       setNewOrgName("");
       toast.success("Empresa creada exitosamente");
