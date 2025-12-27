@@ -41,6 +41,7 @@ const ErrorDiagnostic = lazy(() => import("@/components/dashboard/ErrorDiagnosti
 const SearchImportInvoice = lazy(() => import("@/components/dashboard/SearchImportInvoice").then(m => ({ default: m.SearchImportInvoice })));
 const BatchImportInvoices = lazy(() => import("@/components/dashboard/BatchImportInvoices").then(m => ({ default: m.BatchImportInvoices })));
 const PublishOrphanedInvoices = lazy(() => import("@/components/dashboard/PublishOrphanedInvoices").then(m => ({ default: m.PublishOrphanedInvoices })));
+const IVAModeIndicator = lazy(() => import("@/components/dashboard/IVAModeIndicator").then(m => ({ default: m.IVAModeIndicator })));
 
 // Componente de loading para lazy components
 const LazyFallback = () => (
@@ -456,10 +457,15 @@ const Dashboard = () => {
                   <h2 className="text-2xl font-bold text-foreground">Panel de Control</h2>
                   <p className="text-sm text-muted-foreground">Monitoreo en tiempo real del procesamiento de facturas</p>
                 </div>
-                <Badge variant="default" className="h-fit">
-                  <Clock className="h-3 w-3 mr-1" />
-                  Sincronización Automática Activa (cada 30 min)
-                </Badge>
+                <div className="flex items-center gap-2">
+                  <Suspense fallback={null}>
+                    <IVAModeIndicator organizationId={activeOrganization} />
+                  </Suspense>
+                  <Badge variant="default" className="h-fit">
+                    <Clock className="h-3 w-3 mr-1" />
+                    Sincronización Automática Activa (cada 30 min)
+                  </Badge>
+                </div>
               </div>
             </div>
 
