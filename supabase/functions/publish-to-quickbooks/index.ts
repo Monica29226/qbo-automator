@@ -1009,20 +1009,20 @@ Deno.serve(async (req) => {
                 },
               };
 
-              // TREE OF LIFE: NO agregar TaxCodeRef (impuesto ya incluido en monto)
-              if (!includeTaxInLines) {
-                // SIEMPRE asignar TaxCodeRef (QuickBooks lo requiere cuando "Los importes son Impuestos no incluidos")
-                let taxCodeId = taxCodeCache.get(tasaImpuesto);
-                if (taxCodeId === undefined) {
-                  taxCodeId = await getTaxCodeRef(tasaImpuesto);
-                  taxCodeCache.set(tasaImpuesto, taxCodeId);
-                }
-                
-                if (taxCodeId) {
-                  lineDetail.AccountBasedExpenseLineDetail.TaxCodeRef = { value: taxCodeId };
-                } else {
-                  logInfo(`⚠️ Línea sin TaxCodeRef asignado para tasa ${tasaImpuesto}%`);
-                }
+              // SIEMPRE asignar TaxCodeRef (QuickBooks lo requiere en todas las líneas)
+              // Para Tree of Life (IVA incluido en líneas), usar tasa 0% ya que el impuesto está en el monto
+              const taxRateForCode = includeTaxInLines ? 0 : tasaImpuesto;
+              
+              let taxCodeId = taxCodeCache.get(taxRateForCode);
+              if (taxCodeId === undefined) {
+                taxCodeId = await getTaxCodeRef(taxRateForCode);
+                taxCodeCache.set(taxRateForCode, taxCodeId);
+              }
+              
+              if (taxCodeId) {
+                lineDetail.AccountBasedExpenseLineDetail.TaxCodeRef = { value: taxCodeId };
+              } else {
+                logInfo(`⚠️ Línea sin TaxCodeRef asignado para tasa ${taxRateForCode}%`);
               }
 
               lines.push(lineDetail);
@@ -1057,16 +1057,14 @@ Deno.serve(async (req) => {
             },
           };
           
-          // Si orgDefaultUsesTax es false, NO agregar TaxCodeRef (IVA ya incluido en líneas)
-          if (!includeTaxInLines && orgDefaultUsesTax) {
-            // Obtener TaxCodeRef para la línea fallback solo si la org usa IVA recuperable
-            const effectiveUsesTax = (doc.uses_tax !== false) && orgDefaultUsesTax;
-            const fallbackTaxRate = effectiveUsesTax && doc.total_tax && doc.total_tax > 0 ? 13 : 0;
-            const fallbackTaxCodeId = await getTaxCodeRef(fallbackTaxRate);
-            
-            if (fallbackTaxCodeId) {
-              fallbackLine.AccountBasedExpenseLineDetail.TaxCodeRef = { value: fallbackTaxCodeId };
-            }
+          // SIEMPRE asignar TaxCodeRef (QuickBooks lo requiere en todas las líneas)
+          // Para Tree of Life o cuando orgDefaultUsesTax es false, usar tasa 0%
+          const effectiveUsesTax = (doc.uses_tax !== false) && orgDefaultUsesTax && !includeTaxInLines;
+          const fallbackTaxRate = effectiveUsesTax && doc.total_tax && doc.total_tax > 0 ? 13 : 0;
+          const fallbackTaxCodeId = await getTaxCodeRef(fallbackTaxRate);
+          
+          if (fallbackTaxCodeId) {
+            fallbackLine.AccountBasedExpenseLineDetail.TaxCodeRef = { value: fallbackTaxCodeId };
           }
           
           lines.push(fallbackLine);
