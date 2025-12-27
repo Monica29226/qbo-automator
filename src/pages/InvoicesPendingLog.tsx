@@ -453,9 +453,9 @@ const InvoicesPendingLog = () => {
         updatingInvoicesRef.current.delete(updateKey);
         return;
       }
-      valueToSave = account.accountNumber 
-        ? `${account.accountNumber} - ${account.name}` 
-        : account.name;
+      // IMPORTANTE: Guardar SOLO el ID interno de QB para que publish-to-quickbooks lo encuentre
+      valueToSave = account.id;
+      console.log('✅ Guardando account ID:', account.id, '- Código:', account.accountNumber, '- Nombre:', account.name);
     }
 
     // ===== OPTIMISTIC UPDATE INMEDIATO - UI responde al instante =====
