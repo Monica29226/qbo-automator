@@ -75,6 +75,8 @@ const ReviewQueue = () => {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [showPdfPreview, setShowPdfPreview] = useState(false);
+  const [pdfOnlyDoc, setPdfOnlyDoc] = useState<Document | null>(null);
+  const [isPdfDialogOpen, setIsPdfDialogOpen] = useState(false);
 
   useEffect(() => {
     if (activeOrganization) {
@@ -161,6 +163,11 @@ const ReviewQueue = () => {
 
   const handleViewPdf = () => {
     setShowPdfPreview(true);
+  };
+
+  const openPdfOnly = (doc: Document) => {
+    setPdfOnlyDoc(doc);
+    setIsPdfDialogOpen(true);
   };
 
   const handleApprove = async () => {
@@ -323,9 +330,21 @@ const ReviewQueue = () => {
                       </span>
                     </TableCell>
                     <TableCell className="text-right">
-                      <Button variant="outline" size="sm" onClick={() => openDialog(doc)}>
-                        Revisar
-                      </Button>
+                      <div className="flex items-center justify-end gap-2">
+                        {(doc.pdf_attachment_url || doc.file_path) && (
+                          <Button 
+                            variant="ghost" 
+                            size="sm" 
+                            onClick={() => openPdfOnly(doc)}
+                            title="Ver PDF"
+                          >
+                            <Eye className="h-4 w-4" />
+                          </Button>
+                        )}
+                        <Button variant="outline" size="sm" onClick={() => openDialog(doc)}>
+                          Revisar
+                        </Button>
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -451,6 +470,26 @@ const ReviewQueue = () => {
               )}
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Diálogo solo para ver PDF */}
+      <Dialog open={isPdfDialogOpen} onOpenChange={setIsPdfDialogOpen}>
+        <DialogContent className="max-w-4xl max-h-[90vh]">
+          <DialogHeader>
+            <DialogTitle>
+              {pdfOnlyDoc ? `${pdfOnlyDoc.doc_number} - ${pdfOnlyDoc.supplier_name}` : "Ver PDF"}
+            </DialogTitle>
+          </DialogHeader>
+          {pdfOnlyDoc && (
+            <div className="h-[600px]">
+              <PdfViewer 
+                url={pdfOnlyDoc.pdf_attachment_url || undefined}
+                storagePath={pdfOnlyDoc.file_path || undefined}
+                fileName={`${pdfOnlyDoc.doc_number}-${pdfOnlyDoc.supplier_name}`}
+              />
+            </div>
+          )}
         </DialogContent>
       </Dialog>
     </div>
