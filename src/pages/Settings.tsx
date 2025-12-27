@@ -26,6 +26,7 @@ interface Settings {
   duplicate_window_days: string;
   dry_run: string;
   email_sender_address: string;
+  default_uses_tax: string;
 }
 
 const Settings = () => {
@@ -39,6 +40,7 @@ const Settings = () => {
     duplicate_window_days: "120",
     dry_run: "true",
     email_sender_address: "",
+    default_uses_tax: "true",
   });
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -270,6 +272,36 @@ const Settings = () => {
                       setSettings({ ...settings, dry_run: checked ? "true" : "false" })
                     }
                   />
+                </div>
+              </div>
+            </div>
+
+            <div className="border-t pt-6">
+              <h2 className="text-lg font-semibold mb-4">Tratamiento de IVA</h2>
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="space-y-0.5">
+                    <Label>IVA Recuperable</Label>
+                    <p className="text-xs text-muted-foreground">
+                      Si está activo, el IVA se registra como crédito fiscal recuperable.
+                      Si está desactivado, el IVA se incluye como parte del gasto.
+                    </p>
+                  </div>
+                  <Switch
+                    checked={settings.default_uses_tax === "true"}
+                    onCheckedChange={(checked) =>
+                      setSettings({ ...settings, default_uses_tax: checked ? "true" : "false" })
+                    }
+                  />
+                </div>
+                <div className="p-3 rounded-lg bg-muted/50">
+                  <p className="text-sm text-muted-foreground">
+                    <strong>IVA Recuperable (activo):</strong> El impuesto se separa y registra como crédito fiscal en QuickBooks.
+                  </p>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    <strong>IVA como Gasto (desactivado):</strong> El impuesto se incluye en el monto total del gasto, 
+                    útil para organizaciones que no pueden recuperar el IVA.
+                  </p>
                 </div>
               </div>
             </div>
