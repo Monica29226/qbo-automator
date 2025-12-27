@@ -263,7 +263,7 @@ Deno.serve(async (req) => {
       const timeoutId = setTimeout(() => controller.abort(), 8000); // 8s timeout for vendor search
       
       try {
-        // Single search - exact match only (faster)
+        // First try exact match
         const searchQuery = `SELECT * FROM Vendor WHERE DisplayName = '${vendorDisplayName.replace(/'/g, "\\'")}'`;
         const searchUrl = `https://quickbooks.api.intuit.com/v3/company/${realmId}/query?query=${encodeURIComponent(searchQuery)}`;
 
@@ -283,6 +283,44 @@ Deno.serve(async (req) => {
             log(`✓ Found vendor: ${searchData.QueryResponse.Vendor[0].DisplayName}`);
             return searchData.QueryResponse.Vendor[0].Id;
           }
+        }
+        
+        // Try LIKE search if exact match fails (handles slight variations)
+        const likeController = new AbortController();
+        const likeTimeoutId = setTimeout(() => likeController.abort(), 8000);
+        
+        try {
+          const likeQuery = `SELECT * FROM Vendor WHERE DisplayName LIKE '%${vendorDisplayName.substring(0, 30).replace(/'/g, "\\'")}%'`;
+          const likeUrl = `https://quickbooks.api.intuit.com/v3/company/${realmId}/query?query=${encodeURIComponent(likeQuery)}`;
+
+          const likeResponse = await fetch(likeUrl, {
+            headers: {
+              "Authorization": `Bearer ${accessToken}`,
+              "Accept": "application/json",
+            },
+            signal: likeController.signal
+          });
+
+          clearTimeout(likeTimeoutId);
+
+          if (likeResponse.ok) {
+            const likeData = await likeResponse.json();
+            if (likeData.QueryResponse?.Vendor?.length > 0) {
+              // Find best match
+              const normalizedTarget = vendorDisplayName.toLowerCase().replace(/\s+/g, ' ').trim();
+              for (const vendor of likeData.QueryResponse.Vendor) {
+                const normalizedVendor = (vendor.DisplayName || '').toLowerCase().replace(/\s+/g, ' ').trim();
+                if (normalizedVendor.includes(normalizedTarget.substring(0, 20)) || 
+                    normalizedTarget.includes(normalizedVendor.substring(0, 20))) {
+                  logInfo(`✓ Found vendor via LIKE: ${vendor.DisplayName} (ID: ${vendor.Id})`);
+                  return vendor.Id;
+                }
+              }
+            }
+          }
+        } catch (likeErr) {
+          clearTimeout(likeTimeoutId);
+          // Continue to vendor creation
         }
       } catch (e) {
         clearTimeout(timeoutId);
@@ -330,15 +368,27 @@ Deno.serve(async (req) => {
           const errorText = await createResponse.text();
           logError(`❌ Failed to create vendor "${vendorDisplayName}": ${errorText}`);
           
-          // Intentar parsear el error de QBO para dar mejor mensaje
+          // Intentar parsear el error de QBO
           try {
             const errorJson = JSON.parse(errorText);
             const qboError = errorJson?.Fault?.Error?.[0];
             if (qboError) {
+              // Si es error de duplicado, extraer el ID existente
+              if (qboError.code === '6240' || (qboError.Detail && qboError.Detail.includes('Id='))) {
+                const idMatch = qboError.Detail?.match(/Id=(\d+)/);
+                if (idMatch) {
+                  const existingId = idMatch[1];
+                  logInfo(`✅ Vendor already exists: ${vendorDisplayName} (ID: ${existingId}) - usando existente`);
+                  return existingId;
+                }
+              }
               const detail = qboError.Detail || qboError.Message || 'Error desconocido';
               throw new Error(`Error QBO creando proveedor "${vendorDisplayName}": ${detail}`);
             }
           } catch (parseErr) {
+            if (parseErr instanceof Error && parseErr.message.includes('Error QBO')) {
+              throw parseErr;
+            }
             // Si no se puede parsear, usar el mensaje genérico
           }
           
