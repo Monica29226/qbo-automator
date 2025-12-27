@@ -25,7 +25,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { FileText, ArrowLeft, Loader2, CheckCircle, X } from "lucide-react";
+import { FileText, ArrowLeft, Loader2, CheckCircle, X, Eye } from "lucide-react";
+import { PdfViewer } from "@/components/PdfViewer";
 import { Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -46,6 +47,8 @@ interface Document {
   error_message: string | null;
   vendor_id: string | null;
   default_account_ref: string | null;
+  pdf_attachment_url: string | null;
+  file_path: string | null;
 }
 
 interface Vendor {
@@ -71,6 +74,7 @@ const ReviewQueue = () => {
   const [selectedAccount, setSelectedAccount] = useState<string>("");
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [showPdfPreview, setShowPdfPreview] = useState(false);
 
   useEffect(() => {
     if (activeOrganization) {
@@ -151,7 +155,12 @@ const ReviewQueue = () => {
     setSelectedDoc(doc);
     setSelectedVendor(doc.vendor_id || "");
     setSelectedAccount(doc.default_account_ref || "");
+    setShowPdfPreview(false);
     setIsDialogOpen(true);
+  };
+
+  const handleViewPdf = () => {
+    setShowPdfPreview(true);
   };
 
   const handleApprove = async () => {
@@ -327,72 +336,99 @@ const ReviewQueue = () => {
       </main>
 
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className={showPdfPreview ? "max-w-6xl max-h-[90vh]" : "max-w-2xl"}>
           <DialogHeader>
-            <DialogTitle>Revisar Documento</DialogTitle>
+            <DialogTitle className="flex items-center justify-between">
+              <span>Revisar Documento</span>
+              {selectedDoc && (selectedDoc.pdf_attachment_url || selectedDoc.file_path) && (
+                <Button 
+                  variant={showPdfPreview ? "default" : "outline"} 
+                  size="sm" 
+                  onClick={() => setShowPdfPreview(!showPdfPreview)}
+                  className="ml-4"
+                >
+                  <Eye className="h-4 w-4 mr-2" />
+                  {showPdfPreview ? "Ocultar PDF" : "Ver PDF"}
+                </Button>
+              )}
+            </DialogTitle>
             <DialogDescription>
-              Asigne el proveedor correcto para este documento
+              Asigne la cuenta contable para este documento
             </DialogDescription>
           </DialogHeader>
 
           {selectedDoc && (
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-4 p-4 bg-muted rounded-lg">
-                <div>
-                  <p className="text-xs text-muted-foreground">Número</p>
-                  <p className="font-semibold">{selectedDoc.doc_number}</p>
+            <div className={showPdfPreview ? "grid grid-cols-2 gap-4" : ""}>
+              {/* Panel izquierdo - Datos del documento */}
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 gap-4 p-4 bg-muted rounded-lg">
+                  <div>
+                    <p className="text-xs text-muted-foreground">Número</p>
+                    <p className="font-semibold">{selectedDoc.doc_number}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Fecha</p>
+                    <p className="font-semibold">
+                      {new Date(selectedDoc.issue_date).toLocaleDateString("es-CR")}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Proveedor</p>
+                    <p className="font-semibold">{selectedDoc.supplier_name}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Cédula</p>
+                    <p className="font-semibold">{selectedDoc.supplier_tax_id || "N/A"}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Monto Total</p>
+                    <p className="font-semibold text-lg">
+                      {formatCurrency(selectedDoc.total_amount, selectedDoc.currency)}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Motivo de Revisión</p>
+                    <p className="text-sm text-warning">{selectedDoc.error_message || "Sin clasificar"}</p>
+                  </div>
                 </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">Fecha</p>
-                  <p className="font-semibold">
-                    {new Date(selectedDoc.issue_date).toLocaleDateString("es-CR")}
-                  </p>
+
+                <div className="space-y-2">
+                  <Label htmlFor="account">Cuenta Contable *</Label>
+                  <AccountCombobox
+                    accounts={accounts}
+                    value={selectedAccount}
+                    onValueChange={setSelectedAccount}
+                    placeholder="Seleccione cuenta contable..."
+                  />
                 </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">Proveedor</p>
-                  <p className="font-semibold">{selectedDoc.supplier_name}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">Cédula</p>
-                  <p className="font-semibold">{selectedDoc.supplier_tax_id || "N/A"}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">Monto Total</p>
-                  <p className="font-semibold text-lg">
-                    {formatCurrency(selectedDoc.total_amount, selectedDoc.currency)}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">Motivo de Revisión</p>
-                  <p className="text-sm text-warning">{selectedDoc.error_message || "Sin clasificar"}</p>
+
+                <div className="space-y-2">
+                  <Label htmlFor="vendor">Proveedor QBO (opcional)</Label>
+                  <Select value={selectedVendor} onValueChange={setSelectedVendor}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Seleccione un proveedor..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {vendors.map((vendor) => (
+                        <SelectItem key={vendor.id} value={vendor.id}>
+                          {vendor.vendor_name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
               </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="account">Cuenta Contable *</Label>
-                <AccountCombobox
-                  accounts={accounts}
-                  value={selectedAccount}
-                  onValueChange={setSelectedAccount}
-                  placeholder="Seleccione cuenta contable..."
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="vendor">Proveedor QBO (opcional)</Label>
-                <Select value={selectedVendor} onValueChange={setSelectedVendor}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Seleccione un proveedor..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {vendors.map((vendor) => (
-                      <SelectItem key={vendor.id} value={vendor.id}>
-                        {vendor.vendor_name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
+              {/* Panel derecho - Vista previa del PDF */}
+              {showPdfPreview && (
+                <div className="border rounded-lg overflow-hidden h-[500px]">
+                  <PdfViewer 
+                    url={selectedDoc.pdf_attachment_url || undefined}
+                    storagePath={selectedDoc.file_path || undefined}
+                    fileName={`${selectedDoc.doc_number}-${selectedDoc.supplier_name}`}
+                  />
+                </div>
+              )}
             </div>
           )}
 
