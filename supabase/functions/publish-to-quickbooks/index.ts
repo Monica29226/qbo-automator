@@ -783,11 +783,27 @@ Deno.serve(async (req) => {
         // 1. Cuenta del documento
         if (doc.default_account_ref) {
           const rawCode = doc.default_account_ref;
-          accountCode = rawCode.includes(' - ') 
-            ? rawCode.split(' - ')[0].trim()
-            : rawCode.split(' ')[0].trim();
           
-          log(`✓ Account from document: ${accountCode}`);
+          // Si es un ID puro (número de 1-3 dígitos), usarlo directamente
+          if (/^\d{1,3}$/.test(rawCode.trim())) {
+            accountCode = rawCode.trim();
+            log(`✓ Account from document (ID directo): ${accountCode}`);
+          } else {
+            // Si tiene formato "670 - Nombre" o "670 Nombre", extraer el código
+            const extractedCode = rawCode.includes(' - ') 
+              ? rawCode.split(' - ')[0].trim()
+              : rawCode.split(' ')[0].trim();
+            
+            // Si el código extraído parece un número válido, usarlo
+            if (/^\d+/.test(extractedCode)) {
+              accountCode = extractedCode;
+              log(`✓ Account from document (extraído): ${accountCode}`);
+            } else {
+              // Fallback: usar el valor raw completo para búsqueda por nombre
+              accountCode = rawCode.trim();
+              log(`✓ Account from document (nombre completo): ${accountCode}`);
+            }
+          }
           
           if (!accountCode) {
             throw new Error(`Código de cuenta vacío: "${rawCode}"`);
