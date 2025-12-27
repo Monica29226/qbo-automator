@@ -125,6 +125,21 @@ Deno.serve(async (req) => {
     const settings = orgSettings?.settings as any || {};
     const taxHandling = settings?.tax_handling || 'standard'; // 'standard' o 'included_in_line_items'
     
+    // Obtener configuración de default_uses_tax desde system_settings
+    const { data: defaultUsesTaxSetting } = await supabase
+      .from("system_settings")
+      .select("value")
+      .eq("organization_id", organization_id)
+      .eq("key", "default_uses_tax")
+      .maybeSingle();
+    
+    // Si default_uses_tax = 'false', el IVA se trata como gasto no recuperable
+    const orgDefaultUsesTax = defaultUsesTaxSetting?.value !== 'false';
+    
+    if (!orgDefaultUsesTax) {
+      logInfo(`💰 Organización "${orgSettings?.name}" - IVA tratado como gasto no recuperable`);
+    }
+    
     if (taxHandling === 'included_in_line_items') {
       logInfo(`🏷️ Organización "${orgSettings?.name}" - IVA incluido en líneas de producto`);
     }
@@ -1022,7 +1037,9 @@ Deno.serve(async (req) => {
           if (includeTaxInLines) {
             subtotal = doc.total_amount; // Total con IVA incluido
           } else {
-            subtotal = doc.uses_tax !== false 
+            // Aplicar configuración de organización: si orgDefaultUsesTax es false, el IVA se incluye en el monto
+            const effectiveUsesTax = (doc.uses_tax !== false) && orgDefaultUsesTax;
+            subtotal = effectiveUsesTax
               ? doc.total_amount - (doc.total_tax || 0)
               : doc.total_amount;
           }
@@ -1040,10 +1057,11 @@ Deno.serve(async (req) => {
             },
           };
           
-          // TREE OF LIFE: NO agregar TaxCodeRef
-          if (!includeTaxInLines) {
-            // Obtener TaxCodeRef para la línea fallback
-            const fallbackTaxRate = doc.uses_tax !== false && doc.total_tax && doc.total_tax > 0 ? 13 : 0;
+          // Si orgDefaultUsesTax es false, NO agregar TaxCodeRef (IVA ya incluido en líneas)
+          if (!includeTaxInLines && orgDefaultUsesTax) {
+            // Obtener TaxCodeRef para la línea fallback solo si la org usa IVA recuperable
+            const effectiveUsesTax = (doc.uses_tax !== false) && orgDefaultUsesTax;
+            const fallbackTaxRate = effectiveUsesTax && doc.total_tax && doc.total_tax > 0 ? 13 : 0;
             const fallbackTaxCodeId = await getTaxCodeRef(fallbackTaxRate);
             
             if (fallbackTaxCodeId) {
@@ -1054,7 +1072,9 @@ Deno.serve(async (req) => {
           lines.push(fallbackLine);
         }
         
-        const documentUsesTax = doc.uses_tax !== false && !includeTaxInLines;
+        // Aplicar configuración de organización para determinar si usar IVA como línea separada
+        const effectiveDocUsesTax = (doc.uses_tax !== false) && orgDefaultUsesTax;
+        const documentUsesTax = effectiveDocUsesTax && !includeTaxInLines;
         const totalTax = documentUsesTax ? (parseFloat(doc.total_tax as any) || 0) : 0;
         const subtotalLines = lines.reduce((sum, l) => sum + l.Amount, 0);
         
