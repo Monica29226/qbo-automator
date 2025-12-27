@@ -385,14 +385,18 @@ serve(async (req) => {
         // IMPORTANTE: Filtrar XMLs que NO son facturas (respuestas de Hacienda)
         // AHC = Acuse Hacienda Confirmación, RMH = Respuesta Mensaje Hacienda, MH = Mensaje Hacienda
         const allXmlParts = allParts.filter((p: any) => p.filename?.toLowerCase().endsWith(".xml"));
+        console.log(`🔍 XMLs encontrados: ${allXmlParts.map((p: any) => p.filename).join(', ')}`);
+        
         const xmlParts = allXmlParts.filter((p: any) => {
           const filename = p.filename?.toUpperCase() || '';
-          // Excluir respuestas de Hacienda - estos NO son facturas
-          if (filename.startsWith('AHC-') || filename.startsWith('RMH-') || filename.startsWith('MH-') || 
-              filename.includes('RESPUESTA') || filename.includes('HACIENDA')) {
+          // Excluir SOLO respuestas de Hacienda (confirmaciones/acuses)
+          // IMPORTANTE: Los archivos que empiezan con números (ej: 50612345...) SÍ son facturas
+          if (filename.startsWith('AHC-') || filename.startsWith('RMH-') || 
+              filename.includes('-RESPUESTA') || filename.includes('_RESPUESTA')) {
             console.log(`⏭️ Ignorando respuesta de Hacienda: ${p.filename}`);
             return false;
           }
+          // Aceptar todo lo demás (incluyendo MH que puede ser factura legítima)
           return true;
         });
         
