@@ -329,7 +329,20 @@ Deno.serve(async (req) => {
         if (!createResponse.ok) {
           const errorText = await createResponse.text();
           logError(`❌ Failed to create vendor "${vendorDisplayName}": ${errorText}`);
-          throw new Error(`No se pudo crear el proveedor "${vendorDisplayName}" en QuickBooks`);
+          
+          // Intentar parsear el error de QBO para dar mejor mensaje
+          try {
+            const errorJson = JSON.parse(errorText);
+            const qboError = errorJson?.Fault?.Error?.[0];
+            if (qboError) {
+              const detail = qboError.Detail || qboError.Message || 'Error desconocido';
+              throw new Error(`Error QBO creando proveedor "${vendorDisplayName}": ${detail}`);
+            }
+          } catch (parseErr) {
+            // Si no se puede parsear, usar el mensaje genérico
+          }
+          
+          throw new Error(`No se pudo crear el proveedor "${vendorDisplayName}" en QuickBooks: ${errorText.substring(0, 200)}`);
         }
 
         const vendorData = await createResponse.json();
