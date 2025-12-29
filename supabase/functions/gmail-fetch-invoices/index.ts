@@ -428,7 +428,15 @@ serve(async (req) => {
               if (!attachmentResponse.ok) continue;
 
               const attachmentData = await attachmentResponse.json();
-              const xmlContent = atob(attachmentData.data.replace(/-/g, "+").replace(/_/g, "/"));
+              
+              // Decodificar base64 a bytes y luego a texto UTF-8 para preservar tildes
+              const base64Fixed = attachmentData.data.replace(/-/g, "+").replace(/_/g, "/");
+              const binaryString = atob(base64Fixed);
+              const bytes = new Uint8Array(binaryString.length);
+              for (let i = 0; i < binaryString.length; i++) {
+                bytes[i] = binaryString.charCodeAt(i);
+              }
+              const xmlContent = new TextDecoder('utf-8').decode(bytes);
 
               console.log(`Processing invoice: ${xmlPart.filename}`);
 
