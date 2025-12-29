@@ -493,6 +493,9 @@ const ReviewQueue = () => {
             <DialogTitle>
               {pdfOnlyDoc ? `${pdfOnlyDoc.doc_number} - ${pdfOnlyDoc.supplier_name}` : "Ver PDF"}
             </DialogTitle>
+            <DialogDescription className="sr-only">
+              Vista previa del documento en PDF
+            </DialogDescription>
           </DialogHeader>
           {pdfOnlyDoc && (
             <div className="h-[600px]">
