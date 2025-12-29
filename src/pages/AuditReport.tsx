@@ -289,7 +289,7 @@ export default function AuditReport() {
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold text-green-600">
-                {documents.filter(d => d.status === "processed" || d.status === "duplicate").length}
+                {documents.filter(d => d.status === "published" || d.status === "processed" || d.status === "duplicate").length}
               </div>
             </CardContent>
           </Card>
