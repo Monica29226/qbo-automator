@@ -20,13 +20,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { ErrorDiagnostic } from "@/components/dashboard/ErrorDiagnostic";
 import { useQBOAccounts } from "@/hooks/useQBOAccounts";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { AccountCombobox } from "@/components/AccountCombobox";
 
 interface ErrorDocument {
   id: string;
@@ -626,22 +620,16 @@ const ErrorDocuments = () => {
               ) : accounts.length === 0 ? (
                 <p className="text-sm text-destructive">No se encontraron cuentas. Verifica la conexión con QuickBooks.</p>
               ) : (
-                <Select value={selectedAccount} onValueChange={setSelectedAccount}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Seleccionar cuenta" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <ScrollArea className="h-[300px]">
-                      {accounts
-                        .sort((a, b) => (a.accountNumber || "").localeCompare(b.accountNumber || ""))
-                        .map((account) => (
-                          <SelectItem key={account.id} value={account.id}>
-                            {account.accountNumber ? `${account.accountNumber} - ` : ""}{account.name} ({account.accountType})
-                          </SelectItem>
-                        ))}
-                    </ScrollArea>
-                  </SelectContent>
-                </Select>
+                <AccountCombobox
+                  accounts={accounts.map(acc => ({
+                    id: acc.id,
+                    name: acc.name,
+                    accountNumber: acc.accountNumber || undefined
+                  }))}
+                  value={selectedAccount}
+                  onValueChange={setSelectedAccount}
+                  placeholder="Seleccionar cuenta..."
+                />
               )}
               <p className="text-xs text-muted-foreground">
                 Esta cuenta se guardará como predeterminada para este proveedor
