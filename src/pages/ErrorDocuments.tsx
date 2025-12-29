@@ -621,22 +621,28 @@ const ErrorDocuments = () => {
             
             <div className="space-y-2">
               <Label htmlFor="account">Cuenta de Gastos</Label>
-              <Select value={selectedAccount} onValueChange={setSelectedAccount}>
-                <SelectTrigger>
-                  <SelectValue placeholder={isLoadingAccounts ? "Cargando cuentas..." : "Seleccionar cuenta"} />
-                </SelectTrigger>
-                <SelectContent>
-                  <ScrollArea className="h-[300px]">
-                    {accounts
-                      .filter(acc => acc.accountType === "Expense" || acc.accountType === "Cost of Goods Sold" || acc.accountType === "Other Expense")
-                      .map((account) => (
-                        <SelectItem key={account.id} value={account.id}>
-                          {account.accountNumber ? `${account.accountNumber} - ` : ""}{account.name}
-                        </SelectItem>
-                      ))}
-                  </ScrollArea>
-                </SelectContent>
-              </Select>
+              {isLoadingAccounts ? (
+                <p className="text-sm text-muted-foreground">Cargando cuentas de QuickBooks...</p>
+              ) : accounts.length === 0 ? (
+                <p className="text-sm text-destructive">No se encontraron cuentas. Verifica la conexión con QuickBooks.</p>
+              ) : (
+                <Select value={selectedAccount} onValueChange={setSelectedAccount}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Seleccionar cuenta" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <ScrollArea className="h-[300px]">
+                      {accounts
+                        .sort((a, b) => (a.accountNumber || "").localeCompare(b.accountNumber || ""))
+                        .map((account) => (
+                          <SelectItem key={account.id} value={account.id}>
+                            {account.accountNumber ? `${account.accountNumber} - ` : ""}{account.name} ({account.accountType})
+                          </SelectItem>
+                        ))}
+                    </ScrollArea>
+                  </SelectContent>
+                </Select>
+              )}
               <p className="text-xs text-muted-foreground">
                 Esta cuenta se guardará como predeterminada para este proveedor
               </p>
