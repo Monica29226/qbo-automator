@@ -94,11 +94,12 @@ Deno.serve(async (req) => {
     }
 
     // Buscar notas de crédito publicadas (con qbo_entity_id)
+    // Include both old "NC" type and new "NotaCreditoElectronica" type
     const { data: creditNotes, error: docError } = await supabase
       .from("processed_documents")
       .select("*")
       .eq("organization_id", organization_id)
-      .eq("doc_type", "NC")
+      .in("doc_type", ["NC", "NotaCreditoElectronica"])
       .eq("status", "published")
       .not("qbo_entity_id", "is", null)
       .limit(100);
@@ -129,53 +130,59 @@ Deno.serve(async (req) => {
     // Procesar cada nota de crédito
     for (const doc of creditNotes) {
       try {
-        console.log(`Processing credit note: ${doc.doc_number} with QBO ID: ${doc.qbo_entity_id}`);
+        console.log(`Processing credit note: ${doc.doc_number} with QBO ID: ${doc.qbo_entity_id} (type: ${doc.qbo_entity_type})`);
         
-        // Paso 1: Eliminar el bill existente de QuickBooks
+        // Paso 1: Eliminar el Bill o VendorCredit existente de QuickBooks
         try {
-          // Primero obtener el bill actual para tener el SyncToken
-          const getBillUrl = `https://quickbooks.api.intuit.com/v3/company/${realmId}/bill/${doc.qbo_entity_id}?minorversion=65`;
-          const getBillResponse = await fetch(getBillUrl, {
+          const entityType = doc.qbo_entity_type || "Bill"; // Default to Bill for old records
+          const entityEndpoint = entityType === "VendorCredit" ? "vendorcredit" : "bill";
+          
+          // Primero obtener la entidad actual para tener el SyncToken
+          const getUrl = `https://quickbooks.api.intuit.com/v3/company/${realmId}/${entityEndpoint}/${doc.qbo_entity_id}?minorversion=65`;
+          const getResponse = await fetch(getUrl, {
             headers: {
               "Authorization": `Bearer ${accessToken}`,
               "Accept": "application/json",
             },
           });
 
-          if (getBillResponse.ok) {
-            const billData = await getBillResponse.json();
-            const syncToken = billData.Bill.SyncToken;
+          if (getResponse.ok) {
+            const entityData = await getResponse.json();
+            const entity = entityData[entityType === "VendorCredit" ? "VendorCredit" : "Bill"];
+            const syncToken = entity?.SyncToken;
             
-            // Eliminar el bill
-            const deletePayload = {
-              Id: doc.qbo_entity_id,
-              SyncToken: syncToken,
-            };
+            if (syncToken) {
+              // Eliminar la entidad
+              const deletePayload = {
+                Id: doc.qbo_entity_id,
+                SyncToken: syncToken,
+              };
 
-            const deleteBillUrl = `https://quickbooks.api.intuit.com/v3/company/${realmId}/bill?operation=delete&minorversion=65`;
-            const deleteResponse = await fetch(deleteBillUrl, {
-              method: "POST",
-              headers: {
-                "Authorization": `Bearer ${accessToken}`,
-                "Accept": "application/json",
-                "Content-Type": "application/json",
-              },
-              body: JSON.stringify(deletePayload),
-            });
+              const deleteUrl = `https://quickbooks.api.intuit.com/v3/company/${realmId}/${entityEndpoint}?operation=delete&minorversion=65`;
+              const deleteResponse = await fetch(deleteUrl, {
+                method: "POST",
+                headers: {
+                  "Authorization": `Bearer ${accessToken}`,
+                  "Accept": "application/json",
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify(deletePayload),
+              });
 
-            if (deleteResponse.ok) {
-              console.log(`✓ Deleted bill ${doc.doc_number} from QuickBooks`);
-              results.deleted++;
-            } else {
-              const errorText = await deleteResponse.text();
-              console.error(`Failed to delete bill: ${errorText}`);
-              throw new Error(`Failed to delete bill: ${errorText}`);
+              if (deleteResponse.ok) {
+                console.log(`✓ Deleted ${entityType} ${doc.doc_number} from QuickBooks`);
+                results.deleted++;
+              } else {
+                const errorText = await deleteResponse.text();
+                console.error(`Failed to delete ${entityType}: ${errorText}`);
+                throw new Error(`Failed to delete ${entityType}: ${errorText}`);
+              }
             }
           } else {
-            console.warn(`Bill ${doc.qbo_entity_id} not found in QuickBooks, will republish anyway`);
+            console.warn(`${entityType} ${doc.qbo_entity_id} not found in QuickBooks, will republish anyway`);
           }
         } catch (deleteError) {
-          console.error(`Error deleting bill for ${doc.doc_number}:`, deleteError);
+          console.error(`Error deleting entity for ${doc.doc_number}:`, deleteError);
           // Continuar de todos modos para intentar republicar
         }
 

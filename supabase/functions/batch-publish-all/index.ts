@@ -225,6 +225,15 @@ async function processSingleDocument(
       };
     }
     
+    // Detect if this is a credit note
+    const isCreditNote = doc.xml_data?.esNotaCredito === true || 
+                         docType === 'NotaCreditoElectronica' || 
+                         docType === 'NC' ||
+                         docType === '03';
+    
+    if (isCreditNote) {
+      console.log(`💳 ${docNumber}: Nota de Crédito detectada`);
+    }
     // 2. Filter rejected invoices
     const situacion = doc.xml_data?.situacion || doc.xml_data?.mensaje_receptor;
     if (situacion === '3' || situacion === 3) {
@@ -389,18 +398,18 @@ async function processSingleDocument(
       };
     }
     
-    // 7. Build Bill lines
+    // 7. Build lines (positive amounts for both Bill and VendorCredit)
     const lines: any[] = [];
     const detalle = doc.xml_data?.detalle || doc.xml_data?.lineas || [];
     
     if (Array.isArray(detalle) && detalle.length > 0) {
       for (const item of detalle) {
-        const amount = parseFloat(item.monto_total_linea || item.MontoTotalLinea || item.subtotal || item.monto || '0');
+        const amount = Math.abs(parseFloat(item.monto_total_linea || item.MontoTotalLinea || item.subtotal || item.monto || '0'));
         if (amount > 0) {
           lines.push({
             DetailType: "AccountBasedExpenseLineDetail",
             Amount: amount,
-            Description: (item.detalle || item.Detalle || item.descripcion || 'Línea de factura').substring(0, 4000),
+            Description: (item.detalle || item.Detalle || item.descripcion || (isCreditNote ? 'Línea NC' : 'Línea de factura')).substring(0, 4000),
             AccountBasedExpenseLineDetail: {
               AccountRef: { value: account.Id },
               BillableStatus: "NotBillable"
@@ -412,11 +421,11 @@ async function processSingleDocument(
     
     // If no lines from detail, create single line
     if (lines.length === 0) {
-      const baseAmount = doc.total_amount - (doc.total_tax || 0);
+      const baseAmount = Math.abs(doc.total_amount) - Math.abs(doc.total_tax || 0);
       lines.push({
         DetailType: "AccountBasedExpenseLineDetail",
-        Amount: baseAmount > 0 ? baseAmount : doc.total_amount,
-        Description: `Factura ${docNumber} - ${supplierName}`,
+        Amount: baseAmount > 0 ? baseAmount : Math.abs(doc.total_amount),
+        Description: `${isCreditNote ? 'Nota de Crédito' : 'Factura'} ${docNumber} - ${supplierName}`,
         AccountBasedExpenseLineDetail: {
           AccountRef: { value: account.Id },
           BillableStatus: "NotBillable"
@@ -444,77 +453,153 @@ async function processSingleDocument(
       });
     }
     
-    // 9. Create Bill in QuickBooks (with timeout protection)
-    const billPayload = {
-      VendorRef: { value: vendorRef },
-      TxnDate: doc.issue_date,
-      DueDate: doc.issue_date,
-      DocNumber: docNumber.length > 21 ? docNumber.substring(docNumber.length - 21) : docNumber,
-      CurrencyRef: { value: doc.currency || 'CRC' },
-      ExchangeRate: doc.exchange_rate || 1,
-      Line: lines,
-      PrivateNote: `Clave: ${doc.doc_key || docNumber}`
-    };
+    // 9. Create Bill or VendorCredit in QuickBooks (with timeout protection)
+    const qboDocNumber = docNumber.length > 21 ? docNumber.substring(docNumber.length - 21) : docNumber;
     
-    console.log(`📤 ${docNumber}: Enviando a QuickBooks (${lines.length} líneas)...`);
+    let entityId: string;
+    let entityType: string;
     
-    const billController = new AbortController();
-    const billTimeoutId = setTimeout(() => billController.abort(), 15000); // 15s timeout for bill creation
-    
-    const qbResponse = await fetch(
-      `https://quickbooks.api.intuit.com/v3/company/${realmId}/bill?minorversion=65`,
-      {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${accessToken}`,
-          'Accept': 'application/json',
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(billPayload),
-        signal: billController.signal
-      }
-    );
-    
-    clearTimeout(billTimeoutId);
-    
-    const qbResult = await qbResponse.json();
-    
-    if (!qbResponse.ok) {
-      const errorMsg = qbResult.Fault?.Error?.[0]?.Message || 
-                       qbResult.Fault?.Error?.[0]?.Detail || 
-                       JSON.stringify(qbResult).substring(0, 200);
-      console.error(`❌ ${docNumber}: Error QB - ${errorMsg}`);
-      
-      // Update document with error
-      await supabase
-        .from('processed_documents')
-        .update({
-          status: 'error',
-          error_message: errorMsg.substring(0, 500),
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', doc.id);
-      
-      return {
-        doc_id: doc.id,
-        doc_number: docNumber,
-        supplier_name: supplierName,
-        success: false,
-        reason: errorMsg,
-        elapsed_ms: Date.now() - startTime
+    if (isCreditNote) {
+      // ============================================
+      // NOTA DE CRÉDITO → VendorCredit
+      // ============================================
+      const vendorCreditPayload = {
+        VendorRef: { value: vendorRef },
+        TxnDate: doc.issue_date,
+        DocNumber: qboDocNumber,
+        CurrencyRef: { value: doc.currency || 'CRC' },
+        ExchangeRate: doc.exchange_rate || 1,
+        Line: lines, // VendorCredit uses positive amounts
+        PrivateNote: `Nota de Crédito - Clave: ${doc.doc_key || docNumber}`
       };
+      
+      console.log(`📤 ${docNumber}: Enviando VendorCredit a QuickBooks (${lines.length} líneas)...`);
+      
+      const vcController = new AbortController();
+      const vcTimeoutId = setTimeout(() => vcController.abort(), 15000);
+      
+      const qbResponse = await fetch(
+        `https://quickbooks.api.intuit.com/v3/company/${realmId}/vendorcredit?minorversion=65`,
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'Accept': 'application/json',
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(vendorCreditPayload),
+          signal: vcController.signal
+        }
+      );
+      
+      clearTimeout(vcTimeoutId);
+      
+      const qbResult = await qbResponse.json();
+      
+      if (!qbResponse.ok) {
+        const errorMsg = qbResult.Fault?.Error?.[0]?.Message || 
+                         qbResult.Fault?.Error?.[0]?.Detail || 
+                         JSON.stringify(qbResult).substring(0, 200);
+        console.error(`❌ ${docNumber}: Error QB VendorCredit - ${errorMsg}`);
+        
+        await supabase
+          .from('processed_documents')
+          .update({
+            status: 'error',
+            error_message: errorMsg.substring(0, 500),
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', doc.id);
+        
+        return {
+          doc_id: doc.id,
+          doc_number: docNumber,
+          supplier_name: supplierName,
+          success: false,
+          reason: errorMsg,
+          elapsed_ms: Date.now() - startTime
+        };
+      }
+      
+      entityId = qbResult.VendorCredit?.Id;
+      entityType = 'VendorCredit';
+      console.log(`✅ ${docNumber}: VendorCredit creado (ID: ${entityId})`);
+      
+    } else {
+      // ============================================
+      // FACTURA → Bill
+      // ============================================
+      const billPayload = {
+        VendorRef: { value: vendorRef },
+        TxnDate: doc.issue_date,
+        DueDate: doc.issue_date,
+        DocNumber: qboDocNumber,
+        CurrencyRef: { value: doc.currency || 'CRC' },
+        ExchangeRate: doc.exchange_rate || 1,
+        Line: lines,
+        PrivateNote: `Clave: ${doc.doc_key || docNumber}`
+      };
+      
+      console.log(`📤 ${docNumber}: Enviando Bill a QuickBooks (${lines.length} líneas)...`);
+      
+      const billController = new AbortController();
+      const billTimeoutId = setTimeout(() => billController.abort(), 15000);
+      
+      const qbResponse = await fetch(
+        `https://quickbooks.api.intuit.com/v3/company/${realmId}/bill?minorversion=65`,
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'Accept': 'application/json',
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(billPayload),
+          signal: billController.signal
+        }
+      );
+      
+      clearTimeout(billTimeoutId);
+      
+      const qbResult = await qbResponse.json();
+      
+      if (!qbResponse.ok) {
+        const errorMsg = qbResult.Fault?.Error?.[0]?.Message || 
+                         qbResult.Fault?.Error?.[0]?.Detail || 
+                         JSON.stringify(qbResult).substring(0, 200);
+        console.error(`❌ ${docNumber}: Error QB Bill - ${errorMsg}`);
+        
+        await supabase
+          .from('processed_documents')
+          .update({
+            status: 'error',
+            error_message: errorMsg.substring(0, 500),
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', doc.id);
+        
+        return {
+          doc_id: doc.id,
+          doc_number: docNumber,
+          supplier_name: supplierName,
+          success: false,
+          reason: errorMsg,
+          elapsed_ms: Date.now() - startTime
+        };
+      }
+      
+      entityId = qbResult.Bill?.Id;
+      entityType = 'Bill';
+      console.log(`✅ ${docNumber}: Bill creado (ID: ${entityId})`);
     }
-    
-    const billId = qbResult.Bill?.Id;
-    console.log(`✅ ${docNumber}: Bill creado (ID: ${billId})`);
     
     // 10. Update document as published
     await supabase
       .from('processed_documents')
       .update({
         status: 'published',
-        qbo_entity_type: 'Bill',
-        qbo_entity_id: billId,
+        qbo_entity_type: entityType,
+        qbo_entity_id: entityId,
         error_message: null,
         processed_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
@@ -523,7 +608,7 @@ async function processSingleDocument(
     
     // 11. Attach PDF (fire and forget, don't block)
     if (doc.pdf_attachment_url) {
-      attachPDFToQuickBooks(billId, doc.pdf_attachment_url, accessToken, realmId, docNumber)
+      attachPDFToQuickBooks(entityId, doc.pdf_attachment_url, accessToken, realmId, docNumber)
         .catch(e => console.warn(`📎 ${docNumber}: Error en background PDF:`, e));
     }
     
@@ -532,7 +617,7 @@ async function processSingleDocument(
       doc_number: docNumber,
       supplier_name: supplierName,
       success: true,
-      qbo_id: billId,
+      qbo_id: entityId,
       elapsed_ms: Date.now() - startTime
     };
     
