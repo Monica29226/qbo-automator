@@ -199,6 +199,18 @@ Deno.serve(async (req) => {
         .eq("service_type", "quickbooks");
     }
 
+    // Obtener configuración de fecha mínima para publicar (por defecto: 90 días atrás)
+    const { data: minDateSetting } = await supabase
+      .from("system_settings")
+      .select("value")
+      .eq("organization_id", organization_id)
+      .eq("key", "min_publish_date")
+      .maybeSingle();
+    
+    // Si no hay configuración, usar 180 días atrás como mínimo (para incluir más facturas)
+    const minDate = minDateSetting?.value || new Date(Date.now() - 180 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    logInfo(`📅 Fecha mínima de publicación: ${minDate}`);
+
     // Obtener documentos a publicar
     let query = supabase
       .from("processed_documents")
@@ -206,7 +218,7 @@ Deno.serve(async (req) => {
       .eq("organization_id", organization_id)
       .is("qbo_entity_id", null)
       .in("status", ["pending", "processed"])
-      .gte("issue_date", "2025-11-01");
+      .gte("issue_date", minDate);
 
     if (document_ids && document_ids.length > 0) {
       query = query.in("id", document_ids);
@@ -217,6 +229,7 @@ Deno.serve(async (req) => {
     if (docError) throw docError;
 
     if (!documents || documents.length === 0) {
+      logInfo(`⚠️ No documents found to publish (min_date: ${minDate}, org: ${organization_id})`);
       return new Response(
         JSON.stringify({ success: true, message: "No documents to publish", published: 0 }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
