@@ -157,7 +157,8 @@ const ReviewQueue = () => {
     setSelectedDoc(doc);
     setSelectedVendor(doc.vendor_id || "");
     setSelectedAccount(doc.default_account_ref || "");
-    setShowPdfPreview(false);
+    // Mostrar PDF automáticamente si está disponible
+    setShowPdfPreview(!!(doc.pdf_attachment_url || doc.file_path));
     setIsDialogOpen(true);
   };
 
