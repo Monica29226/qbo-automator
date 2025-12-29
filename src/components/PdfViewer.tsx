@@ -1,8 +1,14 @@
 import { useState, useEffect } from 'react';
+import { Document, Page, pdfjs } from 'react-pdf';
+import 'react-pdf/dist/esm/Page/AnnotationLayer.css';
+import 'react-pdf/dist/esm/Page/TextLayer.css';
 import { Button } from '@/components/ui/button';
-import { FileText, Download, ExternalLink, Loader2, RefreshCw, CloudDownload } from 'lucide-react';
+import { FileText, Download, ExternalLink, Loader2, RefreshCw, CloudDownload, ChevronLeft, ChevronRight, ZoomIn, ZoomOut } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
+
+// Configurar el worker de PDF.js
+pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
 
 interface PdfViewerProps {
   url?: string;
@@ -25,11 +31,16 @@ export const PdfViewer = ({
 }: PdfViewerProps) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
-  const [pdfUrl, setPdfUrl] = useState<string | null>(null);
-  const [iframeKey, setIframeKey] = useState(0);
+  const [pdfData, setPdfData] = useState<{ data: Uint8Array } | null>(null);
+  const [pdfBlobUrl, setPdfBlobUrl] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
   const [pdfNotFound, setPdfNotFound] = useState(false);
   const [pdfInvalid, setPdfInvalid] = useState(false);
+  
+  // Estados para navegación y zoom
+  const [numPages, setNumPages] = useState<number>(0);
+  const [pageNumber, setPageNumber] = useState(1);
+  const [scale, setScale] = useState(1.0);
 
   const extractCompanyDocumentsPathFromPublicUrl = (rawUrl: string) => {
     const marker = '/storage/v1/object/public/company-documents/';
@@ -45,52 +56,37 @@ export const PdfViewer = ({
     }
   };
 
-  const toAbsoluteStorageUrl = (maybeRelativeUrl: string) => {
-    if (!maybeRelativeUrl) return maybeRelativeUrl;
-    if (/^https?:\/\//i.test(maybeRelativeUrl)) return maybeRelativeUrl;
-
-    const base = import.meta.env.VITE_SUPABASE_URL as string | undefined;
-    if (!base) return maybeRelativeUrl;
-
-    const origin = base.replace(/\/$/, '');
-
-    // Storage signed URLs can come back as /object/sign/... (relative to /storage/v1)
-    if (maybeRelativeUrl.startsWith('/storage/v1')) return `${origin}${maybeRelativeUrl}`;
-    if (maybeRelativeUrl.startsWith('/')) return `${origin}/storage/v1${maybeRelativeUrl}`;
-
-    return `${origin}/storage/v1/${maybeRelativeUrl}`;
-  };
   useEffect(() => {
     console.log('📄 PdfViewer useEffect - url:', url?.substring(0, 80), 'storagePath:', storagePath);
 
     setError(false);
     setLoading(true);
-    setPdfUrl(null);
+    setPdfData(null);
     setPdfNotFound(false);
     setPdfInvalid(false);
+    setPageNumber(1);
 
     if (url) {
       const companyDocsPath = extractCompanyDocumentsPathFromPublicUrl(url);
       if (companyDocsPath) {
         console.log('🔑 PdfViewer: URL pública detectada (bucket privado). Cargando desde storage:', companyDocsPath);
-        generateSignedUrl(companyDocsPath);
+        loadPdfFromStorage(companyDocsPath);
         return;
       }
 
-      console.log('✅ PdfViewer: Usando URL directa:', url);
-      setPdfUrl(toAbsoluteStorageUrl(url));
-      setLoading(false);
-      setIframeKey((prev) => prev + 1);
+      // Si es una URL externa, cargar directamente
+      console.log('✅ PdfViewer: Cargando desde URL externa');
+      loadPdfFromUrl(url);
       return;
     }
 
     if (storagePath && storagePath.toLowerCase().endsWith('.pdf')) {
       console.log('🔑 PdfViewer: Cargando PDF desde storagePath:', storagePath);
-      generateSignedUrl(storagePath);
+      loadPdfFromStorage(storagePath);
     } else if (storagePath && storagePath.includes('/')) {
       const pdfPath = storagePath.replace(/\.xml$/i, '.pdf');
       console.log('🔄 PdfViewer: storagePath es XML, intentando con PDF:', pdfPath);
-      generateSignedUrl(pdfPath);
+      loadPdfFromStorage(pdfPath);
     } else {
       console.warn('⚠️ PdfViewer: Sin URL ni storagePath usable');
       setLoading(false);
@@ -99,15 +95,46 @@ export const PdfViewer = ({
     }
   }, [url, storagePath]);
 
+  // Limpiar blob URL al desmontar
   useEffect(() => {
     return () => {
-      if (pdfUrl?.startsWith('blob:')) {
-        URL.revokeObjectURL(pdfUrl);
+      if (pdfBlobUrl) {
+        URL.revokeObjectURL(pdfBlobUrl);
       }
     };
-  }, [pdfUrl]);
+  }, [pdfBlobUrl]);
 
-  const generateSignedUrl = async (path: string) => {
+  const loadPdfFromUrl = async (pdfUrl: string) => {
+    try {
+      const response = await fetch(pdfUrl);
+      if (!response.ok) throw new Error('Error fetching PDF');
+      
+      const arrayBuffer = await response.arrayBuffer();
+      const uint8Array = new Uint8Array(arrayBuffer);
+      
+      // Validar que es un PDF
+      const header = new TextDecoder().decode(uint8Array.slice(0, 4));
+      if (!header.startsWith('%PDF')) {
+        console.warn('⚠️ El archivo no parece un PDF válido');
+        setError(true);
+        setPdfInvalid(true);
+        return;
+      }
+      
+      setPdfData({ data: uint8Array });
+      // Crear blob URL para descarga
+      const blob = new Blob([uint8Array], { type: 'application/pdf' });
+      setPdfBlobUrl(URL.createObjectURL(blob));
+      console.log('✅ PDF cargado desde URL');
+    } catch (err) {
+      console.error('❌ Error cargando PDF desde URL:', err);
+      setError(true);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadPdfFromStorage = async (path: string) => {
     setLoading(true);
     setError(false);
     setPdfNotFound(false);
@@ -134,48 +161,33 @@ export const PdfViewer = ({
         return;
       }
 
-      // 1) Preferir descargar como Blob y crear objectURL (evita problemas de iframe/X-Frame/CSP)
+      // Descargar el PDF
       const { data: blob, error: downloadError } = await supabase.storage
         .from('company-documents')
         .download(path);
 
-      if (!downloadError && blob) {
-        const pdfBlob = blob.type === 'application/pdf' ? blob : blob.slice(0, blob.size, 'application/pdf');
+      if (downloadError || !blob) {
+        console.error('❌ Error descargando PDF:', downloadError);
+        throw downloadError || new Error('No blob returned');
+      }
 
-        // Validación rápida: un PDF válido empieza con "%PDF"
-        const headerBuf = await pdfBlob.slice(0, 4).arrayBuffer();
-        const header = new TextDecoder().decode(headerBuf);
-        if (!header.startsWith('%PDF')) {
-          console.warn('⚠️ El archivo descargado no parece un PDF válido. Header:', header);
-          setError(true);
-          setPdfInvalid(true);
-          return;
-        }
+      const arrayBuffer = await blob.arrayBuffer();
+      const uint8Array = new Uint8Array(arrayBuffer);
 
-        const objectUrl = URL.createObjectURL(pdfBlob);
-        console.log('✅ PDF listo para visor (blob URL)');
-        setPdfUrl(objectUrl);
-        setIframeKey((prev) => prev + 1);
+      // Validar que es un PDF
+      const header = new TextDecoder().decode(uint8Array.slice(0, 4));
+      if (!header.startsWith('%PDF')) {
+        console.warn('⚠️ El archivo no parece un PDF válido. Header:', header);
+        setError(true);
+        setPdfInvalid(true);
         return;
       }
 
-      console.warn('⚠️ No se pudo descargar el PDF (download). Intentando signed URL...', downloadError);
-
-      // 2) Fallback: signed URL
-      const { data, error: signedUrlError } = await supabase.storage
-        .from('company-documents')
-        .createSignedUrl(path, 3600);
-
-      if (signedUrlError) {
-        console.error('❌ Error generando signed URL:', signedUrlError);
-        throw signedUrlError;
-      }
-
-      const absoluteSignedUrl = toAbsoluteStorageUrl(data.signedUrl);
-      console.log('✅ Signed URL generada (fallback)');
-      console.log('🔗 Signed URL final:', absoluteSignedUrl?.substring(0, 140));
-      setPdfUrl(absoluteSignedUrl);
-      setIframeKey((prev) => prev + 1);
+      setPdfData({ data: uint8Array });
+      // Crear blob URL para descarga/nueva pestaña
+      const pdfBlob = new Blob([uint8Array], { type: 'application/pdf' });
+      setPdfBlobUrl(URL.createObjectURL(pdfBlob));
+      console.log('✅ PDF cargado correctamente desde storage');
     } catch (err) {
       console.error('❌ Error en carga de PDF:', err);
       setError(true);
@@ -207,15 +219,13 @@ export const PdfViewer = ({
       if (data?.success && data?.pdf_url) {
         toast.success('PDF descargado exitosamente');
         
-        // Notificar al componente padre
         if (onPdfDownloaded) {
           onPdfDownloaded(data.pdf_url);
         }
         
-        // Recargar el visor con la nueva URL
         const path = data.storage_path;
         if (path) {
-          await generateSignedUrl(path);
+          await loadPdfFromStorage(path);
         }
       } else {
         toast.error(data?.error || 'No se encontró el PDF en Gmail');
@@ -229,18 +239,16 @@ export const PdfViewer = ({
   };
 
   const openInNewTab = () => {
-    if (pdfUrl) {
-      // Para blob URLs, abrir la nueva pestaña inmediatamente.
-      window.open(pdfUrl, '_blank', 'noopener,noreferrer');
+    if (pdfBlobUrl) {
+      window.open(pdfBlobUrl, '_blank', 'noopener,noreferrer');
     }
   };
 
   const downloadPdf = () => {
-    if (pdfUrl) {
+    if (pdfBlobUrl) {
       const a = document.createElement('a');
-      a.href = pdfUrl;
+      a.href = pdfBlobUrl;
       a.download = `${fileName}.pdf`;
-      a.target = '_blank';
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -248,35 +256,37 @@ export const PdfViewer = ({
   };
 
   const handleRetry = () => {
-    setIframeKey((prev) => prev + 1);
-
     if (url) {
       const companyDocsPath = extractCompanyDocumentsPathFromPublicUrl(url);
       if (companyDocsPath) {
-        generateSignedUrl(companyDocsPath);
+        loadPdfFromStorage(companyDocsPath);
         return;
       }
-      setPdfUrl(toAbsoluteStorageUrl(url));
-      setError(false);
-      setLoading(false);
+      loadPdfFromUrl(url);
       return;
     }
 
     if (storagePath && storagePath.toLowerCase().endsWith('.pdf')) {
-      generateSignedUrl(storagePath);
+      loadPdfFromStorage(storagePath);
     } else if (storagePath && storagePath.includes('/')) {
-      generateSignedUrl(storagePath.replace(/\.xml$/i, '.pdf'));
+      loadPdfFromStorage(storagePath.replace(/\.xml$/i, '.pdf'));
     }
   };
 
-  const handleIframeLoad = () => {
-    setLoading(false);
+  const onDocumentLoadSuccess = ({ numPages }: { numPages: number }) => {
+    setNumPages(numPages);
+    console.log('📖 PDF cargado con', numPages, 'páginas');
   };
 
-  const handleIframeError = () => {
+  const onDocumentLoadError = (error: Error) => {
+    console.error('❌ Error cargando PDF en react-pdf:', error);
     setError(true);
-    setLoading(false);
   };
+
+  const goToPrevPage = () => setPageNumber((prev) => Math.max(prev - 1, 1));
+  const goToNextPage = () => setPageNumber((prev) => Math.min(prev + 1, numPages));
+  const zoomIn = () => setScale((prev) => Math.min(prev + 0.25, 3));
+  const zoomOut = () => setScale((prev) => Math.max(prev - 0.25, 0.5));
 
   if (loading) {
     return (
@@ -289,7 +299,7 @@ export const PdfViewer = ({
     );
   }
 
-  if (error || !pdfUrl) {
+  if (error || !pdfData) {
     const canDownloadFromGmail = organizationId && docNumber && (pdfNotFound || pdfInvalid);
 
     return (
@@ -300,7 +310,7 @@ export const PdfViewer = ({
           {pdfNotFound
             ? 'El PDF no existe en el storage.'
             : pdfInvalid
-              ? 'El archivo encontrado en storage no parece ser un PDF válido. Re-descárguelo desde Gmail.'
+              ? 'El archivo encontrado en storage no parece ser un PDF válido.'
               : 'Error al cargar el documento.'}
         </p>
         <div className="flex flex-wrap gap-2 justify-center">
@@ -328,51 +338,75 @@ export const PdfViewer = ({
               )}
             </Button>
           )}
-          {pdfUrl && (
-            <Button onClick={openInNewTab} variant="secondary" className="gap-1">
-              <ExternalLink className="h-4 w-4" />
-              Abrir en nueva pestaña
-            </Button>
-          )}
         </div>
       </div>
     );
   }
 
   return (
-    <div className="relative w-full h-full min-h-[500px] bg-muted/20 flex flex-col">
-      {/* Botones de acción prominentes */}
-      <div className="flex items-center justify-center gap-3 p-4 bg-background border-b">
-        <Button onClick={openInNewTab} variant="default" className="gap-2">
-          <ExternalLink className="h-4 w-4" />
-          Ver PDF en nueva pestaña
-        </Button>
-        <Button onClick={downloadPdf} variant="outline" className="gap-2">
-          <Download className="h-4 w-4" />
-          Descargar PDF
-        </Button>
+    <div className="flex flex-col h-full min-h-[500px] bg-muted/20">
+      {/* Barra de herramientas */}
+      <div className="flex items-center justify-between gap-2 p-2 bg-background border-b flex-wrap">
+        {/* Navegación de páginas */}
+        <div className="flex items-center gap-1">
+          <Button size="sm" variant="outline" onClick={goToPrevPage} disabled={pageNumber <= 1}>
+            <ChevronLeft className="h-4 w-4" />
+          </Button>
+          <span className="text-sm px-2 min-w-[80px] text-center">
+            {pageNumber} / {numPages}
+          </span>
+          <Button size="sm" variant="outline" onClick={goToNextPage} disabled={pageNumber >= numPages}>
+            <ChevronRight className="h-4 w-4" />
+          </Button>
+        </div>
+
+        {/* Controles de zoom */}
+        <div className="flex items-center gap-1">
+          <Button size="sm" variant="outline" onClick={zoomOut} disabled={scale <= 0.5}>
+            <ZoomOut className="h-4 w-4" />
+          </Button>
+          <span className="text-sm px-2 min-w-[50px] text-center">
+            {Math.round(scale * 100)}%
+          </span>
+          <Button size="sm" variant="outline" onClick={zoomIn} disabled={scale >= 3}>
+            <ZoomIn className="h-4 w-4" />
+          </Button>
+        </div>
+
+        {/* Acciones */}
+        <div className="flex items-center gap-1">
+          <Button size="sm" variant="outline" onClick={openInNewTab} className="gap-1">
+            <ExternalLink className="h-4 w-4" />
+            <span className="hidden sm:inline">Nueva pestaña</span>
+          </Button>
+          <Button size="sm" variant="outline" onClick={downloadPdf} className="gap-1">
+            <Download className="h-4 w-4" />
+            <span className="hidden sm:inline">Descargar</span>
+          </Button>
+        </div>
       </div>
-      
-      {/* Visor de PDF con object tag (mejor compatibilidad que iframe para PDFs) */}
-      <div className="flex-1 relative">
-        <object
-          key={iframeKey}
-          data={pdfUrl}
-          type="application/pdf"
-          className="w-full h-full absolute inset-0"
-          title={fileName}
+
+      {/* Visor de PDF con react-pdf */}
+      <div className="flex-1 overflow-auto flex justify-center p-4 bg-muted/40">
+        <Document
+          file={pdfData}
+          onLoadSuccess={onDocumentLoadSuccess}
+          onLoadError={onDocumentLoadError}
+          loading={
+            <div className="flex items-center gap-2">
+              <Loader2 className="h-5 w-5 animate-spin" />
+              <span>Renderizando PDF...</span>
+            </div>
+          }
         >
-          {/* Fallback cuando object no puede mostrar el PDF */}
-          <div className="flex flex-col items-center justify-center h-full gap-4 p-8 text-center">
-            <FileText className="h-16 w-16 text-primary" />
-            <p className="text-muted-foreground font-medium">
-              El visor integrado no está disponible en este navegador
-            </p>
-            <p className="text-sm text-muted-foreground">
-              Use los botones de arriba para ver o descargar el PDF
-            </p>
-          </div>
-        </object>
+          <Page 
+            pageNumber={pageNumber} 
+            scale={scale}
+            renderTextLayer={true}
+            renderAnnotationLayer={true}
+            className="shadow-lg"
+          />
+        </Document>
       </div>
     </div>
   );
