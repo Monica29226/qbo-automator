@@ -15,31 +15,54 @@ export const PdfViewer = ({ url, storagePath, fileName = 'documento' }: PdfViewe
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [iframeKey, setIframeKey] = useState(0);
 
+  const extractCompanyDocumentsPathFromPublicUrl = (rawUrl: string) => {
+    // When bucket is private, the `/public/...` endpoint responds 404 "Bucket not found".
+    // In that case we should generate a signed URL using the object path.
+    const marker = '/storage/v1/object/public/company-documents/';
+    const idx = rawUrl.indexOf(marker);
+    if (idx === -1) return null;
+
+    const after = rawUrl.slice(idx + marker.length);
+    const clean = after.split('?')[0].split('#')[0];
+    try {
+      return decodeURIComponent(clean);
+    } catch {
+      return clean;
+    }
+  };
+
   useEffect(() => {
     console.log('📄 PdfViewer useEffect - url:', url?.substring(0, 80), 'storagePath:', storagePath);
-    
+
     setError(false);
     setLoading(true);
     setPdfUrl(null);
-    
+
     if (url) {
+      const companyDocsPath = extractCompanyDocumentsPathFromPublicUrl(url);
+      if (companyDocsPath) {
+        console.log('🔑 PdfViewer: URL pública detectada (bucket privado). Usando signed URL:', companyDocsPath);
+        generateSignedUrl(companyDocsPath);
+        return;
+      }
+
       console.log('✅ PdfViewer: Usando URL directa:', url);
       setPdfUrl(url);
       setLoading(false);
-      setIframeKey(prev => prev + 1);
+      setIframeKey((prev) => prev + 1);
       return;
     }
-    
+
     if (storagePath && storagePath.toLowerCase().endsWith('.pdf')) {
       console.log('🔑 PdfViewer: Generando signed URL para PDF:', storagePath);
       generateSignedUrl(storagePath);
-    } else if (storagePath) {
-      // storagePath is XML, try to derive PDF path
+    } else if (storagePath && storagePath.includes('/')) {
+      // storagePath might be XML in some flows; try to derive PDF path only when it looks like a bucket path
       const pdfPath = storagePath.replace(/\.xml$/i, '.pdf');
       console.log('🔄 PdfViewer: storagePath es XML, intentando con PDF:', pdfPath);
       generateSignedUrl(pdfPath);
     } else {
-      console.warn('⚠️ PdfViewer: Sin URL ni storagePath');
+      console.warn('⚠️ PdfViewer: Sin URL ni storagePath usable');
       setLoading(false);
       setError(true);
     }
@@ -94,16 +117,25 @@ export const PdfViewer = ({ url, storagePath, fileName = 'documento' }: PdfViewe
 
   const handleRetry = () => {
     console.log('🔄 Reintentando cargar PDF...');
-    setIframeKey(prev => prev + 1);
+    setIframeKey((prev) => prev + 1);
+
     if (url) {
+      const companyDocsPath = extractCompanyDocumentsPathFromPublicUrl(url);
+      if (companyDocsPath) {
+        generateSignedUrl(companyDocsPath);
+        return;
+      }
+
       setPdfUrl(url);
       setError(false);
       setLoading(false);
-    } else if (storagePath) {
-      const path = storagePath.toLowerCase().endsWith('.pdf') 
-        ? storagePath 
-        : storagePath.replace(/\.xml$/i, '.pdf');
-      generateSignedUrl(path);
+      return;
+    }
+
+    if (storagePath && storagePath.toLowerCase().endsWith('.pdf')) {
+      generateSignedUrl(storagePath);
+    } else if (storagePath && storagePath.includes('/')) {
+      generateSignedUrl(storagePath.replace(/\.xml$/i, '.pdf'));
     }
   };
 
