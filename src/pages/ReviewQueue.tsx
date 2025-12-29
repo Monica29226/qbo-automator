@@ -458,6 +458,17 @@ const ReviewQueue = () => {
                     url={selectedDoc.pdf_attachment_url || undefined}
                     storagePath={selectedDoc.file_path || undefined}
                     fileName={`${selectedDoc.doc_number}-${selectedDoc.supplier_name}`}
+                    organizationId={activeOrganization || undefined}
+                    docNumber={selectedDoc.doc_number}
+                    documentId={selectedDoc.id}
+                    onPdfDownloaded={(newUrl) => {
+                      setDocuments(prev => prev.map(d => 
+                        d.id === selectedDoc.id 
+                          ? { ...d, pdf_attachment_url: newUrl }
+                          : d
+                      ));
+                      setSelectedDoc(prev => prev ? { ...prev, pdf_attachment_url: newUrl } : null);
+                    }}
                   />
                 </div>
               )}
@@ -503,6 +514,18 @@ const ReviewQueue = () => {
                 url={pdfOnlyDoc.pdf_attachment_url || undefined}
                 storagePath={pdfOnlyDoc.file_path || undefined}
                 fileName={`${pdfOnlyDoc.doc_number}-${pdfOnlyDoc.supplier_name}`}
+                organizationId={activeOrganization || undefined}
+                docNumber={pdfOnlyDoc.doc_number}
+                documentId={pdfOnlyDoc.id}
+                onPdfDownloaded={(newUrl) => {
+                  // Actualizar el documento en la lista local
+                  setDocuments(prev => prev.map(d => 
+                    d.id === pdfOnlyDoc.id 
+                      ? { ...d, pdf_attachment_url: newUrl }
+                      : d
+                  ));
+                  setPdfOnlyDoc(prev => prev ? { ...prev, pdf_attachment_url: newUrl } : null);
+                }}
               />
             </div>
           )}
