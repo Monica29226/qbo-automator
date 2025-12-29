@@ -12,27 +12,32 @@ interface PdfViewerProps {
 export const PdfViewer = ({ url, storagePath, fileName = 'documento' }: PdfViewerProps) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
-  const [signedUrl, setSignedUrl] = useState<string | null>(null);
-  const [iframeKey, setIframeKey] = useState(0); // Force iframe refresh
+  const [pdfUrl, setPdfUrl] = useState<string | null>(null);
+  const [iframeKey, setIframeKey] = useState(0);
 
   useEffect(() => {
     console.log('📄 PdfViewer useEffect - url:', url?.substring(0, 80), 'storagePath:', storagePath);
     
-    // Reset states when inputs change
     setError(false);
     setLoading(true);
+    setPdfUrl(null);
     
     if (url) {
-      console.log('✅ PdfViewer: Usando URL directa');
-      setSignedUrl(url);
+      console.log('✅ PdfViewer: Usando URL directa:', url);
+      setPdfUrl(url);
       setLoading(false);
-      setIframeKey(prev => prev + 1); // Force iframe refresh
+      setIframeKey(prev => prev + 1);
       return;
     }
     
-    if (storagePath) {
-      console.log('🔑 PdfViewer: Generando signed URL para:', storagePath);
-      generateSignedUrl();
+    if (storagePath && storagePath.toLowerCase().endsWith('.pdf')) {
+      console.log('🔑 PdfViewer: Generando signed URL para PDF:', storagePath);
+      generateSignedUrl(storagePath);
+    } else if (storagePath) {
+      // storagePath is XML, try to derive PDF path
+      const pdfPath = storagePath.replace(/\.xml$/i, '.pdf');
+      console.log('🔄 PdfViewer: storagePath es XML, intentando con PDF:', pdfPath);
+      generateSignedUrl(pdfPath);
     } else {
       console.warn('⚠️ PdfViewer: Sin URL ni storagePath');
       setLoading(false);
@@ -40,22 +45,16 @@ export const PdfViewer = ({ url, storagePath, fileName = 'documento' }: PdfViewe
     }
   }, [url, storagePath]);
 
-  const generateSignedUrl = async () => {
-    if (!storagePath) {
-      setError(true);
-      setLoading(false);
-      return;
-    }
-    
+  const generateSignedUrl = async (path: string) => {
     setLoading(true);
     setError(false);
     
     try {
-      console.log('🔄 Generando signed URL para path:', storagePath);
+      console.log('🔄 Generando signed URL para path:', path);
       
       const { data, error: signedUrlError } = await supabase.storage
         .from('company-documents')
-        .createSignedUrl(storagePath, 3600); // 1 hora de expiración
+        .createSignedUrl(path, 3600);
       
       if (signedUrlError) {
         console.error('❌ Error generando signed URL:', signedUrlError);
@@ -63,7 +62,7 @@ export const PdfViewer = ({ url, storagePath, fileName = 'documento' }: PdfViewe
       }
       
       console.log('✅ Signed URL generada exitosamente');
-      setSignedUrl(data.signedUrl);
+      setPdfUrl(data.signedUrl);
       setIframeKey(prev => prev + 1);
     } catch (err) {
       console.error('❌ Error en generateSignedUrl:', err);
@@ -74,18 +73,19 @@ export const PdfViewer = ({ url, storagePath, fileName = 'documento' }: PdfViewe
   };
 
   const openInNewTab = () => {
-    if (signedUrl) {
-      console.log('🔗 Abriendo PDF en nueva pestaña:', signedUrl.substring(0, 80));
-      window.open(signedUrl, '_blank');
+    if (pdfUrl) {
+      console.log('🔗 Abriendo PDF en nueva pestaña');
+      window.open(pdfUrl, '_blank');
     }
   };
 
   const downloadPdf = () => {
-    if (signedUrl) {
+    if (pdfUrl) {
       console.log('⬇️ Descargando PDF');
       const a = document.createElement('a');
-      a.href = signedUrl;
+      a.href = pdfUrl;
       a.download = `${fileName}.pdf`;
+      a.target = '_blank';
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -94,14 +94,22 @@ export const PdfViewer = ({ url, storagePath, fileName = 'documento' }: PdfViewe
 
   const handleRetry = () => {
     console.log('🔄 Reintentando cargar PDF...');
+    setIframeKey(prev => prev + 1);
     if (url) {
-      setSignedUrl(url);
+      setPdfUrl(url);
       setError(false);
       setLoading(false);
-      setIframeKey(prev => prev + 1);
     } else if (storagePath) {
-      generateSignedUrl();
+      const path = storagePath.toLowerCase().endsWith('.pdf') 
+        ? storagePath 
+        : storagePath.replace(/\.xml$/i, '.pdf');
+      generateSignedUrl(path);
     }
+  };
+
+  const handleIframeLoad = () => {
+    console.log('✅ Iframe PDF cargado');
+    setLoading(false);
   };
 
   const handleIframeError = () => {
@@ -110,14 +118,9 @@ export const PdfViewer = ({ url, storagePath, fileName = 'documento' }: PdfViewe
     setLoading(false);
   };
 
-  const handleIframeLoad = () => {
-    console.log('✅ Iframe cargado correctamente');
-    setLoading(false);
-  };
-
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-full min-h-[500px]">
+      <div className="flex items-center justify-center h-full min-h-[500px] bg-muted/30">
         <div className="flex flex-col items-center gap-2">
           <Loader2 className="h-8 w-8 animate-spin text-primary" />
           <span className="text-sm text-muted-foreground">Cargando PDF...</span>
@@ -126,64 +129,49 @@ export const PdfViewer = ({ url, storagePath, fileName = 'documento' }: PdfViewe
     );
   }
 
-  if (error || !signedUrl) {
+  if (error || !pdfUrl) {
     return (
-      <div className="flex flex-col items-center justify-center h-full gap-4 p-8 text-center min-h-[500px]">
+      <div className="flex flex-col items-center justify-center h-full gap-4 p-8 text-center min-h-[500px] bg-muted/30">
         <FileText className="h-16 w-16 text-muted-foreground" />
         <p className="text-muted-foreground">No se pudo cargar el PDF</p>
         <p className="text-xs text-muted-foreground/70">
-          {!signedUrl ? 'URL no disponible' : 'Error al cargar el documento'}
+          {!pdfUrl ? 'URL no disponible' : 'Error al cargar el documento'}
         </p>
         <Button onClick={handleRetry} variant="outline" className="gap-2">
           <RefreshCw className="h-4 w-4" />
           Reintentar
         </Button>
-        {signedUrl && (
+        {pdfUrl && (
           <Button onClick={openInNewTab} variant="link" className="gap-1 text-xs">
             <ExternalLink className="h-3 w-3" />
-            Probar abrir en nueva pestaña
+            Abrir en nueva pestaña
           </Button>
         )}
       </div>
     );
   }
 
-  // Use embed with PDF.js as fallback for better compatibility
-  const pdfViewerUrl = `${signedUrl}#toolbar=1&navpanes=0`;
-
+  // Use iframe for better PDF rendering compatibility
   return (
-    <div className="relative w-full h-full min-h-[500px]">
+    <div className="relative w-full h-full min-h-[500px] bg-muted/20">
       <div className="absolute top-2 right-2 z-10 flex gap-2">
-        <Button size="sm" variant="outline" onClick={openInNewTab} className="gap-1 bg-background/80 backdrop-blur">
+        <Button size="sm" variant="outline" onClick={openInNewTab} className="gap-1 bg-background/90 backdrop-blur shadow-sm">
           <ExternalLink className="h-4 w-4" />
           Nueva pestaña
         </Button>
-        <Button size="sm" variant="outline" onClick={downloadPdf} className="gap-1 bg-background/80 backdrop-blur">
+        <Button size="sm" variant="outline" onClick={downloadPdf} className="gap-1 bg-background/90 backdrop-blur shadow-sm">
           <Download className="h-4 w-4" />
           Descargar
         </Button>
       </div>
-      <object
+      <iframe
         key={iframeKey}
-        data={pdfViewerUrl}
-        type="application/pdf"
+        src={pdfUrl}
         className="w-full h-full border-0"
         title={fileName}
-      >
-        <embed 
-          src={pdfViewerUrl} 
-          type="application/pdf" 
-          className="w-full h-full"
-        />
-        <div className="flex flex-col items-center justify-center h-full gap-4 p-8 text-center">
-          <FileText className="h-16 w-16 text-muted-foreground" />
-          <p className="text-muted-foreground">Tu navegador no puede mostrar el PDF</p>
-          <Button onClick={openInNewTab} variant="default" className="gap-2">
-            <ExternalLink className="h-4 w-4" />
-            Abrir en nueva pestaña
-          </Button>
-        </div>
-      </object>
+        onLoad={handleIframeLoad}
+        onError={handleIframeError}
+      />
     </div>
   );
 };
