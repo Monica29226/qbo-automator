@@ -1,7 +1,7 @@
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { AlertCircle, ArrowLeft, RefreshCw, FileText, Database, Wrench } from "lucide-react";
+import { AlertCircle, ArrowLeft, RefreshCw, FileText, Database, Wrench, Settings2 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
@@ -14,9 +14,19 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
+  DialogFooter,
 } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ErrorDiagnostic } from "@/components/dashboard/ErrorDiagnostic";
+import { useQBOAccounts } from "@/hooks/useQBOAccounts";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 interface ErrorDocument {
   id: string;
@@ -26,12 +36,17 @@ interface ErrorDocument {
   total_amount: number;
   error_message: string;
   created_at: string;
+  default_account_ref?: string | null;
 }
 
 const ErrorDocuments = () => {
   const { activeOrganization } = useAuth();
+  const { accounts, isLoading: isLoadingAccounts } = useQBOAccounts();
   const [documents, setDocuments] = useState<ErrorDocument[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [changeAccountDoc, setChangeAccountDoc] = useState<ErrorDocument | null>(null);
+  const [selectedAccount, setSelectedAccount] = useState<string>("");
+  const [isUpdatingAccount, setIsUpdatingAccount] = useState(false);
 
   useEffect(() => {
     if (activeOrganization) {
@@ -52,7 +67,7 @@ const ErrorDocuments = () => {
     try {
       const { data, error } = await supabase
         .from("processed_documents")
-        .select("id, doc_number, supplier_name, issue_date, total_amount, error_message, created_at")
+        .select("id, doc_number, supplier_name, issue_date, total_amount, error_message, created_at, default_account_ref")
         .eq("organization_id", activeOrganization)
         .eq("status", "error")
         .order("created_at", { ascending: false });
@@ -308,6 +323,68 @@ const ErrorDocuments = () => {
     }
   };
 
+  const handleChangeAccount = async () => {
+    if (!activeOrganization || !changeAccountDoc || !selectedAccount) return;
+
+    setIsUpdatingAccount(true);
+    const toastId = toast.loading("Actualizando cuenta y republicando...");
+
+    try {
+      // Actualizar la cuenta en el documento
+      const { error: updateError } = await supabase
+        .from("processed_documents")
+        .update({ 
+          default_account_ref: selectedAccount,
+          error_message: null,
+          status: "pending"
+        })
+        .eq("id", changeAccountDoc.id);
+
+      if (updateError) throw updateError;
+
+      // También actualizar vendor_defaults para que futuras facturas usen esta cuenta
+      const { error: vendorError } = await supabase
+        .from("vendor_defaults")
+        .upsert({
+          organization_id: activeOrganization,
+          vendor_name: changeAccountDoc.supplier_name,
+          default_account_ref: selectedAccount,
+        }, {
+          onConflict: "organization_id,vendor_name"
+        });
+
+      if (vendorError) {
+        console.warn("Could not update vendor defaults:", vendorError);
+      }
+
+      // Intentar republicar inmediatamente
+      const { data, error } = await supabase.functions.invoke("retry-failed-bills", {
+        body: { 
+          documentId: changeAccountDoc.id,
+          organizationId: activeOrganization
+        },
+      });
+
+      if (error) throw error;
+
+      if (data.success) {
+        toast.success(`✓ Cuenta actualizada y factura publicada`, { id: toastId });
+      } else {
+        toast.warning(`Cuenta actualizada. Error al publicar: ${data.message || data.error}`, { id: toastId });
+      }
+
+      setChangeAccountDoc(null);
+      setSelectedAccount("");
+      setTimeout(() => fetchErrorDocuments(), 1000);
+
+    } catch (error: any) {
+      console.error("Error changing account:", error);
+      toast.error(`Error: ${error.message}`, { id: toastId });
+    } finally {
+      setIsUpdatingAccount(false);
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
@@ -493,6 +570,22 @@ const ErrorDocuments = () => {
                     </div>
 
                     <div className="flex flex-col gap-2">
+                      {/* Botón Cambiar Cuenta - solo si el error es de cuenta */}
+                      {(doc.error_message?.includes("no existe en QuickBooks") || 
+                        doc.error_message?.includes("Account not found") ||
+                        doc.error_message?.includes("Cuenta")) && (
+                        <Button
+                          variant="default"
+                          size="sm"
+                          onClick={() => {
+                            setChangeAccountDoc(doc);
+                            setSelectedAccount(doc.default_account_ref || "");
+                          }}
+                        >
+                          <Settings2 className="h-4 w-4 mr-2" />
+                          Cambiar Cuenta
+                        </Button>
+                      )}
                       <Button
                         variant="outline"
                         size="sm"
@@ -509,6 +602,67 @@ const ErrorDocuments = () => {
           </div>
         )}
       </main>
+
+      {/* Modal para cambiar cuenta */}
+      <Dialog open={!!changeAccountDoc} onOpenChange={(open) => !open && setChangeAccountDoc(null)}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Cambiar Cuenta Contable</DialogTitle>
+            <DialogDescription>
+              Selecciona una cuenta válida de QuickBooks para la factura #{changeAccountDoc?.doc_number}
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label>Proveedor</Label>
+              <p className="text-sm text-muted-foreground">{changeAccountDoc?.supplier_name}</p>
+            </div>
+            
+            <div className="space-y-2">
+              <Label htmlFor="account">Cuenta de Gastos</Label>
+              <Select value={selectedAccount} onValueChange={setSelectedAccount}>
+                <SelectTrigger>
+                  <SelectValue placeholder={isLoadingAccounts ? "Cargando cuentas..." : "Seleccionar cuenta"} />
+                </SelectTrigger>
+                <SelectContent>
+                  <ScrollArea className="h-[300px]">
+                    {accounts
+                      .filter(acc => acc.accountType === "Expense" || acc.accountType === "Cost of Goods Sold" || acc.accountType === "Other Expense")
+                      .map((account) => (
+                        <SelectItem key={account.id} value={account.id}>
+                          {account.accountNumber ? `${account.accountNumber} - ` : ""}{account.name}
+                        </SelectItem>
+                      ))}
+                  </ScrollArea>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                Esta cuenta se guardará como predeterminada para este proveedor
+              </p>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setChangeAccountDoc(null)}>
+              Cancelar
+            </Button>
+            <Button 
+              onClick={handleChangeAccount} 
+              disabled={!selectedAccount || isUpdatingAccount}
+            >
+              {isUpdatingAccount ? (
+                <>
+                  <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                  Actualizando...
+                </>
+              ) : (
+                "Guardar y Republicar"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
