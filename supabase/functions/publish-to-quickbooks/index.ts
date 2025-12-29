@@ -409,12 +409,21 @@ Deno.serve(async (req) => {
     };
 
     // Helper para verificar duplicados en QBO (con timeout) - CRITICAL: NO asumir "no duplicado" en timeout
-    const checkDuplicateBill = async (docNumber: string, vendorId: string | null): Promise<{ isDuplicate: boolean; billId: string | null; error?: string }> => {
+    // Ahora verifica tanto Bill como VendorCredit según el tipo de documento
+    const checkDuplicateInQBO = async (docNumber: string, vendorId: string | null, isCreditNote: boolean = false): Promise<{ isDuplicate: boolean; entityId: string | null; entityType: string | null; error?: string }> => {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 8000); // 8s timeout (increased)
       
+      // Preparar DocNumber para búsqueda (mismo formato que se usa al crear)
+      const qboDocNumber = docNumber.length > 21 
+        ? docNumber.substring(docNumber.length - 21)
+        : docNumber;
+      
+      // Determinar tipo de entidad a buscar
+      const entityName = isCreditNote ? 'VendorCredit' : 'Bill';
+      
       try {
-        const query = `SELECT * FROM Bill WHERE DocNumber = '${docNumber.replace(/'/g, "\\'")}'`;
+        const query = `SELECT * FROM ${entityName} WHERE DocNumber = '${qboDocNumber.replace(/'/g, "\\'")}'`;
         const url = `https://quickbooks.api.intuit.com/v3/company/${realmId}/query?query=${encodeURIComponent(query)}`;
 
         const response = await fetch(url, {
@@ -429,34 +438,37 @@ Deno.serve(async (req) => {
 
         if (response.ok) {
           const data = await response.json();
-          const bills = data.QueryResponse?.Bill || [];
+          const entities = data.QueryResponse?.[entityName] || [];
           
-          if (bills.length > 0) {
+          if (entities.length > 0) {
             if (vendorId) {
-              const matchingBill = bills.find((bill: any) => 
-                bill.VendorRef?.value === vendorId
+              const matchingEntity = entities.find((entity: any) => 
+                entity.VendorRef?.value === vendorId
               );
-              if (matchingBill) {
-                log(`✓ Found existing bill ${docNumber} for vendor ${vendorId}: ${matchingBill.Id}`);
-                return { isDuplicate: true, billId: matchingBill.Id };
+              if (matchingEntity) {
+                log(`✓ Found existing ${entityName} ${qboDocNumber} for vendor ${vendorId}: ${matchingEntity.Id}`);
+                return { isDuplicate: true, entityId: matchingEntity.Id, entityType: entityName };
               }
-              log(`⚠️ Bill ${docNumber} exists in QBO but for different vendor - NOT a duplicate`);
-              return { isDuplicate: false, billId: null };
+              log(`⚠️ ${entityName} ${qboDocNumber} exists in QBO but for different vendor - NOT a duplicate`);
+              return { isDuplicate: false, entityId: null, entityType: null };
             }
-            return { isDuplicate: true, billId: bills[0].Id };
+            return { isDuplicate: true, entityId: entities[0].Id, entityType: entityName };
           }
         }
-        return { isDuplicate: false, billId: null };
+        return { isDuplicate: false, entityId: null, entityType: null };
       } catch (e) {
         clearTimeout(timeoutId);
         if (e instanceof Error && e.name === 'AbortError') {
-          logError(`⏱️ Timeout verificando duplicado: ${docNumber} - DETENIENDO para evitar duplicación`);
+          logError(`⏱️ Timeout verificando duplicado ${entityName}: ${docNumber} - DETENIENDO para evitar duplicación`);
           // CRITICAL: NO asumir que no es duplicado - lanzar error para evitar duplicación
-          return { isDuplicate: false, billId: null, error: `Timeout verificando duplicado - reintentar más tarde` };
+          return { isDuplicate: false, entityId: null, entityType: null, error: `Timeout verificando duplicado - reintentar más tarde` };
         }
-        return { isDuplicate: false, billId: null, error: `Error verificando duplicado: ${e}` };
+        return { isDuplicate: false, entityId: null, entityType: null, error: `Error verificando duplicado: ${e}` };
       }
     };
+    
+    // Alias para compatibilidad (función anterior)
+    const checkDuplicateBill = (docNumber: string, vendorId: string | null) => checkDuplicateInQBO(docNumber, vendorId, false);
 
     const batchStartTime = Date.now();
     
@@ -515,9 +527,16 @@ Deno.serve(async (req) => {
         // MULTI-CURRENCY: Pasar la moneda del documento para crear vendor USD si es necesario
         const vendorId = await findOrCreateVendor(doc.supplier_name, doc.supplier_tax_id, doc.currency);
         
-        // Verificar duplicado en QBO - CRITICAL: now checks vendor too!
+        // Detectar si es nota de crédito ANTES de verificar duplicados
+        const docXmlData = doc.xml_data || {};
+        const isDocCreditNote = docXmlData.esNotaCredito === true || 
+                             doc.doc_type === 'NotaCreditoElectronica' || 
+                             doc.doc_type === 'NC' || 
+                             doc.doc_type === '03';
+        
+        // Verificar duplicado en QBO - usa la función correcta según tipo de documento
         // This prevents false matches when same invoice number exists for different vendors
-        const duplicateCheck = await checkDuplicateBill(doc.doc_number, vendorId);
+        const duplicateCheck = await checkDuplicateInQBO(doc.doc_number, vendorId, isDocCreditNote);
         
         // Si hubo error verificando duplicado, NO continuar para evitar duplicación
         if (duplicateCheck.error) {
@@ -532,14 +551,15 @@ Deno.serve(async (req) => {
           return { success: false, docNumber: doc.doc_number, error: duplicateCheck.error };
         }
         
-        if (duplicateCheck.isDuplicate && duplicateCheck.billId) {
-          log(`Bill ${doc.doc_number} exists in QBO for same vendor: ${duplicateCheck.billId}`);
+        if (duplicateCheck.isDuplicate && duplicateCheck.entityId) {
+          const entityType = duplicateCheck.entityType || (isDocCreditNote ? 'VendorCredit' : 'Bill');
+          log(`${entityType} ${doc.doc_number} exists in QBO for same vendor: ${duplicateCheck.entityId}`);
           
           await supabase
             .from("processed_documents")
             .update({
-              qbo_entity_id: duplicateCheck.billId,
-              qbo_entity_type: "Bill",
+              qbo_entity_id: duplicateCheck.entityId,
+              qbo_entity_type: entityType,
               status: "published",
               error_message: null,
             })

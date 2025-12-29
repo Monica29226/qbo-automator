@@ -197,6 +197,58 @@ async function attachPDFToQuickBooks(
   }
 }
 
+// Helper para verificar duplicados en QBO
+async function checkDuplicateInQBO(
+  docNumber: string, 
+  accessToken: string, 
+  realmId: string,
+  isCreditNote: boolean
+): Promise<{ isDuplicate: boolean; entityId: string | null; entityType: string | null }> {
+  try {
+    // Preparar DocNumber para búsqueda (mismo formato que se usa al crear)
+    const qboDocNumber = docNumber.length > 21 ? docNumber.substring(docNumber.length - 21) : docNumber;
+    
+    // Buscar según tipo de documento
+    const entityName = isCreditNote ? 'VendorCredit' : 'Bill';
+    const query = `SELECT Id, DocNumber FROM ${entityName} WHERE DocNumber = '${qboDocNumber.replace(/'/g, "\\'")}'`;
+    
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 8000);
+    
+    const response = await fetch(
+      `https://quickbooks.api.intuit.com/v3/company/${realmId}/query?query=${encodeURIComponent(query)}`,
+      {
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Accept': 'application/json'
+        },
+        signal: controller.signal
+      }
+    );
+    
+    clearTimeout(timeoutId);
+    
+    if (response.ok) {
+      const data = await response.json();
+      const entities = data.QueryResponse?.[entityName] || [];
+      if (entities.length > 0) {
+        console.log(`✓ ${entityName} ${qboDocNumber} ya existe en QBO: ID ${entities[0].Id}`);
+        return { isDuplicate: true, entityId: entities[0].Id, entityType: entityName };
+      }
+    }
+    
+    return { isDuplicate: false, entityId: null, entityType: null };
+  } catch (e) {
+    if (e instanceof Error && e.name === 'AbortError') {
+      console.error(`⏱️ Timeout verificando duplicado: ${docNumber}`);
+      // En caso de timeout, devolver error para evitar duplicación
+      return { isDuplicate: false, entityId: null, entityType: 'TIMEOUT_ERROR' };
+    }
+    console.error(`Error verificando duplicado: ${e}`);
+    return { isDuplicate: false, entityId: null, entityType: null };
+  }
+}
+
 // Process single document to QuickBooks
 async function processSingleDocument(
   supabase: any,
@@ -234,7 +286,46 @@ async function processSingleDocument(
     if (isCreditNote) {
       console.log(`💳 ${docNumber}: Nota de Crédito detectada`);
     }
-    // 2. Filter rejected invoices
+    
+    // 2. CRITICAL: Check for duplicate in QuickBooks BEFORE creating
+    const duplicateCheck = await checkDuplicateInQBO(docNumber, accessToken, realmId, isCreditNote);
+    
+    if (duplicateCheck.entityType === 'TIMEOUT_ERROR') {
+      return {
+        doc_id: doc.id,
+        doc_number: docNumber,
+        supplier_name: supplierName,
+        success: false,
+        reason: 'Timeout verificando duplicado - reintentar más tarde',
+        elapsed_ms: Date.now() - startTime
+      };
+    }
+    
+    if (duplicateCheck.isDuplicate && duplicateCheck.entityId) {
+      console.log(`✓ ${docNumber}: Ya existe en QBO (${duplicateCheck.entityType} ID: ${duplicateCheck.entityId}) - marcando como publicado`);
+      
+      await supabase
+        .from('processed_documents')
+        .update({
+          qbo_entity_id: duplicateCheck.entityId,
+          qbo_entity_type: duplicateCheck.entityType,
+          status: 'published',
+          error_message: null,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', doc.id);
+      
+      return {
+        doc_id: doc.id,
+        doc_number: docNumber,
+        supplier_name: supplierName,
+        success: true,
+        qbo_id: duplicateCheck.entityId,
+        elapsed_ms: Date.now() - startTime
+      };
+    }
+    
+    // 3. Filter rejected invoices
     const situacion = doc.xml_data?.situacion || doc.xml_data?.mensaje_receptor;
     if (situacion === '3' || situacion === 3) {
       return {
@@ -247,14 +338,14 @@ async function processSingleDocument(
       };
     }
     
-    // 3. Validate totals
+    // 4. Validate totals
     const totalsCheck = validateTotals(doc.xml_data, doc.total_amount);
     if (!totalsCheck.valid) {
       console.warn(`⚠️ ${docNumber}: Diferencia en totales: ${totalsCheck.diff.toFixed(2)}`);
       // Continue anyway but log warning
     }
     
-    // 4. Parse OtrosCargos
+    // 5. Parse OtrosCargos
     const otrosCargos = parseOtrosCargos(doc.xml_data);
     if (otrosCargos.length > 0) {
       console.log(`📄 ${docNumber}: ${otrosCargos.length} otros cargos detectados`);
