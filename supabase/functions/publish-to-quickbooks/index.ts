@@ -230,6 +230,7 @@ Deno.serve(async (req) => {
     const results = {
       published: 0,
       failed: 0,
+      skipped_duplicates: 0,
       errors: [] as any[],
     };
 
@@ -553,7 +554,7 @@ Deno.serve(async (req) => {
         
         if (duplicateCheck.isDuplicate && duplicateCheck.entityId) {
           const entityType = duplicateCheck.entityType || (isDocCreditNote ? 'VendorCredit' : 'Bill');
-          log(`${entityType} ${doc.doc_number} exists in QBO for same vendor: ${duplicateCheck.entityId}`);
+          logInfo(`⚠️ DUPLICADO DETECTADO: ${entityType} ${doc.doc_number} ya existe en QuickBooks (ID: ${duplicateCheck.entityId}) para vendor ${doc.supplier_name}`);
           
           await supabase
             .from("processed_documents")
@@ -561,11 +562,11 @@ Deno.serve(async (req) => {
               qbo_entity_id: duplicateCheck.entityId,
               qbo_entity_type: entityType,
               status: "published",
-              error_message: null,
+              error_message: `Ya existía en QuickBooks (${entityType} ID: ${duplicateCheck.entityId})`,
             })
             .eq("id", doc.id);
 
-          return { success: true, docNumber: doc.doc_number };
+          return { success: true, docNumber: doc.doc_number, skipped: true, reason: `Ya existe en QuickBooks (ID: ${duplicateCheck.entityId})` };
         }
         
         // RE-VERIFICACIÓN CRÍTICA: Verificar que el documento NO tiene qbo_entity_id antes de crear
@@ -1491,20 +1492,27 @@ Deno.serve(async (req) => {
       const doc = documents[0];
       const result = await processDocument(doc, 0, 1);
       
-      results.published = result.success ? 1 : 0;
-      results.failed = result.success ? 0 : 1;
-      if (!result.success) {
+      if (result.success) {
+        if (result.skipped) {
+          results.skipped_duplicates = 1;
+        } else {
+          results.published = 1;
+        }
+      } else {
+        results.failed = 1;
         results.errors.push({ doc_number: result.docNumber, error: result.error });
       }
       
       const totalTime = Date.now() - batchStartTime;
-      logInfo(`⚡ Single document processed in ${totalTime}ms`);
+      logInfo(`⚡ Single document processed in ${totalTime}ms${result.skipped ? ' (skipped - already in QBO)' : ''}`);
       
       return new Response(
         JSON.stringify({
           success: result.success,
           published: results.published,
+          skipped_duplicates: results.skipped_duplicates,
           failed: results.failed,
+          skipped_reason: result.reason || undefined,
           errors: results.errors.length > 0 ? results.errors : undefined,
         }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 200 }
@@ -1538,7 +1546,11 @@ Deno.serve(async (req) => {
     // Contabilizar resultados
     for (const result of documentResults) {
       if (result.success) {
-        results.published++;
+        if (result.skipped) {
+          results.skipped_duplicates++;
+        } else {
+          results.published++;
+        }
       } else {
         results.failed++;
         results.errors.push({ doc_number: result.docNumber, error: result.error });
@@ -1546,12 +1558,13 @@ Deno.serve(async (req) => {
     }
     
     const totalTime = Date.now() - batchStartTime;
-    logInfo(`📊 Batch complete: ${results.published} published, ${results.failed} failed in ${totalTime}ms`);
+    logInfo(`📊 Batch complete: ${results.published} published, ${results.skipped_duplicates} skipped (duplicates), ${results.failed} failed in ${totalTime}ms`);
 
     return new Response(
       JSON.stringify({
         success: results.failed === 0,
         published: results.published,
+        skipped_duplicates: results.skipped_duplicates,
         failed: results.failed,
         errors: results.errors.length > 0 ? results.errors : undefined,
       }),
