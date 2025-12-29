@@ -75,6 +75,23 @@ export const PdfViewer = ({ url, storagePath, fileName = 'documento' }: PdfViewe
     try {
       console.log('🔄 Generando signed URL para path:', path);
       
+      // Primero verificar si el archivo existe
+      const { data: fileList, error: listError } = await supabase.storage
+        .from('company-documents')
+        .list(path.split('/').slice(0, -1).join('/'), {
+          search: path.split('/').pop() || ''
+        });
+      
+      const fileExists = fileList && fileList.some(f => path.endsWith(f.name));
+      console.log('📂 Archivo existe en storage:', fileExists, 'Files encontrados:', fileList?.length || 0);
+      
+      if (!fileExists) {
+        console.warn('⚠️ Archivo PDF no encontrado en storage:', path);
+        setError(true);
+        setLoading(false);
+        return;
+      }
+      
       const { data, error: signedUrlError } = await supabase.storage
         .from('company-documents')
         .createSignedUrl(path, 3600);
@@ -84,7 +101,7 @@ export const PdfViewer = ({ url, storagePath, fileName = 'documento' }: PdfViewe
         throw signedUrlError;
       }
       
-      console.log('✅ Signed URL generada exitosamente');
+      console.log('✅ Signed URL generada exitosamente:', data.signedUrl.substring(0, 80));
       setPdfUrl(data.signedUrl);
       setIframeKey(prev => prev + 1);
     } catch (err) {
@@ -165,20 +182,24 @@ export const PdfViewer = ({ url, storagePath, fileName = 'documento' }: PdfViewe
     return (
       <div className="flex flex-col items-center justify-center h-full gap-4 p-8 text-center min-h-[500px] bg-muted/30">
         <FileText className="h-16 w-16 text-muted-foreground" />
-        <p className="text-muted-foreground">No se pudo cargar el PDF</p>
-        <p className="text-xs text-muted-foreground/70">
-          {!pdfUrl ? 'URL no disponible' : 'Error al cargar el documento'}
+        <p className="text-muted-foreground font-medium">No se pudo cargar el PDF</p>
+        <p className="text-xs text-muted-foreground/70 max-w-md">
+          {!pdfUrl 
+            ? 'El archivo PDF no está disponible. Es posible que el documento solo tenga el XML sin PDF adjunto.' 
+            : 'Error al cargar el documento. Intente abrir en nueva pestaña.'}
         </p>
-        <Button onClick={handleRetry} variant="outline" className="gap-2">
-          <RefreshCw className="h-4 w-4" />
-          Reintentar
-        </Button>
-        {pdfUrl && (
-          <Button onClick={openInNewTab} variant="link" className="gap-1 text-xs">
-            <ExternalLink className="h-3 w-3" />
-            Abrir en nueva pestaña
+        <div className="flex gap-2">
+          <Button onClick={handleRetry} variant="outline" className="gap-2">
+            <RefreshCw className="h-4 w-4" />
+            Reintentar
           </Button>
-        )}
+          {pdfUrl && (
+            <Button onClick={openInNewTab} variant="default" className="gap-1">
+              <ExternalLink className="h-4 w-4" />
+              Abrir en nueva pestaña
+            </Button>
+          )}
+        </div>
       </div>
     );
   }
