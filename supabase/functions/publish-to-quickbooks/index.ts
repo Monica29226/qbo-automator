@@ -1171,79 +1171,156 @@ Deno.serve(async (req) => {
         }
 
         // ============================================
-        // Crear Bill con UNA SOLA moneda
+        // Crear Bill o VendorCredit según tipo de documento
         // ============================================
         
-        // Log especial para notas de crédito
+        let entityId: string;
+        let entityType: string;
+        
         if (isCreditNote) {
-          logInfo(`💳 Creando Bill con montos NEGATIVOS para NC ${doc.doc_number}: ${subtotalLines} (${lines.length} líneas)`);
-        }
-        
-        const billPayload: any = {
-          VendorRef: { value: vendorId },
-          TxnDate: doc.issue_date,
-          DocNumber: qboDocNumber,
-          Line: lines,
-          DueDate: doc.issue_date,
-          PrivateNote: `${isCreditNote ? '⚠️ NOTA DE CRÉDITO - Montos negativos\n' : ''}Factura XML: ${doc.doc_number}\nProveedor: ${doc.supplier_name}\nMoneda: ${documentCurrency}${includeTaxInLines ? '\nIVA incluido en líneas' : ''}`,
-          // TREE OF LIFE: Cambiar a TaxInclusive cuando IVA está en las líneas
-          GlobalTaxCalculation: includeTaxInLines ? "TaxInclusive" : "TaxExcluded",
-        };
-
-        // Solo agregar CurrencyRef si NO es CRC (moneda base)
-        if (documentCurrency === 'USD') {
-          billPayload.CurrencyRef = { value: "USD" };
+          // ============================================
+          // NOTA DE CRÉDITO → VendorCredit (montos POSITIVOS en QBO)
+          // ============================================
+          logInfo(`💳 Creando VendorCredit para NC ${doc.doc_number}`);
           
-          // Tipo de cambio
-          const exchangeRate = parseFloat(xmlData?.resumen_factura?.tipoCambio || xmlData?.tipoCambio || '1');
-          if (exchangeRate && exchangeRate > 1) {
-            billPayload.ExchangeRate = exchangeRate;
-          }
-        }
-
-        // TREE OF LIFE: NO agregar TxnTaxDetail cuando IVA está en líneas
-        if (documentUsesTax && totalTax > 0 && !includeTaxInLines) {
-          billPayload.TxnTaxDetail = { TotalTax: totalTax };
-        }
-
-        // ============================================
-        // FIX ERROR 2: Usar fetchWithRetry para rate limiting
-        // ============================================
-        // Small delay before creating bill (rate limiting prevention)
-        await delay(1000);
-        
-        const billResponse = await fetchWithRetry(
-          `https://quickbooks.api.intuit.com/v3/company/${realmId}/bill`,
-          {
-            method: "POST",
-            headers: {
-              "Authorization": `Bearer ${accessToken}`,
-              "Accept": "application/json",
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify(billPayload),
-          }
-        );
-
-        if (!billResponse.ok) {
-          const errorText = await billResponse.text();
-          logError(`❌ Failed to create bill: ${errorText.substring(0, 200)}`);
+          // VendorCredit en QBO usa montos POSITIVOS (el sistema sabe que es un crédito)
+          const vendorCreditLines = lines.map(line => ({
+            ...line,
+            Amount: Math.abs(line.Amount), // Convertir a positivo para VendorCredit
+          }));
           
-          await supabase
-            .from("processed_documents")
-            .update({
-              status: "error",
-              error_message: `QBO Error: ${errorText.substring(0, 500)}`,
-            })
-            .eq("id", doc.id);
+          const vendorCreditSubtotal = vendorCreditLines.reduce((sum, l) => sum + l.Amount, 0);
+          logInfo(`💳 VendorCredit subtotal: ${vendorCreditSubtotal} (${vendorCreditLines.length} líneas)`);
+          
+          const vendorCreditPayload: any = {
+            VendorRef: { value: vendorId },
+            TxnDate: doc.issue_date,
+            DocNumber: qboDocNumber,
+            Line: vendorCreditLines,
+            PrivateNote: `Nota de Crédito XML: ${doc.doc_number}\nProveedor: ${doc.supplier_name}\nMoneda: ${documentCurrency}`,
+            GlobalTaxCalculation: includeTaxInLines ? "TaxInclusive" : "TaxExcluded",
+          };
+          
+          // Solo agregar CurrencyRef si es USD
+          if (documentCurrency === 'USD') {
+            vendorCreditPayload.CurrencyRef = { value: "USD" };
+            const exchangeRate = parseFloat(xmlData?.resumen_factura?.tipoCambio || xmlData?.tipoCambio || '1');
+            if (exchangeRate && exchangeRate > 1) {
+              vendorCreditPayload.ExchangeRate = exchangeRate;
+            }
+          }
+          
+          // Tax detail para VendorCredit (montos positivos)
+          if (documentUsesTax && totalTax !== 0 && !includeTaxInLines) {
+            vendorCreditPayload.TxnTaxDetail = { TotalTax: Math.abs(totalTax) };
+          }
+          
+          await delay(1000);
+          
+          const vendorCreditResponse = await fetchWithRetry(
+            `https://quickbooks.api.intuit.com/v3/company/${realmId}/vendorcredit`,
+            {
+              method: "POST",
+              headers: {
+                "Authorization": `Bearer ${accessToken}`,
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify(vendorCreditPayload),
+            }
+          );
+          
+          if (!vendorCreditResponse.ok) {
+            const errorText = await vendorCreditResponse.text();
+            logError(`❌ Failed to create VendorCredit: ${errorText.substring(0, 200)}`);
+            
+            await supabase
+              .from("processed_documents")
+              .update({
+                status: "error",
+                error_message: `QBO VendorCredit Error: ${errorText.substring(0, 500)}`,
+              })
+              .eq("id", doc.id);
+            
+            return { success: false, docNumber: doc.doc_number, error: errorText.substring(0, 200) };
+          }
+          
+          const vendorCreditData = await vendorCreditResponse.json();
+          entityId = vendorCreditData.VendorCredit.Id;
+          entityType = "VendorCredit";
+          
+          logInfo(`✅ VendorCredit created: ${doc.doc_number} → ${entityId}`);
+          
+        } else {
+          // ============================================
+          // FACTURA → Bill
+          // ============================================
+          const billPayload: any = {
+            VendorRef: { value: vendorId },
+            TxnDate: doc.issue_date,
+            DocNumber: qboDocNumber,
+            Line: lines,
+            DueDate: doc.issue_date,
+            PrivateNote: `Factura XML: ${doc.doc_number}\nProveedor: ${doc.supplier_name}\nMoneda: ${documentCurrency}${includeTaxInLines ? '\nIVA incluido en líneas' : ''}`,
+            GlobalTaxCalculation: includeTaxInLines ? "TaxInclusive" : "TaxExcluded",
+          };
 
-          return { success: false, docNumber: doc.doc_number, error: errorText.substring(0, 200) };
+          // Solo agregar CurrencyRef si NO es CRC (moneda base)
+          if (documentCurrency === 'USD') {
+            billPayload.CurrencyRef = { value: "USD" };
+            
+            // Tipo de cambio
+            const exchangeRate = parseFloat(xmlData?.resumen_factura?.tipoCambio || xmlData?.tipoCambio || '1');
+            if (exchangeRate && exchangeRate > 1) {
+              billPayload.ExchangeRate = exchangeRate;
+            }
+          }
+
+          // TREE OF LIFE: NO agregar TxnTaxDetail cuando IVA está en líneas
+          if (documentUsesTax && totalTax > 0 && !includeTaxInLines) {
+            billPayload.TxnTaxDetail = { TotalTax: totalTax };
+          }
+
+          // ============================================
+          // FIX ERROR 2: Usar fetchWithRetry para rate limiting
+          // ============================================
+          // Small delay before creating bill (rate limiting prevention)
+          await delay(1000);
+          
+          const billResponse = await fetchWithRetry(
+            `https://quickbooks.api.intuit.com/v3/company/${realmId}/bill`,
+            {
+              method: "POST",
+              headers: {
+                "Authorization": `Bearer ${accessToken}`,
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify(billPayload),
+            }
+          );
+
+          if (!billResponse.ok) {
+            const errorText = await billResponse.text();
+            logError(`❌ Failed to create bill: ${errorText.substring(0, 200)}`);
+            
+            await supabase
+              .from("processed_documents")
+              .update({
+                status: "error",
+                error_message: `QBO Error: ${errorText.substring(0, 500)}`,
+              })
+              .eq("id", doc.id);
+
+            return { success: false, docNumber: doc.doc_number, error: errorText.substring(0, 200) };
+          }
+
+          const billData = await billResponse.json();
+          entityId = billData.Bill.Id;
+          entityType = "Bill";
+
+          logInfo(`✅ Bill created: ${doc.doc_number} → ${entityId}`);
         }
-
-        const billData = await billResponse.json();
-        const billId = billData.Bill.Id;
-
-        logInfo(`✅ Bill created: ${doc.doc_number} → ${billId}`);
 
         // Adjuntar PDF (con delay para rate limiting)
         if (doc.pdf_attachment_url) {
@@ -1274,8 +1351,8 @@ Deno.serve(async (req) => {
 
               const boundary = "----WebKitFormBoundary" + Math.random().toString(36).substring(2);
               const attachmentMetadata = {
-                AttachableRef: [{ EntityRef: { type: "Bill", value: billId } }],
-                FileName: `factura_${doc.doc_number}.pdf`,
+                AttachableRef: [{ EntityRef: { type: entityType, value: entityId } }],
+                FileName: `${isCreditNote ? 'nc' : 'factura'}_${doc.doc_number}.pdf`,
                 ContentType: "application/pdf",
               };
 
@@ -1308,7 +1385,7 @@ Deno.serve(async (req) => {
               );
 
               if (attachResponse.ok) {
-                log(`✅ PDF attached to bill ${doc.doc_number}`);
+                log(`✅ PDF attached to ${entityType} ${doc.doc_number}`);
               }
             }
           } catch (pdfError: any) {
@@ -1320,8 +1397,8 @@ Deno.serve(async (req) => {
         await supabase
           .from("processed_documents")
           .update({
-            qbo_entity_id: billId,
-            qbo_entity_type: "Bill",
+            qbo_entity_id: entityId,
+            qbo_entity_type: entityType,
             status: "published",
             processed_at: new Date().toISOString(),
             processed_by: userId,
