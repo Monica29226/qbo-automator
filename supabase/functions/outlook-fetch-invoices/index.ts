@@ -273,8 +273,13 @@ serve(async (req) => {
         // Procesar cada XML de factura
         for (const xmlAtt of xmlAttachments) {
           try {
-            // Microsoft Graph devuelve contentBytes en base64
-            const xmlContent = atob(xmlAtt.contentBytes);
+            // Microsoft Graph devuelve contentBytes en base64, decodificar a UTF-8 para tildes
+            const binaryString = atob(xmlAtt.contentBytes);
+            const bytes = new Uint8Array(binaryString.length);
+            for (let i = 0; i < binaryString.length; i++) {
+              bytes[i] = binaryString.charCodeAt(i);
+            }
+            const xmlContent = new TextDecoder('utf-8').decode(bytes);
             console.log(`Processing invoice: ${xmlAtt.name}`);
 
             // Descargar y guardar PDF si existe

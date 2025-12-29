@@ -324,7 +324,15 @@ serve(async (req) => {
           );
           if (!resp.ok) return null;
           const data = await resp.json();
-          return { xmlPart, content: atob(data.data.replace(/-/g, "+").replace(/_/g, "/")) };
+          // Decodificar base64 a bytes y luego a UTF-8 para preservar tildes
+          const base64Fixed = data.data.replace(/-/g, "+").replace(/_/g, "/");
+          const binaryString = atob(base64Fixed);
+          const bytes = new Uint8Array(binaryString.length);
+          for (let i = 0; i < binaryString.length; i++) {
+            bytes[i] = binaryString.charCodeAt(i);
+          }
+          const content = new TextDecoder('utf-8').decode(bytes);
+          return { xmlPart, content };
         } catch { return null; }
       });
 
