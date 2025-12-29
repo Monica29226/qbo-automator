@@ -42,6 +42,7 @@ const SearchImportInvoice = lazy(() => import("@/components/dashboard/SearchImpo
 const BatchImportInvoices = lazy(() => import("@/components/dashboard/BatchImportInvoices").then(m => ({ default: m.BatchImportInvoices })));
 const PublishOrphanedInvoices = lazy(() => import("@/components/dashboard/PublishOrphanedInvoices").then(m => ({ default: m.PublishOrphanedInvoices })));
 const IVAModeIndicator = lazy(() => import("@/components/dashboard/IVAModeIndicator").then(m => ({ default: m.IVAModeIndicator })));
+const BatchDownloadMissingPdfs = lazy(() => import("@/components/dashboard/BatchDownloadMissingPdfs").then(m => ({ default: m.BatchDownloadMissingPdfs })));
 
 // Componente de loading para lazy components
 const LazyFallback = () => (
@@ -546,6 +547,9 @@ const Dashboard = () => {
                   </Suspense>
                   <Suspense fallback={<div className="h-9 bg-muted animate-pulse rounded" />}>
                     <BatchUploadToDriveButton />
+                  </Suspense>
+                  <Suspense fallback={<div className="h-9 bg-muted animate-pulse rounded" />}>
+                    <BatchDownloadMissingPdfs onComplete={refreshData} />
                   </Suspense>
                   <Button 
                     variant="outline" 
