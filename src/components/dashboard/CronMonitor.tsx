@@ -1,8 +1,21 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Clock, CheckCircle, AlertCircle, Activity, RefreshCw, Pause, Play } from "lucide-react";
+import { 
+  Clock, 
+  CheckCircle, 
+  AlertCircle, 
+  Activity, 
+  RefreshCw, 
+  Pause, 
+  Play,
+  Mail,
+  AlertTriangle,
+  FileWarning,
+  Settings
+} from "lucide-react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -36,6 +49,7 @@ interface SyncLog {
 
 export const CronMonitor = () => {
   const { activeOrganization } = useAuth();
+  const navigate = useNavigate();
   const [lastSync, setLastSync] = useState<SyncLog | null>(null);
   const [recentLogs, setRecentLogs] = useState<SyncLog[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -175,7 +189,7 @@ export const CronMonitor = () => {
       case "success":
         return <CheckCircle className="h-4 w-4 text-green-600" />;
       case "partial":
-        return <Clock className="h-4 w-4 text-yellow-600" />;
+        return <AlertTriangle className="h-4 w-4 text-yellow-600" />;
       case "error":
         return <AlertCircle className="h-4 w-4 text-red-600" />;
       case "running":
@@ -215,8 +229,32 @@ export const CronMonitor = () => {
       cron: "Automático",
       manual: "Manual",
       button: "Botón",
+      scheduled: "Automático",
     };
     return labels[trigger] || trigger;
+  };
+
+  const getFriendlyErrorMessage = (errorMessage: string | null): string | null => {
+    if (!errorMessage) return null;
+    
+    // Extraer el número de facturas con errores si existe
+    const match = errorMessage.match(/(\d+) facturas? con errores? reales?/i);
+    if (match) {
+      return `${match[1]} requieren configuración`;
+    }
+    
+    if (errorMessage.includes('Account not found')) {
+      return 'Cuenta QBO no existe';
+    }
+    if (errorMessage.includes('duplicate')) {
+      return 'Duplicado en QBO';
+    }
+    if (errorMessage.includes('token')) {
+      return 'Token expirado';
+    }
+    
+    // Truncar mensajes muy largos
+    return errorMessage.length > 40 ? errorMessage.substring(0, 37) + '...' : errorMessage;
   };
 
   if (isLoading) {
@@ -234,10 +272,10 @@ export const CronMonitor = () => {
   return (
     <>
       <Card className="p-6">
-        <div className="flex items-center justify-between mb-6">
+        <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
             <Activity className="h-5 w-5 text-primary" />
-            <h3 className="text-lg font-semibold">Monitor de Sincronización Automática</h3>
+            <h3 className="text-lg font-semibold">Monitor de Sincronización</h3>
             {!cronEnabled && (
               <Badge variant="secondary" className="ml-2">
                 Pausado
@@ -264,143 +302,158 @@ export const CronMonitor = () => {
           </Button>
         </div>
 
-      {/* Estadísticas principales */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-        <div className="p-4 rounded-lg border bg-muted/30">
-          <div className="flex items-center gap-2 mb-2">
-            <Clock className="h-4 w-4 text-muted-foreground" />
-            <p className="text-xs text-muted-foreground font-medium">Última Ejecución</p>
+        {/* Resumen de última sincronización - Mejorado */}
+        {lastSync && (
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 p-3 bg-muted/50 rounded-lg mb-4">
+            <div className="text-center">
+              <div className="text-2xl font-bold text-primary">
+                {lastSync.gmail_fetched || 0}
+              </div>
+              <div className="text-xs text-muted-foreground flex items-center justify-center gap-1">
+                <Mail className="h-3 w-3" />
+                Obtenidas
+              </div>
+            </div>
+            <div className="text-center">
+              <div className="text-2xl font-bold text-green-600">
+                {lastSync.gmail_processed || 0}
+              </div>
+              <div className="text-xs text-muted-foreground flex items-center justify-center gap-1">
+                <CheckCircle className="h-3 w-3" />
+                Procesadas
+              </div>
+            </div>
+            <div className="text-center">
+              <div className={`text-2xl font-bold ${(lastSync.gmail_failed || 0) > 0 ? 'text-yellow-600' : 'text-muted-foreground'}`}>
+                {lastSync.gmail_failed || 0}
+              </div>
+              <div className="text-xs text-muted-foreground flex items-center justify-center gap-1">
+                <AlertTriangle className="h-3 w-3" />
+                Requieren Atención
+              </div>
+            </div>
+            <div className="text-center">
+              <div className="text-2xl font-bold text-blue-600">
+                {lastSync.qbo_published || 0}
+              </div>
+              <div className="text-xs text-muted-foreground flex items-center justify-center gap-1">
+                <CheckCircle className="h-3 w-3" />
+                Publicadas QBO
+              </div>
+            </div>
           </div>
-          {lastSync ? (
-            <>
-              <p className="text-lg font-bold">
+        )}
+
+        {/* Estadísticas de tiempo */}
+        <div className="grid grid-cols-2 gap-4 mb-4">
+          <div className="p-3 rounded-lg border bg-muted/30">
+            <div className="flex items-center gap-2 mb-1">
+              <Clock className="h-4 w-4 text-muted-foreground" />
+              <p className="text-xs text-muted-foreground font-medium">Última Ejecución</p>
+            </div>
+            {lastSync ? (
+              <p className="text-sm font-medium">
                 {formatDistanceToNow(new Date(lastSync.started_at), { locale: es, addSuffix: true })}
               </p>
-              <p className="text-xs text-muted-foreground mt-1">
-                {new Date(lastSync.started_at).toLocaleString('es-ES')}
-              </p>
-            </>
-          ) : (
-            <p className="text-sm text-muted-foreground">Sin ejecuciones</p>
-          )}
-        </div>
-
-        <div className="p-4 rounded-lg border bg-muted/30">
-          <div className="flex items-center gap-2 mb-2">
-            <RefreshCw className="h-4 w-4 text-muted-foreground" />
-            <p className="text-xs text-muted-foreground font-medium">Próxima Ejecución</p>
+            ) : (
+              <p className="text-sm text-muted-foreground">Sin ejecuciones</p>
+            )}
           </div>
-          <p className="text-lg font-bold">{getNextSyncTime()}</p>
-          <p className="text-xs text-muted-foreground mt-1">Cada 30 minutos</p>
-        </div>
 
-        <div className="p-4 rounded-lg border bg-muted/30">
-          <div className="flex items-center gap-2 mb-2">
-            <CheckCircle className="h-4 w-4 text-muted-foreground" />
-            <p className="text-xs text-muted-foreground font-medium">Última Sincronización</p>
-          </div>
-          {lastSync ? (
-            <>
-              {lastSync.status === "error" ? (
-                <>
-                  <p className="text-lg font-bold text-destructive">Error</p>
-                  <p className="text-xs text-muted-foreground mt-1 line-clamp-2">
-                    {lastSync.error_message || "Error en sincronización"}
-                  </p>
-                </>
-              ) : lastSync.status === "partial" ? (
-                <>
-                  <p className="text-lg font-bold text-yellow-600">
-                    {lastSync.gmail_processed} procesadas (parcial)
-                  </p>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    {lastSync.qbo_published} publicadas • {lastSync.error_message || "Continuará en próxima ejecución"}
-                  </p>
-                </>
-              ) : lastSync.status === "success" ? (
-                <>
-                  <p className="text-lg font-bold">
-                    {lastSync.gmail_processed} procesadas
-                  </p>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    {lastSync.qbo_published} publicadas • {lastSync.gmail_failed > 0 ? `${lastSync.gmail_failed} fallidas` : '0 errores'}
-                  </p>
-                </>
-              ) : (
-                <p className="text-sm text-muted-foreground">En curso...</p>
-              )}
-            </>
-          ) : (
-            <p className="text-sm text-muted-foreground">Sin datos</p>
-          )}
-        </div>
-      </div>
-
-      {/* Historial reciente */}
-      <div>
-        <h4 className="text-sm font-semibold mb-3">Historial Reciente</h4>
-        <div className="space-y-2">
-          {recentLogs.length === 0 ? (
-            <p className="text-sm text-muted-foreground py-4 text-center">
-              No hay registros de sincronización
+          <div className="p-3 rounded-lg border bg-muted/30">
+            <div className="flex items-center gap-2 mb-1">
+              <RefreshCw className="h-4 w-4 text-muted-foreground" />
+              <p className="text-xs text-muted-foreground font-medium">Próxima Ejecución</p>
+            </div>
+            <p className="text-sm font-medium">
+              {cronEnabled ? getNextSyncTime() : 'Pausado'}
             </p>
-          ) : (
-            recentLogs.filter(log => {
-              if (log.status === 'error' && log.error_message) {
-                const patterns = ['Gmail fetch failed', 'FunctionsHttpError', 'Gateway Timeout', '504'];
-                return !patterns.some(p => log.error_message?.includes(p));
-              }
-              return true;
-            }).map((log) => (
-              <div
-                key={log.id}
-                className="flex items-center justify-between p-3 rounded-lg border bg-card hover:bg-muted/30 transition-colors"
-              >
-                <div className="flex items-center gap-3 flex-1">
-                  {getStatusIcon(log.status)}
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-1">
-                      {getStatusBadge(log.status)}
-                      <Badge variant="outline" className="text-xs">
-                        {getTriggerLabel(log.trigger_type)}
-                      </Badge>
+          </div>
+        </div>
+
+        {/* Acciones rápidas cuando hay errores */}
+        {lastSync && (lastSync.gmail_failed || 0) > 0 && (
+          <div className="flex gap-2 flex-wrap mb-4">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => navigate('/error-documents')}
+              className="text-yellow-600 border-yellow-500 hover:bg-yellow-50 dark:hover:bg-yellow-950"
+            >
+              <FileWarning className="h-4 w-4 mr-1" />
+              Ver Errores
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => navigate('/vendors')}
+            >
+              <Settings className="h-4 w-4 mr-1" />
+              Configurar Proveedores
+            </Button>
+          </div>
+        )}
+
+        {/* Historial reciente - Mejorado */}
+        <div>
+          <h4 className="text-sm font-semibold mb-3">Historial Reciente</h4>
+          <div className="space-y-2">
+            {recentLogs.length === 0 ? (
+              <p className="text-sm text-muted-foreground py-4 text-center">
+                No hay registros de sincronización
+              </p>
+            ) : (
+              recentLogs.filter(log => {
+                if (log.status === 'error' && log.error_message) {
+                  const patterns = ['Gmail fetch failed', 'FunctionsHttpError', 'Gateway Timeout', '504'];
+                  return !patterns.some(p => log.error_message?.includes(p));
+                }
+                return true;
+              }).map((log) => (
+                <div
+                  key={log.id}
+                  className="flex items-center justify-between p-3 rounded-lg border bg-card hover:bg-muted/30 transition-colors"
+                >
+                  <div className="flex items-center gap-3 flex-1">
+                    {getStatusIcon(log.status)}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-1">
+                        {getStatusBadge(log.status)}
+                        <Badge variant="outline" className="text-xs">
+                          {getTriggerLabel(log.trigger_type)}
+                        </Badge>
+                      </div>
+                      {log.error_message && (
+                        <p className="text-xs text-yellow-600 mt-1">
+                          {getFriendlyErrorMessage(log.error_message)}
+                        </p>
+                      )}
                     </div>
-                    <p className="text-xs text-muted-foreground">
-                      {formatDistanceToNow(new Date(log.started_at), { locale: es, addSuffix: true })}
-                    </p>
-                    {log.error_message && (
-                      <p className="text-xs text-destructive mt-1 truncate">
-                        {log.error_message}
-                      </p>
-                    )}
                   </div>
-                </div>
-                
-                {(log.status === "success" || log.status === "partial") && (
-                  <div className="flex items-center gap-4 text-xs text-muted-foreground">
-                    <div className="text-right">
-                      <p className={`font-medium ${log.status === "partial" ? "text-yellow-600" : "text-foreground"}`}>{log.gmail_processed}</p>
-                      <p>Procesadas</p>
-                    </div>
-                    <div className="text-right">
-                      <p className="font-medium text-foreground">{log.qbo_published}</p>
-                      <p>Publicadas</p>
+                  
+                  <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                    <div className="text-right flex items-center gap-1">
+                      <Mail className="h-3 w-3" />
+                      <span className="font-medium">{log.gmail_fetched || 0}</span>
+                      {(log.gmail_failed || 0) > 0 && (
+                        <span className="text-yellow-600">
+                          ({log.gmail_failed} ⚠)
+                        </span>
+                      )}
                     </div>
                     {log.execution_time_ms && (
                       <div className="text-right">
-                        <p className="font-medium text-foreground">
+                        <span className="font-medium">
                           {(log.execution_time_ms / 1000).toFixed(1)}s
-                        </p>
-                        <p>Duración</p>
+                        </span>
                       </div>
                     )}
                   </div>
-                )}
-              </div>
-            ))
-          )}
+                </div>
+              ))
+            )}
+          </div>
         </div>
-      </div>
       </Card>
 
       <AlertDialog open={showConfirmDialog} onOpenChange={setShowConfirmDialog}>
