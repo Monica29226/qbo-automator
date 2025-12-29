@@ -202,6 +202,19 @@ export default function AuditReport() {
 
   const uniqueAccounts = Array.from(new Set(documents.map(getAccountForDocument))).sort();
 
+  // Calculate invoices for current month
+  const getCurrentMonthName = () => {
+    const months = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 
+                    'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+    return months[new Date().getMonth()];
+  };
+
+  const currentMonthInvoices = documents.filter(doc => {
+    const docDate = new Date(doc.issue_date);
+    const now = new Date();
+    return docDate.getMonth() === now.getMonth() && docDate.getFullYear() === now.getFullYear();
+  }).length;
+
   const getStatusBadge = (status: string) => {
     const variants: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
       published: "default",
@@ -286,11 +299,11 @@ export default function AuditReport() {
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-medium text-muted-foreground">
-                Cuentas Únicas
+                Facturas {getCurrentMonthName()}
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{uniqueAccounts.length}</div>
+              <div className="text-2xl font-bold text-blue-600">{currentMonthInvoices}</div>
             </CardContent>
           </Card>
         </div>
