@@ -24,18 +24,21 @@ serve(async (req) => {
 
     console.log(`Retrying failed bill for document ${documentId}`);
 
-    // Get the document with error
+    // Get the document (accept both error and pending status since frontend may update first)
     const { data: doc, error: docError } = await supabase
       .from("processed_documents")
       .select("*")
       .eq("id", documentId)
       .eq("organization_id", organizationId)
-      .eq("status", "error")
+      .in("status", ["error", "pending"])
       .single();
 
     if (docError || !doc) {
-      throw new Error("Document not found or not in error status");
+      console.error("Document lookup failed:", docError);
+      throw new Error("Document not found or not in error/pending status");
     }
+
+    console.log(`Found document with status: ${doc.status}, account: ${doc.default_account_ref}`);
 
     // Re-extract data from XML if available
     if (doc.xml_data && doc.xml_content) {
