@@ -315,9 +315,21 @@ const ReviewQueue = () => {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {documents.map((doc) => (
+              {documents.map((doc) => (
                   <TableRow key={doc.id}>
-                    <TableCell className="font-mono text-sm">{doc.doc_number}</TableCell>
+                    <TableCell className="font-mono text-sm">
+                      {(doc.pdf_attachment_url || doc.file_path) ? (
+                        <button
+                          onClick={() => openPdfOnly(doc)}
+                          className="text-primary hover:text-primary/80 hover:underline cursor-pointer font-mono"
+                          title="Ver PDF de la factura"
+                        >
+                          {doc.doc_number}
+                        </button>
+                      ) : (
+                        doc.doc_number
+                      )}
+                    </TableCell>
                     <TableCell>{new Date(doc.issue_date).toLocaleDateString("es-CR")}</TableCell>
                     <TableCell className="font-medium">{doc.supplier_name}</TableCell>
                     <TableCell>{doc.supplier_tax_id || "-"}</TableCell>
