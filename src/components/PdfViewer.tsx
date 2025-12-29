@@ -340,25 +340,40 @@ export const PdfViewer = ({
   }
 
   return (
-    <div className="relative w-full h-full min-h-[500px] bg-muted/20">
-      <div className="absolute top-2 right-2 z-10 flex gap-2">
-        <Button size="sm" variant="outline" onClick={openInNewTab} className="gap-1 bg-background/90 backdrop-blur shadow-sm">
+    <div className="relative w-full h-full min-h-[500px] bg-muted/20 flex flex-col">
+      {/* Botones de acción prominentes */}
+      <div className="flex items-center justify-center gap-3 p-4 bg-background border-b">
+        <Button onClick={openInNewTab} variant="default" className="gap-2">
           <ExternalLink className="h-4 w-4" />
-          Nueva pestaña
+          Ver PDF en nueva pestaña
         </Button>
-        <Button size="sm" variant="outline" onClick={downloadPdf} className="gap-1 bg-background/90 backdrop-blur shadow-sm">
+        <Button onClick={downloadPdf} variant="outline" className="gap-2">
           <Download className="h-4 w-4" />
-          Descargar
+          Descargar PDF
         </Button>
       </div>
-      <iframe
-        key={iframeKey}
-        src={pdfUrl}
-        className="w-full h-full border-0"
-        title={fileName}
-        onLoad={handleIframeLoad}
-        onError={handleIframeError}
-      />
+      
+      {/* Visor de PDF con object tag (mejor compatibilidad que iframe para PDFs) */}
+      <div className="flex-1 relative">
+        <object
+          key={iframeKey}
+          data={pdfUrl}
+          type="application/pdf"
+          className="w-full h-full absolute inset-0"
+          title={fileName}
+        >
+          {/* Fallback cuando object no puede mostrar el PDF */}
+          <div className="flex flex-col items-center justify-center h-full gap-4 p-8 text-center">
+            <FileText className="h-16 w-16 text-primary" />
+            <p className="text-muted-foreground font-medium">
+              El visor integrado no está disponible en este navegador
+            </p>
+            <p className="text-sm text-muted-foreground">
+              Use los botones de arriba para ver o descargar el PDF
+            </p>
+          </div>
+        </object>
+      </div>
     </div>
   );
 };
