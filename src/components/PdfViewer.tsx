@@ -44,6 +44,21 @@ export const PdfViewer = ({
     }
   };
 
+  const toAbsoluteStorageUrl = (maybeRelativeUrl: string) => {
+    if (!maybeRelativeUrl) return maybeRelativeUrl;
+    if (/^https?:\/\//i.test(maybeRelativeUrl)) return maybeRelativeUrl;
+
+    const base = import.meta.env.VITE_SUPABASE_URL as string | undefined;
+    if (!base) return maybeRelativeUrl;
+
+    const origin = base.replace(/\/$/, '');
+
+    // Storage signed URLs can come back as /object/sign/... (relative to /storage/v1)
+    if (maybeRelativeUrl.startsWith('/storage/v1')) return `${origin}${maybeRelativeUrl}`;
+    if (maybeRelativeUrl.startsWith('/')) return `${origin}/storage/v1${maybeRelativeUrl}`;
+
+    return `${origin}/storage/v1/${maybeRelativeUrl}`;
+  };
   useEffect(() => {
     console.log('📄 PdfViewer useEffect - url:', url?.substring(0, 80), 'storagePath:', storagePath);
 
@@ -61,7 +76,7 @@ export const PdfViewer = ({
       }
 
       console.log('✅ PdfViewer: Usando URL directa:', url);
-      setPdfUrl(url);
+      setPdfUrl(toAbsoluteStorageUrl(url));
       setLoading(false);
       setIframeKey((prev) => prev + 1);
       return;
@@ -119,7 +134,9 @@ export const PdfViewer = ({
       }
       
       console.log('✅ Signed URL generada exitosamente');
-      setPdfUrl(data.signedUrl);
+      const absoluteSignedUrl = toAbsoluteStorageUrl(data.signedUrl);
+      console.log('🔗 Signed URL final:', absoluteSignedUrl?.substring(0, 120));
+      setPdfUrl(absoluteSignedUrl);
       setIframeKey(prev => prev + 1);
     } catch (err) {
       console.error('❌ Error en generateSignedUrl:', err);
