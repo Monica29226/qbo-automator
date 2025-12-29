@@ -44,6 +44,7 @@ export default function AuditReport() {
   const [isRepublishing, setIsRepublishing] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [docTypeFilter, setDocTypeFilter] = useState("all");
   const [accountFilter, setAccountFilter] = useState("all");
 
   useEffect(() => {
@@ -111,6 +112,12 @@ export default function AuditReport() {
     return rule?.account_description || "Sin descripción";
   };
 
+  // Map doc_type to category: Factura or Nota de Crédito
+  const getDocTypeCategory = (docType: string): "factura" | "nota_credito" => {
+    const ncTypes = ["NotaCreditoElectronica", "NC"];
+    return ncTypes.includes(docType) ? "nota_credito" : "factura";
+  };
+
   const filteredDocuments = documents.filter(doc => {
     const matchesSearch = 
       doc.doc_number.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -118,10 +125,12 @@ export default function AuditReport() {
     
     const matchesStatus = statusFilter === "all" || doc.status === statusFilter;
     
+    const matchesDocType = docTypeFilter === "all" || getDocTypeCategory(doc.doc_type) === docTypeFilter;
+    
     const docAccount = getAccountForDocument(doc);
     const matchesAccount = accountFilter === "all" || docAccount === accountFilter;
     
-    return matchesSearch && matchesStatus && matchesAccount;
+    return matchesSearch && matchesStatus && matchesDocType && matchesAccount;
   });
 
   const exportToCSV = () => {
@@ -346,7 +355,7 @@ export default function AuditReport() {
           </CardHeader>
           <CardContent className="space-y-4">
             {/* Filters */}
-            <div className="grid gap-4 md:grid-cols-3">
+            <div className="grid gap-4 md:grid-cols-4">
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
@@ -356,6 +365,16 @@ export default function AuditReport() {
                   className="pl-10"
                 />
               </div>
+              <Select value={docTypeFilter} onValueChange={setDocTypeFilter}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Filtrar por tipo" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todos los tipos</SelectItem>
+                  <SelectItem value="factura">Factura</SelectItem>
+                  <SelectItem value="nota_credito">Nota de Crédito (NC)</SelectItem>
+                </SelectContent>
+              </Select>
               <Select value={statusFilter} onValueChange={setStatusFilter}>
                 <SelectTrigger>
                   <SelectValue placeholder="Filtrar por estado" />
