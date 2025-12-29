@@ -1,4 +1,5 @@
-import { CheckCircle2, Eye, FileText, Loader2, RefreshCw, Search, Star, Trash2, Upload, X, Filter, CalendarIcon, CheckSquare, Square, ListChecks } from "lucide-react";
+import { ArrowLeft, CheckCircle2, Eye, FileText, Loader2, RefreshCw, Search, Star, Trash2, Upload, X, Filter, CalendarIcon, CheckSquare, Square, ListChecks } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
@@ -83,6 +84,7 @@ interface PendingInvoice {
 }
 
 const InvoicesPendingLog = () => {
+  const navigate = useNavigate();
   const { activeOrganization } = useAuth();
   
   // ===== HOOKS OPTIMIZADOS CON CACHING =====
@@ -823,11 +825,21 @@ const InvoicesPendingLog = () => {
   return (
     <div className="container mx-auto py-8 space-y-6">
       <div className="flex justify-between items-center">
-        <div>
-          <h1 className="text-3xl font-bold">Log de Facturas Pendientes</h1>
-          <p className="text-muted-foreground">
-            Gestiona y configura las facturas antes de publicar a QuickBooks
-          </p>
+        <div className="flex items-center gap-4">
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => navigate('/dashboard')}
+            className="rounded-full"
+          >
+            <ArrowLeft className="h-5 w-5" />
+          </Button>
+          <div>
+            <h1 className="text-3xl font-bold">Log de Facturas Pendientes</h1>
+            <p className="text-muted-foreground">
+              Gestiona y configura las facturas antes de publicar a QuickBooks
+            </p>
+          </div>
         </div>
         <div className="flex items-center gap-2">
           {selectedIds.size > 0 && (
