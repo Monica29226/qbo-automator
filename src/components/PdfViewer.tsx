@@ -29,6 +29,7 @@ export const PdfViewer = ({
   const [iframeKey, setIframeKey] = useState(0);
   const [downloading, setDownloading] = useState(false);
   const [pdfNotFound, setPdfNotFound] = useState(false);
+  const [pdfInvalid, setPdfInvalid] = useState(false);
 
   const extractCompanyDocumentsPathFromPublicUrl = (rawUrl: string) => {
     const marker = '/storage/v1/object/public/company-documents/';
@@ -66,11 +67,12 @@ export const PdfViewer = ({
     setLoading(true);
     setPdfUrl(null);
     setPdfNotFound(false);
+    setPdfInvalid(false);
 
     if (url) {
       const companyDocsPath = extractCompanyDocumentsPathFromPublicUrl(url);
       if (companyDocsPath) {
-        console.log('🔑 PdfViewer: URL pública detectada (bucket privado). Usando signed URL:', companyDocsPath);
+        console.log('🔑 PdfViewer: URL pública detectada (bucket privado). Cargando desde storage:', companyDocsPath);
         generateSignedUrl(companyDocsPath);
         return;
       }
@@ -83,7 +85,7 @@ export const PdfViewer = ({
     }
 
     if (storagePath && storagePath.toLowerCase().endsWith('.pdf')) {
-      console.log('🔑 PdfViewer: Generando signed URL para PDF:', storagePath);
+      console.log('🔑 PdfViewer: Cargando PDF desde storagePath:', storagePath);
       generateSignedUrl(storagePath);
     } else if (storagePath && storagePath.includes('/')) {
       const pdfPath = storagePath.replace(/\.xml$/i, '.pdf');
@@ -97,49 +99,85 @@ export const PdfViewer = ({
     }
   }, [url, storagePath]);
 
+  useEffect(() => {
+    return () => {
+      if (pdfUrl?.startsWith('blob:')) {
+        URL.revokeObjectURL(pdfUrl);
+      }
+    };
+  }, [pdfUrl]);
+
   const generateSignedUrl = async (path: string) => {
     setLoading(true);
     setError(false);
     setPdfNotFound(false);
-    
+    setPdfInvalid(false);
+
     try {
-      console.log('🔄 Generando signed URL para path:', path);
-      
+      console.log('🔄 Cargando PDF desde storage:', path);
+
       // Verificar si el archivo existe
       const folderPath = path.split('/').slice(0, -1).join('/');
-      const fileName = path.split('/').pop() || '';
-      
+      const targetName = path.split('/').pop() || '';
+
       const { data: fileList } = await supabase.storage
         .from('company-documents')
-        .list(folderPath, { search: fileName });
-      
-      const fileExists = fileList && fileList.some(f => f.name === fileName);
-      console.log('📂 Archivo existe en storage:', fileExists, 'Buscando:', fileName);
-      
+        .list(folderPath, { search: targetName });
+
+      const fileExists = fileList && fileList.some((f) => f.name === targetName);
+      console.log('📂 Archivo existe en storage:', fileExists, 'Buscando:', targetName);
+
       if (!fileExists) {
         console.warn('⚠️ Archivo PDF no encontrado en storage:', path);
         setError(true);
         setPdfNotFound(true);
-        setLoading(false);
         return;
       }
-      
+
+      // 1) Preferir descargar como Blob y crear objectURL (evita problemas de iframe/X-Frame/CSP)
+      const { data: blob, error: downloadError } = await supabase.storage
+        .from('company-documents')
+        .download(path);
+
+      if (!downloadError && blob) {
+        const pdfBlob = blob.type === 'application/pdf' ? blob : blob.slice(0, blob.size, 'application/pdf');
+
+        // Validación rápida: un PDF válido empieza con "%PDF"
+        const headerBuf = await pdfBlob.slice(0, 4).arrayBuffer();
+        const header = new TextDecoder().decode(headerBuf);
+        if (!header.startsWith('%PDF')) {
+          console.warn('⚠️ El archivo descargado no parece un PDF válido. Header:', header);
+          setError(true);
+          setPdfInvalid(true);
+          return;
+        }
+
+        const objectUrl = URL.createObjectURL(pdfBlob);
+        console.log('✅ PDF listo para visor (blob URL)');
+        setPdfUrl(objectUrl);
+        setIframeKey((prev) => prev + 1);
+        return;
+      }
+
+      console.warn('⚠️ No se pudo descargar el PDF (download). Intentando signed URL...', downloadError);
+
+      // 2) Fallback: signed URL
       const { data, error: signedUrlError } = await supabase.storage
         .from('company-documents')
         .createSignedUrl(path, 3600);
-      
+
       if (signedUrlError) {
         console.error('❌ Error generando signed URL:', signedUrlError);
         throw signedUrlError;
       }
-      
-      console.log('✅ Signed URL generada exitosamente');
+
       const absoluteSignedUrl = toAbsoluteStorageUrl(data.signedUrl);
-      console.log('🔗 Signed URL final:', absoluteSignedUrl?.substring(0, 120));
+      console.log('✅ Signed URL generada (fallback)');
+      console.log('🔗 Signed URL final:', absoluteSignedUrl?.substring(0, 140));
       setPdfUrl(absoluteSignedUrl);
-      setIframeKey(prev => prev + 1);
+      setIframeKey((prev) => prev + 1);
     } catch (err) {
-      console.error('❌ Error en generateSignedUrl:', err);
+      console.error('❌ Error en carga de PDF:', err);
       setError(true);
     } finally {
       setLoading(false);
@@ -192,7 +230,8 @@ export const PdfViewer = ({
 
   const openInNewTab = () => {
     if (pdfUrl) {
-      window.open(pdfUrl, '_blank');
+      // Para blob URLs, abrir la nueva pestaña inmediatamente.
+      window.open(pdfUrl, '_blank', 'noopener,noreferrer');
     }
   };
 
@@ -217,7 +256,7 @@ export const PdfViewer = ({
         generateSignedUrl(companyDocsPath);
         return;
       }
-      setPdfUrl(url);
+      setPdfUrl(toAbsoluteStorageUrl(url));
       setError(false);
       setLoading(false);
       return;
@@ -251,16 +290,18 @@ export const PdfViewer = ({
   }
 
   if (error || !pdfUrl) {
-    const canDownloadFromGmail = organizationId && docNumber && pdfNotFound;
-    
+    const canDownloadFromGmail = organizationId && docNumber && (pdfNotFound || pdfInvalid);
+
     return (
       <div className="flex flex-col items-center justify-center h-full gap-4 p-8 text-center min-h-[500px] bg-muted/30">
         <FileText className="h-16 w-16 text-muted-foreground" />
-        <p className="text-muted-foreground font-medium">PDF no disponible en almacenamiento</p>
+        <p className="text-muted-foreground font-medium">No se pudo mostrar el PDF</p>
         <p className="text-xs text-muted-foreground/70 max-w-md">
-          {pdfNotFound 
-            ? 'El archivo PDF no existe en el storage. Puede intentar descargarlo desde Gmail si el correo original lo incluía.' 
-            : 'Error al cargar el documento.'}
+          {pdfNotFound
+            ? 'El PDF no existe en el storage.'
+            : pdfInvalid
+              ? 'El archivo encontrado en storage no parece ser un PDF válido. Re-descárguelo desde Gmail.'
+              : 'Error al cargar el documento.'}
         </p>
         <div className="flex flex-wrap gap-2 justify-center">
           <Button onClick={handleRetry} variant="outline" className="gap-2">
