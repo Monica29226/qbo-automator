@@ -15,10 +15,47 @@ Deno.serve(async (req) => {
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    const { organization_id, bill_id } = await req.json();
+    let body: any = null;
+    try {
+      body = await req.json();
+    } catch {
+      return new Response(
+        JSON.stringify({ success: false, error: "Cuerpo de solicitud inválido" }),
+        {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+          status: 400,
+        }
+      );
+    }
 
-    if (!organization_id || !bill_id) {
-      throw new Error("organization_id and bill_id are required");
+    const { organization_id, bill_id } = body ?? {};
+
+    if (!organization_id || bill_id === undefined || bill_id === null) {
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: "organization_id y bill_id son requeridos",
+        }),
+        {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+          status: 400,
+        }
+      );
+    }
+
+    const billId = String(bill_id).trim();
+    if (!/^\d+$/.test(billId)) {
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error:
+            "El ID del Bill en QuickBooks debe ser numérico (ej: 38876). No uses la Clave de 50 dígitos.",
+        }),
+        {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+          status: 400,
+        }
+      );
     }
 
     // Get QuickBooks credentials
@@ -39,7 +76,7 @@ Deno.serve(async (req) => {
     const realmId = credentials.realm_id;
 
     // Fetch bill details from QuickBooks
-    const billUrl = `https://quickbooks.api.intuit.com/v3/company/${realmId}/bill/${bill_id}`;
+    const billUrl = `https://quickbooks.api.intuit.com/v3/company/${realmId}/bill/${billId}`;
     const billResponse = await fetch(billUrl, {
       headers: {
         Authorization: `Bearer ${accessToken}`,
