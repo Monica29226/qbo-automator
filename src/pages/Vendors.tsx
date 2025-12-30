@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { AccountCombobox } from "@/components/AccountCombobox";
 import { useVendorsData } from "@/hooks/useVendorsData";
 import { useVendorDefaultsData } from "@/hooks/useVendorDefaultsData";
+import { useQBOAccounts } from "@/hooks/useQBOAccounts";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Table,
@@ -60,6 +61,7 @@ const Vendors = () => {
   const { isAdmin, activeOrganization } = useAuth();
   const { vendors, isLoading, invalidate } = useVendorsData(activeOrganization);
   const { vendorDefaults, isLoading: isLoadingDefaults, invalidate: invalidateDefaults } = useVendorDefaultsData(activeOrganization);
+  const { accounts: qboAccountsList, getAccountById } = useQBOAccounts();
   
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingVendor, setEditingVendor] = useState<Vendor | null>(null);
@@ -321,7 +323,13 @@ const Vendors = () => {
                         <TableRow key={vd.id}>
                           <TableCell className="font-medium">{vd.vendor_name}</TableCell>
                           <TableCell>
-                            <Badge variant="outline">{vd.default_account_ref || "Sin asignar"}</Badge>
+                            {(() => {
+                              const account = getAccountById(vd.default_account_ref || "");
+                              const displayText = account 
+                                ? `${account.accountNumber ? account.accountNumber + " - " : ""}${account.name}`
+                                : vd.default_account_ref || "Sin asignar";
+                              return <Badge variant="outline">{displayText}</Badge>;
+                            })()}
                           </TableCell>
                           <TableCell>
                             <Badge variant={vd.default_uses_tax ? "default" : "secondary"}>
