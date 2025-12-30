@@ -6,6 +6,8 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { AccountCombobox } from "@/components/AccountCombobox";
 import { useVendorsData } from "@/hooks/useVendorsData";
+import { useVendorDefaultsData } from "@/hooks/useVendorDefaultsData";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Table,
   TableBody,
@@ -29,7 +31,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { FileText, Plus, Edit, ArrowLeft, Loader2 } from "lucide-react";
+import { FileText, Plus, Edit, ArrowLeft, Loader2, Settings } from "lucide-react";
 import { Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -57,6 +59,7 @@ interface QBOAccount {
 const Vendors = () => {
   const { isAdmin, activeOrganization } = useAuth();
   const { vendors, isLoading, invalidate } = useVendorsData(activeOrganization);
+  const { vendorDefaults, isLoading: isLoadingDefaults, invalidate: invalidateDefaults } = useVendorDefaultsData(activeOrganization);
   
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingVendor, setEditingVendor] = useState<Vendor | null>(null);
@@ -72,6 +75,12 @@ const Vendors = () => {
     tax_rate: 13,
   });
   const [qboNotConnected, setQboNotConnected] = useState(false);
+  
+  // Estado para editar vendor_defaults
+  const [isEditDefaultOpen, setIsEditDefaultOpen] = useState(false);
+  const [editingDefault, setEditingDefault] = useState<{ id: string; vendor_name: string; default_account_ref: string | null } | null>(null);
+  const [newAccountRef, setNewAccountRef] = useState("");
+  const [isSavingDefault, setIsSavingDefault] = useState(false);
 
   const handleSave = async () => {
     if (!formData.vendor_name || !formData.qbo_vendor_ref || !formData.default_account_ref) {
@@ -266,64 +275,153 @@ const Vendors = () => {
       </header>
 
       <main className="container mx-auto px-6 py-8">
-        <Card className="p-6">
-          {isLoading ? (
-            <div className="flex justify-center py-8">
-              <Loader2 className="h-8 w-8 animate-spin text-primary" />
-            </div>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Nombre</TableHead>
-                  <TableHead>Cédula</TableHead>
-                  <TableHead>QBO Ref</TableHead>
-                  <TableHead>Cuenta a Registrar</TableHead>
-                  <TableHead>Tratamiento IVA</TableHead>
-                  <TableHead>Tasa (%)</TableHead>
-                  <TableHead>Estado</TableHead>
-                  <TableHead className="text-right">Acciones</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {vendors.length === 0 ? (
-                  <TableRow>
-                    <TableCell colSpan={8} className="text-center text-muted-foreground py-8">
-                      No hay proveedores registrados
-                    </TableCell>
-                  </TableRow>
-                ) : (
-                  vendors.map((vendor) => (
-                    <TableRow key={vendor.id}>
-                      <TableCell className="font-medium">{vendor.vendor_name}</TableCell>
-                      <TableCell>{vendor.vendor_tax_id || "-"}</TableCell>
-                      <TableCell>{vendor.qbo_vendor_ref}</TableCell>
-                      <TableCell>
-                        <Badge variant="outline">{vendor.default_account_ref}</Badge>
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant={vendor.tax_treatment === "gravado" ? "default" : "secondary"}>
-                          {vendor.tax_treatment}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>{vendor.tax_rate}%</TableCell>
-                      <TableCell>
-                        <Badge variant={vendor.is_active ? "default" : "secondary"}>
-                          {vendor.is_active ? "Activo" : "Inactivo"}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <Button variant="ghost" size="sm" onClick={() => openDialog(vendor)}>
-                          <Edit className="h-4 w-4" />
-                        </Button>
-                      </TableCell>
+        <Tabs defaultValue="defaults" className="space-y-4">
+          <TabsList className="grid w-full max-w-md grid-cols-2">
+            <TabsTrigger value="defaults" className="flex items-center gap-2">
+              <Settings className="h-4 w-4" />
+              Reglas Automáticas ({vendorDefaults.length})
+            </TabsTrigger>
+            <TabsTrigger value="catalog" className="flex items-center gap-2">
+              <FileText className="h-4 w-4" />
+              Catálogo Completo ({vendors.length})
+            </TabsTrigger>
+          </TabsList>
+          
+          <TabsContent value="defaults">
+            <Card className="p-6">
+              <div className="mb-4">
+                <h3 className="text-lg font-semibold">Reglas de Cuenta por Proveedor</h3>
+                <p className="text-sm text-muted-foreground">
+                  Estas reglas asignan automáticamente una cuenta contable cuando se procesa una factura del proveedor.
+                </p>
+              </div>
+              {isLoadingDefaults ? (
+                <div className="flex justify-center py-8">
+                  <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                </div>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Nombre del Proveedor</TableHead>
+                      <TableHead>Cuenta Asignada</TableHead>
+                      <TableHead>Usa IVA</TableHead>
+                      <TableHead className="text-right">Acciones</TableHead>
                     </TableRow>
-                  ))
-                )}
-              </TableBody>
-            </Table>
-          )}
-        </Card>
+                  </TableHeader>
+                  <TableBody>
+                    {vendorDefaults.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={4} className="text-center text-muted-foreground py-8">
+                          No hay reglas de proveedor configuradas
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      vendorDefaults.map((vd) => (
+                        <TableRow key={vd.id}>
+                          <TableCell className="font-medium">{vd.vendor_name}</TableCell>
+                          <TableCell>
+                            <Badge variant="outline">{vd.default_account_ref || "Sin asignar"}</Badge>
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant={vd.default_uses_tax ? "default" : "secondary"}>
+                              {vd.default_uses_tax ? "Sí" : "No"}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <Button 
+                              variant="ghost" 
+                              size="sm" 
+                              onClick={() => {
+                                setEditingDefault({ 
+                                  id: vd.id, 
+                                  vendor_name: vd.vendor_name, 
+                                  default_account_ref: vd.default_account_ref 
+                                });
+                                setNewAccountRef(vd.default_account_ref || "");
+                                fetchQBOAccounts();
+                                setIsEditDefaultOpen(true);
+                              }}
+                            >
+                              <Edit className="h-4 w-4" />
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
+              )}
+            </Card>
+          </TabsContent>
+          
+          <TabsContent value="catalog">
+            <Card className="p-6">
+              <div className="mb-4">
+                <h3 className="text-lg font-semibold">Catálogo Completo de Proveedores</h3>
+                <p className="text-sm text-muted-foreground">
+                  Proveedores con configuración avanzada para QuickBooks (referencia de vendor, tratamiento de IVA, etc.)
+                </p>
+              </div>
+              {isLoading ? (
+                <div className="flex justify-center py-8">
+                  <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                </div>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Nombre</TableHead>
+                      <TableHead>Cédula</TableHead>
+                      <TableHead>QBO Ref</TableHead>
+                      <TableHead>Cuenta a Registrar</TableHead>
+                      <TableHead>Tratamiento IVA</TableHead>
+                      <TableHead>Tasa (%)</TableHead>
+                      <TableHead>Estado</TableHead>
+                      <TableHead className="text-right">Acciones</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {vendors.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={8} className="text-center text-muted-foreground py-8">
+                          No hay proveedores en el catálogo completo
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      vendors.map((vendor) => (
+                        <TableRow key={vendor.id}>
+                          <TableCell className="font-medium">{vendor.vendor_name}</TableCell>
+                          <TableCell>{vendor.vendor_tax_id || "-"}</TableCell>
+                          <TableCell>{vendor.qbo_vendor_ref}</TableCell>
+                          <TableCell>
+                            <Badge variant="outline">{vendor.default_account_ref}</Badge>
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant={vendor.tax_treatment === "gravado" ? "default" : "secondary"}>
+                              {vendor.tax_treatment}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>{vendor.tax_rate}%</TableCell>
+                          <TableCell>
+                            <Badge variant={vendor.is_active ? "default" : "secondary"}>
+                              {vendor.is_active ? "Activo" : "Inactivo"}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <Button variant="ghost" size="sm" onClick={() => openDialog(vendor)}>
+                              <Edit className="h-4 w-4" />
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
+              )}
+            </Card>
+          </TabsContent>
+        </Tabs>
       </main>
 
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
@@ -447,6 +545,86 @@ const Vendors = () => {
             </Button>
             <Button onClick={handleSave} disabled={isLoading}>
               {isLoading ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Guardando...
+                </>
+              ) : (
+                "Guardar"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Dialog para editar vendor_defaults */}
+      <Dialog open={isEditDefaultOpen} onOpenChange={setIsEditDefaultOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Cambiar Cuenta del Proveedor</DialogTitle>
+            <DialogDescription>
+              Actualizar la cuenta contable asignada a: <strong>{editingDefault?.vendor_name}</strong>
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label>Cuenta Actual</Label>
+              <Badge variant="outline" className="text-base px-3 py-1">
+                {editingDefault?.default_account_ref || "Sin asignar"}
+              </Badge>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Nueva Cuenta</Label>
+              {qboNotConnected ? (
+                <div className="p-3 border border-destructive/50 bg-destructive/10 rounded-md">
+                  <p className="text-sm text-destructive">
+                    QuickBooks no está conectado. Vaya a Integraciones para conectar QuickBooks primero.
+                  </p>
+                </div>
+              ) : (
+                <AccountCombobox
+                  accounts={qboAccounts}
+                  value={newAccountRef}
+                  onValueChange={setNewAccountRef}
+                  disabled={isLoadingAccounts}
+                  className="w-full"
+                  placeholder={isLoadingAccounts ? "Cargando cuentas..." : "Seleccionar nueva cuenta"}
+                />
+              )}
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsEditDefaultOpen(false)}>
+              Cancelar
+            </Button>
+            <Button 
+              onClick={async () => {
+                if (!editingDefault || !newAccountRef) {
+                  toast.error("Seleccione una cuenta");
+                  return;
+                }
+                setIsSavingDefault(true);
+                const { error } = await supabase
+                  .from("vendor_defaults")
+                  .update({ default_account_ref: newAccountRef })
+                  .eq("id", editingDefault.id);
+                
+                if (error) {
+                  toast.error("Error al actualizar cuenta");
+                  console.error(error);
+                } else {
+                  toast.success("Cuenta actualizada correctamente");
+                  invalidateDefaults();
+                  setIsEditDefaultOpen(false);
+                }
+                setIsSavingDefault(false);
+              }} 
+              disabled={isSavingDefault || !newAccountRef}
+            >
+              {isSavingDefault ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                   Guardando...
