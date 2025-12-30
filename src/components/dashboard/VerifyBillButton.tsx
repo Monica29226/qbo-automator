@@ -48,8 +48,24 @@ export const VerifyBillButton = () => {
   const [verifyMode, setVerifyMode] = useState<'single' | 'multiple'>('single');
 
   const handleVerify = async () => {
-    if (!activeOrganization || !billId) {
-      toast.error("Ingresa un ID de factura válido");
+    const trimmed = billId.trim();
+
+    if (!activeOrganization) {
+      toast.error("No hay organización activa");
+      return;
+    }
+
+    if (!trimmed) {
+      toast.error("Ingresa el ID numérico del Bill (ej: 38876)");
+      return;
+    }
+
+    if (!/^\d+$/.test(trimmed)) {
+      toast.error(
+        trimmed.length === 50
+          ? "Ese parece ser la Clave (50 dígitos). Aquí debes usar el ID numérico del Bill en QuickBooks (ej: 38876)."
+          : "El ID del Bill debe ser numérico (solo números)."
+      );
       return;
     }
 
@@ -61,7 +77,7 @@ export const VerifyBillButton = () => {
       const { data, error } = await supabase.functions.invoke("verify-bill-details", {
         body: {
           organization_id: activeOrganization,
-          bill_id: billId,
+          bill_id: trimmed,
         },
       });
 
@@ -133,13 +149,17 @@ export const VerifyBillButton = () => {
         <div className="space-y-4">
           <div className="flex gap-2">
             <div className="flex-1">
-              <Label htmlFor="billId">ID del Bill en QuickBooks</Label>
+              <Label htmlFor="billId">ID numérico del Bill en QuickBooks</Label>
               <Input
                 id="billId"
                 value={billId}
                 onChange={(e) => setBillId(e.target.value)}
-                placeholder="Ej: 12590"
+                placeholder="Ej: 38876"
+                inputMode="numeric"
               />
+              <p className="text-xs text-muted-foreground mt-1">
+                Solo números. Si tienes la Clave (50 dígitos) de Hacienda, ese no es el ID de QBO.
+              </p>
             </div>
             <div className="self-end">
               <Button onClick={handleVerify} disabled={isVerifying}>
