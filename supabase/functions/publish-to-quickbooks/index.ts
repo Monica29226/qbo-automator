@@ -1354,6 +1354,44 @@ Deno.serve(async (req) => {
           entityType = "Bill";
 
           logInfo(`✅ Bill created: ${doc.doc_number} → ${entityId}`);
+          
+          // ============================================
+          // VERIFICACIÓN POST-PUBLICACIÓN: Confirmar que el Bill existe
+          // ============================================
+          try {
+            await delay(300); // Pequeña pausa antes de verificar
+            const verifyResponse = await fetch(
+              `https://quickbooks.api.intuit.com/v3/company/${realmId}/bill/${entityId}?minorversion=73`,
+              {
+                method: 'GET',
+                headers: {
+                  'Authorization': `Bearer ${accessToken}`,
+                  'Accept': 'application/json'
+                }
+              }
+            );
+            
+            if (!verifyResponse.ok) {
+              logError(`⚠️ VERIFICACIÓN FALLIDA: Bill ${entityId} no existe después de creación`);
+              // NO marcar como published si no podemos verificar
+              await supabase
+                .from("processed_documents")
+                .update({
+                  status: "error",
+                  error_message: `Bill creado (ID: ${entityId}) pero verificación falló - requiere auditoría`,
+                  qbo_entity_id: entityId, // Guardar ID para investigación
+                  qbo_entity_type: entityType
+                })
+                .eq("id", doc.id);
+              
+              return { success: false, docNumber: doc.doc_number, error: "Verificación post-publicación falló" };
+            }
+            
+            log(`✓ Verificación exitosa: Bill ${entityId} confirmado en QBO`);
+          } catch (verifyErr: any) {
+            // Si falla la verificación pero el Bill se creó, continuar pero loguear
+            logError(`⚠️ No se pudo verificar Bill ${entityId}: ${verifyErr.message}`);
+          }
         }
 
         // Adjuntar PDF (con delay para rate limiting)

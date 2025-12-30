@@ -1,5 +1,8 @@
 project_id = "lqirqvvkjpunhtsvebot"
 
+[functions.audit-qbo-bills]
+verify_jwt = true
+
 [functions.smart-retry-errors]
 verify_jwt = false
 

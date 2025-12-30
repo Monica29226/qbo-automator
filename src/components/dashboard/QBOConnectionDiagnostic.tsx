@@ -44,8 +44,22 @@ export const QBOConnectionDiagnostic = () => {
   const [diagnosticResults, setDiagnosticResults] = useState<DiagnosticResult[]>([]);
   const [billChecks, setBillChecks] = useState<BillCheckResult[]>([]);
 
-  const addResult = (result: DiagnosticResult) => {
-    setDiagnosticResults(prev => [...prev, result]);
+  // Función para actualizar un paso específico (evita duplicados)
+  const updateStep = (step: string, status: DiagnosticResult['status'], message: string, details?: any) => {
+    setDiagnosticResults(prev => {
+      const existingIndex = prev.findIndex(r => r.step === step);
+      const newResult: DiagnosticResult = { step, status, message, details };
+      
+      if (existingIndex >= 0) {
+        // Actualizar paso existente
+        const updated = [...prev];
+        updated[existingIndex] = newResult;
+        return updated;
+      } else {
+        // Agregar nuevo paso
+        return [...prev, newResult];
+      }
+    });
   };
 
   const runDiagnostic = async () => {
@@ -60,11 +74,7 @@ export const QBOConnectionDiagnostic = () => {
     
     try {
       // Step 1: Check organization settings
-      addResult({
-        step: "Configuración de Organización",
-        status: 'pending',
-        message: "Verificando configuración..."
-      });
+      updateStep("Configuración de Organización", 'pending', "Verificando configuración...");
 
       const { data: org, error: orgError } = await supabase
         .from('organizations')
@@ -73,33 +83,23 @@ export const QBOConnectionDiagnostic = () => {
         .single();
 
       if (orgError || !org) {
-        addResult({
-          step: "Configuración de Organización",
-          status: 'error',
-          message: "No se pudo obtener la organización",
-          details: orgError
-        });
+        updateStep("Configuración de Organización", 'error', "No se pudo obtener la organización", orgError);
+        setIsRunning(false);
         return;
       }
 
       const settings = org.settings as any;
-      addResult({
-        step: "Configuración de Organización",
-        status: 'success',
-        message: `${org.name} - QuickBooks ${org.quickbooks_connected ? 'Conectado' : 'No conectado'}`,
-        details: {
+      updateStep("Configuración de Organización", 'success', 
+        `${org.name} - QuickBooks ${org.quickbooks_connected ? 'Conectado' : 'No conectado'}`,
+        {
           realm_id: org.qbo_realm_id,
           tax_handling: settings?.tax_handling || 'standard',
           description: settings?.description
         }
-      });
+      );
 
       // Step 2: Check integration credentials
-      addResult({
-        step: "Credenciales QuickBooks",
-        status: 'pending',
-        message: "Verificando token..."
-      });
+      updateStep("Credenciales QuickBooks", 'pending', "Verificando token...");
 
       const { data: integration, error: integrationError } = await supabase
         .from('integration_accounts')
@@ -109,12 +109,8 @@ export const QBOConnectionDiagnostic = () => {
         .maybeSingle();
 
       if (integrationError || !integration) {
-        addResult({
-          step: "Credenciales QuickBooks",
-          status: 'error',
-          message: "No hay integración de QuickBooks configurada",
-          details: integrationError
-        });
+        updateStep("Credenciales QuickBooks", 'error', "No hay integración de QuickBooks configurada", integrationError);
+        setIsRunning(false);
         return;
       }
 
@@ -122,30 +118,25 @@ export const QBOConnectionDiagnostic = () => {
       const expiresAt = new Date(credentials?.expires_at || 0);
       const isExpired = expiresAt < new Date();
 
-      addResult({
-        step: "Credenciales QuickBooks",
-        status: isExpired ? 'error' : 'success',
-        message: isExpired 
+      updateStep("Credenciales QuickBooks", isExpired ? 'error' : 'success',
+        isExpired 
           ? `Token EXPIRADO (${expiresAt.toLocaleString()})` 
           : `Token válido hasta ${expiresAt.toLocaleString()}`,
-        details: {
+        {
           realm_id: credentials?.realm_id,
           account_name: integration.account_name,
           is_active: integration.is_active,
           token_length: credentials?.access_token?.length || 0
         }
-      });
+      );
 
       if (isExpired) {
+        setIsRunning(false);
         return;
       }
 
       // Step 3: Check system settings
-      addResult({
-        step: "System Settings",
-        status: 'pending',
-        message: "Verificando configuración..."
-      });
+      updateStep("System Settings", 'pending', "Verificando configuración...");
 
       const { data: systemSettings } = await supabase
         .from('system_settings')
@@ -157,24 +148,46 @@ export const QBOConnectionDiagnostic = () => {
         return acc;
       }, {});
 
-      addResult({
-        step: "System Settings",
-        status: 'success',
-        message: `${(systemSettings || []).length} configuraciones encontradas`,
-        details: {
+      updateStep("System Settings", 'success', 
+        `${(systemSettings || []).length} configuraciones encontradas`,
+        {
           dry_run: settingsMap.dry_run,
           default_uses_tax: settingsMap.default_uses_tax,
           duplicate_window_days: settingsMap.duplicate_window_days,
           min_publish_date: settingsMap.min_publish_date
         }
-      });
+      );
 
-      // Step 4: Check recent published documents
-      addResult({
-        step: "Documentos Publicados",
-        status: 'pending',
-        message: "Verificando documentos..."
-      });
+      // Step 4: Check document summary
+      updateStep("Resumen de Documentos", 'pending', "Contando documentos...");
+
+      const { data: publishedCount } = await supabase
+        .from('processed_documents')
+        .select('id', { count: 'exact', head: true })
+        .eq('organization_id', activeOrganization)
+        .eq('status', 'published')
+        .not('qbo_entity_id', 'is', null);
+
+      const { data: reviewCount } = await supabase
+        .from('processed_documents')
+        .select('id', { count: 'exact', head: true })
+        .eq('organization_id', activeOrganization)
+        .eq('status', 'review');
+
+      const { data: pendingCount } = await supabase
+        .from('processed_documents')
+        .select('id', { count: 'exact', head: true })
+        .eq('organization_id', activeOrganization)
+        .in('status', ['pending', 'processed'])
+        .is('qbo_entity_id', null);
+
+      updateStep("Resumen de Documentos", 'success',
+        `Published: ${publishedCount || 0}, Review: ${reviewCount || 0}, Pendientes: ${pendingCount || 0}`,
+        { published: publishedCount || 0, review: reviewCount || 0, pending: pendingCount || 0 }
+      );
+
+      // Step 5: Check recent published documents
+      updateStep("Documentos Publicados", 'pending', "Verificando documentos...");
 
       const { data: publishedDocs, error: docsError } = await supabase
         .from('processed_documents')
@@ -186,31 +199,20 @@ export const QBOConnectionDiagnostic = () => {
         .limit(10);
 
       if (docsError) {
-        addResult({
-          step: "Documentos Publicados",
-          status: 'error',
-          message: "Error al obtener documentos",
-          details: docsError
-        });
+        updateStep("Documentos Publicados", 'error', "Error al obtener documentos", docsError);
       } else {
-        addResult({
-          step: "Documentos Publicados",
-          status: 'success',
-          message: `${publishedDocs?.length || 0} documentos recientes con QBO ID`,
-          details: publishedDocs?.slice(0, 5).map(d => ({
+        updateStep("Documentos Publicados", 'success',
+          `${publishedDocs?.length || 0} documentos recientes con QBO ID`,
+          publishedDocs?.slice(0, 5).map(d => ({
             doc: d.doc_number,
             bill_id: d.qbo_entity_id,
             account: d.default_account_ref
           }))
-        });
+        );
 
-        // Step 5: Verify bills in QuickBooks
+        // Step 6: Verify bills in QuickBooks
         if (publishedDocs && publishedDocs.length > 0) {
-          addResult({
-            step: "Verificación en QuickBooks",
-            status: 'pending',
-            message: "Verificando Bills en QuickBooks..."
-          });
+          updateStep("Verificación en QuickBooks", 'pending', "Verificando Bills en QuickBooks...");
 
           const billIds = publishedDocs.slice(0, 5).map(d => d.qbo_entity_id).filter(Boolean);
 
@@ -226,12 +228,7 @@ export const QBOConnectionDiagnostic = () => {
             );
 
             if (verifyError) {
-              addResult({
-                step: "Verificación en QuickBooks",
-                status: 'error',
-                message: "Error al verificar Bills",
-                details: verifyError
-              });
+              updateStep("Verificación en QuickBooks", 'error', "Error al verificar Bills", verifyError);
             } else {
               const results = verifyResult.results || [];
               const found = results.filter((r: BillCheckResult) => r.exists).length;
@@ -239,24 +236,17 @@ export const QBOConnectionDiagnostic = () => {
 
               setBillChecks(results);
 
-              addResult({
-                step: "Verificación en QuickBooks",
-                status: missing > 0 ? 'warning' : 'success',
-                message: `${found}/${billIds.length} Bills encontrados en QuickBooks${missing > 0 ? ` (${missing} faltantes)` : ''}`,
-                details: {
+              updateStep("Verificación en QuickBooks", missing > 0 ? 'warning' : 'success',
+                `${found}/${billIds.length} Bills encontrados en QuickBooks${missing > 0 ? ` (${missing} faltantes)` : ''}`,
+                {
                   realm_id: verifyResult.realm_id,
                   found,
                   missing
                 }
-              });
+              );
             }
           } catch (err: any) {
-            addResult({
-              step: "Verificación en QuickBooks",
-              status: 'error',
-              message: `Error: ${err.message}`,
-              details: err
-            });
+            updateStep("Verificación en QuickBooks", 'error', `Error: ${err.message}`, err);
           }
         }
       }
@@ -323,7 +313,7 @@ export const QBOConnectionDiagnostic = () => {
             <ScrollArea className="h-[400px] rounded-md border p-4">
               <div className="space-y-4">
                 {diagnosticResults.map((result, index) => (
-                  <div key={index} className="space-y-2">
+                  <div key={result.step} className="space-y-2">
                     <div className="flex items-center gap-2">
                       {getStatusIcon(result.status)}
                       <span className="font-medium">{result.step}</span>
