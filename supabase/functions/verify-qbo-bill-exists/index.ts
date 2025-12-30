@@ -1,24 +1,30 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.7.1";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-serve(async (req) => {
+Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
 
   try {
-    const { organization_id, bill_id } = await req.json();
+    const { organization_id, bill_id, bill_ids } = await req.json();
 
-    if (!organization_id || !bill_id) {
-      throw new Error("organization_id y bill_id son requeridos");
+    if (!organization_id) {
+      throw new Error("organization_id es requerido");
     }
 
-    console.log(`🔍 Verificando Bill ${bill_id} en QuickBooks para organización ${organization_id}`);
+    // Support both single bill_id and array of bill_ids
+    const billIdsToCheck = bill_ids || (bill_id ? [bill_id] : []);
+    
+    if (billIdsToCheck.length === 0) {
+      throw new Error("bill_id o bill_ids es requerido");
+    }
+
+    console.log(`🔍 Verificando ${billIdsToCheck.length} Bills en QuickBooks para org: ${organization_id}`);
 
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
@@ -44,93 +50,133 @@ serve(async (req) => {
       throw new Error("No hay access_token disponible");
     }
 
-    const { data: org } = await supabase
-      .from('organizations')
-      .select('qbo_realm_id')
-      .eq('id', organization_id)
-      .single();
-
-    if (!org?.qbo_realm_id) {
-      throw new Error("No se encontró qbo_realm_id para la organización");
+    const realmId = credentials.realm_id;
+    if (!realmId) {
+      throw new Error("No se encontró realm_id en las credenciales");
     }
 
-    const realmId = org.qbo_realm_id;
+    const results: any[] = [];
 
-    // Intentar obtener el Bill de QuickBooks
-    console.log(`📡 Consultando QuickBooks API para Bill ID ${bill_id}...`);
-    
-    const qboResponse = await fetch(
-      `https://quickbooks.api.intuit.com/v3/company/${realmId}/bill/${bill_id}?minorversion=73`,
-      {
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${credentials.access_token}`,
-          'Accept': 'application/json',
-          'Content-Type': 'application/json'
+    for (const billId of billIdsToCheck) {
+      try {
+        console.log(`📡 Consultando QuickBooks API para Bill ID ${billId}...`);
+        
+        const qboResponse = await fetch(
+          `https://quickbooks.api.intuit.com/v3/company/${realmId}/bill/${billId}?minorversion=73`,
+          {
+            method: 'GET',
+            headers: {
+              'Authorization': `Bearer ${credentials.access_token}`,
+              'Accept': 'application/json',
+              'Content-Type': 'application/json'
+            }
+          }
+        );
+
+        if (!qboResponse.ok) {
+          const errorData = await qboResponse.json().catch(() => ({}));
+          
+          if (qboResponse.status === 401) {
+            results.push({
+              bill_id: billId,
+              exists: false,
+              error: "Token de QuickBooks expirado",
+              needs_reconnect: true
+            });
+          } else {
+            results.push({
+              bill_id: billId,
+              exists: false,
+              error: errorData.Fault?.Error?.[0]?.Message || `HTTP ${qboResponse.status}`
+            });
+          }
+          console.log(`❌ Bill ${billId} no encontrado: ${qboResponse.status}`);
+          continue;
         }
-      }
-    );
 
-    const qboData = await qboResponse.json();
+        const qboData = await qboResponse.json();
+        const bill = qboData.Bill;
+        
+        // Extract account details from lines
+        const accountDetails = bill.Line?.map((line: any) => {
+          const detail = line.AccountBasedExpenseLineDetail;
+          return detail?.AccountRef ? {
+            account_id: detail.AccountRef.value,
+            account_name: detail.AccountRef.name,
+            amount: line.Amount,
+            description: line.Description?.substring(0, 100)
+          } : null;
+        }).filter(Boolean) || [];
+        
+        console.log(`✅ Bill ${billId} encontrado:`, {
+          docNumber: bill.DocNumber,
+          txnDate: bill.TxnDate,
+          totalAmt: bill.TotalAmt,
+          vendor: bill.VendorRef?.name,
+          accounts: accountDetails.map((a: any) => `${a.account_name} (${a.account_id})`).join(', ')
+        });
 
-    if (!qboResponse.ok) {
-      console.error("❌ Error de QuickBooks:", qboData);
-      
-      // Si el error es 401, el token expiró
-      if (qboResponse.status === 401) {
-        return new Response(
-          JSON.stringify({ 
-            exists: false, 
-            error: "Token de QuickBooks expirado",
-            needs_reconnect: true
-          }),
-          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
-      
-      // Si el error es que no se encontró el bill
-      if (qboResponse.status === 404 || qboData.Fault?.Error?.[0]?.code === "610") {
-        console.log(`❌ Bill ${bill_id} NO existe en QuickBooks`);
-        return new Response(
-          JSON.stringify({ 
-            exists: false,
-            message: `El Bill ${bill_id} no existe en QuickBooks`,
-            error: qboData.Fault?.Error?.[0]?.Message || "No encontrado"
-          }),
-          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
+        results.push({
+          bill_id: billId,
+          exists: true,
+          doc_number: bill.DocNumber,
+          txn_date: bill.TxnDate,
+          total_amount: bill.TotalAmt,
+          currency: bill.CurrencyRef?.value || 'CRC',
+          vendor_name: bill.VendorRef?.name,
+          vendor_id: bill.VendorRef?.value,
+          private_note: bill.PrivateNote?.substring(0, 200),
+          accounts: accountDetails,
+          global_tax_calculation: bill.GlobalTaxCalculation,
+          total_tax: bill.TxnTaxDetail?.TotalTax
+        });
 
-      throw new Error(qboData.Fault?.Error?.[0]?.Message || 'Error al consultar QuickBooks');
+      } catch (err: any) {
+        console.error(`❌ Error verificando Bill ${billId}:`, err.message);
+        results.push({
+          bill_id: billId,
+          exists: false,
+          error: err.message
+        });
+      }
     }
 
-    // El bill existe
-    console.log(`✅ Bill ${bill_id} SÍ existe en QuickBooks`);
+    // Summary
+    const existingBills = results.filter(r => r.exists);
+    const missingBills = results.filter(r => !r.exists);
     
-    const bill = qboData.Bill;
-    return new Response(
-      JSON.stringify({ 
-        exists: true,
-        bill_number: bill.DocNumber,
-        vendor_ref: bill.VendorRef?.name,
-        total_amount: bill.TotalAmt,
-        txn_date: bill.TxnDate,
-        sync_token: bill.SyncToken
-      }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    console.log(`📊 Resultados: ${existingBills.length} encontrados, ${missingBills.length} no encontrados`);
+
+    // If single bill requested, return flat response for backwards compatibility
+    if (billIdsToCheck.length === 1) {
+      const result = results[0];
+      return new Response(JSON.stringify(result), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    return new Response(JSON.stringify({
+      success: true,
+      organization_id,
+      realm_id: realmId,
+      summary: {
+        total: billIdsToCheck.length,
+        found: existingBills.length,
+        missing: missingBills.length,
+      },
+      results,
+    }), {
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
 
   } catch (error: any) {
-    console.error("❌ Error:", error);
-    return new Response(
-      JSON.stringify({ 
-        exists: false,
-        error: error.message 
-      }),
-      { 
-        status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      }
-    );
+    console.error("❌ Error:", error.message);
+    return new Response(JSON.stringify({
+      exists: false,
+      error: error.message,
+    }), {
+      status: 400,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
   }
 });

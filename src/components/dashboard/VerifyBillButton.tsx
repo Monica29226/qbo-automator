@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { toast } from "sonner";
-import { Search, Loader2 } from "lucide-react";
+import { Search, Loader2, AlertCircle, CheckCircle } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -14,13 +14,38 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
+import { ScrollArea } from "@/components/ui/scroll-area";
+
+interface BillVerificationResult {
+  bill_id: string;
+  exists: boolean;
+  doc_number?: string;
+  txn_date?: string;
+  total_amount?: number;
+  currency?: string;
+  vendor_name?: string;
+  vendor_id?: string;
+  accounts?: Array<{
+    account_id: string;
+    account_name: string;
+    amount: number;
+    description?: string;
+  }>;
+  global_tax_calculation?: string;
+  total_tax?: number;
+  private_note?: string;
+  error?: string;
+}
 
 export const VerifyBillButton = () => {
   const { activeOrganization } = useAuth();
   const [isOpen, setIsOpen] = useState(false);
-  const [billId, setBillId] = useState("12590");
+  const [billId, setBillId] = useState("");
   const [isVerifying, setIsVerifying] = useState(false);
   const [billDetails, setBillDetails] = useState<any>(null);
+  const [multipleResults, setMultipleResults] = useState<BillVerificationResult[]>([]);
+  const [verifyMode, setVerifyMode] = useState<'single' | 'multiple'>('single');
 
   const handleVerify = async () => {
     if (!activeOrganization || !billId) {
@@ -29,6 +54,7 @@ export const VerifyBillButton = () => {
     }
 
     setIsVerifying(true);
+    setMultipleResults([]);
     toast.info("Verificando detalles del bill en QuickBooks...");
 
     try {
@@ -42,6 +68,7 @@ export const VerifyBillButton = () => {
       if (error) throw error;
 
       setBillDetails(data);
+      setVerifyMode('single');
       toast.success("Detalles del bill obtenidos exitosamente");
     } catch (error: any) {
       console.error("Error verifying bill:", error);
@@ -50,6 +77,42 @@ export const VerifyBillButton = () => {
       setIsVerifying(false);
     }
   };
+
+  const handleVerifyMultiple = async (billIds: string[]) => {
+    if (!activeOrganization || billIds.length === 0) {
+      toast.error("No hay Bills para verificar");
+      return;
+    }
+
+    setIsVerifying(true);
+    setBillDetails(null);
+    toast.info(`Verificando ${billIds.length} Bills en QuickBooks...`);
+
+    try {
+      const { data, error } = await supabase.functions.invoke("verify-qbo-bill-exists", {
+        body: {
+          organization_id: activeOrganization,
+          bill_ids: billIds,
+        },
+      });
+
+      if (error) throw error;
+
+      setMultipleResults(data.results || []);
+      setVerifyMode('multiple');
+      
+      const found = (data.results || []).filter((r: BillVerificationResult) => r.exists).length;
+      toast.success(`${found}/${billIds.length} Bills encontrados en QuickBooks`);
+    } catch (error: any) {
+      console.error("Error verifying multiple bills:", error);
+      toast.error(`Error: ${error.message}`);
+    } finally {
+      setIsVerifying(false);
+    }
+  };
+
+  // Bills de Big Brown para verificar
+  const bigBrownBillIds = ["40236", "40209", "38876"];
 
   return (
     <Dialog open={isOpen} onOpenChange={setIsOpen}>
@@ -95,7 +158,106 @@ export const VerifyBillButton = () => {
             </div>
           </div>
 
-          {billDetails && (
+          {/* Quick verify Big Brown bills */}
+          <div className="border rounded-lg p-4 bg-muted/50">
+            <div className="flex items-center justify-between mb-2">
+              <h4 className="font-medium">Verificación Rápida - Big Brown Brindle</h4>
+              <Button 
+                variant="secondary" 
+                size="sm"
+                onClick={() => handleVerifyMultiple(bigBrownBillIds)}
+                disabled={isVerifying}
+              >
+                {isVerifying ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <Search className="h-4 w-4 mr-2" />
+                )}
+                Verificar Bills: {bigBrownBillIds.join(', ')}
+              </Button>
+            </div>
+            <p className="text-sm text-muted-foreground">
+              Verifica si los Bills 40236 (Oct), 38876 (Nov), 40209 (Dic) existen en QuickBooks
+            </p>
+          </div>
+
+          {/* Multiple results */}
+          {verifyMode === 'multiple' && multipleResults.length > 0 && (
+            <ScrollArea className="h-[400px]">
+              <div className="space-y-3">
+                {multipleResults.map((result, index) => (
+                  <div 
+                    key={index} 
+                    className={`border rounded-lg p-4 ${result.exists ? 'bg-green-50 dark:bg-green-900/20 border-green-200' : 'bg-red-50 dark:bg-red-900/20 border-red-200'}`}
+                  >
+                    <div className="flex items-center gap-2 mb-2">
+                      {result.exists ? (
+                        <CheckCircle className="h-5 w-5 text-green-600" />
+                      ) : (
+                        <AlertCircle className="h-5 w-5 text-red-600" />
+                      )}
+                      <span className="font-semibold">Bill ID: {result.bill_id}</span>
+                      <Badge variant={result.exists ? "default" : "destructive"}>
+                        {result.exists ? "EXISTE" : "NO ENCONTRADO"}
+                      </Badge>
+                    </div>
+
+                    {result.exists && (
+                      <div className="grid grid-cols-2 gap-2 text-sm mt-3">
+                        <div>
+                          <span className="text-muted-foreground">Doc Number:</span>{" "}
+                          <span className="font-mono">{result.doc_number}</span>
+                        </div>
+                        <div>
+                          <span className="text-muted-foreground">Fecha:</span>{" "}
+                          {result.txn_date}
+                        </div>
+                        <div>
+                          <span className="text-muted-foreground">Total:</span>{" "}
+                          {result.currency === 'USD' ? '$' : '₡'}
+                          {result.total_amount?.toLocaleString()}
+                        </div>
+                        <div>
+                          <span className="text-muted-foreground">Proveedor:</span>{" "}
+                          {result.vendor_name}
+                        </div>
+                        <div className="col-span-2">
+                          <span className="text-muted-foreground">IVA:</span>{" "}
+                          {result.global_tax_calculation} 
+                          {result.total_tax ? ` (₡${result.total_tax.toLocaleString()})` : ''}
+                        </div>
+                        
+                        {result.accounts && result.accounts.length > 0 && (
+                          <div className="col-span-2 mt-2">
+                            <span className="text-muted-foreground font-medium">Cuentas usadas:</span>
+                            <div className="mt-1 space-y-1">
+                              {result.accounts.map((acc, accIndex) => (
+                                <div key={accIndex} className="bg-background rounded p-2 text-xs">
+                                  <span className="font-mono text-blue-600">
+                                    {acc.account_name} (ID: {acc.account_id})
+                                  </span>
+                                  <span className="ml-2">
+                                    - ₡{acc.amount?.toLocaleString()}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {!result.exists && result.error && (
+                      <p className="text-sm text-red-600 mt-2">{result.error}</p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </ScrollArea>
+          )}
+
+          {/* Single bill details */}
+          {verifyMode === 'single' && billDetails && (
             <div className="space-y-4 bg-muted p-4 rounded-lg">
               <div>
                 <h3 className="font-semibold text-lg mb-2">Información del Bill</h3>
