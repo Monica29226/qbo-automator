@@ -43,6 +43,7 @@ const BatchImportInvoices = lazy(() => import("@/components/dashboard/BatchImpor
 const PublishOrphanedInvoices = lazy(() => import("@/components/dashboard/PublishOrphanedInvoices").then(m => ({ default: m.PublishOrphanedInvoices })));
 const IVAModeIndicator = lazy(() => import("@/components/dashboard/IVAModeIndicator").then(m => ({ default: m.IVAModeIndicator })));
 const BatchDownloadMissingPdfs = lazy(() => import("@/components/dashboard/BatchDownloadMissingPdfs").then(m => ({ default: m.BatchDownloadMissingPdfs })));
+const QBOConnectionDiagnostic = lazy(() => import("@/components/dashboard/QBOConnectionDiagnostic").then(m => ({ default: m.QBOConnectionDiagnostic })));
 
 // Componente de loading para lazy components
 const LazyFallback = () => (
@@ -484,6 +485,11 @@ const Dashboard = () => {
                   {isAdmin && (
                     <Suspense fallback={<div className="h-9 bg-muted animate-pulse rounded" />}>
                       <VerifyBillButton />
+                    </Suspense>
+                  )}
+                  {isAdmin && (
+                    <Suspense fallback={<div className="h-9 bg-muted animate-pulse rounded" />}>
+                      <QBOConnectionDiagnostic />
                     </Suspense>
                   )}
                   <Button 
