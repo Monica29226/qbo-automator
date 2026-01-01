@@ -245,6 +245,7 @@ Deno.serve(async (req) => {
       failed: 0,
       skipped_duplicates: 0,
       errors: [] as any[],
+      duplicates: [] as { doc_number: string; qbo_entity_id: string; qbo_entity_type: string; reason: string }[],
     };
 
     // Helper para buscar vendor en QBO (con timeout)
@@ -579,7 +580,7 @@ Deno.serve(async (req) => {
             })
             .eq("id", doc.id);
 
-          return { success: true, docNumber: doc.doc_number, skipped: true, reason: `Ya existe en QuickBooks (ID: ${duplicateCheck.entityId})` };
+          return { success: true, docNumber: doc.doc_number, skipped: true, reason: `Ya existe en QuickBooks (ID: ${duplicateCheck.entityId})`, qbo_entity_id: duplicateCheck.entityId, qbo_entity_type: entityType };
         }
         
         // RE-VERIFICACIÓN CRÍTICA: Verificar que el documento NO tiene qbo_entity_id antes de crear
@@ -1599,6 +1600,15 @@ Deno.serve(async (req) => {
       if (result.success) {
         if (result.skipped) {
           results.skipped_duplicates++;
+          // Agregar información del duplicado para el frontend
+          if (result.qbo_entity_id) {
+            results.duplicates.push({
+              doc_number: result.docNumber,
+              qbo_entity_id: result.qbo_entity_id,
+              qbo_entity_type: result.qbo_entity_type || 'Bill',
+              reason: result.reason || 'Ya existe en QuickBooks',
+            });
+          }
         } else {
           results.published++;
         }
@@ -1618,6 +1628,7 @@ Deno.serve(async (req) => {
         skipped_duplicates: results.skipped_duplicates,
         failed: results.failed,
         errors: results.errors.length > 0 ? results.errors : undefined,
+        duplicates: results.duplicates.length > 0 ? results.duplicates : undefined,
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 200 }
     );

@@ -57,6 +57,18 @@ export const PublishSingleDocButton = ({ docNumber, documentId }: PublishSingleD
         throw new Error(errorMsg);
       }
 
+      // Verificar si fue detectado como duplicado
+      if (data.skipped_duplicates > 0) {
+        const duplicateInfo = data.duplicates?.[0];
+        const qboId = duplicateInfo?.qbo_entity_id || 'ID desconocido';
+        toast.warning(
+          `⚠️ Factura ${docNumber} ya existe en QuickBooks (ID: ${qboId}). No se subió para evitar duplicados.`,
+          { duration: 8000 }
+        );
+        setTimeout(() => window.location.reload(), 2000);
+        return;
+      }
+      
       if (data.published > 0) {
         toast.success(`✓ Factura ${docNumber} publicada exitosamente a QuickBooks`);
         // Recargar la página después de 1 segundo
@@ -74,8 +86,16 @@ export const PublishSingleDocButton = ({ docNumber, documentId }: PublishSingleD
           errorMsg = JSON.stringify(firstError);
         }
         
-        console.error("Publishing failed:", errorMsg, data);
-        toast.error(`Error al publicar: ${errorMsg}`, { duration: 6000 });
+        // Verificar si el error menciona duplicado
+        if (errorMsg.toLowerCase().includes('duplica') || errorMsg.toLowerCase().includes('ya existe')) {
+          toast.warning(`⚠️ ${errorMsg}`, { duration: 8000 });
+        } else {
+          console.error("Publishing failed:", errorMsg, data);
+          toast.error(`Error al publicar: ${errorMsg}`, { duration: 6000 });
+        }
+      } else {
+        // No se publicó ni falló - posiblemente ya estaba publicado
+        toast.info(`Factura ${docNumber} - no hubo cambios (posiblemente ya publicada)`);
       }
     } catch (error) {
       console.error("Error publishing document:", error);
