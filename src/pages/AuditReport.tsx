@@ -28,6 +28,7 @@ interface AuditDocument {
   vendor_id: string | null;
   error_message: string | null;
   processed_at: string | null;
+  default_account_ref: string | null;
 }
 
 interface VendorRule {
@@ -89,7 +90,13 @@ export default function AuditReport() {
   };
 
   const getAccountForDocument = (doc: AuditDocument): string => {
-    // Try to get from vendor rule
+    // 1. First priority: Use the assigned account from the document
+    if (doc.default_account_ref) {
+      // Extract just the account code (e.g., "5105" from "5105 Costo de ventas")
+      return doc.default_account_ref.split(" ")[0];
+    }
+
+    // 2. Try to get from vendor rule
     const rule = vendorRules.find(r => 
       r.vendor_name.toLowerCase() === doc.supplier_name.toLowerCase()
     );
@@ -98,18 +105,30 @@ export default function AuditReport() {
       return rule.account_code.split(" ")[0];
     }
 
-    // Try to get from xml_data
+    // 3. Try to get from xml_data
     if (doc.xml_data?.cuentaContable) {
       return doc.xml_data.cuentaContable.split(" ")[0];
     }
 
-    // Default account
-    return "60";
+    // 4. No account assigned
+    return "Sin asignar";
   };
 
-  const getAccountDescription = (accountCode: string): string => {
+  const getAccountDescriptionFromDoc = (doc: AuditDocument): string => {
+    // First try to get description from the default_account_ref (e.g., "5105 Costo de ventas:Alimentos")
+    if (doc.default_account_ref && doc.default_account_ref.includes(" ")) {
+      return doc.default_account_ref.split(" ").slice(1).join(" ");
+    }
+    
+    // Try from vendor rules
+    const accountCode = getAccountForDocument(doc);
     const rule = vendorRules.find(r => r.account_code.startsWith(accountCode));
     return rule?.account_description || "Sin descripción";
+  };
+
+  const getAccountDescriptionFromCode = (accountCode: string): string => {
+    const rule = vendorRules.find(r => r.account_code.startsWith(accountCode));
+    return rule?.account_description || accountCode;
   };
 
   // Map doc_type to category: Factura or Nota de Crédito
@@ -142,7 +161,7 @@ export default function AuditReport() {
       "Monto": doc.total_amount,
       "Moneda": doc.currency,
       "Cuenta Contable": getAccountForDocument(doc),
-      "Descripción Cuenta": getAccountDescription(getAccountForDocument(doc)),
+      "Descripción Cuenta": getAccountDescriptionFromDoc(doc),
       "Estado": doc.status,
       "QBO ID": doc.qbo_entity_id || "N/A",
       "Error": doc.error_message || ""
@@ -270,7 +289,7 @@ export default function AuditReport() {
         </div>
 
         {/* Stats Cards */}
-        <div className="grid gap-4 md:grid-cols-4">
+        <div className="grid gap-4 md:grid-cols-5">
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-medium text-muted-foreground">
@@ -284,12 +303,24 @@ export default function AuditReport() {
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-medium text-muted-foreground">
-                Publicadas
+                Publicadas en QBO
               </CardTitle>
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold text-green-600">
-                {documents.filter(d => d.status === "published" || d.status === "processed" || d.status === "duplicate").length}
+                {documents.filter(d => d.qbo_entity_id !== null).length}
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground">
+                Pendientes Publicar
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold text-warning">
+                {documents.filter(d => d.qbo_entity_id === null && d.default_account_ref && d.status !== 'error' && d.status !== 'review').length}
               </div>
             </CardContent>
           </Card>
@@ -308,11 +339,11 @@ export default function AuditReport() {
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-medium text-muted-foreground">
-                Facturas {getCurrentMonthName()}
+                Cuentas Únicas
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold text-blue-600">{currentMonthInvoices}</div>
+              <div className="text-2xl font-bold">{uniqueAccounts.length}</div>
             </CardContent>
           </Card>
         </div>
@@ -395,7 +426,7 @@ export default function AuditReport() {
                   <SelectItem value="all">Todas las cuentas</SelectItem>
                   {uniqueAccounts.map(account => (
                     <SelectItem key={account} value={account}>
-                      {account} - {getAccountDescription(account)}
+                      {account} - {getAccountDescriptionFromCode(account)}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -434,7 +465,7 @@ export default function AuditReport() {
                     ) : (
                       filteredDocuments.map((doc) => {
                         const accountCode = getAccountForDocument(doc);
-                        const accountDesc = getAccountDescription(accountCode);
+                        const accountDesc = getAccountDescriptionFromDoc(doc);
                         
                         return (
                           <TableRow key={doc.id}>
