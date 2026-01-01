@@ -42,25 +42,28 @@ serve(async (req) => {
       }
     }
 
-    // Obtener todas las organizaciones activas con correo (Gmail O Outlook) y QuickBooks conectados
+    // Obtener todas las organizaciones activas con correo (Gmail, Outlook O Bluehost) y QuickBooks conectados
     const { data: orgs } = await supabase
       .from("organizations")
-      .select("id, name, gmail_connected, outlook_connected")
+      .select("id, name, gmail_connected, outlook_connected, bluehost_connected")
       .eq("quickbooks_connected", true)
       .eq("is_active", true);
 
-    // Filtrar orgs que tengan al menos Gmail O Outlook conectado
-    const validOrgs = orgs?.filter(org => org.gmail_connected || org.outlook_connected) || [];
+    // Filtrar orgs que tengan al menos Gmail, Outlook o Bluehost conectado
+    const validOrgs = orgs?.filter(org => org.gmail_connected || org.outlook_connected || org.bluehost_connected) || [];
 
     if (validOrgs.length === 0) {
-      console.log("No organizations with email (Gmail/Outlook) and QuickBooks connected");
+      console.log("No organizations with email (Gmail/Outlook/Bluehost) and QuickBooks connected");
       return new Response(
         JSON.stringify({ message: "No organizations to sync" }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
     
-    console.log(`Found ${validOrgs.length} organizations to sync (Gmail: ${validOrgs.filter(o => o.gmail_connected).length}, Outlook: ${validOrgs.filter(o => o.outlook_connected).length})`);
+    const gmailCount = validOrgs.filter(o => o.gmail_connected).length;
+    const outlookCount = validOrgs.filter(o => o.outlook_connected).length;
+    const bluehostCount = validOrgs.filter(o => o.bluehost_connected && !o.gmail_connected && !o.outlook_connected).length;
+    console.log(`Found ${validOrgs.length} organizations to sync (Gmail: ${gmailCount}, Outlook: ${outlookCount}, Bluehost: ${bluehostCount})`);
     
     const orgsToProcess = validOrgs;
 
@@ -84,8 +87,43 @@ serve(async (req) => {
 
       try {
         // Determinar qué proveedor de correo usar
-        const mailProvider = org.gmail_connected ? "gmail" : "outlook";
-        const fetchFunctionName = org.gmail_connected ? "gmail-fetch-invoices" : "outlook-fetch-invoices";
+        let mailProvider: string;
+        let fetchFunctionName: string;
+        
+        if (org.gmail_connected) {
+          mailProvider = "gmail";
+          fetchFunctionName = "gmail-fetch-invoices";
+        } else if (org.outlook_connected) {
+          mailProvider = "outlook";
+          fetchFunctionName = "outlook-fetch-invoices";
+        } else if (org.bluehost_connected) {
+          // Bluehost usa IMAP que no está soportado en Edge Functions
+          // Por ahora, registrar que necesita configuración manual o reenvío a Gmail
+          console.log(`⚠️ Organization ${org.name} uses Bluehost - IMAP fetch not yet implemented`);
+          
+          if (syncLog) {
+            await supabase
+              .from("sync_logs")
+              .update({
+                status: "skipped",
+                error_message: "Bluehost requiere configuración adicional. Considere reenviar correos a Gmail o usar la importación manual.",
+                completed_at: new Date().toISOString(),
+                execution_time_ms: Date.now() - syncStartTime,
+              })
+              .eq("id", syncLog.id);
+          }
+          
+          results.push({
+            organization_id: org.id,
+            organization_name: org.name,
+            mail_provider: "bluehost",
+            status: "skipped",
+            message: "Bluehost IMAP no soportado aún. Use importación manual o reenvíe correos a Gmail.",
+          });
+          continue;
+        } else {
+          throw new Error("No email provider configured");
+        }
         
         console.log(`📧 Fetching invoices from ${mailProvider.toUpperCase()} for ${org.name}...`);
         
