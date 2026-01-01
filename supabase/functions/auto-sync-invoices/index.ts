@@ -97,30 +97,8 @@ serve(async (req) => {
           mailProvider = "outlook";
           fetchFunctionName = "outlook-fetch-invoices";
         } else if (org.bluehost_connected) {
-          // Bluehost usa IMAP que no está soportado en Edge Functions
-          // Por ahora, registrar que necesita configuración manual o reenvío a Gmail
-          console.log(`⚠️ Organization ${org.name} uses Bluehost - IMAP fetch not yet implemented`);
-          
-          if (syncLog) {
-            await supabase
-              .from("sync_logs")
-              .update({
-                status: "skipped",
-                error_message: "Bluehost requiere configuración adicional. Considere reenviar correos a Gmail o usar la importación manual.",
-                completed_at: new Date().toISOString(),
-                execution_time_ms: Date.now() - syncStartTime,
-              })
-              .eq("id", syncLog.id);
-          }
-          
-          results.push({
-            organization_id: org.id,
-            organization_name: org.name,
-            mail_provider: "bluehost",
-            status: "skipped",
-            message: "Bluehost IMAP no soportado aún. Use importación manual o reenvíe correos a Gmail.",
-          });
-          continue;
+          mailProvider = "bluehost";
+          fetchFunctionName = "bluehost-fetch-invoices";
         } else {
           throw new Error("No email provider configured");
         }
