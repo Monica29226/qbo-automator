@@ -246,31 +246,43 @@ Deno.serve(async (req) => {
     console.log("🏢 Organización esperada:", { name: organization.name, tax_id: organization.tax_id });
     
     // Validar que la factura sea para esta organización
-    if (organization.tax_id) {
-      // Normalizar cédulas para comparación (quitar guiones, espacios)
-      const normalizedOrgTaxId = organization.tax_id.replace(/[-\s]/g, '').trim();
-      const normalizedReceptorId = receptor.identificacion.replace(/[-\s]/g, '').trim();
+    // IMPORTANTE: Si la organización no tiene cédula configurada, RECHAZAR para evitar cargar facturas incorrectas
+    if (!organization.tax_id) {
+      console.error(`❌ FACTURA RECHAZADA - La organización ${organization.name} no tiene cédula jurídica configurada`);
+      console.error(`   Configure la cédula en Mi Empresa antes de procesar facturas`);
       
-      if (normalizedReceptorId && normalizedReceptorId !== normalizedOrgTaxId) {
-        console.warn(`⚠️ FACTURA RECHAZADA - Receptor no coincide con la organización`);
-        console.warn(`   Receptor: ${receptor.nombre} (${receptor.identificacion})`);
-        console.warn(`   Esperado: ${organization.name} (${organization.tax_id})`);
-        
-        return new Response(
-          JSON.stringify({
-            success: false,
-            rejected: true,
-            message: `Factura rechazada: El receptor (${receptor.nombre} - ${receptor.identificacion}) no coincide con la organización (${organization.name} - ${organization.tax_id})`,
-            reason: 'receptor_mismatch'
-          }),
-          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
-      
-      console.log("✅ Receptor validado correctamente");
-    } else {
-      console.warn("⚠️ La organización no tiene cédula jurídica configurada, saltando validación de receptor");
+      return new Response(
+        JSON.stringify({
+          success: false,
+          rejected: true,
+          message: `Organización sin cédula configurada. Configure la cédula jurídica en "Mi Empresa" antes de importar facturas.`,
+          reason: 'org_no_tax_id'
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
     }
+    
+    // Normalizar cédulas para comparación (quitar guiones, espacios)
+    const normalizedOrgTaxId = organization.tax_id.replace(/[-\s]/g, '').trim();
+    const normalizedReceptorId = receptor.identificacion.replace(/[-\s]/g, '').trim();
+    
+    if (normalizedReceptorId && normalizedReceptorId !== normalizedOrgTaxId) {
+      console.warn(`⚠️ FACTURA RECHAZADA - Receptor no coincide con la organización`);
+      console.warn(`   Receptor: ${receptor.nombre} (${receptor.identificacion})`);
+      console.warn(`   Esperado: ${organization.name} (${organization.tax_id})`);
+      
+      return new Response(
+        JSON.stringify({
+          success: false,
+          rejected: true,
+          message: `Factura rechazada: El receptor (${receptor.nombre} - ${receptor.identificacion}) no coincide con la organización (${organization.name} - ${organization.tax_id})`,
+          reason: 'receptor_mismatch'
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+    
+    console.log("✅ Receptor validado correctamente:", receptor.nombre, receptor.identificacion);
     
     // ============================================================
     // Continuar con el procesamiento normal del documento
@@ -548,6 +560,10 @@ Deno.serve(async (req) => {
             nombre: supplier_name,
             identificacion: supplier_tax_id,
             email: supplier_email
+          },
+          receptor: {
+            nombre: receptor.nombre,
+            identificacion: receptor.identificacion
           },
           numeroConsecutivo: doc_number,
           fechaEmision: issue_date,
