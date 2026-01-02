@@ -778,8 +778,26 @@ Deno.serve(async (req) => {
             
             logInfo(`🔍 Buscando cuenta con código: "${searchCode}" entre ${allAccounts.length} cuentas`);
             
-            // 0. FIRST: Si es un número simple (1-3 dígitos), buscar DIRECTAMENTE por ID interno de QB
-            // Esto resuelve el bug donde vendor_defaults tiene IDs internos (97, 81, 93) en vez de códigos
+            // 0. FIRST: Check if searchCode contains a name after the number (format: "71 · Servicios" or "71 Nombre")
+            // If so, prioritize searching by NAME to avoid mismatches
+            const hasNamePart = searchCode.includes(' ') || searchCode.includes('·');
+            if (hasNamePart) {
+              // Extract the name part for searching
+              const namePart = searchCode.replace(/^\d+[\s·\-:]*/, '').trim().toLowerCase();
+              if (namePart.length > 3) {
+                const accountByName = allAccounts.find((acc: any) => {
+                  const accName = (acc.Name || '').toLowerCase();
+                  return accName.includes(namePart) || namePart.includes(accName);
+                });
+                if (accountByName) {
+                  logInfo(`✅ Cuenta encontrada por nombre: ${accountByName.Name} (ID: ${accountByName.Id})`);
+                  return accountByName.Id;
+                }
+              }
+            }
+            
+            // 0b. If it's a simple number (1-3 digits), search by internal QB ID
+            // This resolves the bug where vendor_defaults has internal IDs (97, 81, 93) instead of codes
             if (/^\d{1,3}$/.test(searchCode)) {
               const targetByInternalId = allAccounts.find((acc: any) => acc.Id === searchCode);
               if (targetByInternalId) {
@@ -798,12 +816,13 @@ Deno.serve(async (req) => {
               return targetAccount.Id;
             }
             
-            // 2. Buscar por nombre que empiece con el código
+            // 2. Buscar por nombre que empiece con el código (extracting code part)
+            const codeOnly = searchCode.split(/[\s·\-:]/)[0].trim();
             targetAccount = allAccounts.find((acc: any) => {
               const name = acc.Name || '';
-              return name.startsWith(searchCode + ' ') || 
-                     name.startsWith(searchCode + '-') ||
-                     name.startsWith(searchCode + ':');
+              return name.startsWith(codeOnly + ' ') || 
+                     name.startsWith(codeOnly + '-') ||
+                     name.startsWith(codeOnly + ':');
             });
             
             if (targetAccount) {
