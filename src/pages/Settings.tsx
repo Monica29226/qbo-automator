@@ -16,6 +16,7 @@ import { Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
+import SystemStatusPanel from "@/components/settings/SystemStatusPanel";
 
 interface Settings {
   qbo_company_id: string;
@@ -136,7 +137,11 @@ const Settings = () => {
         </div>
       </header>
 
-      <main className="container mx-auto px-6 py-8">
+      <main className="container mx-auto px-6 py-8 space-y-6">
+        <div className="max-w-3xl mx-auto">
+          <SystemStatusPanel />
+        </div>
+
         <Card className="p-6 max-w-3xl mx-auto">
           <div className="space-y-6">
             <div>
