@@ -119,7 +119,7 @@ const Organizations = () => {
     // Obtener miembros
     const { data: membersData, error: membersError } = await supabase
       .from("organization_members")
-      .select("id, user_id, role, profiles(email, full_name)")
+      .select("id, user_id, role")
       .eq("organization_id", activeOrganization)
       .eq("is_active", true)
       .order("role");
@@ -127,8 +127,22 @@ const Organizations = () => {
     if (membersError) {
       toast.error("Error al cargar miembros");
       console.error(membersError);
+    } else if (membersData && membersData.length > 0) {
+      // Fetch profiles separately since there's no FK relationship
+      const userIds = membersData.map(m => m.user_id);
+      const { data: profilesData } = await supabase
+        .from("profiles")
+        .select("id, email, full_name")
+        .in("id", userIds);
+
+      // Combine members with their profiles
+      const membersWithProfiles = membersData.map(member => ({
+        ...member,
+        profiles: profilesData?.find(p => p.id === member.user_id) || { email: "", full_name: "" }
+      }));
+      setMembers(membersWithProfiles as any);
     } else {
-      setMembers(membersData as any || []);
+      setMembers([]);
     }
 
     // Obtener invitaciones pendientes
