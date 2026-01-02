@@ -32,6 +32,7 @@ import ResetPassword from "./pages/ResetPassword";
 import ForgotPassword from "./pages/ForgotPassword";
 import NotFound from "./pages/NotFound";
 import { ProtectedRoute } from "./components/ProtectedRoute";
+import { AppErrorBoundary } from "./components/AppErrorBoundary";
 import { AuthProvider } from "./contexts/AuthContext";
 
 const queryClient = new QueryClient({
@@ -52,186 +53,188 @@ const App = () => (
       <Sonner />
       <BrowserRouter>
         <AuthProvider>
-        <Routes>
-          {/* Auth routes - both "/" and "/auth" point to login */}
-          <Route path="/" element={<Auth />} />
-          <Route path="/auth" element={<Auth />} />
-          <Route path="/forgot-password" element={<ForgotPassword />} />
-          <Route path="/reset-password" element={<ResetPassword />} />
-          <Route path="/multi-tenant" element={<MultiTenantDocs />} />
-          
-          {/* Protected: Select company */}
-          <Route
-            path="/select-company"
-            element={
-              <ProtectedRoute>
-                <SelectCompany />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/accept-invitation"
-            element={
-              <ProtectedRoute>
-                <AcceptInvitation />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/dashboard"
-            element={
-              <ProtectedRoute>
-                <Dashboard />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/upload"
-            element={
-              <ProtectedRoute>
-                <UploadDocument />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/review-queue"
-            element={
-              <ProtectedRoute>
-                <ReviewQueue />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/vendors"
-            element={
-              <ProtectedRoute requireAdmin>
-                <Vendors />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/settings"
-            element={
-              <ProtectedRoute requireAdmin>
-                <Settings />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/organization"
-            element={
-              <ProtectedRoute requireAdmin>
-                <Organizations />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/my-company"
-            element={
-              <ProtectedRoute>
-                <MyCompany />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/integrations"
-            element={
-              <ProtectedRoute requireAdmin>
-                <Integrations />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/vendor-rules"
-            element={
-              <ProtectedRoute requireAdmin>
-                <VendorRules />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/vendor-categories"
-            element={
-              <ProtectedRoute requireAdmin>
-                <VendorCategories />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/validation-rules"
-            element={
-              <ProtectedRoute requireAdmin>
-                <ValidationRules />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/error-documents"
-            element={
-              <ProtectedRoute>
-                <ErrorDocuments />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/published-documents"
-            element={
-              <ProtectedRoute>
-                <PublishedDocuments />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/audit-report"
-            element={
-              <ProtectedRoute>
-                <AuditReport />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/invoices-pending-log"
-            element={
-              <ProtectedRoute>
-                <InvoicesPendingLog />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/sales-invoices"
-            element={
-              <ProtectedRoute>
-                <SalesInvoices />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/quickbooks-status"
-            element={
-              <ProtectedRoute>
-                <QuickBooksStatus />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/all-invoices"
-            element={
-              <ProtectedRoute>
-                <AllInvoices />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/users-management"
-            element={
-              <ProtectedRoute requireAdmin>
-                <UsersManagement />
-              </ProtectedRoute>
-            }
-          />
-          {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
-          <Route path="*" element={<NotFound />} />
-        </Routes>
+          <AppErrorBoundary>
+            <Routes>
+              {/* Auth routes - both "/" and "/auth" point to login */}
+              <Route path="/" element={<Auth />} />
+              <Route path="/auth" element={<Auth />} />
+              <Route path="/forgot-password" element={<ForgotPassword />} />
+              <Route path="/reset-password" element={<ResetPassword />} />
+              <Route path="/multi-tenant" element={<MultiTenantDocs />} />
+
+              {/* Protected: Select company */}
+              <Route
+                path="/select-company"
+                element={
+                  <ProtectedRoute>
+                    <SelectCompany />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/accept-invitation"
+                element={
+                  <ProtectedRoute>
+                    <AcceptInvitation />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/dashboard"
+                element={
+                  <ProtectedRoute>
+                    <Dashboard />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/upload"
+                element={
+                  <ProtectedRoute>
+                    <UploadDocument />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/review-queue"
+                element={
+                  <ProtectedRoute>
+                    <ReviewQueue />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/vendors"
+                element={
+                  <ProtectedRoute requireAdmin>
+                    <Vendors />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/settings"
+                element={
+                  <ProtectedRoute requireAdmin>
+                    <Settings />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/organization"
+                element={
+                  <ProtectedRoute requireAdmin>
+                    <Organizations />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/my-company"
+                element={
+                  <ProtectedRoute>
+                    <MyCompany />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/integrations"
+                element={
+                  <ProtectedRoute requireAdmin>
+                    <Integrations />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/vendor-rules"
+                element={
+                  <ProtectedRoute requireAdmin>
+                    <VendorRules />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/vendor-categories"
+                element={
+                  <ProtectedRoute requireAdmin>
+                    <VendorCategories />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/validation-rules"
+                element={
+                  <ProtectedRoute requireAdmin>
+                    <ValidationRules />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/error-documents"
+                element={
+                  <ProtectedRoute>
+                    <ErrorDocuments />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/published-documents"
+                element={
+                  <ProtectedRoute>
+                    <PublishedDocuments />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/audit-report"
+                element={
+                  <ProtectedRoute>
+                    <AuditReport />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/invoices-pending-log"
+                element={
+                  <ProtectedRoute>
+                    <InvoicesPendingLog />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/sales-invoices"
+                element={
+                  <ProtectedRoute>
+                    <SalesInvoices />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/quickbooks-status"
+                element={
+                  <ProtectedRoute>
+                    <QuickBooksStatus />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/all-invoices"
+                element={
+                  <ProtectedRoute>
+                    <AllInvoices />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/users-management"
+                element={
+                  <ProtectedRoute requireAdmin>
+                    <UsersManagement />
+                  </ProtectedRoute>
+                }
+              />
+              {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
+              <Route path="*" element={<NotFound />} />
+            </Routes>
+          </AppErrorBoundary>
         </AuthProvider>
       </BrowserRouter>
     </TooltipProvider>
