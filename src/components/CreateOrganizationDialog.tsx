@@ -89,10 +89,47 @@ export function CreateOrganizationDialog({
     setFormData((prev) => ({ ...prev, [field]: value }));
   };
 
+  // Validar cédula según tipo de identificación
+  const validateIdentification = (type: string, number: string): string | null => {
+    if (!number) return null; // Es opcional
+    
+    // Limpiar guiones y espacios
+    const cleanNumber = number.replace(/[-\s]/g, "");
+    
+    if (type === "juridica") {
+      if (!/^\d{10}$/.test(cleanNumber)) {
+        return "La cédula jurídica debe tener exactamente 10 dígitos";
+      }
+    } else if (type === "fisica") {
+      if (!/^\d{9}$/.test(cleanNumber)) {
+        return "La cédula física debe tener exactamente 9 dígitos";
+      }
+    } else if (type === "dimex") {
+      if (!/^\d{11,12}$/.test(cleanNumber)) {
+        return "El DIMEX debe tener 11 o 12 dígitos";
+      }
+    } else if (type === "nite") {
+      if (!/^\d{10}$/.test(cleanNumber)) {
+        return "El NITE debe tener exactamente 10 dígitos";
+      }
+    }
+    
+    return null;
+  };
+
   const handleSubmit = async () => {
     if (!formData.name.trim()) {
       toast.error("El nombre de la empresa es requerido");
       return;
+    }
+
+    // Validar identificación si está presente
+    if (formData.identification_number && formData.identification_type) {
+      const validationError = validateIdentification(formData.identification_type, formData.identification_number);
+      if (validationError) {
+        toast.error(validationError);
+        return;
+      }
     }
 
     setIsCreating(true);

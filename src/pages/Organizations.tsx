@@ -163,10 +163,33 @@ const Organizations = () => {
     setIsLoading(false);
   };
 
+  // Validar cédula jurídica (10 dígitos)
+  const validateTaxId = (taxId: string): string | null => {
+    if (!taxId) return null; // Es opcional
+    
+    // Limpiar guiones y espacios
+    const cleanNumber = taxId.replace(/[-\s]/g, "");
+    
+    if (!/^\d{10}$/.test(cleanNumber)) {
+      return "La cédula jurídica debe tener exactamente 10 dígitos (sin guiones)";
+    }
+    
+    return null;
+  };
+
   const handleUpdateOrg = async () => {
     if (!orgFormData.name) {
       toast.error("El nombre es requerido");
       return;
+    }
+
+    // Validar cédula jurídica
+    if (orgFormData.tax_id) {
+      const validationError = validateTaxId(orgFormData.tax_id);
+      if (validationError) {
+        toast.error(validationError);
+        return;
+      }
     }
 
     if (!activeOrganization) return;
