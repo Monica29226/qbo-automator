@@ -1,7 +1,7 @@
 import React from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { AlertTriangle, LogOut, RefreshCw } from "lucide-react";
+import { AlertTriangle, LogOut, RefreshCw, Loader2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 
 const RELOAD_ONCE_KEY = "ff_reload_once";
@@ -13,12 +13,13 @@ type AppErrorBoundaryProps = {
 type AppErrorBoundaryState = {
   hasError: boolean;
   error?: Error;
+  isReloading: boolean;
 };
 
 export class AppErrorBoundary extends React.Component<AppErrorBoundaryProps, AppErrorBoundaryState> {
-  state: AppErrorBoundaryState = { hasError: false };
+  state: AppErrorBoundaryState = { hasError: false, isReloading: false };
 
-  static getDerivedStateFromError(error: Error): AppErrorBoundaryState {
+  static getDerivedStateFromError(error: Error): Partial<AppErrorBoundaryState> {
     return { hasError: true, error };
   }
 
@@ -36,7 +37,14 @@ export class AppErrorBoundary extends React.Component<AppErrorBoundaryProps, App
         const alreadyReloaded = sessionStorage.getItem(RELOAD_ONCE_KEY) === "1";
         if (!alreadyReloaded) {
           sessionStorage.setItem(RELOAD_ONCE_KEY, "1");
-          window.location.reload();
+          // Set reloading state to show spinner before reload
+          this.setState({ isReloading: true }, () => {
+            // Small delay to ensure the spinner is visible
+            setTimeout(() => {
+              window.location.reload();
+            }, 100);
+          });
+          return;
         }
       } catch {
         // ignore
@@ -44,13 +52,22 @@ export class AppErrorBoundary extends React.Component<AppErrorBoundaryProps, App
     }
   }
 
+  private isLazyLoadError = (): boolean => {
+    const message = String(this.state.error?.message ?? "");
+    return /Failed to fetch dynamically imported module|Loading chunk|ChunkLoadError/i.test(message);
+  };
+
   private handleReload = () => {
     try {
       sessionStorage.removeItem(RELOAD_ONCE_KEY);
     } catch {
       // ignore
     }
-    window.location.reload();
+    this.setState({ isReloading: true }, () => {
+      setTimeout(() => {
+        window.location.reload();
+      }, 100);
+    });
   };
 
   private handleSignOut = async () => {
@@ -63,6 +80,16 @@ export class AppErrorBoundary extends React.Component<AppErrorBoundaryProps, App
 
   render() {
     if (!this.state.hasError) return this.props.children;
+
+    // Show loading spinner during automatic reload for lazy loading errors
+    if (this.state.isReloading || (this.isLazyLoadError() && sessionStorage.getItem(RELOAD_ONCE_KEY) !== "1")) {
+      return (
+        <div className="min-h-screen bg-background flex flex-col items-center justify-center p-6 gap-4">
+          <Loader2 className="h-12 w-12 animate-spin text-primary" />
+          <p className="text-lg text-muted-foreground">Cargando aplicación...</p>
+        </div>
+      );
+    }
 
     return (
       <div className="min-h-screen bg-background flex items-center justify-center p-6">
@@ -78,9 +105,18 @@ export class AppErrorBoundary extends React.Component<AppErrorBoundaryProps, App
           </CardHeader>
           <CardContent className="flex flex-col gap-3">
             <div className="flex flex-col sm:flex-row gap-3">
-              <Button onClick={this.handleReload} className="w-full">
-                <RefreshCw className="h-4 w-4 mr-2" />
-                Recargar
+              <Button onClick={this.handleReload} className="w-full" disabled={this.state.isReloading}>
+                {this.state.isReloading ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Recargando...
+                  </>
+                ) : (
+                  <>
+                    <RefreshCw className="h-4 w-4 mr-2" />
+                    Recargar
+                  </>
+                )}
               </Button>
               <Button variant="outline" onClick={this.handleSignOut} className="w-full">
                 <LogOut className="h-4 w-4 mr-2" />
