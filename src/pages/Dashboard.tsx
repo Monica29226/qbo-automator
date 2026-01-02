@@ -45,6 +45,7 @@ const IVAModeIndicator = lazy(() => import("@/components/dashboard/IVAModeIndica
 const BatchDownloadMissingPdfs = lazy(() => import("@/components/dashboard/BatchDownloadMissingPdfs").then(m => ({ default: m.BatchDownloadMissingPdfs })));
 const QBOConnectionDiagnostic = lazy(() => import("@/components/dashboard/QBOConnectionDiagnostic").then(m => ({ default: m.QBOConnectionDiagnostic })));
 const AuditQBOBills = lazy(() => import("@/components/dashboard/AuditQBOBills").then(m => ({ default: m.AuditQBOBills })));
+const MissingTaxIdAlert = lazy(() => import("@/components/dashboard/MissingTaxIdAlert").then(m => ({ default: m.MissingTaxIdAlert })));
 
 // Componente de loading para lazy components
 const LazyFallback = () => (
@@ -472,6 +473,9 @@ const Dashboard = () => {
               </div>
             </div>
 
+            <Suspense fallback={null}>
+              <MissingTaxIdAlert organizationId={activeOrganization} />
+            </Suspense>
             <GmailTokenAlert />
             <QuickBooksTokenAlert />
 
