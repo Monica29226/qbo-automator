@@ -211,24 +211,49 @@ Deno.serve(async (req) => {
     const minDate = minDateSetting?.value || new Date(Date.now() - 180 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
     logInfo(`📅 Fecha mínima de publicación: ${minDate}`);
 
-    // Obtener documentos a publicar
-    let query = supabase
+    // ============================================================
+    // CLEANUP: Revert documents stuck in 'publishing' for more than 5 minutes
+    // This handles cases where the previous function instance crashed or timed out
+    // ============================================================
+    const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+    const { data: stuckDocs } = await supabase
       .from("processed_documents")
-      .select("*")
+      .update({ 
+        status: "pending", 
+        error_message: "Proceso anterior interrumpido - reintentando" 
+      })
+      .eq("organization_id", organization_id)
+      .eq("status", "publishing")
+      .lt("updated_at", fiveMinutesAgo)
+      .select("id, doc_number");
+    
+    if (stuckDocs && stuckDocs.length > 0) {
+      logInfo(`🔄 Reverted ${stuckDocs.length} document(s) stuck in 'publishing' state: ${stuckDocs.map(d => d.doc_number).join(', ')}`);
+    }
+
+    // ============================================================
+    // ATOMIC LOCK: Select and immediately mark documents as 'publishing' to prevent race conditions
+    // This prevents duplicate bills when multiple function instances run in parallel
+    // ============================================================
+    
+    // First: Find eligible documents
+    let findQuery = supabase
+      .from("processed_documents")
+      .select("id")
       .eq("organization_id", organization_id)
       .is("qbo_entity_id", null)
       .in("status", ["pending", "processed"])
       .gte("issue_date", minDate);
 
     if (document_ids && document_ids.length > 0) {
-      query = query.in("id", document_ids);
+      findQuery = findQuery.in("id", document_ids);
     }
 
-    const { data: documents, error: docError } = await query.limit(50);
+    const { data: eligibleDocs, error: findError } = await findQuery.limit(50);
 
-    if (docError) throw docError;
+    if (findError) throw findError;
 
-    if (!documents || documents.length === 0) {
+    if (!eligibleDocs || eligibleDocs.length === 0) {
       logInfo(`⚠️ No documents found to publish (min_date: ${minDate}, org: ${organization_id})`);
       return new Response(
         JSON.stringify({ success: true, message: "No documents to publish", published: 0 }),
@@ -236,7 +261,31 @@ Deno.serve(async (req) => {
       );
     }
 
-    logInfo(`📋 Found ${documents.length} document(s) to publish`);
+    const docIdsToProcess = eligibleDocs.map(d => d.id);
+    logInfo(`📋 Found ${docIdsToProcess.length} document(s) eligible for publishing`);
+
+    // Second: Atomically update status to 'publishing' - only for docs still in pending/processed state
+    // This acts as a lock - other instances won't pick up these documents
+    const { data: lockedDocs, error: lockError } = await supabase
+      .from("processed_documents")
+      .update({ status: "publishing", error_message: null })
+      .in("id", docIdsToProcess)
+      .in("status", ["pending", "processed"])  // Only update if still in valid state (not already being published)
+      .select("*");
+
+    if (lockError) throw lockError;
+
+    // If no documents were locked (another instance got them), return early
+    if (!lockedDocs || lockedDocs.length === 0) {
+      logInfo(`⚠️ No documents to publish - all were already locked by another process`);
+      return new Response(
+        JSON.stringify({ success: true, message: "Documents already being processed", published: 0 }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    const documents = lockedDocs;
+    logInfo(`🔒 Locked ${documents.length} document(s) for publishing (status set to 'publishing')`);
     
     const isSingleDocument = documents.length === 1;
 
@@ -584,6 +633,7 @@ Deno.serve(async (req) => {
         }
         
         // RE-VERIFICACIÓN CRÍTICA: Verificar que el documento NO tiene qbo_entity_id antes de crear
+        // Y que todavía está en estado "publishing" (no fue cambiado por otra ejecución)
         // Esto previene duplicación cuando hay ejecuciones paralelas
         const { data: freshDoc } = await supabase
           .from("processed_documents")
@@ -594,6 +644,12 @@ Deno.serve(async (req) => {
         if (freshDoc?.qbo_entity_id) {
           logInfo(`⚠️ Documento ${doc.doc_number} ya fue publicado por otra ejecución: ${freshDoc.qbo_entity_id}`);
           return { success: true, docNumber: doc.doc_number };
+        }
+        
+        // Verificar que el documento todavía está en estado "publishing" (nosotros lo bloqueamos)
+        if (freshDoc?.status !== 'publishing') {
+          logInfo(`⚠️ Documento ${doc.doc_number} cambió de estado a '${freshDoc?.status}' - saltando`);
+          return { success: false, docNumber: doc.doc_number, error: `Estado cambió a ${freshDoc?.status}` };
         }
 
         // Cache global para TaxCodes (evitar múltiples llamadas)
