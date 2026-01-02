@@ -311,16 +311,22 @@ const Dashboard = () => {
     }
   }, [activeOrganization, refreshData]);
 
-  // Mostrar loader si auth está cargando o si acabamos de navegar pero no hay org aún
-  if (authLoading || (!activeOrganization && !user)) {
+  // Mostrar loader solo mientras auth está cargando (máximo 10 segundos)
+  if (authLoading) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-primary/5 via-background to-accent/5 flex items-center justify-center">
         <div className="text-center">
           <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-primary mb-4"></div>
-          <p className="text-muted-foreground">Cargando empresa...</p>
+          <p className="text-muted-foreground">Cargando...</p>
         </div>
       </div>
     );
+  }
+
+  // Si no hay usuario, redirigir a login
+  if (!user) {
+    navigate("/");
+    return null;
   }
 
   if (!activeOrganization) {

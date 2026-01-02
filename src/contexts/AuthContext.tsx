@@ -145,8 +145,12 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
   const loadUserData = async (userId: string) => {
     try {
-      // Ejecutar todas las queries en paralelo
-      const [membershipsResult, activeOrgResult, adminRoleResult] = await Promise.all([
+      // Ejecutar todas las queries en paralelo con timeout
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error("Timeout loading user data")), 10000)
+      );
+
+      const dataPromise = Promise.all([
         supabase
           .from("organization_members")
           .select("organization_id, role, organizations(id, name)")
@@ -166,6 +170,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
           .limit(1)
       ]);
 
+      const [membershipsResult, activeOrgResult, adminRoleResult] = await Promise.race([
+        dataPromise,
+        timeoutPromise
+      ]) as any;
+
       let orgs: any[] = [];
       let activeOrg: string | null = null;
       let admin = false;
@@ -174,7 +183,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       if (!membershipsResult.error && membershipsResult.data) {
         orgs = membershipsResult.data.map((m: any) => ({
           id: m.organization_id,
-          name: m.organizations.name,
+          name: m.organizations?.name || 'Sin nombre',
           role: m.role,
         }));
         setOrganizations(orgs);
@@ -192,18 +201,24 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
             .upsert({ user_id: userId, organization_id: orgs[0].id })
             .then(() => {});
         }
+      } else {
+        console.warn("No se encontraron organizaciones para el usuario:", membershipsResult.error);
+        setOrganizations([]);
+        setActiveOrganization(null);
       }
 
       // Procesar rol admin
-      admin = !adminRoleResult.error && !!adminRoleResult.data;
+      admin = !adminRoleResult.error && adminRoleResult.data && adminRoleResult.data.length > 0;
       setIsAdmin(admin);
 
       // Guardar en cache
       setCachedData(orgs, activeOrg, admin);
 
     } catch (error) {
-      console.error("❌ Error cargando datos:", error);
+      console.error("❌ Error cargando datos de usuario:", error);
       setIsAdmin(false);
+      setOrganizations([]);
+      setActiveOrganization(null);
     }
   };
 
