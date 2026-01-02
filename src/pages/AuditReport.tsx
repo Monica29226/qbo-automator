@@ -9,8 +9,10 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { FileText, ArrowLeft, Download, AlertTriangle, CheckCircle2, Search, RefreshCw } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { FileText, ArrowLeft, Download, AlertTriangle, CheckCircle2, Search, RefreshCw, ExternalLink } from "lucide-react";
 import { OrganizationSwitcher } from "@/components/OrganizationSwitcher";
+import { PdfViewer } from "@/components/PdfViewer";
 import { toast } from "sonner";
 
 interface AuditDocument {
@@ -29,6 +31,7 @@ interface AuditDocument {
   error_message: string | null;
   processed_at: string | null;
   default_account_ref: string | null;
+  pdf_attachment_url: string | null;
 }
 
 interface VendorRule {
@@ -47,6 +50,8 @@ export default function AuditReport() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [docTypeFilter, setDocTypeFilter] = useState("all");
   const [accountFilter, setAccountFilter] = useState("all");
+  const [selectedDocument, setSelectedDocument] = useState<AuditDocument | null>(null);
+  const [pdfDialogOpen, setPdfDialogOpen] = useState(false);
 
   useEffect(() => {
     if (activeOrganization) {
@@ -470,7 +475,20 @@ export default function AuditReport() {
                         return (
                           <TableRow key={doc.id}>
                             <TableCell className="font-mono text-sm">
-                              {doc.doc_number}
+                              {doc.pdf_attachment_url ? (
+                                <button
+                                  onClick={() => {
+                                    setSelectedDocument(doc);
+                                    setPdfDialogOpen(true);
+                                  }}
+                                  className="text-primary hover:underline cursor-pointer flex items-center gap-1"
+                                >
+                                  {doc.doc_number}
+                                  <ExternalLink className="h-3 w-3" />
+                                </button>
+                              ) : (
+                                <span className="text-muted-foreground">{doc.doc_number}</span>
+                              )}
                             </TableCell>
                             <TableCell>
                               <Badge variant="outline">{doc.doc_type}</Badge>
@@ -522,6 +540,37 @@ export default function AuditReport() {
             </div>
           </CardContent>
         </Card>
+
+        {/* PDF Viewer Dialog */}
+        <Dialog open={pdfDialogOpen} onOpenChange={setPdfDialogOpen}>
+          <DialogContent className="max-w-4xl max-h-[90vh]">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <FileText className="h-5 w-5" />
+                Factura #{selectedDocument?.doc_number}
+              </DialogTitle>
+            </DialogHeader>
+            <div className="space-y-2">
+              <div className="text-sm text-muted-foreground">
+                <span className="font-medium">Proveedor:</span> {selectedDocument?.supplier_name}
+                {" | "}
+                <span className="font-medium">Fecha:</span> {selectedDocument?.issue_date && new Date(selectedDocument.issue_date).toLocaleDateString()}
+                {" | "}
+                <span className="font-medium">Monto:</span> {selectedDocument?.currency} {selectedDocument?.total_amount?.toLocaleString()}
+              </div>
+              {selectedDocument?.pdf_attachment_url ? (
+                <PdfViewer 
+                  url={selectedDocument.pdf_attachment_url} 
+                  fileName={`factura_${selectedDocument.doc_number}`}
+                />
+              ) : (
+                <div className="flex items-center justify-center h-64 bg-muted rounded-md">
+                  <p className="text-muted-foreground">No hay PDF disponible para este documento</p>
+                </div>
+              )}
+            </div>
+          </DialogContent>
+        </Dialog>
       </div>
     </div>
   );
