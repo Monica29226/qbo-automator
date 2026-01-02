@@ -219,9 +219,11 @@ serve(async (req) => {
     let mailQuery: string;
     
     if (month && year) {
-      // Calcular el primer y último día del mes
+      // Calcular el primer día del mes
       const startDate = new Date(year, month - 1, 1);
-      const endDate = new Date(year, month, 0); // Último día del mes
+      // El día DESPUÉS del último día del mes (para que 'before:' incluya el último día)
+      // Gmail 'before:' es EXCLUSIVO, así que necesitamos el primer día del MES SIGUIENTE
+      const afterEndDate = new Date(year, month, 1);
       
       const formatDate = (date: Date) => {
         const yyyy = date.getFullYear();
@@ -230,8 +232,12 @@ serve(async (req) => {
         return `${yyyy}/${mm}/${dd}`;
       };
       
-      mailQuery = `has:attachment (filename:xml OR filename:pdf) after:${formatDate(startDate)} before:${formatDate(endDate)}`;
-      console.log(`Using custom date range query for ${year}-${month}: ${mailQuery}`);
+      // Importante: 'after:' es INCLUSIVO del día, 'before:' es EXCLUSIVO del día
+      // Para diciembre 2025: after:2025/12/01 before:2026/01/01
+      mailQuery = `has:attachment (filename:xml OR filename:pdf) after:${formatDate(startDate)} before:${formatDate(afterEndDate)}`;
+      console.log(`📅 Using date range query for ${year}-${String(month).padStart(2, '0')}: ${mailQuery}`);
+      console.log(`   Start date: ${formatDate(startDate)} (inclusive)`);
+      console.log(`   End date: ${formatDate(afterEndDate)} (exclusive, so includes ${year}-${String(month).padStart(2, '0')}-${new Date(year, month, 0).getDate()})`);
     } else {
       mailQuery = settings?.find(s => s.key === "mail_query")?.value || 
         "has:attachment (filename:xml OR filename:pdf) newer_than:3d";
