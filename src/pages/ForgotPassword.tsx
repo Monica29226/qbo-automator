@@ -32,16 +32,20 @@ const ForgotPassword = () => {
     setIsLoading(true);
 
     try {
-      const redirectUrl = `${window.location.origin}/reset-password`;
+      // Use the production URL for password reset redirect
+      const redirectUrl = "https://facturas.aureoncr.com/reset-password";
       
-      const { data, error } = await supabase.functions.invoke("send-password-reset", {
-        body: { email, redirectUrl },
+      const { error } = await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: redirectUrl,
       });
 
-      if (error) throw error;
-
-      setIsSuccess(true);
-      toast.success("Revisa tu correo electrónico");
+      if (error) {
+        console.error("Error sending password reset:", error);
+        toast.error(error.message || "Error al enviar el correo de recuperación");
+      } else {
+        setIsSuccess(true);
+        toast.success("Revisa tu correo electrónico");
+      }
     } catch (error: any) {
       console.error("Error sending password reset:", error);
       toast.error(error.message || "Error al enviar el correo de recuperación");
