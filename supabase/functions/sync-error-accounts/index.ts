@@ -54,6 +54,46 @@ Deno.serve(async (req) => {
 
     console.log(`📋 Found ${vendors?.length || 0} configured vendors`);
 
+    // 3. Get published documents to find valid QBO account IDs
+    const { data: publishedDocs, error: publishedError } = await supabase
+      .from("processed_documents")
+      .select("supplier_name, supplier_tax_id, default_account_ref")
+      .eq("organization_id", organization_id)
+      .eq("status", "published")
+      .not("default_account_ref", "is", null);
+
+    if (publishedError) console.error("Error fetching published docs:", publishedError);
+
+    // Build map of supplier -> valid QBO account from published docs
+    const validAccountByTaxId = new Map<string, string>();
+    const validAccountByName = new Map<string, string>();
+    
+    for (const pd of publishedDocs || []) {
+      // Only consider numeric IDs as valid QBO accounts
+      if (pd.default_account_ref && /^\d+$/.test(pd.default_account_ref)) {
+        if (pd.supplier_tax_id) {
+          const cleanTaxId = pd.supplier_tax_id.replace(/-/g, '');
+          if (!validAccountByTaxId.has(cleanTaxId)) {
+            validAccountByTaxId.set(cleanTaxId, pd.default_account_ref);
+          }
+        }
+        if (pd.supplier_name) {
+          const key = pd.supplier_name.toLowerCase().trim();
+          if (!validAccountByName.has(key)) {
+            validAccountByName.set(key, pd.default_account_ref);
+          }
+        }
+      }
+    }
+
+    console.log(`📋 Found ${validAccountByTaxId.size} suppliers with valid QBO accounts from published docs`);
+
+    // Helper to check if account is a valid QBO ID (numeric)
+    const isValidQboAccount = (account: string | null): boolean => {
+      if (!account) return false;
+      return /^\d+$/.test(account);
+    };
+
     // Create maps for quick lookup
     const vendorByTaxId = new Map<string, any>();
     const vendorByName = new Map<string, any>();
@@ -95,9 +135,46 @@ Deno.serve(async (req) => {
         continue;
       }
 
-      // Check if account is different
+      // Determine the correct account to use
+      let correctAccount = matchedVendor.default_account_ref;
+      
+      // If vendor account is not a valid QBO ID, try to find from published docs
+      if (!isValidQboAccount(correctAccount)) {
+        console.log(`⚠️ Vendor account "${correctAccount}" is not a valid QBO ID, searching published docs...`);
+        
+        // Try to find valid account from published docs
+        if (doc.supplier_tax_id) {
+          const cleanTaxId = doc.supplier_tax_id.replace(/-/g, '');
+          const validFromTaxId = validAccountByTaxId.get(cleanTaxId);
+          if (validFromTaxId) {
+            correctAccount = validFromTaxId;
+            console.log(`   Found valid account from tax_id: ${correctAccount}`);
+          }
+        }
+        
+        if (!isValidQboAccount(correctAccount) && doc.supplier_name) {
+          const validFromName = validAccountByName.get(doc.supplier_name.toLowerCase().trim());
+          if (validFromName) {
+            correctAccount = validFromName;
+            console.log(`   Found valid account from name: ${correctAccount}`);
+          }
+        }
+        
+        if (!isValidQboAccount(correctAccount)) {
+          console.log(`❌ No valid QBO account found for ${doc.supplier_name}. Vendor needs correct QBO account ID.`);
+          notFound.push({
+            doc_number: doc.doc_number,
+            supplier_name: doc.supplier_name,
+            supplier_tax_id: doc.supplier_tax_id,
+            current_account: doc.default_account_ref,
+            vendor_account: matchedVendor.default_account_ref,
+            issue: "Vendor account is not a valid QuickBooks ID (should be numeric)"
+          });
+          continue;
+        }
+      }
+
       const currentAccount = doc.default_account_ref;
-      const correctAccount = matchedVendor.default_account_ref;
 
       if (currentAccount === correctAccount) {
         console.log(`✅ Account already correct for ${doc.doc_number}: ${correctAccount}`);
