@@ -1219,6 +1219,85 @@ Deno.serve(async (req) => {
           }
         }
         
+        // ============================================
+        // OTROS CARGOS: Envíos, fletes, otros cargos adicionales
+        // ============================================
+        const parseOtrosCargos = (data: any): { tipo: string; detalle: string; monto: number }[] => {
+          const otrosCargos: { tipo: string; detalle: string; monto: number }[] = [];
+          
+          if (!data) return otrosCargos;
+          
+          try {
+            // Look in resumen_factura
+            const resumen = data.resumen_factura || data.ResumenFactura || data;
+            
+            // Look for otros_cargos array
+            const cargos = resumen.otros_cargos || resumen.OtrosCargos || 
+                           data.otros_cargos || data.OtrosCargos || [];
+            
+            if (Array.isArray(cargos)) {
+              for (const cargo of cargos) {
+                const monto = parseFloat(cargo.monto || cargo.Monto || cargo.monto_cargo || cargo.MontoCargo || '0');
+                if (monto > 0) {
+                  otrosCargos.push({
+                    tipo: cargo.tipo_documento || cargo.TipoDocumento || 'OC',
+                    detalle: cargo.detalle || cargo.Detalle || cargo.detalle_cargo || cargo.DetalleCargo || 'Otros Cargos',
+                    monto: isCreditNote ? -Math.abs(monto) : monto
+                  });
+                }
+              }
+            }
+            
+            // Also check for single TotalOtrosCargos field
+            if (otrosCargos.length === 0) {
+              const totalCargos = parseFloat(resumen.total_otros_cargos || resumen.TotalOtrosCargos || 
+                                             data.totalOtrosCargos || data.TotalOtrosCargos || '0');
+              if (totalCargos > 0) {
+                otrosCargos.push({
+                  tipo: 'OC',
+                  detalle: 'Otros Cargos (Envío/Flete)',
+                  monto: isCreditNote ? -Math.abs(totalCargos) : totalCargos
+                });
+              }
+            }
+          } catch (e) {
+            logError('Error parsing OtrosCargos:', e);
+          }
+          
+          return otrosCargos;
+        };
+        
+        const otrosCargos = parseOtrosCargos(xmlData);
+        
+        if (otrosCargos.length > 0) {
+          logInfo(`📦 ${otrosCargos.length} Otros Cargos detectados para ${doc.doc_number}`);
+          
+          for (const cargo of otrosCargos) {
+            // TREE OF LIFE: Incluir IVA en el monto si aplica
+            let cargoAmount = cargo.monto;
+            
+            if (Math.abs(cargoAmount) > 0) {
+              const cargoLine: any = {
+                DetailType: "AccountBasedExpenseLineDetail",
+                Amount: cargoAmount,
+                Description: `${cargo.detalle} (${cargo.tipo})`.substring(0, 4000),
+                AccountBasedExpenseLineDetail: {
+                  AccountRef: { value: accountRef }, // Usar la misma cuenta del proveedor
+                },
+              };
+              
+              // Asignar TaxCodeRef - generalmente otros cargos no llevan IVA
+              const cargoTaxCodeId = await getTaxCodeRef(0);
+              if (cargoTaxCodeId) {
+                cargoLine.AccountBasedExpenseLineDetail.TaxCodeRef = { value: cargoTaxCodeId };
+              }
+              
+              lines.push(cargoLine);
+              log(`   📦 Cargo agregado: ${cargo.detalle} = ${cargoAmount}`);
+            }
+          }
+        }
+        
         // Fallback: crear línea desde totales
         if (lines.length === 0) {
           // TREE OF LIFE: Usar total_amount directamente (ya incluye IVA)
