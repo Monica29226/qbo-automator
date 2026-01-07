@@ -43,7 +43,7 @@ Deno.serve(async (req) => {
 
     console.log(`📋 Found ${errorDocs.length} documents with account errors`);
 
-    // 2. Get all vendors with correct accounts
+    // 2. Get all vendors with configured accounts
     const { data: vendors, error: vendorsError } = await supabase
       .from("vendors")
       .select("id, vendor_name, vendor_tax_id, default_account_ref")
@@ -52,9 +52,38 @@ Deno.serve(async (req) => {
 
     if (vendorsError) throw vendorsError;
 
-    console.log(`📋 Found ${vendors?.length || 0} configured vendors`);
+    // 2b. Get vendor_defaults (many orgs use this table for account mapping)
+    const { data: vendorDefaults, error: vendorDefaultsError } = await supabase
+      .from("vendor_defaults")
+      .select("id, vendor_name, default_account_ref")
+      .eq("organization_id", organization_id);
 
-    // 3. Get published documents to find valid QBO account IDs
+    if (vendorDefaultsError) throw vendorDefaultsError;
+
+    console.log(`📋 Found ${vendors?.length || 0} vendors`);
+    console.log(`📋 Found ${vendorDefaults?.length || 0} vendor_defaults`);
+
+    const normalizeName = (name: string) =>
+      name
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .toLowerCase()
+        .trim();
+
+    const scoreAccountRef = (ref: string): number => {
+      const v = ref.trim();
+      if (!v) return 0;
+      if (/^\d+$/.test(v)) return 3; // pure numeric
+      if (/^\d+/.test(v)) return 2; // starts with digits (e.g. "608 Gastos")
+      return 1;
+    };
+
+    const pickBetter = (current: string | undefined, candidate: string): string => {
+      if (!current) return candidate;
+      return scoreAccountRef(candidate) > scoreAccountRef(current) ? candidate : current;
+    };
+
+    // 3. Get published documents to find known-good account refs that already worked
     const { data: publishedDocs, error: publishedError } = await supabase
       .from("processed_documents")
       .select("supplier_name, supplier_tax_id, default_account_ref")
@@ -64,45 +93,42 @@ Deno.serve(async (req) => {
 
     if (publishedError) console.error("Error fetching published docs:", publishedError);
 
-    // Build map of supplier -> valid QBO account from published docs
     const validAccountByTaxId = new Map<string, string>();
     const validAccountByName = new Map<string, string>();
-    
+
     for (const pd of publishedDocs || []) {
-      // Only consider numeric IDs as valid QBO accounts
-      if (pd.default_account_ref && /^\d+$/.test(pd.default_account_ref)) {
-        if (pd.supplier_tax_id) {
-          const cleanTaxId = pd.supplier_tax_id.replace(/-/g, '');
-          if (!validAccountByTaxId.has(cleanTaxId)) {
-            validAccountByTaxId.set(cleanTaxId, pd.default_account_ref);
-          }
-        }
-        if (pd.supplier_name) {
-          const key = pd.supplier_name.toLowerCase().trim();
-          if (!validAccountByName.has(key)) {
-            validAccountByName.set(key, pd.default_account_ref);
-          }
-        }
+      const ref = (pd.default_account_ref || "").toString().trim();
+      if (!ref) continue;
+
+      if (pd.supplier_tax_id) {
+        const cleanTaxId = pd.supplier_tax_id.replace(/-/g, "");
+        validAccountByTaxId.set(cleanTaxId, pickBetter(validAccountByTaxId.get(cleanTaxId), ref));
+      }
+
+      if (pd.supplier_name) {
+        const key = normalizeName(pd.supplier_name);
+        validAccountByName.set(key, pickBetter(validAccountByName.get(key), ref));
       }
     }
 
-    console.log(`📋 Found ${validAccountByTaxId.size} suppliers with valid QBO accounts from published docs`);
-
-    // Helper to check if account is a valid QBO ID (numeric)
-    const isValidQboAccount = (account: string | null): boolean => {
-      if (!account) return false;
-      return /^\d+$/.test(account);
-    };
+    console.log(
+      `📋 Found ${validAccountByTaxId.size} suppliers with known-good accounts from published docs`
+    );
 
     // Create maps for quick lookup
     const vendorByTaxId = new Map<string, any>();
     const vendorByName = new Map<string, any>();
-    
+
     for (const v of vendors || []) {
       if (v.vendor_tax_id) {
-        vendorByTaxId.set(v.vendor_tax_id.replace(/-/g, ''), v);
+        vendorByTaxId.set(v.vendor_tax_id.replace(/-/g, ""), v);
       }
-      vendorByName.set(v.vendor_name.toLowerCase().trim(), v);
+      vendorByName.set(normalizeName(v.vendor_name), v);
+    }
+
+    const vendorDefaultByName = new Map<string, { id: string; vendor_name: string; default_account_ref: string | null }>();
+    for (const vd of vendorDefaults || []) {
+      vendorDefaultByName.set(normalizeName(vd.vendor_name), vd);
     }
 
     const updated: any[] = [];
