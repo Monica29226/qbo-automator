@@ -385,6 +385,64 @@ const ErrorDocuments = () => {
     }
   };
 
+  const handleSyncErrorAccounts = async (dryRun = true) => {
+    if (!activeOrganization) return;
+
+    const toastId = toast.loading(dryRun 
+      ? "Analizando errores y buscando cuentas corregidas..." 
+      : "Sincronizando cuentas corregidas y republicando...");
+
+    try {
+      const { data, error } = await supabase.functions.invoke("sync-error-accounts", {
+        body: { 
+          organization_id: activeOrganization,
+          dry_run: dryRun
+        },
+      });
+
+      if (error) throw error;
+
+      const { updated, not_found, already_correct, total_errors } = data;
+
+      if (dryRun) {
+        // Solo análisis
+        if (updated > 0) {
+          toast.success(
+            `📊 Análisis: ${updated} factura${updated !== 1 ? 's' : ''} pueden ser corregida${updated !== 1 ? 's' : ''} con vendors configurados. Usa "Sincronizar Cuentas" para aplicar.`,
+            { id: toastId, duration: 8000 }
+          );
+        } else if (not_found > 0) {
+          toast.warning(
+            `${not_found} proveedor${not_found !== 1 ? 'es' : ''} sin configuración de vendor. Configura en Proveedores → Reglas.`,
+            { id: toastId, duration: 6000 }
+          );
+        } else {
+          toast.info("No se encontraron errores que puedan corregirse automáticamente", { id: toastId });
+        }
+      } else {
+        // Actualización real
+        if (updated > 0) {
+          toast.success(
+            `✅ ${updated} factura${updated !== 1 ? 's' : ''} actualizada${updated !== 1 ? 's' : ''} y en proceso de publicación`,
+            { id: toastId, duration: 6000 }
+          );
+          setTimeout(() => fetchErrorDocuments(), 2000);
+        } else if (not_found > 0) {
+          toast.warning(
+            `No se pudieron corregir. ${not_found} proveedor${not_found !== 1 ? 'es' : ''} sin configurar.`,
+            { id: toastId, duration: 5000 }
+          );
+        } else {
+          toast.info("No hay facturas que corregir", { id: toastId });
+        }
+      }
+
+    } catch (error: any) {
+      console.error("Error syncing accounts:", error);
+      toast.error(`Error: ${error.message}`, { id: toastId });
+    }
+  };
+
   const handleFixAccountCodes = async () => {
     if (!activeOrganization) return;
 
@@ -562,12 +620,20 @@ const ErrorDocuments = () => {
             {documents.length > 0 && (
               <div className="flex flex-wrap gap-2">
                 <Button 
-                  onClick={handleFixAccountCodes}
+                  onClick={() => handleSyncErrorAccounts(false)}
                   variant="default"
                   className="gap-2"
                 >
                   <Wrench className="h-4 w-4" />
-                  Corregir Cuentas Auto
+                  Sincronizar Cuentas
+                </Button>
+                <Button 
+                  onClick={() => handleSyncErrorAccounts(true)}
+                  variant="outline"
+                  className="gap-2"
+                >
+                  <Filter className="h-4 w-4" />
+                  Analizar
                 </Button>
                 <Button 
                   onClick={handleRepublishFromData}
@@ -575,7 +641,7 @@ const ErrorDocuments = () => {
                   className="gap-2"
                 >
                   <Database className="h-4 w-4" />
-                  Republicar desde Datos
+                  Republicar
                 </Button>
                 <Button 
                   onClick={() => handleRetryAll(false)}
@@ -583,7 +649,7 @@ const ErrorDocuments = () => {
                   className="gap-2"
                 >
                   <RefreshCw className="h-4 w-4" />
-                  Reintentar Todas
+                  Reintentar
                 </Button>
                 <Button 
                   onClick={() => handleRetryAll(true)}
@@ -591,7 +657,7 @@ const ErrorDocuments = () => {
                   className="gap-2"
                 >
                   <RefreshCw className="h-4 w-4" />
-                  Forzar Retry
+                  Forzar
                 </Button>
               </div>
             )}
