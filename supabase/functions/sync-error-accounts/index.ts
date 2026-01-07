@@ -78,6 +78,11 @@ Deno.serve(async (req) => {
       return 1;
     };
 
+    const isValidQboAccount = (account: string | null): boolean => {
+      if (!account) return false;
+      return /^\d+$/.test(account.trim());
+    };
+
     const pickBetter = (current: string | undefined, candidate: string): string => {
       if (!current) return candidate;
       return scoreAccountRef(candidate) > scoreAccountRef(current) ? candidate : current;
