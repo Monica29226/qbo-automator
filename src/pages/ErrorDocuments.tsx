@@ -1,9 +1,9 @@
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { AlertCircle, ArrowLeft, RefreshCw, FileText, Database, Wrench, Settings2 } from "lucide-react";
+import { AlertCircle, ArrowLeft, RefreshCw, FileText, Database, Wrench, Settings2, Filter, Ban, CheckCircle, Trash2 } from "lucide-react";
 import { Link } from "react-router-dom";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { toast } from "sonner";
@@ -21,17 +21,29 @@ import { ErrorDiagnostic } from "@/components/dashboard/ErrorDiagnostic";
 import { useQBOAccounts } from "@/hooks/useQBOAccounts";
 import { Label } from "@/components/ui/label";
 import { AccountCombobox } from "@/components/AccountCombobox";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 interface ErrorDocument {
   id: string;
   doc_number: string;
+  doc_type: string;
   supplier_name: string;
   issue_date: string;
   total_amount: number;
+  currency: string;
   error_message: string;
   created_at: string;
   default_account_ref?: string | null;
 }
+
+type ErrorCategory = "all" | "fixable" | "not_publishable" | "account_error" | "permanent";
 
 const ErrorDocuments = () => {
   const { activeOrganization } = useAuth();
@@ -41,12 +53,12 @@ const ErrorDocuments = () => {
   const [changeAccountDoc, setChangeAccountDoc] = useState<ErrorDocument | null>(null);
   const [selectedAccount, setSelectedAccount] = useState<string>("");
   const [isUpdatingAccount, setIsUpdatingAccount] = useState(false);
+  const [activeTab, setActiveTab] = useState<ErrorCategory>("all");
 
   useEffect(() => {
     if (activeOrganization) {
       fetchErrorDocuments();
     } else {
-      // If no org selected, stop loading and show empty state
       setIsLoading(false);
     }
   }, [activeOrganization]);
@@ -61,7 +73,7 @@ const ErrorDocuments = () => {
     try {
       const { data, error } = await supabase
         .from("processed_documents")
-        .select("id, doc_number, supplier_name, issue_date, total_amount, error_message, created_at, default_account_ref")
+        .select("id, doc_number, doc_type, supplier_name, issue_date, total_amount, currency, error_message, created_at, default_account_ref")
         .eq("organization_id", activeOrganization)
         .eq("status", "error")
         .order("created_at", { ascending: false });
@@ -80,47 +92,101 @@ const ErrorDocuments = () => {
     }
   };
 
-  const getErrorSummary = (errorMessage: string) => {
+  // Categorize error for filtering
+  const categorizeError = (doc: ErrorDocument): ErrorCategory => {
+    const msg = doc.error_message || "";
+    const docType = doc.doc_type?.toLowerCase() || "";
+    
+    // Not publishable - TiqueteElectronico
+    if (docType.includes("tiquete") || docType === "tiqueteelectronico") {
+      return "not_publishable";
+    }
+    
+    // Permanent errors
+    if (msg.includes("[PERMANENTE]")) {
+      return "permanent";
+    }
+    
+    // Account errors - fixable
+    if (msg.includes("no existe en QuickBooks") || 
+        msg.includes("Account not found") ||
+        msg.includes("Cuenta") ||
+        msg.includes("No account configured") ||
+        msg.includes("No se pudo determinar cuenta")) {
+      return "account_error";
+    }
+    
+    // Potentially fixable
+    return "fixable";
+  };
+
+  const getErrorSummary = (doc: ErrorDocument) => {
+    const errorMessage = doc.error_message || "";
+    const docType = doc.doc_type?.toLowerCase() || "";
+    
+    // TiqueteElectronico - No se puede publicar
+    if (docType.includes("tiquete") || docType === "tiqueteelectronico") {
+      return {
+        type: "No Publicable",
+        description: "Los Tiquetes Electrónicos no se publican en QuickBooks (solo facturas)",
+        solution: "Descartar este documento o eliminarlo de la lista de errores",
+        canRetry: false,
+        canChangeAccount: false
+      };
+    }
+    
     if (errorMessage.includes("[PERMANENTE]")) {
       return {
         type: "Error Permanente",
         description: errorMessage.replace("[PERMANENTE] Max retries reached (3 attempts) - Original: ", ""),
-        solution: "Usar botón 'Forzar Reintento' para resetear contador"
+        solution: "Usar botón 'Forzar Reintento' para resetear contador",
+        canRetry: true,
+        canChangeAccount: false
       };
     }
     if (errorMessage.includes("Falta el parámetro Line requerido")) {
       return {
         type: "Sin líneas de detalle",
         description: "El XML no contiene líneas de detalle válidas",
-        solution: "Revisar el XML original - puede estar incompleto"
+        solution: "Revisar el XML original - puede estar incompleto",
+        canRetry: true,
+        canChangeAccount: false
       };
     }
     if (errorMessage.includes("Número no válido") && errorMessage.includes("Gastos por clasificar")) {
       return {
         type: "Cuenta contable inválida",
         description: 'La cuenta "Gastos por clasificar" no existe en QuickBooks',
-        solution: "Configurar regla de vendor con cuenta válida"
+        solution: "Configurar regla de vendor con cuenta válida",
+        canRetry: false,
+        canChangeAccount: true
       };
     }
     if (errorMessage.includes("La longitud de la cadena") && errorMessage.includes("DocNumber")) {
       return {
         type: "Número de factura muy largo",
         description: "QuickBooks acepta máximo 21 caracteres",
-        solution: "El número debe acortarse manualmente"
+        solution: "El número debe acortarse manualmente",
+        canRetry: false,
+        canChangeAccount: false
       };
     }
     if (errorMessage.includes("Failed to create vendor")) {
       return {
         type: "Error al crear proveedor",
         description: "No se pudo crear el vendor en QuickBooks",
-        solution: "Verificar permisos y conectividad con QuickBooks"
+        solution: "Verificar permisos y conectividad con QuickBooks",
+        canRetry: true,
+        canChangeAccount: false
       };
     }
     if (errorMessage.includes("No se pudo determinar cuenta contable")) {
       return {
         type: "Sin regla de clasificación",
         description: "El proveedor no tiene configurada una cuenta contable",
-        solution: "Ir a Configuración → Reglas de Vendors y agregar regla"
+        solution: "Ir a Configuración → Reglas de Vendors y agregar regla",
+        canRetry: false,
+        canChangeAccount: true
       };
     }
     if (errorMessage.includes("no existe en QuickBooks") && errorMessage.includes("Cuenta")) {
@@ -128,29 +194,113 @@ const ErrorDocuments = () => {
       return {
         type: "Código de cuenta incorrecto",
         description: `El código "${match?.[1] || '?'}" no corresponde a una cuenta válida en QuickBooks`,
-        solution: "Usar botón 'Corregir Cuentas Auto' para mapear automáticamente"
+        solution: "Cambiar la cuenta usando el botón 'Cambiar Cuenta'",
+        canRetry: false,
+        canChangeAccount: true
       };
     }
     if (errorMessage.includes("No account configured")) {
       return {
         type: "Sin cuenta configurada",
         description: "La factura no tiene una cuenta contable asignada",
-        solution: "Ir a Facturas Pendientes y asignar cuenta al proveedor"
+        solution: "Asignar cuenta usando el botón 'Cambiar Cuenta'",
+        canRetry: false,
+        canChangeAccount: true
       };
     }
     return {
       type: "Error desconocido",
       description: errorMessage.substring(0, 100) + "...",
-      solution: "Revisar logs completos"
+      solution: "Revisar logs completos",
+      canRetry: true,
+      canChangeAccount: false
     };
   };
 
-  const formatCurrency = (amount: number) => {
+  // Filter documents by category
+  const filteredDocuments = useMemo(() => {
+    if (activeTab === "all") return documents;
+    return documents.filter(doc => categorizeError(doc) === activeTab);
+  }, [documents, activeTab]);
+
+  // Count by category
+  const errorCounts = useMemo(() => {
+    const counts = {
+      all: documents.length,
+      fixable: 0,
+      not_publishable: 0,
+      account_error: 0,
+      permanent: 0
+    };
+    
+    documents.forEach(doc => {
+      const cat = categorizeError(doc);
+      counts[cat]++;
+    });
+    
+    return counts;
+  }, [documents]);
+
+  const formatCurrency = (amount: number, currency: string = "CRC") => {
     return new Intl.NumberFormat('es-CR', {
       style: 'currency',
-      currency: 'CRC',
+      currency: currency === "USD" ? "USD" : "CRC",
       minimumFractionDigits: 2
     }).format(amount);
+  };
+
+  const handleDismissError = async (docId: string, docNumber: string) => {
+    if (!activeOrganization) return;
+
+    const toastId = toast.loading(`Descartando ${docNumber}...`);
+    
+    try {
+      const { error } = await supabase
+        .from("processed_documents")
+        .update({ 
+          status: "dismissed",
+          error_message: `[DESCARTADO] ${documents.find(d => d.id === docId)?.error_message || "No publicable"}`
+        })
+        .eq("id", docId);
+
+      if (error) throw error;
+
+      toast.success(`✓ ${docNumber} descartado`, { id: toastId });
+      fetchErrorDocuments();
+    } catch (error: any) {
+      console.error("Error dismissing document:", error);
+      toast.error(`Error: ${error.message}`, { id: toastId });
+    }
+  };
+
+  const handleDismissAllNotPublishable = async () => {
+    if (!activeOrganization) return;
+
+    const notPublishable = documents.filter(doc => categorizeError(doc) === "not_publishable");
+    if (notPublishable.length === 0) {
+      toast.info("No hay documentos para descartar");
+      return;
+    }
+
+    const toastId = toast.loading(`Descartando ${notPublishable.length} documentos no publicables...`);
+    
+    try {
+      const { error } = await supabase
+        .from("processed_documents")
+        .update({ 
+          status: "dismissed",
+          error_message: "[DESCARTADO] TiqueteElectronico - No publicable en QuickBooks"
+        })
+        .in("id", notPublishable.map(d => d.id));
+
+      if (error) throw error;
+
+      toast.success(`✓ ${notPublishable.length} documentos descartados`, { id: toastId });
+      fetchErrorDocuments();
+    } catch (error: any) {
+      console.error("Error dismissing documents:", error);
+      toast.error(`Error: ${error.message}`, { id: toastId });
+    }
   };
 
   const handleRetry = async (docId: string, docNumber: string) => {
@@ -450,8 +600,54 @@ const ErrorDocuments = () => {
       </header>
 
       <main className="container mx-auto px-6 py-8">
-        {/* Diagnostic Section */}
+        {/* Tabs de filtrado */}
         {documents.length > 0 && (
+          <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as ErrorCategory)} className="mb-6">
+            <div className="flex items-center justify-between mb-4">
+              <TabsList>
+                <TabsTrigger value="all" className="gap-2">
+                  Todos
+                  <Badge variant="secondary" className="ml-1">{errorCounts.all}</Badge>
+                </TabsTrigger>
+                <TabsTrigger value="account_error" className="gap-2">
+                  <Settings2 className="h-3 w-3" />
+                  Cuenta
+                  <Badge variant="secondary" className="ml-1">{errorCounts.account_error}</Badge>
+                </TabsTrigger>
+                <TabsTrigger value="not_publishable" className="gap-2">
+                  <Ban className="h-3 w-3" />
+                  No Publicables
+                  <Badge variant="secondary" className="ml-1">{errorCounts.not_publishable}</Badge>
+                </TabsTrigger>
+                <TabsTrigger value="permanent" className="gap-2">
+                  <AlertCircle className="h-3 w-3" />
+                  Permanentes
+                  <Badge variant="secondary" className="ml-1">{errorCounts.permanent}</Badge>
+                </TabsTrigger>
+                <TabsTrigger value="fixable" className="gap-2">
+                  <Wrench className="h-3 w-3" />
+                  Otros
+                  <Badge variant="secondary" className="ml-1">{errorCounts.fixable}</Badge>
+                </TabsTrigger>
+              </TabsList>
+              
+              {activeTab === "not_publishable" && errorCounts.not_publishable > 0 && (
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  onClick={handleDismissAllNotPublishable}
+                  className="gap-2"
+                >
+                  <Trash2 className="h-4 w-4" />
+                  Descartar Todos ({errorCounts.not_publishable})
+                </Button>
+              )}
+            </div>
+          </Tabs>
+        )}
+
+        {/* Diagnostic Section */}
+        {documents.length > 0 && activeTab !== "not_publishable" && (
           <div className="mb-8">
             <ErrorDiagnostic />
           </div>
@@ -460,25 +656,50 @@ const ErrorDocuments = () => {
         {documents.length === 0 ? (
           <Card className="p-12 text-center">
             <div className="text-muted-foreground space-y-4">
+              <CheckCircle className="h-12 w-12 mx-auto text-green-500" />
               <p className="text-lg mb-2">¡No hay facturas con error! 🎉</p>
               <p className="text-sm">Todas las facturas se han procesado correctamente.</p>
             </div>
           </Card>
+        ) : filteredDocuments.length === 0 ? (
+          <Card className="p-12 text-center">
+            <div className="text-muted-foreground space-y-4">
+              <Filter className="h-12 w-12 mx-auto text-muted-foreground" />
+              <p className="text-lg mb-2">No hay errores en esta categoría</p>
+              <p className="text-sm">Selecciona otra pestaña para ver más errores.</p>
+            </div>
+          </Card>
         ) : (
           <div className="space-y-4">
-            {documents.map((doc) => {
-              const errorInfo = getErrorSummary(doc.error_message);
+            {filteredDocuments.map((doc) => {
+              const errorInfo = getErrorSummary(doc);
+              const category = categorizeError(doc);
+              const isNotPublishable = category === "not_publishable";
+              
               return (
-                <Card key={doc.doc_number} className="p-6 hover:shadow-lg transition-shadow">
+                <Card 
+                  key={doc.id} 
+                  className={`p-6 hover:shadow-lg transition-shadow ${isNotPublishable ? 'border-orange-300 bg-orange-50/50 dark:border-orange-800 dark:bg-orange-950/20' : ''}`}
+                >
                   <div className="flex items-start justify-between gap-4">
                     <div className="flex-1">
                       <div className="flex items-start gap-3 mb-3">
-                        <AlertCircle className="h-5 w-5 text-destructive mt-1 flex-shrink-0" />
+                        {isNotPublishable ? (
+                          <Ban className="h-5 w-5 text-orange-500 mt-1 flex-shrink-0" />
+                        ) : (
+                          <AlertCircle className="h-5 w-5 text-destructive mt-1 flex-shrink-0" />
+                        )}
                         <div className="flex-1">
-                          <div className="flex items-center gap-3 mb-2">
+                          <div className="flex items-center gap-3 mb-2 flex-wrap">
                             <h3 className="font-semibold text-lg">
-                              Factura #{doc.doc_number}
+                              {doc.doc_type?.toLowerCase().includes("tiquete") ? "Tiquete" : "Factura"} #{doc.doc_number}
                             </h3>
+                            <Badge 
+                              variant={isNotPublishable ? "outline" : "destructive"} 
+                              className={`text-xs ${isNotPublishable ? 'border-orange-400 text-orange-700 dark:text-orange-300' : ''}`}
+                            >
+                              {doc.doc_type || "FacturaElectronica"}
+                            </Badge>
                             <Badge variant="destructive" className="text-xs">
                               {errorInfo.type}
                             </Badge>
@@ -490,15 +711,15 @@ const ErrorDocuments = () => {
                             <span className="font-medium">Fecha:</span> {new Date(doc.issue_date).toLocaleDateString('es-CR')}
                           </p>
                           <p className="text-sm text-muted-foreground mb-3">
-                            <span className="font-medium">Monto:</span> {formatCurrency(doc.total_amount)}
+                            <span className="font-medium">Monto:</span> {formatCurrency(doc.total_amount, doc.currency)}
                           </p>
                         </div>
                       </div>
 
-                      <div className="bg-muted/30 border border-muted rounded-lg p-4 space-y-2">
+                      <div className={`border rounded-lg p-4 space-y-2 ${isNotPublishable ? 'bg-orange-100/50 border-orange-200 dark:bg-orange-900/20 dark:border-orange-800' : 'bg-muted/30 border-muted'}`}>
                         <div>
                           <p className="text-sm font-medium text-foreground mb-1">
-                            📋 Descripción del error:
+                            📋 Descripción:
                           </p>
                           <p className="text-sm text-muted-foreground">
                             {errorInfo.description}
@@ -506,7 +727,7 @@ const ErrorDocuments = () => {
                         </div>
                         <div>
                           <p className="text-sm font-medium text-foreground mb-1">
-                            💡 Solución sugerida:
+                            💡 Acción sugerida:
                           </p>
                           <p className="text-sm text-muted-foreground">
                             {errorInfo.solution}
@@ -524,31 +745,33 @@ const ErrorDocuments = () => {
                           </div>
                         )}
                         
-                        <div className="pt-2 border-t border-border">
-                          <Dialog>
-                            <DialogTrigger asChild>
-                              <Button variant="ghost" size="sm" className="gap-2">
-                                <FileText className="h-4 w-4" />
-                                Ver Error Completo
-                              </Button>
-                            </DialogTrigger>
-                            <DialogContent className="max-w-3xl">
-                              <DialogHeader>
-                                <DialogTitle>Mensaje de Error Completo</DialogTitle>
-                                <DialogDescription>
-                                  Factura #{doc.doc_number} - {doc.supplier_name}
-                                </DialogDescription>
-                              </DialogHeader>
-                              <ScrollArea className="max-h-[60vh] w-full">
-                                <div className="bg-muted/50 p-4 rounded-lg">
-                                  <pre className="text-xs font-mono whitespace-pre-wrap break-words">
-                                    {doc.error_message}
-                                  </pre>
-                                </div>
-                              </ScrollArea>
-                            </DialogContent>
-                          </Dialog>
-                        </div>
+                        {!isNotPublishable && (
+                          <div className="pt-2 border-t border-border">
+                            <Dialog>
+                              <DialogTrigger asChild>
+                                <Button variant="ghost" size="sm" className="gap-2">
+                                  <FileText className="h-4 w-4" />
+                                  Ver Error Completo
+                                </Button>
+                              </DialogTrigger>
+                              <DialogContent className="max-w-3xl">
+                                <DialogHeader>
+                                  <DialogTitle>Mensaje de Error Completo</DialogTitle>
+                                  <DialogDescription>
+                                    Factura #{doc.doc_number} - {doc.supplier_name}
+                                  </DialogDescription>
+                                </DialogHeader>
+                                <ScrollArea className="max-h-[60vh] w-full">
+                                  <div className="bg-muted/50 p-4 rounded-lg">
+                                    <pre className="text-xs font-mono whitespace-pre-wrap break-words">
+                                      {doc.error_message}
+                                    </pre>
+                                  </div>
+                                </ScrollArea>
+                              </DialogContent>
+                            </Dialog>
+                          </div>
+                        )}
                       </div>
 
                       {doc.doc_number.length > 21 && (
@@ -564,10 +787,21 @@ const ErrorDocuments = () => {
                     </div>
 
                     <div className="flex flex-col gap-2">
+                      {/* Botón Descartar - para no publicables */}
+                      {isNotPublishable && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleDismissError(doc.id, doc.doc_number)}
+                          className="gap-2 border-orange-400 text-orange-700 hover:bg-orange-100 dark:border-orange-600 dark:text-orange-300 dark:hover:bg-orange-900/30"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                          Descartar
+                        </Button>
+                      )}
+                      
                       {/* Botón Cambiar Cuenta - solo si el error es de cuenta */}
-                      {(doc.error_message?.includes("no existe en QuickBooks") || 
-                        doc.error_message?.includes("Account not found") ||
-                        doc.error_message?.includes("Cuenta")) && (
+                      {errorInfo.canChangeAccount && (
                         <Button
                           variant="default"
                           size="sm"
@@ -580,14 +814,18 @@ const ErrorDocuments = () => {
                           Cambiar Cuenta
                         </Button>
                       )}
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handleRetry(doc.id, doc.doc_number)}
-                      >
-                        <RefreshCw className="h-4 w-4 mr-2" />
-                        Reintentar
-                      </Button>
+                      
+                      {/* Botón Reintentar - solo si tiene sentido */}
+                      {errorInfo.canRetry && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleRetry(doc.id, doc.doc_number)}
+                        >
+                          <RefreshCw className="h-4 w-4 mr-2" />
+                          Reintentar
+                        </Button>
+                      )}
                     </div>
                   </div>
                 </Card>
