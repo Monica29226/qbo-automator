@@ -112,8 +112,8 @@ async function fetchEmailsViaIMAP(
     const messageIds = searchLine.replace("* SEARCH ", "").trim().split(" ").map(Number).filter(n => n > 0);
     console.log(`[IMAP] Found ${messageIds.length} messages`);
 
-    // Limitar a últimos 30 mensajes para evitar timeouts
-    const messagesToFetch = messageIds.slice(-30);
+    // Limitar a últimos 50 mensajes para evitar timeouts
+    const messagesToFetch = messageIds.slice(-50);
     console.log(`[IMAP] Fetching last ${messagesToFetch.length} messages`);
 
     // Fetch cada mensaje
@@ -121,7 +121,7 @@ async function fetchEmailsViaIMAP(
       const msgId = messagesToFetch[i];
       
       try {
-        // Fetch solo el body structure primero para ver si tiene adjuntos XML
+        // Fetch solo el body structure primero para ver si tiene adjuntos XML o PDF
         const structCmd = `A1${i}0 FETCH ${msgId} BODYSTRUCTURE`;
         await conn.write(encoder.encode(structCmd + "\r\n"));
         
@@ -136,16 +136,20 @@ async function fetchEmailsViaIMAP(
           await new Promise(r => setTimeout(r, 50));
         }
 
-        // Verificar si tiene XML adjunto
-        const hasXml = structResp.toLowerCase().includes('"xml"') || 
-                       structResp.toLowerCase().includes('application/xml') ||
-                       structResp.toLowerCase().includes('.xml');
+        // Verificar si tiene XML o PDF adjunto
+        const lowerStructResp = structResp.toLowerCase();
+        const hasXml = lowerStructResp.includes('"xml"') || 
+                       lowerStructResp.includes('application/xml') ||
+                       lowerStructResp.includes('.xml');
+        const hasPdf = lowerStructResp.includes('"pdf"') ||
+                       lowerStructResp.includes('application/pdf') ||
+                       lowerStructResp.includes('.pdf');
 
-        if (!hasXml) {
+        if (!hasXml && !hasPdf) {
           continue;
         }
 
-        console.log(`[IMAP] Message ${msgId} has XML attachment, fetching full...`);
+        console.log(`[IMAP] Message ${msgId} has attachments (XML: ${hasXml}, PDF: ${hasPdf}), fetching full...`);
 
         // Fetch mensaje completo
         const fetchCmd = `A1${i}1 FETCH ${msgId} BODY[]`;
@@ -186,6 +190,41 @@ async function fetchEmailsViaIMAP(
   }
 }
 
+// Función para verificar si un XML es una respuesta de Hacienda (no una factura)
+function isHaciendaResponse(filename: string, content: string): boolean {
+  const upperFilename = filename.toUpperCase();
+  
+  // Respuestas de Hacienda tienen prefijos específicos
+  if (upperFilename.startsWith("AHC-") || 
+      upperFilename.startsWith("RMH-") ||
+      upperFilename.startsWith("MH-")) {
+    return true;
+  }
+  
+  // Los XMLs de respuesta tienen tags específicos de mensaje de Hacienda
+  // Una factura tiene <FacturaElectronica> o similar, no <MensajeHacienda>
+  if (content.includes("<MensajeHacienda") ||
+      content.includes("<ConfirmacionComprobante") ||
+      content.includes("<RespuestaXML") ||
+      content.includes("<MensajeReceptor>") ||
+      (content.includes("<Mensaje>") && content.includes("<DetalleMensaje>") && !content.includes("<FacturaElectronica"))) {
+    return true;
+  }
+  
+  // Si es un mensaje de aceptación/rechazo puro (no una factura)
+  // Estos NO contienen <LineaDetalle> porque no son facturas
+  if (content.includes("<Mensaje>") && 
+      !content.includes("<LineaDetalle>") && 
+      !content.includes("<FacturaElectronica") &&
+      !content.includes("<NotaCreditoElectronica") &&
+      !content.includes("<NotaDebitoElectronica") &&
+      !content.includes("<TiqueteElectronico")) {
+    return true;
+  }
+  
+  return false;
+}
+
 // Función para extraer adjuntos XML de un email raw
 function extractXmlAttachments(rawEmail: string): Array<{ filename: string; content: string }> {
   const attachments: Array<{ filename: string; content: string }> = [];
@@ -205,14 +244,6 @@ function extractXmlAttachments(rawEmail: string): Array<{ filename: string; cont
     if (!filenameMatch) continue;
 
     const filename = filenameMatch[1].trim();
-    
-    // Filtrar respuestas de Hacienda
-    const upperFilename = filename.toUpperCase();
-    if (upperFilename.startsWith("AHC-") || upperFilename.startsWith("RMH-") ||
-        upperFilename.includes("-RESPUESTA") || upperFilename.includes("_RESPUESTA")) {
-      console.log(`[Bluehost] Skipping Hacienda response: ${filename}`);
-      continue;
-    }
 
     // Verificar encoding
     const encodingMatch = part.match(/Content-Transfer-Encoding:\s*(\S+)/i);
@@ -257,13 +288,139 @@ function extractXmlAttachments(rawEmail: string): Array<{ filename: string; cont
       decodedContent = content;
     }
 
-    // Verificar que sea XML válido con Clave
+    // Verificar si es una respuesta de Hacienda (no una factura)
+    if (isHaciendaResponse(filename, decodedContent)) {
+      console.log(`[Bluehost] Skipping Hacienda response/message: ${filename}`);
+      continue;
+    }
+
+    // Verificar que sea XML válido con Clave (facturas válidas)
     if (decodedContent.includes("<Clave>")) {
+      console.log(`[Bluehost] ✓ Valid invoice XML found: ${filename}`);
       attachments.push({ filename, content: decodedContent });
+    } else {
+      console.log(`[Bluehost] Skipping XML without Clave: ${filename}`);
     }
   }
 
   return attachments;
+}
+
+// Función para extraer adjuntos PDF de un email raw
+function extractPdfAttachments(rawEmail: string): Array<{ filename: string; content: Uint8Array }> {
+  const attachments: Array<{ filename: string; content: Uint8Array }> = [];
+  
+  // Buscar boundary
+  const boundaryMatch = rawEmail.match(/boundary="?([^"\r\n;]+)"?/i);
+  if (!boundaryMatch) {
+    return attachments;
+  }
+
+  const boundary = boundaryMatch[1];
+  const parts = rawEmail.split("--" + boundary);
+
+  for (const part of parts) {
+    // Verificar si es un adjunto PDF
+    const filenameMatch = part.match(/filename="?([^"\r\n]+\.pdf)"?/i);
+    if (!filenameMatch) continue;
+
+    const filename = filenameMatch[1].trim();
+
+    // Verificar encoding
+    const encodingMatch = part.match(/Content-Transfer-Encoding:\s*(\S+)/i);
+    const encoding = encodingMatch ? encodingMatch[1].toUpperCase() : "7BIT";
+
+    // Extraer contenido (después de línea vacía)
+    const contentStart = part.indexOf("\r\n\r\n");
+    if (contentStart === -1) continue;
+
+    let content = part.substring(contentStart + 4);
+    
+    // Limpiar el final
+    const endIdx = content.indexOf("--" + boundary);
+    if (endIdx !== -1) {
+      content = content.substring(0, endIdx);
+    }
+    content = content.trim();
+
+    // Decodificar según encoding
+    let decodedContent: Uint8Array;
+    
+    if (encoding === "BASE64") {
+      try {
+        const cleanBase64 = content.replace(/[\r\n\s]/g, "");
+        const binaryStr = atob(cleanBase64);
+        decodedContent = new Uint8Array(binaryStr.length);
+        for (let i = 0; i < binaryStr.length; i++) {
+          decodedContent[i] = binaryStr.charCodeAt(i);
+        }
+      } catch (e) {
+        console.error(`[Bluehost] Error decoding PDF base64 for ${filename}:`, e);
+        continue;
+      }
+    } else {
+      // Para otros encodings, intentar convertir a bytes
+      const encoder = new TextEncoder();
+      decodedContent = encoder.encode(content);
+    }
+
+    // Verificar que comience con %PDF
+    if (decodedContent.length > 4) {
+      const header = String.fromCharCode(...decodedContent.slice(0, 4));
+      if (header === "%PDF") {
+        console.log(`[Bluehost] ✓ Valid PDF found: ${filename} (${decodedContent.length} bytes)`);
+        attachments.push({ filename, content: decodedContent });
+      } else {
+        console.log(`[Bluehost] Skipping invalid PDF (wrong header): ${filename}`);
+      }
+    }
+  }
+
+  return attachments;
+}
+
+// Función para hacer match entre XML y PDF por nombre de archivo
+function matchPdfToXml(
+  xmlAttachments: Array<{ filename: string; content: string }>,
+  pdfAttachments: Array<{ filename: string; content: Uint8Array }>
+): Map<string, { filename: string; content: Uint8Array } | null> {
+  const matches = new Map<string, { filename: string; content: Uint8Array } | null>();
+  
+  for (const xml of xmlAttachments) {
+    // Extraer la clave del XML para buscar en PDFs
+    const claveMatch = xml.content.match(/<Clave>(\d{50})<\/Clave>/);
+    const clave = claveMatch ? claveMatch[1] : "";
+    
+    // También extraer el número consecutivo
+    const numConsecMatch = xml.content.match(/<NumeroConsecutivo>(\d+)<\/NumeroConsecutivo>/);
+    const numConsec = numConsecMatch ? numConsecMatch[1] : "";
+    
+    // Buscar PDF que coincida con el nombre base del XML, la clave o el consecutivo
+    const xmlBaseName = xml.filename.replace(/\.xml$/i, "").toLowerCase();
+    
+    let matchedPdf: { filename: string; content: Uint8Array } | null = null;
+    
+    for (const pdf of pdfAttachments) {
+      const pdfBaseName = pdf.filename.replace(/\.pdf$/i, "").toLowerCase();
+      
+      // Criterios de match:
+      // 1. Mismo nombre base
+      // 2. PDF contiene la clave
+      // 3. PDF contiene el número consecutivo
+      if (pdfBaseName === xmlBaseName ||
+          (clave && pdf.filename.includes(clave)) ||
+          (numConsec && pdf.filename.includes(numConsec)) ||
+          (xmlBaseName.length >= 10 && pdfBaseName.includes(xmlBaseName.substring(0, 10)))) {
+        matchedPdf = pdf;
+        console.log(`[Bluehost] ✓ Matched PDF ${pdf.filename} to XML ${xml.filename}`);
+        break;
+      }
+    }
+    
+    matches.set(xml.filename, matchedPdf);
+  }
+  
+  return matches;
 }
 
 serve(async (req) => {
@@ -366,25 +523,95 @@ serve(async (req) => {
     for (const rawEmail of rawEmails) {
       try {
         const xmlAttachments = extractXmlAttachments(rawEmail);
+        const pdfAttachments = extractPdfAttachments(rawEmail);
         
-        for (const attachment of xmlAttachments) {
+        console.log(`[Bluehost] Email has ${xmlAttachments.length} XMLs and ${pdfAttachments.length} PDFs`);
+        
+        // Match PDFs con XMLs
+        const pdfMatches = matchPdfToXml(xmlAttachments, pdfAttachments);
+        
+        for (const xmlAttachment of xmlAttachments) {
           // Extraer clave del XML
-          const claveMatch = attachment.content.match(/<Clave>(\d{50})<\/Clave>/);
-          if (!claveMatch) continue;
+          const claveMatch = xmlAttachment.content.match(/<Clave>(\d{50})<\/Clave>/);
+          if (!claveMatch) {
+            console.log(`[Bluehost] Skipping XML without valid Clave: ${xmlAttachment.filename}`);
+            continue;
+          }
 
           const docKey = claveMatch[1];
 
           // Verificar si ya existe
           const { data: existing } = await supabase
             .from("processed_documents")
-            .select("id, status")
+            .select("id, status, pdf_attachment_url")
             .eq("doc_key", docKey)
             .eq("organization_id", organization_id)
             .maybeSingle();
 
-          if (existing) {
+          if (existing && !force_resync) {
+            // Si existe pero no tiene PDF, intentar agregar el PDF
+            const matchedPdf = pdfMatches.get(xmlAttachment.filename);
+            if (matchedPdf && !existing.pdf_attachment_url) {
+              try {
+                const pdfPath = `${organization_id}/${docKey}.pdf`;
+                const { error: uploadError } = await supabase.storage
+                  .from("company-documents")
+                  .upload(pdfPath, matchedPdf.content, {
+                    contentType: "application/pdf",
+                    upsert: true
+                  });
+                
+                if (!uploadError) {
+                  const { data: urlData } = supabase.storage
+                    .from("company-documents")
+                    .getPublicUrl(pdfPath);
+                  
+                  await supabase
+                    .from("processed_documents")
+                    .update({ 
+                      pdf_attachment_url: urlData.publicUrl,
+                      file_path: pdfPath
+                    })
+                    .eq("id", existing.id);
+                  
+                  console.log(`[Bluehost] ✅ Added missing PDF for existing document: ${docKey}`);
+                }
+              } catch (pdfErr) {
+                console.error(`[Bluehost] Error adding PDF to existing doc:`, pdfErr);
+              }
+            }
+            
             skippedInvoices.push({ doc_key: docKey, reason: "Already exists" });
             continue;
+          }
+
+          // Subir PDF si existe match
+          let pdfUrl: string | null = null;
+          let pdfPath: string | null = null;
+          const matchedPdf = pdfMatches.get(xmlAttachment.filename);
+          
+          if (matchedPdf) {
+            try {
+              pdfPath = `${organization_id}/${docKey}.pdf`;
+              const { error: uploadError } = await supabase.storage
+                .from("company-documents")
+                .upload(pdfPath, matchedPdf.content, {
+                  contentType: "application/pdf",
+                  upsert: true
+                });
+              
+              if (!uploadError) {
+                const { data: urlData } = supabase.storage
+                  .from("company-documents")
+                  .getPublicUrl(pdfPath);
+                pdfUrl = urlData.publicUrl;
+                console.log(`[Bluehost] ✅ Uploaded PDF: ${pdfPath}`);
+              } else {
+                console.error(`[Bluehost] Error uploading PDF:`, uploadError);
+              }
+            } catch (pdfErr) {
+              console.error(`[Bluehost] Error processing PDF:`, pdfErr);
+            }
           }
 
           // Procesar el XML
@@ -393,25 +620,34 @@ serve(async (req) => {
             {
               body: {
                 organization_id,
-                xml_content: attachment.content,
+                xml_content: xmlAttachment.content,
+                pdf_attachment_url: pdfUrl,
+                file_path: pdfPath,
                 source: "bluehost",
               },
             }
           );
 
           if (processError) {
-            console.error(`[Bluehost] Error processing ${attachment.filename}:`, processError);
-            errors.push({ filename: attachment.filename, error: processError.message });
+            console.error(`[Bluehost] Error processing ${xmlAttachment.filename}:`, processError);
+            errors.push({ filename: xmlAttachment.filename, error: processError.message });
           } else if (processResult?.success) {
             processedInvoices.push({
               doc_key: docKey,
               supplier_name: processResult.document?.supplier_name,
               total_amount: processResult.document?.total_amount,
+              has_pdf: !!pdfUrl
             });
-            console.log(`[Bluehost] ✅ Processed: ${attachment.filename}`);
+            console.log(`[Bluehost] ✅ Processed: ${xmlAttachment.filename} (PDF: ${!!pdfUrl})`);
+          } else if (processResult?.rejected) {
+            skippedInvoices.push({ 
+              filename: xmlAttachment.filename, 
+              reason: processResult?.message || "Rejected" 
+            });
+            console.log(`[Bluehost] ⚠️ Rejected: ${xmlAttachment.filename} - ${processResult?.message}`);
           } else {
             skippedInvoices.push({ 
-              filename: attachment.filename, 
+              filename: xmlAttachment.filename, 
               reason: processResult?.message || "Unknown" 
             });
           }
