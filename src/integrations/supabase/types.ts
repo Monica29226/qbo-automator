@@ -769,6 +769,84 @@ export type Database = {
         }
         Relationships: []
       }
+      qbo_publish_tracking: {
+        Row: {
+          clave_hacienda: string
+          created_at: string
+          currency: string | null
+          doc_number: string
+          document_id: string | null
+          emisor_identificacion: string | null
+          error_message: string | null
+          id: string
+          organization_id: string
+          published_at: string | null
+          qbo_doc_number: string | null
+          qbo_entity_id: string | null
+          qbo_entity_type: string | null
+          receptor_identificacion: string | null
+          status: string
+          supplier_name: string | null
+          total_amount: number | null
+          updated_at: string
+        }
+        Insert: {
+          clave_hacienda: string
+          created_at?: string
+          currency?: string | null
+          doc_number: string
+          document_id?: string | null
+          emisor_identificacion?: string | null
+          error_message?: string | null
+          id?: string
+          organization_id: string
+          published_at?: string | null
+          qbo_doc_number?: string | null
+          qbo_entity_id?: string | null
+          qbo_entity_type?: string | null
+          receptor_identificacion?: string | null
+          status?: string
+          supplier_name?: string | null
+          total_amount?: number | null
+          updated_at?: string
+        }
+        Update: {
+          clave_hacienda?: string
+          created_at?: string
+          currency?: string | null
+          doc_number?: string
+          document_id?: string | null
+          emisor_identificacion?: string | null
+          error_message?: string | null
+          id?: string
+          organization_id?: string
+          published_at?: string | null
+          qbo_doc_number?: string | null
+          qbo_entity_id?: string | null
+          qbo_entity_type?: string | null
+          receptor_identificacion?: string | null
+          status?: string
+          supplier_name?: string | null
+          total_amount?: number | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "qbo_publish_tracking_document_id_fkey"
+            columns: ["document_id"]
+            isOneToOne: false
+            referencedRelation: "processed_documents"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "qbo_publish_tracking_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       rate_limits: {
         Row: {
           created_at: string
