@@ -411,16 +411,112 @@ serve(async (req) => {
     // Check for duplicates using the doc_key (the ONLY truly unique identifier)
     const existingDoc = await checkExistingInvoice(extractedDocNumber, extractedVendorTaxId, extractedVendorName, extractedDocKey);
     if (existingDoc) {
-      // If already published in QB - just confirm success, don't change status
+      // If existing record claims "published", verify the QBO ID matches THIS vendor + doc_number.
       if (existingDoc.qbo_entity_id) {
+        try {
+          const { data: qboAccount } = await supabase
+            .from("integration_accounts")
+            .select("credentials")
+            .eq("organization_id", organization_id)
+            .eq("service_type", "quickbooks")
+            .eq("is_active", true)
+            .maybeSingle();
+
+          const credentials = (qboAccount?.credentials as any) || null;
+          const accessToken = credentials?.access_token;
+          const realmId = credentials?.realm_id;
+
+          if (accessToken && realmId) {
+            const billId = String(existingDoc.qbo_entity_id).trim();
+
+            const qboResp = await fetchWithTimeout(
+              `https://quickbooks.api.intuit.com/v3/company/${realmId}/bill/${billId}?minorversion=73`,
+              {
+                method: 'GET',
+                headers: {
+                  Authorization: `Bearer ${accessToken}`,
+                  Accept: 'application/json',
+                  'Content-Type': 'application/json'
+                },
+              },
+              6000
+            );
+
+            if (qboResp.ok) {
+              const qboJson = await qboResp.json();
+              const bill = qboJson?.Bill;
+              const qboVendorName = String(bill?.VendorRef?.name || '').trim();
+              const qboDocNumber = String(bill?.DocNumber || '').trim();
+
+              const matchesVendor = qboVendorName.toLowerCase() === String(existingDoc.supplier_name || '').trim().toLowerCase();
+              const matchesDocNumber = qboDocNumber === String(existingDoc.doc_number || '').trim();
+
+              if (matchesVendor && matchesDocNumber) {
+                log(`✅ Verificado en QBO (${billId}): ${qboVendorName} / ${qboDocNumber}`);
+                return new Response(
+                  JSON.stringify({
+                    success: true,
+                    message: `Ya en QBO (ID: ${billId}): ${existingDoc.supplier_name}`,
+                    existing: existingDoc,
+                    alreadyPublished: true,
+                    qboVerified: true,
+                    qbo: {
+                      vendor_name: qboVendorName,
+                      doc_number: qboDocNumber,
+                      total_amount: bill?.TotalAmt,
+                      txn_date: bill?.TxnDate,
+                    }
+                  }),
+                  { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                );
+              }
+
+              // Mismatch: QBO ID exists but belongs to another vendor/docNumber. Clear and re-queue.
+              log(`⚠️ Inconsistencia: QBO Bill ${billId} es de "${qboVendorName}" (${qboDocNumber}), pero el sistema tiene "${existingDoc.supplier_name}" (${existingDoc.doc_number}). Reintentando publicación.`);
+              await supabase
+                .from("processed_documents")
+                .update({ status: "processed", qbo_entity_id: null, qbo_entity_type: null, error_message: "Inconsistencia: QBO ID corresponde a otro proveedor. Reprocesando." })
+                .eq("id", existingDoc.id);
+
+              fetch(`${supabaseUrl}/functions/v1/publish-to-quickbooks`, {
+                method: "POST",
+                headers: {
+                  Authorization: `Bearer ${supabaseKey}`,
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify({ organization_id, document_ids: [existingDoc.id] }),
+              }).catch(e => log(`⚠️ QB publish error: ${e}`));
+
+              return new Response(
+                JSON.stringify({
+                  success: true,
+                  message: "Inconsistencia detectada: re-publicando a QBO.",
+                  existing: existingDoc,
+                  mismatch: true,
+                  qbQueued: true,
+                  qboFound: {
+                    bill_id: billId,
+                    vendor_name: qboVendorName,
+                    doc_number: qboDocNumber,
+                  }
+                }),
+                { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+              );
+            }
+          }
+        } catch (e: any) {
+          log(`⚠️ No se pudo verificar en QBO: ${e?.message || e}`);
+        }
+
+        // Fallback: cannot verify QBO, keep previous behavior
         log(`✅ Ya publicada en QB (${existingDoc.qbo_entity_id}): ${existingDoc.doc_number} de ${existingDoc.supplier_name}`);
-        
         return new Response(
           JSON.stringify({
             success: true,
-            message: `Ya en QB (ID: ${existingDoc.qbo_entity_id}): ${existingDoc.supplier_name}`,
+            message: `Ya en QBO (ID: ${existingDoc.qbo_entity_id}): ${existingDoc.supplier_name}`,
             existing: existingDoc,
-            alreadyPublished: true
+            alreadyPublished: true,
+            qboVerified: false,
           }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
