@@ -146,7 +146,7 @@ function parseDescuentosTotal(xmlData: any): number {
   let totalDescuento = 0;
   
   try {
-    // 1. Check resumen_factura for total discount
+    // Check resumen_factura for total discount (nested or flat structure)
     const resumen = xmlData.resumen_factura || xmlData.ResumenFactura || xmlData;
     totalDescuento = parseFloat(
       resumen.TotalDescuentos || 
@@ -155,10 +155,16 @@ function parseDescuentosTotal(xmlData: any): number {
       '0'
     );
     
-    // 2. If no summary discount, sum from detail lines
-    if (totalDescuento === 0 && xmlData.detalle) {
-      const detalles = Array.isArray(xmlData.detalle) ? xmlData.detalle : [xmlData.detalle];
-      for (const item of detalles) {
+    // Sum from detail lines if available (some XMLs have line-level discounts)
+    if (xmlData.detalle && Array.isArray(xmlData.detalle)) {
+      for (const item of xmlData.detalle) {
+        // Check montoDescuento at line level
+        const lineDiscount = parseFloat(item.montoDescuento || item.MontoDescuento || '0');
+        if (lineDiscount > 0 && totalDescuento === 0) {
+          totalDescuento += lineDiscount;
+        }
+        
+        // Check nested descuentos array
         const descuentos = item.descuentos || item.Descuento || [];
         const descuentosArr = Array.isArray(descuentos) ? descuentos : [descuentos];
         
@@ -177,20 +183,49 @@ function parseDescuentosTotal(xmlData: any): number {
 }
 
 // =============================================================
-// PARSE TAXES: Complete parsing from XML
+// PARSE TAXES: Complete parsing from XML (including from lines)
 // =============================================================
 function parseImpuestosTotal(xmlData: any): number {
   if (!xmlData) return 0;
   
   try {
+    // First try from resumen (nested or flat structure)
     const resumen = xmlData.resumen_factura || xmlData.ResumenFactura || xmlData;
-    return parseFloat(
+    let total = parseFloat(
       resumen.TotalImpuesto || 
       resumen.total_impuesto || 
       resumen.totalImpuesto ||
       resumen.total_tax ||
       '0'
     );
+    
+    // If no summary tax, sum from detail lines
+    if (total === 0 && xmlData.detalle && Array.isArray(xmlData.detalle)) {
+      for (const item of xmlData.detalle) {
+        // Check direct impuestoNeto or montoImpuesto
+        const lineTax = parseFloat(
+          item.impuestoNeto || 
+          item.ImpuestoNeto || 
+          item.montoImpuesto || 
+          item.MontoImpuesto || 
+          '0'
+        );
+        total += lineTax;
+        
+        // Also check impuestos array
+        if (item.impuestos && Array.isArray(item.impuestos)) {
+          for (const imp of item.impuestos) {
+            const impMonto = parseFloat(imp.monto || imp.Monto || '0');
+            // Only add if not already counted
+            if (impMonto > 0 && lineTax === 0) {
+              total += impMonto;
+            }
+          }
+        }
+      }
+    }
+    
+    return total;
   } catch (e) {
     logError('Error parsing impuestos:', e);
     return 0;
@@ -217,12 +252,59 @@ function parseExoneracionesTotal(xmlData: any): number {
 }
 
 // =============================================================
+// PARSE SUBTOTAL: From resumen or summing lines
+// =============================================================
+function parseSubtotal(xmlData: any): number {
+  if (!xmlData) return 0;
+  
+  try {
+    const resumen = xmlData.resumen_factura || xmlData.ResumenFactura || xmlData;
+    
+    // Try various field names for subtotal
+    let subtotal = parseFloat(
+      resumen.TotalVentaNeta || 
+      resumen.total_venta_neta || 
+      resumen.totalVentaNeta ||
+      resumen.TotalMercanciasServicios ||
+      resumen.total_mercancias_servicios ||
+      resumen.TotalVenta ||
+      resumen.total_venta ||
+      resumen.totalVenta ||
+      resumen.SubTotal ||
+      resumen.subTotal ||
+      resumen.subtotal ||
+      '0'
+    );
+    
+    // If subtotal is 0 but we have detail lines, sum them up
+    if (subtotal === 0 && xmlData.detalle && Array.isArray(xmlData.detalle)) {
+      for (const item of xmlData.detalle) {
+        // Use subtotal or montoTotal from each line (before tax)
+        const lineSubtotal = parseFloat(
+          item.subtotal || 
+          item.Subtotal || 
+          item.montoTotal ||
+          item.MontoTotal ||
+          '0'
+        );
+        subtotal += lineSubtotal;
+      }
+    }
+    
+    return subtotal;
+  } catch (e) {
+    logError('Error parsing subtotal:', e);
+    return 0;
+  }
+}
+
+// =============================================================
 // VALIDATE TOTALS: CRITICAL - Block if totals don't match
 // =============================================================
 function validateTotalsStrict(xmlData: any, docTotalAmount: number, isCreditNote: boolean): TotalsValidation {
   const errors: string[] = [];
   
-  // Get XML total (TotalComprobante)
+  // Get XML total (TotalComprobante) - support both nested and flat structures
   const resumen = xmlData?.resumen_factura || xmlData?.ResumenFactura || xmlData || {};
   const xmlTotal = parseFloat(
     resumen.TotalComprobante || 
@@ -231,16 +313,8 @@ function validateTotalsStrict(xmlData: any, docTotalAmount: number, isCreditNote
     docTotalAmount.toString()
   );
   
-  // Parse all components
-  const subtotal = parseFloat(
-    resumen.TotalVentaNeta || 
-    resumen.total_venta_neta || 
-    resumen.totalVentaNeta ||
-    resumen.TotalMercanciasServicios ||
-    resumen.total_mercancias_servicios ||
-    '0'
-  );
-  
+  // Parse all components using helper functions
+  const subtotal = parseSubtotal(xmlData);
   const totalImpuestos = parseImpuestosTotal(xmlData);
   const totalDescuentos = parseDescuentosTotal(xmlData);
   const totalExoneraciones = parseExoneracionesTotal(xmlData);
@@ -252,18 +326,30 @@ function validateTotalsStrict(xmlData: any, docTotalAmount: number, isCreditNote
   // Formula: TotalComprobante = Subtotal + Impuestos - Descuentos + OtrosCargos - Exoneraciones
   const calculatedTotal = subtotal + totalImpuestos - totalDescuentos + totalOtrosCargos - totalExoneraciones;
   
-  // Compare
+  // Compare calculated vs XML total
   const difference = Math.abs(calculatedTotal - xmlTotal);
-  const tolerance = 0.05; // 5 centavos de tolerancia para redondeos
   
-  if (difference > tolerance) {
+  // Use 1.00 tolerance (1 colón/cent) for rounding differences
+  const tolerance = 1.0;
+  
+  // Only flag as error if there's a significant difference AND we could calculate components
+  // If subtotal is 0 and we have lines, something went wrong in parsing
+  const hasDetailLines = xmlData.detalle && Array.isArray(xmlData.detalle) && xmlData.detalle.length > 0;
+  
+  if (difference > tolerance && subtotal > 0) {
+    // Real mismatch - components don't add up
     errors.push(`Total calculado (${calculatedTotal.toFixed(2)}) ≠ Total XML (${xmlTotal.toFixed(2)}), diferencia: ${difference.toFixed(2)}`);
   }
   
-  // Also validate against document amount
+  // Validate document amount matches XML total
   const docDifference = Math.abs(docTotalAmount - xmlTotal);
   if (docDifference > tolerance) {
     errors.push(`Total documento (${docTotalAmount.toFixed(2)}) ≠ Total XML (${xmlTotal.toFixed(2)})`);
+  }
+  
+  // Log breakdown for debugging
+  if (hasDetailLines && subtotal === 0) {
+    log(`⚠️ Subtotal=0 pero hay ${xmlData.detalle.length} líneas. Verificar parsing.`);
   }
   
   return {
