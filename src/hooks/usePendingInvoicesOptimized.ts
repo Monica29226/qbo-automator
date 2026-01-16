@@ -41,12 +41,12 @@ const normalizeVendorName = (name: string): string => {
 
 // Fetch optimizado - SOLO documentos, sin vendor_defaults (se obtiene del hook separado)
 const fetchPendingInvoicesOptimized = async (organizationId: string): Promise<PendingInvoice[]> => {
-  // Query única y simple - solo documentos pendientes
+  // Query única y simple - documentos pendientes (incluye review, pending, pending_config)
   const { data: docsData, error: docsError } = await supabase
     .from("processed_documents")
     .select("id, doc_number, supplier_name, supplier_tax_id, total_amount, currency, created_at, vendor_id, default_account_ref, default_class_ref, uses_tax, pdf_attachment_url, issue_date, status, qbo_entity_id")
     .eq("organization_id", organizationId)
-    .in("status", ["pending", "pending_config"])
+    .in("status", ["pending", "pending_config", "review"])
     .is("qbo_entity_id", null)
     .order("created_at", { ascending: false })
     .limit(100);

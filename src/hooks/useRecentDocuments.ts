@@ -56,7 +56,7 @@ export const usePendingDocumentsCount = (organizationId: string | null) => {
         .from("processed_documents")
         .select("id", { count: "exact", head: true })
         .eq("organization_id", organizationId)
-        .in("status", ["pending", "pending_config"])
+        .in("status", ["pending", "pending_config", "review"])
         .is("qbo_entity_id", null);
 
       if (error) throw error;
