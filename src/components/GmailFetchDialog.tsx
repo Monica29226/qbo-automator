@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -12,8 +12,10 @@ import { Label } from "@/components/ui/label";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { toast } from "sonner";
-import { Mail, Calendar } from "lucide-react";
+import { Mail, Calendar, AlertTriangle, RefreshCw } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { useNavigate } from "react-router-dom";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
 interface GmailFetchDialogProps {
   onSuccess?: () => void;
@@ -21,10 +23,46 @@ interface GmailFetchDialogProps {
 
 export const GmailFetchDialog = ({ onSuccess }: GmailFetchDialogProps) => {
   const { activeOrganization } = useAuth();
+  const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [selectedMonth, setSelectedMonth] = useState<string>("");
   const [selectedYear, setSelectedYear] = useState<string>("");
+  const [gmailConnected, setGmailConnected] = useState<boolean | null>(null);
+  const [isCheckingConnection, setIsCheckingConnection] = useState(false);
+
+  // Check if Gmail is connected when dialog opens
+  useEffect(() => {
+    const checkGmailConnection = async () => {
+      if (!open || !activeOrganization) return;
+      
+      setIsCheckingConnection(true);
+      try {
+        const { data, error } = await supabase
+          .from("integration_accounts")
+          .select("id, is_active")
+          .eq("organization_id", activeOrganization)
+          .eq("service_type", "gmail")
+          .eq("is_active", true)
+          .maybeSingle();
+        
+        if (error) throw error;
+        setGmailConnected(!!data);
+      } catch (error) {
+        console.error("Error checking Gmail connection:", error);
+        setGmailConnected(false);
+      } finally {
+        setIsCheckingConnection(false);
+      }
+    };
+
+    checkGmailConnection();
+  }, [open, activeOrganization]);
+
+  const handleReconnect = () => {
+    setOpen(false);
+    navigate("/integrations");
+  };
 
   const handleYearChange = (value: string) => {
     setSelectedYear(value);
@@ -83,7 +121,15 @@ export const GmailFetchDialog = ({ onSuccess }: GmailFetchDialogProps) => {
       onSuccess?.();
     } catch (error: any) {
       console.error("Error fetching Gmail invoices:", error);
-      toast.error(`Error al obtener facturas: ${error.message}`);
+      
+      // Check for specific error messages
+      const errorMessage = error.message || "";
+      if (errorMessage.includes("No active Gmail account") || errorMessage.includes("403")) {
+        setGmailConnected(false);
+        toast.error("Gmail no está conectado. Por favor reconecta tu cuenta de Gmail.");
+      } else {
+        toast.error(`Error al obtener facturas: ${errorMessage}`);
+      }
     } finally {
       setIsProcessing(false);
     }
@@ -105,69 +151,94 @@ export const GmailFetchDialog = ({ onSuccess }: GmailFetchDialogProps) => {
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-4 py-4">
-          <div className="space-y-2">
-            <Label htmlFor="year">Año (opcional)</Label>
-            <Select value={selectedYear} onValueChange={handleYearChange}>
-              <SelectTrigger id="year">
-                <SelectValue placeholder="Todos los años" />
-              </SelectTrigger>
-              <SelectContent>
-                {years.map((year) => (
-                  <SelectItem key={year} value={year.toString()}>
-                    {year}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+        {isCheckingConnection ? (
+          <div className="flex items-center justify-center py-8">
+            <RefreshCw className="h-6 w-6 animate-spin text-muted-foreground" />
+            <span className="ml-2 text-muted-foreground">Verificando conexión...</span>
           </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="month">Mes (opcional)</Label>
-            <Select value={selectedMonth} onValueChange={setSelectedMonth} disabled={!selectedYear}>
-              <SelectTrigger id="month">
-                <SelectValue placeholder="Todos los meses" />
-              </SelectTrigger>
-              <SelectContent>
-                {months.map((month) => (
-                  <SelectItem key={month.value} value={month.value}>
-                    {month.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          {selectedYear && selectedMonth && (
-            <div className="flex items-center gap-2 p-3 bg-muted rounded-md">
-              <Calendar className="h-4 w-4 text-muted-foreground" />
-              <p className="text-sm text-muted-foreground">
-                Se buscarán facturas de {months.find(m => m.value === selectedMonth)?.label} {selectedYear}
-              </p>
+        ) : gmailConnected === false ? (
+          <div className="py-4">
+            <Alert variant="destructive">
+              <AlertTriangle className="h-4 w-4" />
+              <AlertTitle>Gmail no está conectado</AlertTitle>
+              <AlertDescription className="mt-2">
+                La conexión con Gmail ha expirado o fue desconectada. Necesitas reconectar tu cuenta de Gmail para obtener facturas.
+              </AlertDescription>
+            </Alert>
+            <div className="flex justify-end mt-4">
+              <Button onClick={handleReconnect} className="gap-2">
+                <RefreshCw className="h-4 w-4" />
+                Ir a Reconectar Gmail
+              </Button>
             </div>
-          )}
-        </div>
+          </div>
+        ) : (
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="year">Año (opcional)</Label>
+              <Select value={selectedYear} onValueChange={handleYearChange}>
+                <SelectTrigger id="year">
+                  <SelectValue placeholder="Todos los años" />
+                </SelectTrigger>
+                <SelectContent>
+                  {years.map((year) => (
+                    <SelectItem key={year} value={year.toString()}>
+                      {year}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
 
-        <div className="flex justify-end gap-3">
-          <Button variant="outline" onClick={() => setOpen(false)} disabled={isProcessing}>
-            Cancelar
-          </Button>
-          {(selectedYear || selectedMonth) && (
-            <Button 
-              variant="ghost" 
-              onClick={() => {
-                setSelectedYear("");
-                setSelectedMonth("");
-              }} 
-              disabled={isProcessing}
-            >
-              Limpiar
+            <div className="space-y-2">
+              <Label htmlFor="month">Mes (opcional)</Label>
+              <Select value={selectedMonth} onValueChange={setSelectedMonth} disabled={!selectedYear}>
+                <SelectTrigger id="month">
+                  <SelectValue placeholder="Todos los meses" />
+                </SelectTrigger>
+                <SelectContent>
+                  {months.map((month) => (
+                    <SelectItem key={month.value} value={month.value}>
+                      {month.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {selectedYear && selectedMonth && (
+              <div className="flex items-center gap-2 p-3 bg-muted rounded-md">
+                <Calendar className="h-4 w-4 text-muted-foreground" />
+                <p className="text-sm text-muted-foreground">
+                  Se buscarán facturas de {months.find(m => m.value === selectedMonth)?.label} {selectedYear}
+                </p>
+              </div>
+            )}
+          </div>
+        )}
+
+        {gmailConnected !== false && !isCheckingConnection && (
+          <div className="flex justify-end gap-3">
+            <Button variant="outline" onClick={() => setOpen(false)} disabled={isProcessing}>
+              Cancelar
             </Button>
-          )}
-          <Button onClick={handleFetch} disabled={isProcessing}>
-            {isProcessing ? "Obteniendo..." : "Obtener Facturas"}
-          </Button>
-        </div>
+            {(selectedYear || selectedMonth) && (
+              <Button 
+                variant="ghost" 
+                onClick={() => {
+                  setSelectedYear("");
+                  setSelectedMonth("");
+                }} 
+                disabled={isProcessing}
+              >
+                Limpiar
+              </Button>
+            )}
+            <Button onClick={handleFetch} disabled={isProcessing}>
+              {isProcessing ? "Obteniendo..." : "Obtener Facturas"}
+            </Button>
+          </div>
+        )}
       </DialogContent>
     </Dialog>
   );
