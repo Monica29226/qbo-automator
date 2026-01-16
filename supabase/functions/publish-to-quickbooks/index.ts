@@ -1097,6 +1097,21 @@ Deno.serve(async (req) => {
         // =============================================================
         let accountCode = doc.default_account_ref;
         
+        // Check for auto_unclassified_account setting first
+        if (!accountCode) {
+          const { data: autoUnclassifiedSetting } = await supabase
+            .from("system_settings")
+            .select("value")
+            .eq("organization_id", organization_id)
+            .eq("key", "auto_unclassified_account")
+            .maybeSingle();
+          
+          if (autoUnclassifiedSetting?.value) {
+            accountCode = autoUnclassifiedSetting.value;
+            console.log(`🎯 [AUTO-UNCLASSIFIED] Using auto_unclassified_account: ${accountCode}`);
+          }
+        }
+        
         if (!accountCode) {
           // Try vendor_defaults
           const { data: vendorDefault } = await supabase
