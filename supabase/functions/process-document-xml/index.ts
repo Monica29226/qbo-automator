@@ -448,87 +448,107 @@ Deno.serve(async (req) => {
     let vendorId = null;
     let status = "pending";
     
-    console.log(`🔍 [VENDOR LOOKUP START] tax_id='${supplier_tax_id}' (type: ${typeof supplier_tax_id}, length: ${supplier_tax_id?.length})`);
-    console.log(`🔍 [VENDOR LOOKUP START] org='${payload.organization_id}'`);
+    // ============================================================
+    // CHECK FOR AUTO-UNCLASSIFIED SETTING
+    // Si la organización tiene configurado auto_unclassified_account,
+    // todos los gastos van automáticamente a esa cuenta sin clasificar
+    // ============================================================
+    const { data: autoUnclassifiedSetting } = await supabase
+      .from('system_settings')
+      .select('value')
+      .eq('organization_id', payload.organization_id)
+      .eq('key', 'auto_unclassified_account')
+      .maybeSingle();
     
-    if (!supplier_tax_id) {
-      console.error("❌ supplier_tax_id is empty or null!");
+    if (autoUnclassifiedSetting?.value) {
+      accountCode = autoUnclassifiedSetting.value;
+      status = "processed"; // Auto-procesar sin clasificación manual
+      console.log(`🎯 [AUTO-UNCLASSIFIED] Org tiene auto_unclassified_account configurado: "${accountCode}"`);
+      console.log(`✅ Documento asignado automáticamente a: ${accountCode} (sin clasificación de vendor)`);
     } else {
-      console.log(`✓ supplier_tax_id exists, proceeding with lookup...`);
+      // Normal vendor lookup flow
+      console.log(`🔍 [VENDOR LOOKUP START] tax_id='${supplier_tax_id}' (type: ${typeof supplier_tax_id}, length: ${supplier_tax_id?.length})`);
+      console.log(`🔍 [VENDOR LOOKUP START] org='${payload.organization_id}'`);
       
-      // First, look up vendor in vendors table for automatic assignment
-      const { data: vendor, error: vendorError } = await supabase
-        .from('vendors')
-        .select('*')
-        .eq('organization_id', payload.organization_id)
-        .eq('vendor_tax_id', supplier_tax_id)
-        .eq('is_active', true)
-        .maybeSingle();
-      
-      console.log(`🔍 [VENDOR LOOKUP] vendor=${vendor ? 'FOUND' : 'NOT FOUND'}, error=${vendorError ? vendorError.message : 'none'}`);
-      
-      if (vendorError) {
-        console.error("❌ Error buscando vendor:", vendorError);
-      } else if (vendor) {
-        vendorId = vendor.id;
-        accountCode = vendor.default_account_ref;
-        status = "processed";
-        console.log("✅ Vendor found and assigned:", vendor.vendor_name, "→", accountCode);
+      if (!supplier_tax_id) {
+        console.error("❌ supplier_tax_id is empty or null!");
       } else {
-        console.log("⚠️  No vendor found for tax_id:", supplier_tax_id);
+        console.log(`✓ supplier_tax_id exists, proceeding with lookup...`);
         
-        // ============================================================
-        // NUEVO: Buscar en vendor_defaults por nombre de proveedor
-        // Esta es la tabla donde se guardan las configuraciones de cuenta
-        // ============================================================
-        const normalizedSupplierName = supplier_name.toLowerCase().trim()
-          .normalize("NFD").replace(/[\u0300-\u036f]/g, ""); // Remove accents
-        
-        const { data: vendorDefaults, error: vdError } = await supabase
-          .from('vendor_defaults')
+        // First, look up vendor in vendors table for automatic assignment
+        const { data: vendor, error: vendorError } = await supabase
+          .from('vendors')
           .select('*')
-          .eq('organization_id', payload.organization_id);
+          .eq('organization_id', payload.organization_id)
+          .eq('vendor_tax_id', supplier_tax_id)
+          .eq('is_active', true)
+          .maybeSingle();
         
-        if (vdError) {
-          console.error("❌ Error buscando vendor_defaults:", vdError);
-        } else if (vendorDefaults && vendorDefaults.length > 0) {
-          // Buscar coincidencia por nombre normalizado
-          const matchedDefault = vendorDefaults.find(vd => {
-            const normalizedVdName = vd.vendor_name.toLowerCase().trim()
-              .normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-            return normalizedVdName === normalizedSupplierName;
-          });
+        console.log(`🔍 [VENDOR LOOKUP] vendor=${vendor ? 'FOUND' : 'NOT FOUND'}, error=${vendorError ? vendorError.message : 'none'}`);
+        
+        if (vendorError) {
+          console.error("❌ Error buscando vendor:", vendorError);
+        } else if (vendor) {
+          vendorId = vendor.id;
+          accountCode = vendor.default_account_ref;
+          status = "processed";
+          console.log("✅ Vendor found and assigned:", vendor.vendor_name, "→", accountCode);
+        } else {
+          console.log("⚠️  No vendor found for tax_id:", supplier_tax_id);
           
-          if (matchedDefault && matchedDefault.default_account_ref) {
-            accountCode = matchedDefault.default_account_ref;
-            status = "processed"; // Auto-procesar porque tiene cuenta configurada
-            console.log("✅ [VENDOR_DEFAULTS] Cuenta encontrada:", supplier_name, "→", accountCode);
-          } else {
-            console.log("⚠️  No vendor_default encontrado para:", supplier_name);
-          }
-        }
-        
-        // Si aún no tiene cuenta, buscar en vendor_categories
-        if (status !== "processed") {
-          const { data: category, error: catError } = await supabase
-            .from('vendor_categories')
+          // ============================================================
+          // NUEVO: Buscar en vendor_defaults por nombre de proveedor
+          // Esta es la tabla donde se guardan las configuraciones de cuenta
+          // ============================================================
+          const normalizedSupplierName = supplier_name.toLowerCase().trim()
+            .normalize("NFD").replace(/[\u0300-\u036f]/g, ""); // Remove accents
+          
+          const { data: vendorDefaults, error: vdError } = await supabase
+            .from('vendor_defaults')
             .select('*')
-            .eq('organization_id', payload.organization_id)
-            .eq('vendor_identification', supplier_tax_id)
-            .eq('is_active', true)
-            .maybeSingle();
+            .eq('organization_id', payload.organization_id);
           
-          console.log(`🔍 [CATEGORY LOOKUP] category=${category ? 'FOUND' : 'NOT FOUND'}, error=${catError ? catError.message : 'none'}`);
+          if (vdError) {
+            console.error("❌ Error buscando vendor_defaults:", vdError);
+          } else if (vendorDefaults && vendorDefaults.length > 0) {
+            // Buscar coincidencia por nombre normalizado
+            const matchedDefault = vendorDefaults.find(vd => {
+              const normalizedVdName = vd.vendor_name.toLowerCase().trim()
+                .normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+              return normalizedVdName === normalizedSupplierName;
+            });
+            
+            if (matchedDefault && matchedDefault.default_account_ref) {
+              accountCode = matchedDefault.default_account_ref;
+              status = "processed"; // Auto-procesar porque tiene cuenta configurada
+              console.log("✅ [VENDOR_DEFAULTS] Cuenta encontrada:", supplier_name, "→", accountCode);
+            } else {
+              console.log("⚠️  No vendor_default encontrado para:", supplier_name);
+            }
+          }
           
-          if (catError) {
-            console.error("❌ Error buscando category:", catError);
-          } else if (category) {
-            accountCode = category.account_code;
-            status = "review";
-            console.log("✅ Category found (needs manual review):", category.vendor_name, "→", accountCode);
-          } else {
-            console.log("⚠️  No category found for tax_id:", supplier_tax_id);
-            status = "review"; // Sin configuración, necesita revisión manual
+          // Si aún no tiene cuenta, buscar en vendor_categories
+          if (status !== "processed") {
+            const { data: category, error: catError } = await supabase
+              .from('vendor_categories')
+              .select('*')
+              .eq('organization_id', payload.organization_id)
+              .eq('vendor_identification', supplier_tax_id)
+              .eq('is_active', true)
+              .maybeSingle();
+            
+            console.log(`🔍 [CATEGORY LOOKUP] category=${category ? 'FOUND' : 'NOT FOUND'}, error=${catError ? catError.message : 'none'}`);
+            
+            if (catError) {
+              console.error("❌ Error buscando category:", catError);
+            } else if (category) {
+              accountCode = category.account_code;
+              status = "review";
+              console.log("✅ Category found (needs manual review):", category.vendor_name, "→", accountCode);
+            } else {
+              console.log("⚠️  No category found for tax_id:", supplier_tax_id);
+              status = "review"; // Sin configuración, necesita revisión manual
+            }
           }
         }
       }
