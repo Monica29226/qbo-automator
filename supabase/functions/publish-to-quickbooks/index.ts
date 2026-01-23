@@ -476,6 +476,8 @@ Deno.serve(async (req) => {
     const companyTaxId = orgSettings?.tax_id;
     
     // Obtener configuración de default_uses_tax
+    // Cuando default_uses_tax = true (o undefined): IVA es impuesto recuperable, se reporta como Tax separado
+    // Cuando default_uses_tax = false: IVA es gasto no recuperable, se incluye en el subtotal
     const { data: defaultUsesTaxSetting } = await supabase
       .from("system_settings")
       .select("value")
@@ -483,11 +485,12 @@ Deno.serve(async (req) => {
       .eq("key", "default_uses_tax")
       .maybeSingle();
     
+    // orgDefaultUsesTax = true significa IVA como impuesto recuperable (se resta del total y va como TxnTaxDetail)
+    // orgDefaultUsesTax = false significa IVA como gasto (todo el monto va como línea de gasto, sin tax separado)
     const orgDefaultUsesTax = defaultUsesTaxSetting?.value !== 'false';
     
-    if (!orgDefaultUsesTax) {
-      logInfo(`💰 Organización "${orgSettings?.name}" - IVA tratado como gasto no recuperable`);
-    }
+    logInfo(`💰 Organización "${orgSettings?.name}" - IVA: ${orgDefaultUsesTax ? 'Impuesto recuperable (Tax separado)' : 'Gasto no recuperable (incluido en subtotal)'}`);
+    logInfo(`   📋 default_uses_tax setting value: "${defaultUsesTaxSetting?.value}" -> orgDefaultUsesTax: ${orgDefaultUsesTax}`);
 
     // Obtener integración de QuickBooks
     const { data: qboAccount } = await supabase
@@ -1263,10 +1266,20 @@ Deno.serve(async (req) => {
         
         // Fallback: single line from totals
         if (lines.length === 0) {
+          // effectiveUsesTax = true: IVA como impuesto recuperable -> subtotal = total - tax, y tax va aparte
+          // effectiveUsesTax = false: IVA como gasto -> subtotal = total (todo va como gasto, sin tax)
           const effectiveUsesTax = (doc.uses_tax !== false) && orgDefaultUsesTax && !includeTaxInLines;
-          let subtotal = effectiveUsesTax
-            ? Math.abs(doc.total_amount) - Math.abs(doc.total_tax || 0)
-            : Math.abs(doc.total_amount);
+          
+          let subtotal: number;
+          if (effectiveUsesTax) {
+            // IVA recuperable: el subtotal es el monto SIN el impuesto (el impuesto irá en TxnTaxDetail)
+            subtotal = Math.abs(doc.total_amount) - Math.abs(doc.total_tax || 0);
+            logInfo(`   🧾 ${doc.doc_number}: IVA RECUPERABLE - Subtotal: ${subtotal.toFixed(2)} (Total ${doc.total_amount} - Tax ${doc.total_tax})`);
+          } else {
+            // IVA como gasto: el subtotal ES el total completo (el IVA ya está incluido como gasto)
+            subtotal = Math.abs(doc.total_amount);
+            logInfo(`   🧾 ${doc.doc_number}: IVA COMO GASTO - Subtotal: ${subtotal.toFixed(2)} (Total completo, sin tax separado)`);
+          }
           
           const fallbackLine: any = {
             DetailType: "AccountBasedExpenseLineDetail",
@@ -1277,6 +1290,7 @@ Deno.serve(async (req) => {
             },
           };
           
+          // Solo aplicar código de impuesto si es IVA recuperable
           const fallbackTaxCodeId = await getTaxCodeRef(effectiveUsesTax && doc.total_tax > 0 ? 13 : 0);
           if (fallbackTaxCodeId) {
             fallbackLine.AccountBasedExpenseLineDetail.TaxCodeRef = { value: fallbackTaxCodeId };
@@ -1298,8 +1312,11 @@ Deno.serve(async (req) => {
           : doc.doc_number;
         
         const documentCurrency = doc.currency || xmlData.moneda || 'CRC';
+        // Solo reportar TxnTaxDetail si el IVA es recuperable (effectiveUsesTax = true)
         const effectiveUsesTax = (doc.uses_tax !== false) && orgDefaultUsesTax && !includeTaxInLines;
         const totalTax = effectiveUsesTax ? (parseFloat(doc.total_tax as any) || 0) : 0;
+        
+        logInfo(`   📊 ${doc.doc_number}: effectiveUsesTax=${effectiveUsesTax}, totalTax para QBO=${totalTax.toFixed(2)}`);
         
         let entityId: string;
         let entityType: string;
