@@ -5,7 +5,8 @@ import { useAuth } from "@/hooks/useAuth";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
-import { Loader2, AlertCircle, Calendar, FileText, RefreshCw } from "lucide-react";
+import { Loader2, AlertCircle, Calendar, FileText, RefreshCw, Eye } from "lucide-react";
+import { PdfViewer } from "@/components/PdfViewer";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
 import { toast } from "sonner";
@@ -26,6 +27,8 @@ interface ErrorDocument {
   created_at: string;
   doc_type: string;
   retry_count: number;
+  pdf_attachment_url: string | null;
+  organization_id: string;
 }
 
 export const ErrorDocumentsModal = ({ open, onOpenChange }: ErrorDocumentsModalProps) => {
@@ -34,6 +37,7 @@ export const ErrorDocumentsModal = ({ open, onOpenChange }: ErrorDocumentsModalP
   const [isLoading, setIsLoading] = useState(false);
   const [retryingAll, setRetryingAll] = useState(false);
   const [retryingIds, setRetryingIds] = useState<Set<string>>(new Set());
+  const [selectedPdfDoc, setSelectedPdfDoc] = useState<ErrorDocument | null>(null);
 
   useEffect(() => {
     if (open && activeOrganization) {
@@ -48,7 +52,7 @@ export const ErrorDocumentsModal = ({ open, onOpenChange }: ErrorDocumentsModalP
     
     const { data, error } = await supabase
       .from("processed_documents")
-      .select("id, doc_number, supplier_name, issue_date, total_amount, currency, error_message, created_at, doc_type, retry_count")
+      .select("id, doc_number, supplier_name, issue_date, total_amount, currency, error_message, created_at, doc_type, retry_count, pdf_attachment_url, organization_id")
       .eq("organization_id", activeOrganization)
       .eq("status", "error")
       .order("created_at", { ascending: false })
@@ -234,25 +238,38 @@ export const ErrorDocumentsModal = ({ open, onOpenChange }: ErrorDocumentsModalP
                       <span className="text-xs text-muted-foreground">
                         Creado: {format(new Date(error.created_at), "d MMM, HH:mm", { locale: es })} • Reintentos: {error.retry_count}
                       </span>
-                      <Button
-                        onClick={() => retryDocument(error.id, error.doc_number)}
-                        disabled={retryingIds.has(error.id) || retryingAll}
-                        size="sm"
-                        variant="outline"
-                        className="h-7 text-xs"
-                      >
-                        {retryingIds.has(error.id) ? (
-                          <>
-                            <Loader2 className="h-3 w-3 mr-1 animate-spin" />
-                            Reprocesando...
-                          </>
-                        ) : (
-                          <>
-                            <RefreshCw className="h-3 w-3 mr-1" />
-                            Reprocesar
-                          </>
+                      <div className="flex items-center gap-2">
+                        {error.pdf_attachment_url && (
+                          <Button
+                            onClick={() => setSelectedPdfDoc(error)}
+                            size="sm"
+                            variant="outline"
+                            className="h-7 text-xs"
+                          >
+                            <Eye className="h-3 w-3 mr-1" />
+                            Ver PDF
+                          </Button>
                         )}
-                      </Button>
+                        <Button
+                          onClick={() => retryDocument(error.id, error.doc_number)}
+                          disabled={retryingIds.has(error.id) || retryingAll}
+                          size="sm"
+                          variant="outline"
+                          className="h-7 text-xs"
+                        >
+                          {retryingIds.has(error.id) ? (
+                            <>
+                              <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                              Reprocesando...
+                            </>
+                          ) : (
+                            <>
+                              <RefreshCw className="h-3 w-3 mr-1" />
+                              Reprocesar
+                            </>
+                          )}
+                        </Button>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -261,6 +278,44 @@ export const ErrorDocumentsModal = ({ open, onOpenChange }: ErrorDocumentsModalP
           </ScrollArea>
         )}
       </DialogContent>
+
+      {/* PDF Viewer Dialog */}
+      <Dialog open={!!selectedPdfDoc} onOpenChange={(open) => !open && setSelectedPdfDoc(null)}>
+        <DialogContent className="max-w-5xl max-h-[90vh]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <FileText className="h-5 w-5" />
+              PDF: {selectedPdfDoc?.doc_number}
+            </DialogTitle>
+            <DialogDescription>
+              {selectedPdfDoc?.supplier_name} - {selectedPdfDoc?.total_amount && new Intl.NumberFormat('es-CR', {
+                style: 'currency',
+                currency: ['CRC', 'USD', 'EUR'].includes(selectedPdfDoc.currency) ? selectedPdfDoc.currency : 'CRC',
+              }).format(selectedPdfDoc.total_amount)}
+            </DialogDescription>
+          </DialogHeader>
+          
+          {selectedPdfDoc?.error_message && (
+            <div className="p-3 bg-destructive/10 rounded-lg border border-destructive/20 mb-2">
+              <p className="text-sm text-destructive font-medium">
+                Error: {selectedPdfDoc.error_message}
+              </p>
+            </div>
+          )}
+          
+          <div className="h-[60vh] overflow-auto">
+            {selectedPdfDoc?.pdf_attachment_url && selectedPdfDoc.organization_id && (
+              <PdfViewer 
+                url={selectedPdfDoc.pdf_attachment_url} 
+                organizationId={selectedPdfDoc.organization_id}
+                docNumber={selectedPdfDoc.doc_number}
+                documentId={selectedPdfDoc.id}
+                fileName={selectedPdfDoc.doc_number}
+              />
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </Dialog>
   );
 };
