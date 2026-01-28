@@ -43,7 +43,7 @@ interface ErrorDocument {
   default_account_ref?: string | null;
 }
 
-type ErrorCategory = "all" | "fixable" | "not_publishable" | "account_error" | "permanent";
+type ErrorCategory = "all" | "fixable" | "not_publishable" | "account_error" | "permanent" | "totals_error";
 
 const ErrorDocuments = () => {
   const { activeOrganization } = useAuth();
@@ -107,6 +107,13 @@ const ErrorDocuments = () => {
       return "permanent";
     }
     
+    // Totals errors - can be force published
+    if (msg.includes("TOTALES NO COINCIDEN") || 
+        msg.includes("MONTO INCORRECTO") ||
+        msg.includes("error_totals")) {
+      return "totals_error";
+    }
+    
     // Account errors - fixable
     if (msg.includes("no existe en QuickBooks") || 
         msg.includes("Account not found") ||
@@ -131,7 +138,8 @@ const ErrorDocuments = () => {
         description: "Los Tiquetes Electrónicos no se publican en QuickBooks (solo facturas)",
         solution: "Descartar este documento o eliminarlo de la lista de errores",
         canRetry: false,
-        canChangeAccount: false
+        canChangeAccount: false,
+        canForcePublish: false
       };
     }
     
@@ -141,7 +149,8 @@ const ErrorDocuments = () => {
         description: errorMessage.replace("[PERMANENTE] Max retries reached (3 attempts) - Original: ", ""),
         solution: "Usar botón 'Forzar Reintento' para resetear contador",
         canRetry: true,
-        canChangeAccount: false
+        canChangeAccount: false,
+        canForcePublish: true
       };
     }
     if (errorMessage.includes("Falta el parámetro Line requerido")) {
@@ -150,7 +159,8 @@ const ErrorDocuments = () => {
         description: "El XML no contiene líneas de detalle válidas",
         solution: "Revisar el XML original - puede estar incompleto",
         canRetry: true,
-        canChangeAccount: false
+        canChangeAccount: false,
+        canForcePublish: true
       };
     }
     if (errorMessage.includes("Número no válido") && errorMessage.includes("Gastos por clasificar")) {
@@ -159,7 +169,8 @@ const ErrorDocuments = () => {
         description: 'La cuenta "Gastos por clasificar" no existe en QuickBooks',
         solution: "Configurar regla de vendor con cuenta válida",
         canRetry: false,
-        canChangeAccount: true
+        canChangeAccount: true,
+        canForcePublish: false
       };
     }
     if (errorMessage.includes("La longitud de la cadena") && errorMessage.includes("DocNumber")) {
@@ -168,7 +179,8 @@ const ErrorDocuments = () => {
         description: "QuickBooks acepta máximo 21 caracteres",
         solution: "El número debe acortarse manualmente",
         canRetry: false,
-        canChangeAccount: false
+        canChangeAccount: false,
+        canForcePublish: true
       };
     }
     if (errorMessage.includes("Failed to create vendor")) {
@@ -177,7 +189,8 @@ const ErrorDocuments = () => {
         description: "No se pudo crear el vendor en QuickBooks",
         solution: "Verificar permisos y conectividad con QuickBooks",
         canRetry: true,
-        canChangeAccount: false
+        canChangeAccount: false,
+        canForcePublish: false
       };
     }
     if (errorMessage.includes("No se pudo determinar cuenta contable")) {
@@ -186,7 +199,8 @@ const ErrorDocuments = () => {
         description: "El proveedor no tiene configurada una cuenta contable",
         solution: "Ir a Configuración → Reglas de Vendors y agregar regla",
         canRetry: false,
-        canChangeAccount: true
+        canChangeAccount: true,
+        canForcePublish: false
       };
     }
     if (errorMessage.includes("no existe en QuickBooks") && errorMessage.includes("Cuenta")) {
@@ -196,7 +210,8 @@ const ErrorDocuments = () => {
         description: `El código "${match?.[1] || '?'}" no corresponde a una cuenta válida en QuickBooks`,
         solution: "Cambiar la cuenta usando el botón 'Cambiar Cuenta'",
         canRetry: false,
-        canChangeAccount: true
+        canChangeAccount: true,
+        canForcePublish: false
       };
     }
     if (errorMessage.includes("No account configured")) {
@@ -205,7 +220,18 @@ const ErrorDocuments = () => {
         description: "La factura no tiene una cuenta contable asignada",
         solution: "Asignar cuenta usando el botón 'Cambiar Cuenta'",
         canRetry: false,
-        canChangeAccount: true
+        canChangeAccount: true,
+        canForcePublish: false
+      };
+    }
+    if (errorMessage.includes("TOTALES NO COINCIDEN") || errorMessage.includes("MONTO INCORRECTO")) {
+      return {
+        type: "Error de totales",
+        description: "El cálculo de líneas no coincide con el total del documento",
+        solution: "Usar 'Forzar Publicación' para subir con el monto total del documento",
+        canRetry: true,
+        canChangeAccount: false,
+        canForcePublish: true
       };
     }
     return {
@@ -213,7 +239,8 @@ const ErrorDocuments = () => {
       description: errorMessage.substring(0, 100) + "...",
       solution: "Revisar logs completos",
       canRetry: true,
-      canChangeAccount: false
+      canChangeAccount: false,
+      canForcePublish: false
     };
   };
 
@@ -225,12 +252,13 @@ const ErrorDocuments = () => {
 
   // Count by category
   const errorCounts = useMemo(() => {
-    const counts = {
+    const counts: Record<ErrorCategory, number> = {
       all: documents.length,
       fixable: 0,
       not_publishable: 0,
       account_error: 0,
-      permanent: 0
+      permanent: 0,
+      totals_error: 0
     };
     
     documents.forEach(doc => {
@@ -587,6 +615,34 @@ const ErrorDocuments = () => {
     }
   };
 
+  const handleForcePublish = async (docId: string, docNumber: string) => {
+    if (!activeOrganization) return;
+
+    const toastId = toast.loading(`Forzando publicación de ${docNumber}...`);
+    
+    try {
+      const { data, error } = await supabase.functions.invoke("force-publish-document", {
+        body: { 
+          document_id: docId,
+          organization_id: activeOrganization
+        },
+      });
+
+      if (error) throw error;
+
+      if (data.success) {
+        toast.success(`✓ ${docNumber} publicado exitosamente (${data.qbo_entity_type} ID: ${data.qbo_entity_id})`, { id: toastId });
+        setTimeout(() => fetchErrorDocuments(), 1000);
+      } else {
+        toast.error(data.error || "Error al forzar publicación", { id: toastId });
+      }
+
+    } catch (error: any) {
+      console.error("Error forcing publish:", error);
+      toast.error(`Error: ${error.message}`, { id: toastId });
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
@@ -689,6 +745,11 @@ const ErrorDocuments = () => {
                   <AlertCircle className="h-3 w-3" />
                   Permanentes
                   <Badge variant="secondary" className="ml-1">{errorCounts.permanent}</Badge>
+                </TabsTrigger>
+                <TabsTrigger value="totals_error" className="gap-2">
+                  <FileText className="h-3 w-3" />
+                  Totales
+                  <Badge variant="secondary" className="ml-1">{errorCounts.totals_error}</Badge>
                 </TabsTrigger>
                 <TabsTrigger value="fixable" className="gap-2">
                   <Wrench className="h-3 w-3" />
@@ -890,6 +951,19 @@ const ErrorDocuments = () => {
                         >
                           <RefreshCw className="h-4 w-4 mr-2" />
                           Reintentar
+                        </Button>
+                      )}
+                      
+                      {/* Botón Forzar Publicación - para errores de totales */}
+                      {errorInfo.canForcePublish && (
+                        <Button
+                          variant="default"
+                          size="sm"
+                          onClick={() => handleForcePublish(doc.id, doc.doc_number)}
+                          className="bg-amber-600 hover:bg-amber-700"
+                        >
+                          <RefreshCw className="h-4 w-4 mr-2" />
+                          Forzar Publicación
                         </Button>
                       )}
                     </div>

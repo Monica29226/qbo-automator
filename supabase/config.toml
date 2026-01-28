@@ -170,3 +170,6 @@ verify_jwt = true
 
 [functions.bluehost-fetch-invoices]
 verify_jwt = true
+
+[functions.force-publish-document]
+verify_jwt = true
