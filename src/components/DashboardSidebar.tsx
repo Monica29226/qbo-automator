@@ -80,6 +80,12 @@ export function DashboardSidebar({ isAdmin, reviewCount, onSignOut }: DashboardS
       path: "/audit-report",
       show: true,
     },
+    {
+      title: "Reporte por Tasa IVA",
+      icon: FileSpreadsheet,
+      path: "/tax-rate-report",
+      show: true,
+    },
   ], [reviewCount]);
 
   const managementItems = useMemo(() => [
