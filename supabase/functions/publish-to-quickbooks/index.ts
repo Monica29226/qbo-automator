@@ -255,6 +255,7 @@ function parseExoneracionesTotal(xmlData: any): number {
 // PARSE SUBTOTAL: ALWAYS sum from detail lines for accuracy
 // The resumen.subTotal field can be incorrect for multi-line invoices
 // with different tax rates (GTI format issue)
+// Also handles credit notes with negative amounts correctly
 // =============================================================
 function parseSubtotal(xmlData: any): number {
   if (!xmlData) return 0;
@@ -270,15 +271,18 @@ function parseSubtotal(xmlData: any): number {
       for (const item of detalleArray) {
         if (!item) continue;
         // Use subtotal or montoTotal from each line (before tax)
+        // IMPORTANT: Use absolute value since some systems store negative amounts for credit notes
         const amount = parseFloat(
           item.subtotal || 
           item.Subtotal || 
           item.montoTotal ||
           item.MontoTotal ||
           item.SubTotal ||
+          item.baseImponible ||
+          item.BaseImponible ||
           '0'
         );
-        lineSubtotal += amount;
+        lineSubtotal += Math.abs(amount);
       }
       
       if (lineSubtotal > 0) {
@@ -305,7 +309,7 @@ function parseSubtotal(xmlData: any): number {
       '0'
     );
     
-    return subtotal;
+    return Math.abs(subtotal);
   } catch (e) {
     logError('Error parsing subtotal:', e);
     return 0;
@@ -313,26 +317,161 @@ function parseSubtotal(xmlData: any): number {
 }
 
 // =============================================================
+// CALCULATE TOTAL FROM LINE ITEMS: Sum montoTotalLinea
+// This is the most reliable way to get the true total for validation
+// montoTotalLinea includes subtotal + taxes for each line
+// =============================================================
+function calculateTotalFromLines(xmlData: any): { total: number; subtotal: number; tax: number } {
+  if (!xmlData) return { total: 0, subtotal: 0, tax: 0 };
+  
+  const detalle = xmlData.detalle || xmlData.detalles || xmlData.DetalleServicio || [];
+  const detalleArray = Array.isArray(detalle) ? detalle : [detalle];
+  
+  let totalLines = 0;
+  let subtotalLines = 0;
+  let taxLines = 0;
+  
+  for (const item of detalleArray) {
+    if (!item) continue;
+    
+    // MontoTotalLinea is the total for the line (subtotal + tax)
+    const montoTotalLinea = parseFloat(
+      item.montoTotalLinea || 
+      item.MontoTotalLinea || 
+      '0'
+    );
+    
+    // Subtotal/BaseImponible is the pre-tax amount
+    const lineSubtotal = parseFloat(
+      item.subtotal || 
+      item.Subtotal || 
+      item.montoTotal ||
+      item.MontoTotal ||
+      item.baseImponible ||
+      item.BaseImponible ||
+      '0'
+    );
+    
+    // Tax for this line
+    const lineTax = parseFloat(
+      item.impuestoNeto || 
+      item.ImpuestoNeto || 
+      item.montoImpuesto || 
+      item.MontoImpuesto || 
+      '0'
+    );
+    
+    // Use absolute values since credit notes may have negative amounts
+    totalLines += Math.abs(montoTotalLinea);
+    subtotalLines += Math.abs(lineSubtotal);
+    taxLines += Math.abs(lineTax);
+  }
+  
+  log(`📊 Suma de líneas: Total=${totalLines.toFixed(2)}, Subtotal=${subtotalLines.toFixed(2)}, Impuesto=${taxLines.toFixed(2)}`);
+  
+  return { total: totalLines, subtotal: subtotalLines, tax: taxLines };
+}
+
+// =============================================================
 // VALIDATE TOTALS: CRITICAL - Block if totals don't match
 // Handles Costa Rican invoice edge cases:
 // - Standard: TotalComprobante = Subtotal + Impuestos - Descuentos
 // - Exonerado/Asumido: TotalComprobante = Subtotal (impuesto NO se suma al total)
+// - Credit Notes: Amounts may be stored as negative
 // =============================================================
 function validateTotalsStrict(xmlData: any, docTotalAmount: number, isCreditNote: boolean): TotalsValidation {
   const errors: string[] = [];
   
-  // Get XML total (TotalComprobante) - support both nested and flat structures
+  // Use absolute value for XML total (credit notes are negative)
   const resumen = xmlData?.resumen_factura || xmlData?.ResumenFactura || xmlData || {};
-  const xmlTotal = parseFloat(
+  const rawXmlTotal = parseFloat(
     resumen.TotalComprobante || 
     resumen.total_comprobante || 
     resumen.totalComprobante ||
     docTotalAmount.toString()
   );
+  const xmlTotal = Math.abs(rawXmlTotal);
   
-  // Parse all components using helper functions
+  // Use 1.00 tolerance (1 colón/cent) for rounding differences  
+  const tolerance = 1.0;
+  
+  // Check if we have detail lines
+  const hasDetailLines = xmlData.detalle && Array.isArray(xmlData.detalle) && xmlData.detalle.length > 0;
+  
+  // PRIMARY VALIDATION: Sum montoTotalLinea from all lines
+  // This is the most reliable method as montoTotalLinea = subtotal + tax for each line
+  if (hasDetailLines) {
+    const lineCalc = calculateTotalFromLines(xmlData);
+    
+    // Add otros cargos and subtract discounts
+    const otrosCargos = parseOtrosCargosComplete(xmlData);
+    const totalOtrosCargos = otrosCargos.reduce((sum, c) => sum + c.monto, 0);
+    const totalDescuentos = parseDescuentosTotal(xmlData);
+    
+    // If montoTotalLinea is available and > 0, use it as primary validation
+    if (lineCalc.total > 0) {
+      const calculatedFromLines = lineCalc.total + totalOtrosCargos - totalDescuentos;
+      const lineDifference = Math.abs(calculatedFromLines - xmlTotal);
+      
+      log(`📊 Validación por líneas: SumaLineas=${lineCalc.total.toFixed(2)}, OtrosCargos=${totalOtrosCargos.toFixed(2)}, Descuentos=${totalDescuentos.toFixed(2)}`);
+      log(`📊 Total calculado: ${calculatedFromLines.toFixed(2)} vs XML: ${xmlTotal.toFixed(2)} (diff: ${lineDifference.toFixed(2)})`);
+      
+      if (lineDifference <= tolerance) {
+        // Perfect match using line totals
+        return {
+          valid: true,
+          xmlTotal,
+          calculatedTotal: calculatedFromLines,
+          difference: lineDifference,
+          breakdown: {
+            subtotal: lineCalc.subtotal,
+            totalImpuestos: lineCalc.tax,
+            totalDescuentos,
+            totalOtrosCargos,
+            totalExoneraciones: 0
+          },
+          errors: []
+        };
+      }
+    }
+    
+    // FALLBACK: Try with subtotal + tax calculation
+    if (lineCalc.subtotal > 0) {
+      const calculatedStandard = lineCalc.subtotal + lineCalc.tax + totalOtrosCargos - totalDescuentos;
+      const standardDiff = Math.abs(calculatedStandard - xmlTotal);
+      
+      // Also try exempt case (taxes not added)
+      const calculatedExempt = lineCalc.subtotal + totalOtrosCargos - totalDescuentos;
+      const exemptDiff = Math.abs(calculatedExempt - xmlTotal);
+      
+      log(`📊 Fallback: Standard=${calculatedStandard.toFixed(2)} (diff:${standardDiff.toFixed(2)}), Exento=${calculatedExempt.toFixed(2)} (diff:${exemptDiff.toFixed(2)})`);
+      
+      if (standardDiff <= tolerance || exemptDiff <= tolerance) {
+        const usedCalc = standardDiff <= tolerance ? calculatedStandard : calculatedExempt;
+        return {
+          valid: true,
+          xmlTotal,
+          calculatedTotal: usedCalc,
+          difference: Math.min(standardDiff, exemptDiff),
+          breakdown: {
+            subtotal: lineCalc.subtotal,
+            totalImpuestos: lineCalc.tax,
+            totalDescuentos,
+            totalOtrosCargos,
+            totalExoneraciones: 0
+          },
+          errors: []
+        };
+      }
+      
+      // Neither formula matched - report detailed error
+      errors.push(`Suma líneas (${lineCalc.total.toFixed(2)}) o Subtotal+Impuesto (${calculatedStandard.toFixed(2)}) no coincide con TotalComprobante (${xmlTotal.toFixed(2)})`);
+    }
+  }
+  
+  // SECONDARY VALIDATION: Use parsed summary fields
   const subtotal = parseSubtotal(xmlData);
-  const totalImpuestos = parseImpuestosTotal(xmlData);
+  const totalImpuestos = Math.abs(parseImpuestosTotal(xmlData));
   const totalDescuentos = parseDescuentosTotal(xmlData);
   const totalExoneraciones = parseExoneracionesTotal(xmlData);
   
@@ -340,69 +479,32 @@ function validateTotalsStrict(xmlData: any, docTotalAmount: number, isCreditNote
   const totalOtrosCargos = otrosCargos.reduce((sum, c) => sum + c.monto, 0);
   
   // Check for tax exemption/assumption cases
-  // When total = subtotal and there are taxes, it means taxes are NOT added to the total
-  // This happens when: impuesto exonerado, IVA asumido por emisor, etc.
-  const taxesExemptFromTotal = totalImpuestos > 0 && Math.abs(xmlTotal - subtotal) < 1.0;
+  const taxesExemptFromTotal = totalImpuestos > 0 && Math.abs(xmlTotal - subtotal) < tolerance;
   
-  // Calculate what the total SHOULD be based on whether taxes are exempt
   let calculatedTotal: number;
   if (taxesExemptFromTotal) {
-    // Taxes exist but are NOT added to total (exonerado/asumido case)
     calculatedTotal = subtotal - totalDescuentos + totalOtrosCargos;
     log(`📋 Impuesto exonerado/asumido detectado: Total=${xmlTotal}, Subtotal=${subtotal}, Impuesto=${totalImpuestos} (NO suma al total)`);
   } else {
-    // Standard case: TotalComprobante = Subtotal + Impuestos - Descuentos + OtrosCargos - Exoneraciones
     calculatedTotal = subtotal + totalImpuestos - totalDescuentos + totalOtrosCargos - totalExoneraciones;
   }
   
-  // Compare calculated vs XML total
   const difference = Math.abs(calculatedTotal - xmlTotal);
   
-  // Use 1.00 tolerance (1 colón/cent) for rounding differences
-  const tolerance = 1.0;
-  
-  // Check if we have detail lines
-  const hasDetailLines = xmlData.detalle && Array.isArray(xmlData.detalle) && xmlData.detalle.length > 0;
-  
-  // CRITICAL FIX: When subtotal=0 but we have detail lines, something went wrong in parsing
-  if (subtotal === 0 && hasDetailLines) {
-    log(`⚠️ Subtotal=0 pero hay ${xmlData.detalle.length} líneas. Usando validación alternativa.`);
-    
-    // Sum up all line totals as fallback
-    let lineTotal = 0;
-    for (const item of xmlData.detalle) {
-      const lineSubtotal = parseFloat(item.subtotal || item.Subtotal || item.montoTotal || item.MontoTotal || '0');
-      lineTotal += lineSubtotal;
-    }
-    
-    // Validate line total against XML total (allowing for both standard and exempt cases)
-    if (lineTotal > 0) {
-      const standardDiff = Math.abs(lineTotal + totalImpuestos - totalDescuentos + totalOtrosCargos - xmlTotal);
-      const exemptDiff = Math.abs(lineTotal - totalDescuentos + totalOtrosCargos - xmlTotal);
-      
-      // Accept if either formula matches
-      if (standardDiff > tolerance && exemptDiff > tolerance) {
-        errors.push(`Líneas (${lineTotal.toFixed(2)}) no cuadran con Total (${xmlTotal.toFixed(2)})`);
-      }
-    }
-  } else if (difference > tolerance && subtotal > 0) {
-    // Check if it matches when ignoring taxes (exempt case we might have missed)
+  if (difference > tolerance && subtotal > 0) {
+    // Try exempt case we might have missed
     const exemptCalc = subtotal - totalDescuentos + totalOtrosCargos;
     const exemptDiff = Math.abs(exemptCalc - xmlTotal);
     
-    if (exemptDiff <= tolerance) {
-      // It's an exempt case - no error
-      log(`📋 Caso exonerado confirmado: ${exemptCalc.toFixed(2)} = ${xmlTotal.toFixed(2)}`);
-    } else {
-      // Real mismatch - components don't add up with either formula
+    if (exemptDiff > tolerance) {
       errors.push(`Total calculado (${calculatedTotal.toFixed(2)}) ≠ Total XML (${xmlTotal.toFixed(2)}), diferencia: ${difference.toFixed(2)}`);
     }
   }
   
-  // CRITICAL: Always validate document amount matches XML total
-  const docDifference = Math.abs(docTotalAmount - xmlTotal);
+  // Validate document amount matches XML total
+  const docDifference = Math.abs(Math.abs(docTotalAmount) - xmlTotal);
   if (docDifference > tolerance) {
-    errors.push(`Total documento DB (${docTotalAmount.toFixed(2)}) ≠ Total XML (${xmlTotal.toFixed(2)})`);
+    errors.push(`Total documento DB (${Math.abs(docTotalAmount).toFixed(2)}) ≠ Total XML (${xmlTotal.toFixed(2)})`);
   }
   
   return {
