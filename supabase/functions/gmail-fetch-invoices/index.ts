@@ -395,14 +395,51 @@ serve(async (req) => {
         
         const xmlParts = allXmlParts.filter((p: any) => {
           const filename = p.filename?.toUpperCase() || '';
-          // Excluir SOLO respuestas de Hacienda (confirmaciones/acuses)
-          // IMPORTANTE: Los archivos que empiezan con números (ej: 50612345...) SÍ son facturas
+          const filenameLower = p.filename?.toLowerCase() || '';
+          
+          // =============================================================
+          // FILTRO MEJORADO: Excluir XMLs que NO son facturas
+          // =============================================================
+          
+          // 1. Acuses y respuestas de Hacienda (confirmaciones/notificaciones)
           if (filename.startsWith('AHC-') || filename.startsWith('RMH-') || 
               filename.includes('-RESPUESTA') || filename.includes('_RESPUESTA')) {
-            console.log(`⏭️ Ignorando respuesta de Hacienda: ${p.filename}`);
+            console.log(`⏭️ Ignorando respuesta tipo 1 (AHC/RMH): ${p.filename}`);
             return false;
           }
-          // Aceptar todo lo demás (incluyendo MH que puede ser factura legítima)
+          
+          // 2. Acuse Electrónico (notificación de recepción, NO es factura)
+          if (filenameLower.includes('acuse_electronico') || filenameLower.includes('acuse-electronico')) {
+            console.log(`⏭️ Ignorando Acuse Electrónico: ${p.filename}`);
+            return false;
+          }
+          
+          // 3. Respuesta_MH (Respuesta Mensaje Hacienda)
+          if (filenameLower.includes('respuesta_mh') || filenameLower.includes('respuesta-mh')) {
+            console.log(`⏭️ Ignorando Respuesta MH: ${p.filename}`);
+            return false;
+          }
+          
+          // 4. Archivos que terminan en R.xml (respuestas de confirmación)
+          // Formato típico: 506XXXXXXXXXXXXXXXXXXXXXXR.xml
+          if (filename.endsWith('R.XML') && /^5\d{49}R\.XML$/i.test(filename)) {
+            console.log(`⏭️ Ignorando respuesta tipo R: ${p.filename}`);
+            return false;
+          }
+          
+          // 5. MFS_MH_ prefijo (Mensaje Fiscal Sistema - respuesta de Hacienda)
+          if (filename.startsWith('MFS_MH_')) {
+            console.log(`⏭️ Ignorando MFS_MH (respuesta fiscal): ${p.filename}`);
+            return false;
+          }
+          
+          // 6. Confirmación de MH (MensajeHacienda de respuesta)
+          if (filenameLower.includes('mensajehacienda') || filenameLower.includes('mensaje_hacienda')) {
+            console.log(`⏭️ Ignorando MensajeHacienda: ${p.filename}`);
+            return false;
+          }
+          
+          // Aceptar facturas legítimas (empiezan con 506... que es el código de país CR)
           return true;
         });
         
