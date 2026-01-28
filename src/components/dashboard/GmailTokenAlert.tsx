@@ -9,7 +9,6 @@ import { useNavigate } from "react-router-dom";
 interface TokenAlert {
   type: "disconnected" | "expiring";
   message: string;
-  expiresIn?: number;
 }
 
 export const GmailTokenAlert = () => {
@@ -23,7 +22,7 @@ export const GmailTokenAlert = () => {
 
     const checkTokenStatus = async () => {
       try {
-        // Primero verificar si Gmail está conectado en la organización
+        // Verificar si Gmail está conectado en la organización
         const { data: org } = await supabase
           .from("organizations")
           .select("gmail_connected")
@@ -57,7 +56,10 @@ export const GmailTokenAlert = () => {
         }
 
         const credentials = gmailAccount.credentials as any;
-        if (!credentials?.access_token || !credentials?.refresh_token) {
+        
+        // Solo verificar si hay refresh_token - Gmail se auto-renueva con refresh token
+        // El access_token expira cada hora pero se renueva automáticamente
+        if (!credentials?.refresh_token) {
           setAlert({
             type: "disconnected",
             message: "Las credenciales de Gmail están incompletas. Por favor reconecte su cuenta.",
@@ -65,40 +67,19 @@ export const GmailTokenAlert = () => {
           return;
         }
 
-        // Verificar expiración solo si hay expires_at
-        if (credentials.expires_at) {
-          const expiresAt = typeof credentials.expires_at === 'string'
-            ? new Date(credentials.expires_at).getTime()
-            : credentials.expires_at;
-
-          const now = Date.now();
-          const hoursUntilExpiration = (expiresAt - now) / (1000 * 60 * 60);
-
-          // Solo mostrar alerta si el token ya expiró Y no hay refresh token válido
-          // El sistema renovará automáticamente si hay refresh token
-          if (hoursUntilExpiration < -24) {
-            // Token expiró hace más de 24 horas sin renovarse - algo anda mal
-            setAlert({
-              type: "disconnected",
-              message: "El token de Gmail ha expirado y no pudo renovarse automáticamente. Reconecte su cuenta.",
-            });
-          } else {
-            // Token está bien o se renovará automáticamente
-            setAlert(null);
-          }
-        } else {
-          // Sin info de expiración - probablemente OK
-          setAlert(null);
-        }
+        // Gmail con refresh_token válido = conexión OK
+        // No mostrar alertas por access_token expirado, ya que se renueva automáticamente
+        setAlert(null);
+        
       } catch (error) {
-        console.error("Error checking token status:", error);
-        setAlert(null); // No mostrar error al usuario por un check de background
+        console.error("Error checking Gmail token status:", error);
+        setAlert(null);
       }
     };
 
     checkTokenStatus();
     
-    // Verificar cada 10 minutos (no cada 5, para reducir queries)
+    // Verificar cada 10 minutos
     const interval = setInterval(checkTokenStatus, 10 * 60 * 1000);
     
     return () => clearInterval(interval);
