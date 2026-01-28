@@ -252,16 +252,45 @@ function parseExoneracionesTotal(xmlData: any): number {
 }
 
 // =============================================================
-// PARSE SUBTOTAL: From resumen or summing lines
+// PARSE SUBTOTAL: ALWAYS sum from detail lines for accuracy
+// The resumen.subTotal field can be incorrect for multi-line invoices
+// with different tax rates (GTI format issue)
 // =============================================================
 function parseSubtotal(xmlData: any): number {
   if (!xmlData) return 0;
   
   try {
+    // CRITICAL FIX: Always sum from detail lines first if available
+    // This handles GTI invoices where subTotal only shows last line
+    const detalle = xmlData.detalle || xmlData.detalles || xmlData.DetalleServicio || [];
+    const detalleArray = Array.isArray(detalle) ? detalle : [detalle];
+    
+    if (detalleArray.length > 0 && detalleArray[0]) {
+      let lineSubtotal = 0;
+      for (const item of detalleArray) {
+        if (!item) continue;
+        // Use subtotal or montoTotal from each line (before tax)
+        const amount = parseFloat(
+          item.subtotal || 
+          item.Subtotal || 
+          item.montoTotal ||
+          item.MontoTotal ||
+          item.SubTotal ||
+          '0'
+        );
+        lineSubtotal += amount;
+      }
+      
+      if (lineSubtotal > 0) {
+        log(`📊 Subtotal calculado de ${detalleArray.length} líneas: ${lineSubtotal.toFixed(2)}`);
+        return lineSubtotal;
+      }
+    }
+    
+    // Fallback: Try from resumen fields
     const resumen = xmlData.resumen_factura || xmlData.ResumenFactura || xmlData;
     
-    // Try various field names for subtotal
-    let subtotal = parseFloat(
+    const subtotal = parseFloat(
       resumen.TotalVentaNeta || 
       resumen.total_venta_neta || 
       resumen.totalVentaNeta ||
@@ -275,21 +304,6 @@ function parseSubtotal(xmlData: any): number {
       resumen.subtotal ||
       '0'
     );
-    
-    // If subtotal is 0 but we have detail lines, sum them up
-    if (subtotal === 0 && xmlData.detalle && Array.isArray(xmlData.detalle)) {
-      for (const item of xmlData.detalle) {
-        // Use subtotal or montoTotal from each line (before tax)
-        const lineSubtotal = parseFloat(
-          item.subtotal || 
-          item.Subtotal || 
-          item.montoTotal ||
-          item.MontoTotal ||
-          '0'
-        );
-        subtotal += lineSubtotal;
-      }
-    }
     
     return subtotal;
   } catch (e) {
