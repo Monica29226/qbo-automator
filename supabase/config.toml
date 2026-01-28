@@ -152,3 +152,21 @@ verify_jwt = false
 
 [functions.create-organization]
 verify_jwt = true
+
+[functions.migrate-tracking-records]
+verify_jwt = true
+
+[functions.outlook-fetch-invoices]
+verify_jwt = true
+
+[functions.batch-download-missing-pdfs]
+verify_jwt = true
+
+[functions.sync-error-accounts]
+verify_jwt = true
+
+[functions.download-missing-pdf]
+verify_jwt = true
+
+[functions.bluehost-fetch-invoices]
+verify_jwt = true

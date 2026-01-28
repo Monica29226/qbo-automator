@@ -300,6 +300,9 @@ function parseSubtotal(xmlData: any): number {
 
 // =============================================================
 // VALIDATE TOTALS: CRITICAL - Block if totals don't match
+// Handles Costa Rican invoice edge cases:
+// - Standard: TotalComprobante = Subtotal + Impuestos - Descuentos
+// - Exonerado/Asumido: TotalComprobante = Subtotal (impuesto NO se suma al total)
 // =============================================================
 function validateTotalsStrict(xmlData: any, docTotalAmount: number, isCreditNote: boolean): TotalsValidation {
   const errors: string[] = [];
@@ -322,9 +325,21 @@ function validateTotalsStrict(xmlData: any, docTotalAmount: number, isCreditNote
   const otrosCargos = parseOtrosCargosComplete(xmlData);
   const totalOtrosCargos = otrosCargos.reduce((sum, c) => sum + c.monto, 0);
   
-  // Calculate what the total SHOULD be
-  // Formula: TotalComprobante = Subtotal + Impuestos - Descuentos + OtrosCargos - Exoneraciones
-  const calculatedTotal = subtotal + totalImpuestos - totalDescuentos + totalOtrosCargos - totalExoneraciones;
+  // Check for tax exemption/assumption cases
+  // When total = subtotal and there are taxes, it means taxes are NOT added to the total
+  // This happens when: impuesto exonerado, IVA asumido por emisor, etc.
+  const taxesExemptFromTotal = totalImpuestos > 0 && Math.abs(xmlTotal - subtotal) < 1.0;
+  
+  // Calculate what the total SHOULD be based on whether taxes are exempt
+  let calculatedTotal: number;
+  if (taxesExemptFromTotal) {
+    // Taxes exist but are NOT added to total (exonerado/asumido case)
+    calculatedTotal = subtotal - totalDescuentos + totalOtrosCargos;
+    log(`📋 Impuesto exonerado/asumido detectado: Total=${xmlTotal}, Subtotal=${subtotal}, Impuesto=${totalImpuestos} (NO suma al total)`);
+  } else {
+    // Standard case: TotalComprobante = Subtotal + Impuestos - Descuentos + OtrosCargos - Exoneraciones
+    calculatedTotal = subtotal + totalImpuestos - totalDescuentos + totalOtrosCargos - totalExoneraciones;
+  }
   
   // Compare calculated vs XML total
   const difference = Math.abs(calculatedTotal - xmlTotal);
@@ -332,24 +347,48 @@ function validateTotalsStrict(xmlData: any, docTotalAmount: number, isCreditNote
   // Use 1.00 tolerance (1 colón/cent) for rounding differences
   const tolerance = 1.0;
   
-  // Only flag as error if there's a significant difference AND we could calculate components
-  // If subtotal is 0 and we have lines, something went wrong in parsing
+  // Check if we have detail lines
   const hasDetailLines = xmlData.detalle && Array.isArray(xmlData.detalle) && xmlData.detalle.length > 0;
   
-  if (difference > tolerance && subtotal > 0) {
-    // Real mismatch - components don't add up
-    errors.push(`Total calculado (${calculatedTotal.toFixed(2)}) ≠ Total XML (${xmlTotal.toFixed(2)}), diferencia: ${difference.toFixed(2)}`);
+  // CRITICAL FIX: When subtotal=0 but we have detail lines, something went wrong in parsing
+  if (subtotal === 0 && hasDetailLines) {
+    log(`⚠️ Subtotal=0 pero hay ${xmlData.detalle.length} líneas. Usando validación alternativa.`);
+    
+    // Sum up all line totals as fallback
+    let lineTotal = 0;
+    for (const item of xmlData.detalle) {
+      const lineSubtotal = parseFloat(item.subtotal || item.Subtotal || item.montoTotal || item.MontoTotal || '0');
+      lineTotal += lineSubtotal;
+    }
+    
+    // Validate line total against XML total (allowing for both standard and exempt cases)
+    if (lineTotal > 0) {
+      const standardDiff = Math.abs(lineTotal + totalImpuestos - totalDescuentos + totalOtrosCargos - xmlTotal);
+      const exemptDiff = Math.abs(lineTotal - totalDescuentos + totalOtrosCargos - xmlTotal);
+      
+      // Accept if either formula matches
+      if (standardDiff > tolerance && exemptDiff > tolerance) {
+        errors.push(`Líneas (${lineTotal.toFixed(2)}) no cuadran con Total (${xmlTotal.toFixed(2)})`);
+      }
+    }
+  } else if (difference > tolerance && subtotal > 0) {
+    // Check if it matches when ignoring taxes (exempt case we might have missed)
+    const exemptCalc = subtotal - totalDescuentos + totalOtrosCargos;
+    const exemptDiff = Math.abs(exemptCalc - xmlTotal);
+    
+    if (exemptDiff <= tolerance) {
+      // It's an exempt case - no error
+      log(`📋 Caso exonerado confirmado: ${exemptCalc.toFixed(2)} = ${xmlTotal.toFixed(2)}`);
+    } else {
+      // Real mismatch - components don't add up with either formula
+      errors.push(`Total calculado (${calculatedTotal.toFixed(2)}) ≠ Total XML (${xmlTotal.toFixed(2)}), diferencia: ${difference.toFixed(2)}`);
+    }
   }
   
-  // Validate document amount matches XML total
+  // CRITICAL: Always validate document amount matches XML total
   const docDifference = Math.abs(docTotalAmount - xmlTotal);
   if (docDifference > tolerance) {
-    errors.push(`Total documento (${docTotalAmount.toFixed(2)}) ≠ Total XML (${xmlTotal.toFixed(2)})`);
-  }
-  
-  // Log breakdown for debugging
-  if (hasDetailLines && subtotal === 0) {
-    log(`⚠️ Subtotal=0 pero hay ${xmlData.detalle.length} líneas. Verificar parsing.`);
+    errors.push(`Total documento DB (${docTotalAmount.toFixed(2)}) ≠ Total XML (${xmlTotal.toFixed(2)})`);
   }
   
   return {
@@ -654,11 +693,12 @@ Deno.serve(async (req) => {
     };
 
     // =============================================================
-    // HELPER: Check duplicate in QBO (secondary check)
+    // HELPER: Check duplicate in QBO (secondary check) - ENHANCED
+    // Now also verifies amount matches to prevent false negatives
     // =============================================================
-    const checkDuplicateInQBO = async (docNumber: string, vendorId: string | null, isCreditNote: boolean = false): Promise<{ isDuplicate: boolean; entityId: string | null; entityType: string | null; error?: string }> => {
+    const checkDuplicateInQBO = async (docNumber: string, vendorId: string | null, expectedAmount: number, isCreditNote: boolean = false): Promise<{ isDuplicate: boolean; entityId: string | null; entityType: string | null; qboAmount?: number; error?: string }> => {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 8000);
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
       
       const qboDocNumber = docNumber.length > 21 
         ? docNumber.substring(docNumber.length - 21)
@@ -667,6 +707,7 @@ Deno.serve(async (req) => {
       const entityName = isCreditNote ? 'VendorCredit' : 'Bill';
       
       try {
+        // Search by DocNumber
         const query = `SELECT * FROM ${entityName} WHERE DocNumber = '${qboDocNumber.replace(/'/g, "\\'")}'`;
         const url = `https://quickbooks.api.intuit.com/v3/company/${realmId}/query?query=${encodeURIComponent(query)}`;
 
@@ -685,16 +726,43 @@ Deno.serve(async (req) => {
           const entities = data.QueryResponse?.[entityName] || [];
           
           if (entities.length > 0) {
+            // CRITICAL: Must match BOTH vendor AND amount (with tolerance)
             if (vendorId) {
-              const matchingEntity = entities.find((entity: any) => 
-                entity.VendorRef?.value === vendorId
-              );
+              const matchingEntity = entities.find((entity: any) => {
+                const vendorMatches = entity.VendorRef?.value === vendorId;
+                const qboTotal = parseFloat(entity.TotalAmt || entity.Balance || '0');
+                const amountMatches = Math.abs(qboTotal - Math.abs(expectedAmount)) < 1.0;
+                
+                logInfo(`   🔍 QBO ${entityName} ID=${entity.Id}: Vendor=${entity.VendorRef?.value} (esperado: ${vendorId}), Total=${qboTotal} (esperado: ${expectedAmount}) -> vendorMatches=${vendorMatches}, amountMatches=${amountMatches}`);
+                
+                return vendorMatches && amountMatches;
+              });
+              
               if (matchingEntity) {
-                return { isDuplicate: true, entityId: matchingEntity.Id, entityType: entityName };
+                return { 
+                  isDuplicate: true, 
+                  entityId: matchingEntity.Id, 
+                  entityType: entityName,
+                  qboAmount: parseFloat(matchingEntity.TotalAmt || '0')
+                };
               }
+              
+              // No exact match found - might be different invoice with same number
+              logInfo(`   ⚠️ ${docNumber}: Encontrado en QBO pero NO coincide vendor+monto - se creará nuevo`);
               return { isDuplicate: false, entityId: null, entityType: null };
             }
-            return { isDuplicate: true, entityId: entities[0].Id, entityType: entityName };
+            
+            // No vendor ID - just check first entity amount
+            const firstEntity = entities[0];
+            const qboTotal = parseFloat(firstEntity.TotalAmt || '0');
+            const amountMatches = Math.abs(qboTotal - Math.abs(expectedAmount)) < 1.0;
+            
+            if (amountMatches) {
+              return { isDuplicate: true, entityId: firstEntity.Id, entityType: entityName, qboAmount: qboTotal };
+            }
+            
+            logInfo(`   ⚠️ ${docNumber}: Existe en QBO pero monto no coincide (QBO: ${qboTotal}, Esperado: ${expectedAmount})`);
+            return { isDuplicate: false, entityId: null, entityType: null };
           }
         }
         return { isDuplicate: false, entityId: null, entityType: null };
@@ -1058,9 +1126,9 @@ Deno.serve(async (req) => {
         const vendorId = await findOrCreateVendor(doc.supplier_name, doc.supplier_tax_id, doc.currency);
         
         // =============================================================
-        // STEP 5: CHECK DUPLICATE IN QBO (SECONDARY CHECK)
+        // STEP 5: CHECK DUPLICATE IN QBO (SECONDARY CHECK - with amount validation)
         // =============================================================
-        const qboDuplicateCheck = await checkDuplicateInQBO(doc.doc_number, vendorId, isCreditNote);
+        const qboDuplicateCheck = await checkDuplicateInQBO(doc.doc_number, vendorId, doc.total_amount, isCreditNote);
         
         if (qboDuplicateCheck.error) {
           await registerInTracking(doc, 'error', null, null, qboDuplicateCheck.error);
@@ -1305,16 +1373,54 @@ Deno.serve(async (req) => {
         await registerInTracking(doc, 'pending');
         
         // =============================================================
-        // STEP 10: CREATE BILL OR VENDORCREDIT IN QBO
+        // STEP 10: FINAL AMOUNT VALIDATION & TAX EXEMPTION DETECTION
+        // =============================================================
+        const linesTotalAmount = lines.reduce((sum, line) => sum + (parseFloat(line.Amount) || 0), 0);
+        const documentCurrency = doc.currency || xmlData.moneda || 'CRC';
+        
+        // Detect tax exemption case: when subtotal = total but tax > 0
+        // This means the tax is NOT added to the total (exonerado/asumido)
+        const xmlTotal = parseFloat(xmlData.totalComprobante || xmlData.TotalComprobante || doc.total_amount);
+        const xmlSubtotal = parseFloat(xmlData.subTotal || xmlData.SubTotal || '0');
+        const xmlTax = parseFloat(doc.total_tax as any) || 0;
+        const isTaxExempt = xmlTax > 0 && Math.abs(xmlTotal - xmlSubtotal) < 1.0;
+        
+        // Solo reportar TxnTaxDetail si el IVA es recuperable Y NO está exonerado
+        const effectiveUsesTax = (doc.uses_tax !== false) && orgDefaultUsesTax && !includeTaxInLines && !isTaxExempt;
+        const totalTax = effectiveUsesTax ? xmlTax : 0;
+        
+        if (isTaxExempt) {
+          logInfo(`   📋 ${doc.doc_number}: IMPUESTO EXONERADO detectado - Tax=${xmlTax.toFixed(2)} NO se suma al total`);
+        }
+        
+        // CRITICAL: Validate that lines total + tax = document total (with tolerance)
+        const expectedQBOTotal = effectiveUsesTax 
+          ? linesTotalAmount + totalTax
+          : linesTotalAmount;
+        const documentTotal = Math.abs(doc.total_amount);
+        const qboTotalDiff = Math.abs(expectedQBOTotal - documentTotal);
+        
+        if (qboTotalDiff > 2.0) { // 2 colones tolerance for rounding
+          const errorMsg = `MONTO INCORRECTO: Lines=${linesTotalAmount.toFixed(2)} + Tax=${totalTax.toFixed(2)} = ${expectedQBOTotal.toFixed(2)}, pero documento=${documentTotal.toFixed(2)}. Diferencia: ${qboTotalDiff.toFixed(2)}`;
+          logError(`❌ ${doc.doc_number}: ${errorMsg}`);
+          
+          await registerInTracking(doc, 'error_amount_mismatch', null, null, errorMsg);
+          await supabase
+            .from("processed_documents")
+            .update({ status: "error", error_message: errorMsg.substring(0, 500) })
+            .eq("id", doc.id);
+          
+          return { success: false, docNumber: doc.doc_number, error: errorMsg };
+        }
+        
+        logInfo(`   📊 ${doc.doc_number}: Validación final OK - Lines=${linesTotalAmount.toFixed(2)}, Tax=${totalTax.toFixed(2)}, Total=${expectedQBOTotal.toFixed(2)} (esperado: ${documentTotal.toFixed(2)})`);
+        
+        // =============================================================
+        // STEP 11: CREATE BILL OR VENDORCREDIT IN QBO
         // =============================================================
         const qboDocNumber = doc.doc_number.length > 21 
           ? doc.doc_number.substring(doc.doc_number.length - 21)
           : doc.doc_number;
-        
-        const documentCurrency = doc.currency || xmlData.moneda || 'CRC';
-        // Solo reportar TxnTaxDetail si el IVA es recuperable (effectiveUsesTax = true)
-        const effectiveUsesTax = (doc.uses_tax !== false) && orgDefaultUsesTax && !includeTaxInLines;
-        const totalTax = effectiveUsesTax ? (parseFloat(doc.total_tax as any) || 0) : 0;
         
         logInfo(`   📊 ${doc.doc_number}: effectiveUsesTax=${effectiveUsesTax}, totalTax para QBO=${totalTax.toFixed(2)}`);
         
@@ -1393,7 +1499,7 @@ Deno.serve(async (req) => {
             billPayload.TxnTaxDetail = { TotalTax: totalTax };
           }
           
-          const billResponse = await fetchWithRetry(
+          let billResponse = await fetchWithRetry(
             `https://quickbooks.api.intuit.com/v3/company/${realmId}/bill`,
             {
               method: "POST",
@@ -1405,6 +1511,48 @@ Deno.serve(async (req) => {
               body: JSON.stringify(billPayload),
             }
           );
+          
+          // CRITICAL FIX: If QBO returns tax calculation error, retry WITHOUT TxnTaxDetail
+          if (!billResponse.ok) {
+            const errorText = await billResponse.text();
+            
+            // Check if it's a tax calculation error
+            if (errorText.includes('error al calcular el impuesto') || 
+                errorText.includes('calculating the tax') ||
+                errorText.includes('tax rate') ||
+                errorText.includes('TaxCodeRef')) {
+              
+              logInfo(`⚠️ ${doc.doc_number}: Error de impuesto en QBO, reintentando SIN TxnTaxDetail...`);
+              
+              // Remove TxnTaxDetail and TaxCodeRef from lines
+              delete billPayload.TxnTaxDetail;
+              for (const line of billPayload.Line) {
+                if (line.AccountBasedExpenseLineDetail?.TaxCodeRef) {
+                  delete line.AccountBasedExpenseLineDetail.TaxCodeRef;
+                }
+              }
+              billPayload.GlobalTaxCalculation = "NotApplicable";
+              
+              // Retry without tax
+              await delay(1000);
+              billResponse = await fetchWithRetry(
+                `https://quickbooks.api.intuit.com/v3/company/${realmId}/bill`,
+                {
+                  method: "POST",
+                  headers: {
+                    "Authorization": `Bearer ${accessToken}`,
+                    "Accept": "application/json",
+                    "Content-Type": "application/json",
+                  },
+                  body: JSON.stringify(billPayload),
+                }
+              );
+              
+              if (billResponse.ok) {
+                logInfo(`✅ ${doc.doc_number}: Reintento exitoso sin impuestos`);
+              }
+            }
+          }
           
           if (!billResponse.ok) {
             const errorText = await billResponse.text();
