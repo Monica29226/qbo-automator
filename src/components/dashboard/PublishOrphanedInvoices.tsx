@@ -1,9 +1,9 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { toast } from "sonner";
-import { Upload, Loader2, AlertCircle } from "lucide-react";
+import { Upload, Loader2, AlertCircle, RefreshCw } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -32,6 +32,25 @@ export const PublishOrphanedInvoices = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [isPublishing, setIsPublishing] = useState(false);
   const [orphanedInvoices, setOrphanedInvoices] = useState<OrphanedInvoice[]>([]);
+  const [orphanedCount, setOrphanedCount] = useState(0);
+
+  // Fetch count on mount to show badge
+  useEffect(() => {
+    const fetchCount = async () => {
+      if (!activeOrganization) return;
+      
+      const { count } = await supabase
+        .from("processed_documents")
+        .select("id", { count: "exact", head: true })
+        .eq("organization_id", activeOrganization)
+        .eq("status", "processed")
+        .is("qbo_entity_id", null);
+      
+      setOrphanedCount(count || 0);
+    };
+    
+    fetchCount();
+  }, [activeOrganization]);
 
   const fetchOrphanedInvoices = async () => {
     if (!activeOrganization) return;
@@ -50,6 +69,7 @@ export const PublishOrphanedInvoices = () => {
       if (error) throw error;
 
       setOrphanedInvoices(data || []);
+      setOrphanedCount(data?.length || 0);
       
       if (data && data.length > 0) {
         toast.info(`${data.length} facturas procesadas pendientes de publicar`);
@@ -127,9 +147,22 @@ export const PublishOrphanedInvoices = () => {
       if (open) fetchOrphanedInvoices();
     }}>
       <DialogTrigger asChild>
-        <Button variant="outline" size="sm" className="gap-2">
-          <Upload className="h-4 w-4" />
-          Publicar Huérfanas
+        <Button 
+          variant={orphanedCount > 0 ? "default" : "outline"} 
+          size="sm" 
+          className={`gap-2 ${orphanedCount > 0 ? "bg-amber-600 hover:bg-amber-700 text-white" : ""}`}
+        >
+          {orphanedCount > 0 ? (
+            <AlertCircle className="h-4 w-4" />
+          ) : (
+            <Upload className="h-4 w-4" />
+          )}
+          Recuperar Faltantes
+          {orphanedCount > 0 && (
+            <Badge variant="secondary" className="ml-1 bg-white text-amber-700 hover:bg-white">
+              {orphanedCount}
+            </Badge>
+          )}
         </Button>
       </DialogTrigger>
       <DialogContent className="max-w-3xl max-h-[80vh]">
