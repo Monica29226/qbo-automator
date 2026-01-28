@@ -1,7 +1,7 @@
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { AlertCircle, ArrowLeft, RefreshCw, FileText, Database, Wrench, Settings2, Filter, Ban, CheckCircle, Trash2 } from "lucide-react";
+import { AlertCircle, ArrowLeft, RefreshCw, FileText, Database, Wrench, Settings2, Filter, Ban, CheckCircle, Trash2, Eye } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useEffect, useState, useMemo } from "react";
 import { supabase } from "@/integrations/supabase/client";
@@ -21,6 +21,7 @@ import { ErrorDiagnostic } from "@/components/dashboard/ErrorDiagnostic";
 import { useQBOAccounts } from "@/hooks/useQBOAccounts";
 import { Label } from "@/components/ui/label";
 import { AccountCombobox } from "@/components/AccountCombobox";
+import { PdfViewer } from "@/components/PdfViewer";
 import {
   Select,
   SelectContent,
@@ -41,6 +42,8 @@ interface ErrorDocument {
   error_message: string;
   created_at: string;
   default_account_ref?: string | null;
+  pdf_attachment_url?: string | null;
+  organization_id?: string | null;
 }
 
 type ErrorCategory = "all" | "fixable" | "not_publishable" | "account_error" | "permanent" | "totals_error";
@@ -54,7 +57,7 @@ const ErrorDocuments = () => {
   const [selectedAccount, setSelectedAccount] = useState<string>("");
   const [isUpdatingAccount, setIsUpdatingAccount] = useState(false);
   const [activeTab, setActiveTab] = useState<ErrorCategory>("all");
-
+  const [selectedPdfDoc, setSelectedPdfDoc] = useState<ErrorDocument | null>(null);
   useEffect(() => {
     if (activeOrganization) {
       fetchErrorDocuments();
@@ -73,7 +76,7 @@ const ErrorDocuments = () => {
     try {
       const { data, error } = await supabase
         .from("processed_documents")
-        .select("id, doc_number, doc_type, supplier_name, issue_date, total_amount, currency, error_message, created_at, default_account_ref")
+        .select("id, doc_number, doc_type, supplier_name, issue_date, total_amount, currency, error_message, created_at, default_account_ref, pdf_attachment_url, organization_id")
         .eq("organization_id", activeOrganization)
         .eq("status", "error")
         .order("created_at", { ascending: false });
@@ -914,6 +917,19 @@ const ErrorDocuments = () => {
                     </div>
 
                     <div className="flex flex-col gap-2">
+                      {/* Botón Ver PDF - para todos los documentos con PDF */}
+                      {doc.pdf_attachment_url && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setSelectedPdfDoc(doc)}
+                          className="gap-2"
+                        >
+                          <Eye className="h-4 w-4" />
+                          Ver PDF
+                        </Button>
+                      )}
+                      
                       {/* Botón Descartar - para no publicables */}
                       {isNotPublishable && (
                         <Button
@@ -1033,6 +1049,44 @@ const ErrorDocuments = () => {
               )}
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal para ver PDF */}
+      <Dialog open={!!selectedPdfDoc} onOpenChange={(open) => !open && setSelectedPdfDoc(null)}>
+        <DialogContent className="max-w-5xl max-h-[90vh]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <FileText className="h-5 w-5" />
+              PDF: {selectedPdfDoc?.doc_number}
+            </DialogTitle>
+            <DialogDescription>
+              {selectedPdfDoc?.supplier_name} - {selectedPdfDoc?.total_amount && formatCurrency(selectedPdfDoc.total_amount, selectedPdfDoc.currency)}
+            </DialogDescription>
+          </DialogHeader>
+          
+          {selectedPdfDoc?.error_message && (
+            <div className="p-3 bg-destructive/10 rounded-lg border border-destructive/20 mb-2">
+              <p className="text-sm text-destructive font-medium">
+                Error: {getErrorSummary(selectedPdfDoc).description}
+              </p>
+              <p className="text-xs text-muted-foreground mt-1">
+                {getErrorSummary(selectedPdfDoc).solution}
+              </p>
+            </div>
+          )}
+          
+          <div className="h-[60vh] overflow-auto">
+            {selectedPdfDoc?.pdf_attachment_url && selectedPdfDoc.organization_id && (
+              <PdfViewer 
+                url={selectedPdfDoc.pdf_attachment_url} 
+                organizationId={selectedPdfDoc.organization_id}
+                docNumber={selectedPdfDoc.doc_number}
+                documentId={selectedPdfDoc.id}
+                fileName={selectedPdfDoc.doc_number}
+              />
+            )}
+          </div>
         </DialogContent>
       </Dialog>
     </div>
