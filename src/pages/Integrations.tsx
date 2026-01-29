@@ -268,7 +268,12 @@ const Integrations = () => {
         throw error;
       }
 
-      toast.success(`Hostinger conectado: ${data.email}`);
+      if (data?.success === false) {
+        toast.error(data.message || "No se pudo conectar con Hostinger");
+        return;
+      }
+
+      toast.success(`Hostinger conectado: ${data.email || accountEmail}`);
       setIsDialogOpen(false);
       setAccountEmail("");
       setHostingerPassword("");
@@ -1046,7 +1051,7 @@ const Integrations = () => {
 
               <div className="bg-amber-500/10 border border-amber-500/30 p-3 rounded-lg">
                 <p className="text-xs text-amber-700 dark:text-amber-400">
-                  <strong>Nota:</strong> Tus credenciales se almacenan de forma segura y solo se usan para leer correos con facturas.
+                  <strong>Nota:</strong> Usa la contraseña del <em>buzón</em> de correo (no la del panel). Si tienes 2FA, usa una contraseña de aplicación. Tus credenciales se almacenan de forma segura y solo se usan para leer correos con facturas.
                 </p>
               </div>
             </div>

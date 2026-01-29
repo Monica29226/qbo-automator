@@ -108,6 +108,12 @@ export const HostingerFetchDialog = ({ onSuccess }: HostingerFetchDialogProps) =
 
       if (error) throw error;
 
+      if (data?.success === false) {
+        setHostingerConnected(false);
+        toast.error(data.message || "Hostinger requiere reconexión. Por favor conecta tu cuenta nuevamente.");
+        return;
+      }
+
       const processed = data.invoices_processed || 0;
       const failed = data.invoices_failed || 0;
 
