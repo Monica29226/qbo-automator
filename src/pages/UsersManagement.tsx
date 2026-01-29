@@ -32,8 +32,18 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, Users, Loader2, Plus, Trash2, Mail, Building2, CheckSquare, Square, AlertCircle, Pencil, X } from "lucide-react";
+import { ArrowLeft, Users, Loader2, Plus, Trash2, Mail, Building2, CheckSquare, Square, AlertCircle, Pencil, X, Send } from "lucide-react";
 import { toast } from "sonner";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 interface UserProfile {
   id: string;
@@ -69,6 +79,9 @@ const UsersManagement = () => {
   const [editingUserOrgs, setEditingUserOrgs] = useState<string[]>([]);
   const [isSending, setIsSending] = useState(false);
   const [isSavingOrgs, setIsSavingOrgs] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [isSendingBulk, setIsSendingBulk] = useState(false);
+  const [userToDelete, setUserToDelete] = useState<UserProfile | null>(null);
   const [selectedOrganizations, setSelectedOrganizations] = useState<string[]>([]);
   const [formData, setFormData] = useState({
     email: "",
@@ -292,6 +305,60 @@ const UsersManagement = () => {
     );
   };
 
+  const handleDeleteUser = async () => {
+    if (!userToDelete) return;
+    
+    setIsDeleting(true);
+    
+    try {
+      const { data, error } = await supabase.functions.invoke("delete-user", {
+        body: { userId: userToDelete.id },
+      });
+
+      if (error || data?.error) {
+        throw new Error(data?.error || error?.message || "Error al eliminar usuario");
+      }
+
+      toast.success(`Usuario ${userToDelete.email} eliminado correctamente`);
+      setUserToDelete(null);
+      invalidate();
+    } catch (err: any) {
+      toast.error(err.message || "Error al eliminar usuario");
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  const handleSendBulkWelcome = async () => {
+    const confirm = window.confirm(
+      `¿Enviar email de bienvenida a todos los ${users.length} usuarios activos?`
+    );
+    
+    if (!confirm) return;
+    
+    setIsSendingBulk(true);
+    
+    try {
+      const { data, error } = await supabase.functions.invoke("send-bulk-welcome", {
+        body: { userIds: users.map(u => u.id) },
+      });
+
+      if (error || data?.error) {
+        throw new Error(data?.error || error?.message || "Error al enviar emails");
+      }
+
+      toast.success(data.message || "Emails enviados correctamente");
+      
+      if (data.errors && data.errors.length > 0) {
+        console.warn("Algunos emails fallaron:", data.errors);
+      }
+    } catch (err: any) {
+      toast.error(err.message || "Error al enviar emails masivos");
+    } finally {
+      setIsSendingBulk(false);
+    }
+  };
+
 
   const roleLabels: Record<string, string> = {
     admin: "Administrador Global",
@@ -347,10 +414,29 @@ const UsersManagement = () => {
               </p>
             </div>
           </div>
-          <Button onClick={() => setIsInviteDialogOpen(true)}>
-            <Plus className="h-4 w-4 mr-2" />
-            Crear Usuario
-          </Button>
+          <div className="flex gap-2">
+            <Button 
+              variant="outline" 
+              onClick={handleSendBulkWelcome}
+              disabled={isSendingBulk || users.length === 0}
+            >
+              {isSendingBulk ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Enviando...
+                </>
+              ) : (
+                <>
+                  <Send className="h-4 w-4 mr-2" />
+                  Enviar Bienvenida a Todos
+                </>
+              )}
+            </Button>
+            <Button onClick={() => setIsInviteDialogOpen(true)}>
+              <Plus className="h-4 w-4 mr-2" />
+              Crear Usuario
+            </Button>
+          </div>
         </div>
       </header>
 
@@ -507,14 +593,25 @@ const UsersManagement = () => {
                             {formatDate(user.created_at)}
                           </TableCell>
                           <TableCell>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => handleEditUserOrgs(user)}
-                              title="Editar empresas"
-                            >
-                              <Pencil className="h-4 w-4" />
-                            </Button>
+                            <div className="flex items-center gap-1">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleEditUserOrgs(user)}
+                                title="Editar empresas"
+                              >
+                                <Pencil className="h-4 w-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setUserToDelete(user)}
+                                title="Eliminar usuario"
+                                className="text-destructive hover:text-destructive"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </div>
                           </TableCell>
                         </TableRow>
                       ))
@@ -799,6 +896,39 @@ const UsersManagement = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Delete User Confirmation Dialog */}
+      <AlertDialog open={!!userToDelete} onOpenChange={(open) => !open && setUserToDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Eliminar usuario?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Esta acción es <strong>irreversible</strong>. Se eliminará permanentemente el usuario{" "}
+              <strong>{userToDelete?.email}</strong> y todo su acceso a las empresas.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeleting}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDeleteUser}
+              disabled={isDeleting}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {isDeleting ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Eliminando...
+                </>
+              ) : (
+                <>
+                  <Trash2 className="h-4 w-4 mr-2" />
+                  Eliminar Usuario
+                </>
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };
