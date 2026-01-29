@@ -74,7 +74,7 @@ Deno.serve(async (req) => {
     // Verify calling user is admin of the organization (if creating for an org)
     if (organization_id) {
       const { data: isAdmin } = await supabaseAdmin
-        .rpc('is_organization_admin', { _user_id: callingUser.id, _org_id: organization_id });
+        .rpc('is_organization_admin', { _org_id: organization_id, _user_id: callingUser.id });
       
       if (!isAdmin) {
         // Log unauthorized attempt
