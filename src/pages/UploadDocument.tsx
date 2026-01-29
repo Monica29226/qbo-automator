@@ -119,31 +119,15 @@ const UploadDocument = () => {
         xmlPath = xmlFileName;
       }
 
-      // Obtener URLs públicas si hay archivos subidos
-      let pdfUrl = null;
-      let xmlUrl = null;
-      
-      if (pdfPath) {
-        const { data: pdfUrlData } = supabase.storage
-          .from("company-documents")
-          .getPublicUrl(pdfPath);
-        pdfUrl = pdfUrlData.publicUrl;
-      }
-      
-      if (xmlPath) {
-        const { data: xmlUrlData } = supabase.storage
-          .from("company-documents")
-          .getPublicUrl(xmlPath);
-        xmlUrl = xmlUrlData.publicUrl;
-      }
-
       // Usar process-document-xml para análisis automático del XML
+      // IMPORTANTE: Pasar los paths de los archivos, NO URLs públicas
+      // El bucket es privado, las URLs se generan con signed URLs al visualizar
       const { data, error } = await supabase.functions.invoke("process-document-xml", {
         body: { 
           xml_content: xmlContent,
           organization_id: activeOrganization,
-          pdf_attachment_url: pdfUrl,
-          xml_attachment_url: xmlUrl,
+          pdf_attachment_url: pdfPath,  // Path del PDF en storage
+          xml_attachment_url: xmlPath,  // Path del XML en storage
           file_path: pdfPath || xmlPath,
         },
       });
