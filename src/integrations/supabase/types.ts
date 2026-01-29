@@ -489,6 +489,8 @@ export type Database = {
           google_drive_enabled: boolean | null
           google_drive_folder_id: string | null
           hacienda_notification_email: string | null
+          hostinger_connected: boolean | null
+          hostinger_email: string | null
           id: string
           identification_number: string | null
           identification_type: string | null
@@ -526,6 +528,8 @@ export type Database = {
           google_drive_enabled?: boolean | null
           google_drive_folder_id?: string | null
           hacienda_notification_email?: string | null
+          hostinger_connected?: boolean | null
+          hostinger_email?: string | null
           id?: string
           identification_number?: string | null
           identification_type?: string | null
@@ -563,6 +567,8 @@ export type Database = {
           google_drive_enabled?: boolean | null
           google_drive_folder_id?: string | null
           hacienda_notification_email?: string | null
+          hostinger_connected?: boolean | null
+          hostinger_email?: string | null
           id?: string
           identification_number?: string | null
           identification_type?: string | null

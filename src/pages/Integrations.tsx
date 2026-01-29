@@ -38,6 +38,8 @@ interface Organization {
   google_drive_folder_id: string | null;
   bluehost_connected: boolean;
   bluehost_email: string | null;
+  hostinger_connected: boolean;
+  hostinger_email: string | null;
 }
 
 const Integrations = () => {
@@ -52,6 +54,9 @@ const Integrations = () => {
   const [bluehostPassword, setBluehostPassword] = useState("");
   const [bluehostHost, setBluehostHost] = useState("mail.bluehost.com");
   const [bluehostPort, setBluehostPort] = useState("993");
+  const [hostingerPassword, setHostingerPassword] = useState("");
+  const [hostingerHost, setHostingerHost] = useState("imap.hostinger.com");
+  const [hostingerPort, setHostingerPort] = useState("993");
   const [isConnecting, setIsConnecting] = useState(false);
 
   useEffect(() => {
@@ -69,7 +74,7 @@ const Integrations = () => {
     const [orgResult, accountsResult] = await Promise.all([
       supabase
         .from("organizations")
-        .select("gmail_connected, gmail_email, outlook_connected, outlook_email, quickbooks_connected, quickbooks_realm_id, google_drive_connected, google_drive_folder_id, bluehost_connected, bluehost_email")
+        .select("gmail_connected, gmail_email, outlook_connected, outlook_email, quickbooks_connected, quickbooks_realm_id, google_drive_connected, google_drive_folder_id, bluehost_connected, bluehost_email, hostinger_connected, hostinger_email")
         .eq("id", activeOrganization)
         .single(),
       supabase
@@ -128,6 +133,12 @@ const Integrations = () => {
     // Bluehost requires IMAP credentials
     if (selectedService === "bluehost") {
       handleBluehostConnect();
+      return;
+    }
+
+    // Hostinger requires IMAP credentials
+    if (selectedService === "hostinger") {
+      handleHostingerConnect();
       return;
     }
 
@@ -216,6 +227,58 @@ const Integrations = () => {
     } catch (error) {
       console.error("Error connecting Bluehost:", error);
       toast.error("Error al conectar con Bluehost: " + (error instanceof Error ? error.message : "Error desconocido"));
+    } finally {
+      setIsConnecting(false);
+    }
+  };
+
+  const handleHostingerConnect = async () => {
+    if (!activeOrganization) {
+      toast.error("No hay organización activa");
+      return;
+    }
+
+    if (!accountEmail || !hostingerPassword) {
+      toast.error("Ingrese email y contraseña");
+      return;
+    }
+
+    try {
+      setIsConnecting(true);
+      toast.info("Conectando con Hostinger...");
+
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        toast.error("Usuario no autenticado");
+        return;
+      }
+
+      const { data, error } = await supabase.functions.invoke("hostinger-connect", {
+        body: {
+          organization_id: activeOrganization,
+          user_id: user.id,
+          email: accountEmail,
+          password: hostingerPassword,
+          imap_host: hostingerHost,
+          imap_port: parseInt(hostingerPort),
+        },
+      });
+
+      if (error) {
+        throw error;
+      }
+
+      toast.success(`Hostinger conectado: ${data.email}`);
+      setIsDialogOpen(false);
+      setAccountEmail("");
+      setHostingerPassword("");
+      setHostingerHost("imap.hostinger.com");
+      setHostingerPort("993");
+      setSelectedService("");
+      fetchData();
+    } catch (error) {
+      console.error("Error connecting Hostinger:", error);
+      toast.error("Error al conectar con Hostinger: " + (error instanceof Error ? error.message : "Error desconocido"));
     } finally {
       setIsConnecting(false);
     }
@@ -672,6 +735,14 @@ const Integrations = () => {
       description: "Recibir facturas por correo Bluehost (IMAP)",
     },
     {
+      id: "hostinger",
+      name: "Hostinger",
+      icon: Server,
+      connected: orgData?.hostinger_connected || false,
+      accounts: accounts.filter((a) => a.service_type === "hostinger"),
+      description: "Recibir facturas por correo Hostinger (IMAP)",
+    },
+    {
       id: "quickbooks",
       name: "QuickBooks Online",
       icon: Building2,
@@ -909,8 +980,72 @@ const Integrations = () => {
                 </div>
               </div>
 
-              <div className="bg-yellow-500/10 border border-yellow-500/30 p-3 rounded-lg">
-                <p className="text-xs text-yellow-700 dark:text-yellow-400">
+              <div className="bg-amber-500/10 border border-amber-500/30 p-3 rounded-lg">
+                <p className="text-xs text-amber-700 dark:text-amber-400">
+                  <strong>Nota:</strong> Tus credenciales se almacenan de forma segura y solo se usan para leer correos con facturas.
+                </p>
+              </div>
+            </div>
+          ) : selectedService === "hostinger" ? (
+            <div className="space-y-4">
+              <div className="bg-muted p-4 rounded-lg border border-border">
+                <p className="text-sm text-foreground mb-2">
+                  <strong>Conexión IMAP con Hostinger</strong>
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  Ingresa tus credenciales de correo Hostinger para recibir facturas automáticamente.
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="hostinger-email">
+                  Correo electrónico <span className="text-destructive">*</span>
+                </Label>
+                <Input
+                  id="hostinger-email"
+                  type="email"
+                  value={accountEmail}
+                  onChange={(e) => setAccountEmail(e.target.value)}
+                  placeholder="facturas@tudominio.com"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="hostinger-password">
+                  Contraseña <span className="text-destructive">*</span>
+                </Label>
+                <Input
+                  id="hostinger-password"
+                  type="password"
+                  value={hostingerPassword}
+                  onChange={(e) => setHostingerPassword(e.target.value)}
+                  placeholder="••••••••"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-2">
+                  <Label htmlFor="hostinger-host">Servidor IMAP</Label>
+                  <Input
+                    id="hostinger-host"
+                    value={hostingerHost}
+                    onChange={(e) => setHostingerHost(e.target.value)}
+                    placeholder="imap.hostinger.com"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="hostinger-port">Puerto</Label>
+                  <Input
+                    id="hostinger-port"
+                    value={hostingerPort}
+                    onChange={(e) => setHostingerPort(e.target.value)}
+                    placeholder="993"
+                  />
+                </div>
+              </div>
+
+              <div className="bg-amber-500/10 border border-amber-500/30 p-3 rounded-lg">
+                <p className="text-xs text-amber-700 dark:text-amber-400">
                   <strong>Nota:</strong> Tus credenciales se almacenan de forma segura y solo se usan para leer correos con facturas.
                 </p>
               </div>
