@@ -3,7 +3,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
 // Simple IMAP client using Deno's native TCP connection
@@ -394,7 +394,7 @@ function matchPdfToXml(
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
+    return new Response("ok", { headers: corsHeaders });
   }
 
   try {
@@ -431,12 +431,32 @@ serve(async (req) => {
       .single();
 
     if (accountError || !hostingerAccount) {
-      throw new Error("No active Hostinger account found");
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error_code: "NO_ACTIVE_ACCOUNT",
+          message: "Hostinger no está conectado. Ve a Integraciones y conecta/reconecta tu cuenta.",
+        }),
+        {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+          status: 200,
+        }
+      );
     }
 
     const credentials = hostingerAccount.credentials as any;
     if (!credentials?.email || !credentials?.password) {
-      throw new Error("Hostinger credentials incomplete");
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error_code: "CREDENTIALS_INCOMPLETE",
+          message: "La conexión de Hostinger está incompleta. Por favor reconecta la cuenta.",
+        }),
+        {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+          status: 200,
+        }
+      );
     }
 
     const imapHost = credentials.imap_host || "imap.hostinger.com";
@@ -480,6 +500,49 @@ serve(async (req) => {
 
     if (imapError) {
       console.error("[Hostinger] IMAP error:", imapError);
+
+      const isAuthFailed =
+        /AUTHENTICATIONFAILED/i.test(imapError) ||
+        /Login failed/i.test(imapError) ||
+        /Invalid credentials/i.test(imapError);
+
+      if (isAuthFailed) {
+        // Mark connection as inactive so the UI can guide the user to reconnect
+        const now = new Date().toISOString();
+        try {
+          const { error: deactivateError } = await supabase
+            .from("integration_accounts")
+            .update({ is_active: false, updated_at: now })
+            .eq("id", hostingerAccount.id);
+          if (deactivateError) console.error("[Hostinger] Failed to deactivate integration account:", deactivateError);
+        } catch (e) {
+          console.error("[Hostinger] Failed to deactivate integration account (exception):", e);
+        }
+
+        try {
+          const { error: orgUpdateError } = await supabase
+            .from("organizations")
+            .update({ hostinger_connected: false, updated_at: now })
+            .eq("id", organization_id);
+          if (orgUpdateError) console.error("[Hostinger] Failed to update organization hostinger_connected:", orgUpdateError);
+        } catch (e) {
+          console.error("[Hostinger] Failed to update organization hostinger_connected (exception):", e);
+        }
+
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error_code: "IMAP_AUTH_FAILED",
+            message:
+              "No se pudo autenticar en el correo Hostinger. Verifica la contraseña del buzón (no la del panel) y, si tienes 2FA, usa una contraseña de aplicación. Luego reconecta Hostinger.",
+          }),
+          {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+            status: 200,
+          }
+        );
+      }
+
       throw new Error(`IMAP error: ${imapError}`);
     }
 
