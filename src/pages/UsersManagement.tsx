@@ -75,10 +75,13 @@ const UsersManagement = () => {
   
   const [isInviteDialogOpen, setIsInviteDialogOpen] = useState(false);
   const [isEditOrgsDialogOpen, setIsEditOrgsDialogOpen] = useState(false);
+  const [isEditNameDialogOpen, setIsEditNameDialogOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<UserProfile | null>(null);
   const [editingUserOrgs, setEditingUserOrgs] = useState<string[]>([]);
+  const [editingUserName, setEditingUserName] = useState("");
   const [isSending, setIsSending] = useState(false);
   const [isSavingOrgs, setIsSavingOrgs] = useState(false);
+  const [isSavingName, setIsSavingName] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [isSendingBulk, setIsSendingBulk] = useState(false);
   const [userToDelete, setUserToDelete] = useState<UserProfile | null>(null);
@@ -359,6 +362,37 @@ const UsersManagement = () => {
     }
   };
 
+  const handleEditUserName = (user: UserProfile) => {
+    setEditingUser(user);
+    setEditingUserName(user.full_name || "");
+    setIsEditNameDialogOpen(true);
+  };
+
+  const handleSaveUserName = async () => {
+    if (!editingUser) return;
+    
+    setIsSavingName(true);
+    
+    try {
+      const { error } = await supabase
+        .from("profiles")
+        .update({ full_name: editingUserName.trim() })
+        .eq("id", editingUser.id);
+
+      if (error) throw error;
+
+      toast.success("Nombre actualizado correctamente");
+      setIsEditNameDialogOpen(false);
+      setEditingUser(null);
+      setEditingUserName("");
+      invalidate();
+    } catch (error: any) {
+      toast.error(`Error al actualizar nombre: ${error.message}`);
+    } finally {
+      setIsSavingName(false);
+    }
+  };
+
 
   const roleLabels: Record<string, string> = {
     admin: "Administrador Global",
@@ -542,13 +576,12 @@ const UsersManagement = () => {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Usuario</TableHead>
-                      <TableHead>Usuario</TableHead>
+                      <TableHead>Nombre</TableHead>
                       <TableHead>Correo</TableHead>
                       <TableHead>Rol Global</TableHead>
                       <TableHead>Empresas con Acceso</TableHead>
                       <TableHead>Fecha de Registro</TableHead>
-                      <TableHead className="w-[80px]">Acciones</TableHead>
+                      <TableHead className="w-[120px]">Acciones</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -597,10 +630,18 @@ const UsersManagement = () => {
                               <Button
                                 variant="ghost"
                                 size="sm"
+                                onClick={() => handleEditUserName(user)}
+                                title="Editar nombre"
+                              >
+                                <Pencil className="h-4 w-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
                                 onClick={() => handleEditUserOrgs(user)}
                                 title="Editar empresas"
                               >
-                                <Pencil className="h-4 w-4" />
+                                <Building2 className="h-4 w-4" />
                               </Button>
                               <Button
                                 variant="ghost"
@@ -891,6 +932,58 @@ const UsersManagement = () => {
                 </>
               ) : (
                 "Guardar Cambios"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit User Name Dialog */}
+      <Dialog open={isEditNameDialogOpen} onOpenChange={setIsEditNameDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Editar Nombre</DialogTitle>
+            <DialogDescription>
+              Actualiza el nombre del usuario <strong>{editingUser?.email}</strong>
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div>
+              <Label htmlFor="edit_full_name">Nombre Completo</Label>
+              <Input
+                id="edit_full_name"
+                type="text"
+                placeholder="Juan Pérez"
+                value={editingUserName}
+                onChange={(e) => setEditingUserName(e.target.value)}
+                autoFocus
+              />
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setIsEditNameDialogOpen(false);
+                setEditingUser(null);
+                setEditingUserName("");
+              }}
+            >
+              Cancelar
+            </Button>
+            <Button 
+              onClick={handleSaveUserName} 
+              disabled={isSavingName || !editingUserName.trim()}
+            >
+              {isSavingName ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Guardando...
+                </>
+              ) : (
+                "Guardar"
               )}
             </Button>
           </DialogFooter>
