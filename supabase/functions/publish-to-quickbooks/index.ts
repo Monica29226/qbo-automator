@@ -320,9 +320,22 @@ function parseSubtotal(xmlData: any): number {
 // CALCULATE TOTAL FROM LINE ITEMS: Sum montoTotalLinea
 // This is the most reliable way to get the true total for validation
 // montoTotalLinea includes subtotal + taxes for each line
+// 
+// CRITICAL HANDLING FOR:
+// - IEBLE (código 07): Impuesto específico sobre bebidas - tarifa=0 but has montoImpuesto
+// - Credit Notes: May have negative montoTotalLinea values
+// - Discounts: Some XMLs have montoDescuento NOT reflected in baseImponible
 // =============================================================
-function calculateTotalFromLines(xmlData: any): { total: number; subtotal: number; tax: number; lineCount: number } {
-  if (!xmlData) return { total: 0, subtotal: 0, tax: 0, lineCount: 0 };
+function calculateTotalFromLines(xmlData: any): { 
+  total: number; 
+  subtotal: number; 
+  tax: number; 
+  ieble: number; 
+  lineDiscounts: number;
+  lineCount: number;
+  isCreditNote: boolean;
+} {
+  if (!xmlData) return { total: 0, subtotal: 0, tax: 0, ieble: 0, lineDiscounts: 0, lineCount: 0, isCreditNote: false };
   
   const detalle = xmlData.detalle || xmlData.detalles || xmlData.DetalleServicio || [];
   const detalleArray = Array.isArray(detalle) ? detalle : (detalle ? [detalle] : []);
@@ -330,7 +343,10 @@ function calculateTotalFromLines(xmlData: any): { total: number; subtotal: numbe
   let totalLines = 0;
   let subtotalLines = 0;
   let taxLines = 0;
+  let iebleTotal = 0;
+  let lineDiscounts = 0;
   let processedLines = 0;
+  let hasNegativeTotal = false;
   
   for (const item of detalleArray) {
     if (!item) continue;
@@ -343,36 +359,77 @@ function calculateTotalFromLines(xmlData: any): { total: number; subtotal: numbe
       '0'
     );
     
-    // Subtotal/BaseImponible is the pre-tax amount
+    // Detect credit notes by negative montoTotalLinea
+    if (montoTotalLinea < 0) {
+      hasNegativeTotal = true;
+    }
+    
+    // Subtotal/BaseImponible is the pre-tax amount (after discount applied)
     const lineSubtotal = parseFloat(
+      item.baseImponible || 
+      item.BaseImponible ||
       item.subtotal || 
       item.Subtotal || 
       item.montoTotal ||
       item.MontoTotal ||
-      item.baseImponible ||
-      item.BaseImponible ||
       '0'
     );
     
-    // Tax for this line
-    const lineTax = parseFloat(
-      item.impuestoNeto || 
-      item.ImpuestoNeto || 
-      item.montoImpuesto || 
-      item.MontoImpuesto || 
-      '0'
-    );
+    // Get line-level discount (NOT already applied to baseImponible in some XMLs)
+    const lineDiscount = parseFloat(item.montoDescuento || item.MontoDescuento || '0');
     
-    // Use absolute values since credit notes may have negative amounts
+    // Tax for this line - check ALL types of taxes including IEBLE (código 07)
+    let lineTax = 0;
+    let lineIeble = 0;
+    
+    // First check direct impuestoNeto (most reliable)
+    const directTax = parseFloat(item.impuestoNeto || item.ImpuestoNeto || '0');
+    
+    // Also check impuestos array for detailed breakdown
+    const impuestos = item.impuestos || [];
+    const impuestosArray = Array.isArray(impuestos) ? impuestos : [impuestos];
+    
+    for (const imp of impuestosArray) {
+      if (!imp) continue;
+      const codigo = imp.codigo || imp.Codigo || '';
+      const monto = parseFloat(imp.monto || imp.Monto || '0');
+      
+      if (codigo === '07') {
+        // IEBLE - Impuesto Específico sobre Bebidas Envasadas
+        // This is a SPECIFIC tax added to the total, NOT a percentage of subtotal
+        lineIeble += Math.abs(monto);
+        logInfo(`📊 IEBLE detectado en línea ${item.numeroLinea || processedLines}: ${monto.toFixed(2)}`);
+      } else if (monto > 0) {
+        // Regular tax (IVA, etc.)
+        lineTax += Math.abs(monto);
+      }
+    }
+    
+    // If no impuestos array, use directTax
+    if (lineTax === 0 && directTax > 0) {
+      lineTax = Math.abs(directTax);
+    }
+    
+    // Handle credit notes - use absolute values for calculations
     totalLines += Math.abs(montoTotalLinea);
     subtotalLines += Math.abs(lineSubtotal);
-    taxLines += Math.abs(lineTax);
+    taxLines += lineTax;
+    iebleTotal += lineIeble;
+    lineDiscounts += Math.abs(lineDiscount);
   }
   
   logInfo(`📊 calculateTotalFromLines: ${processedLines}/${detalleArray.length} líneas procesadas`);
-  logInfo(`📊 Sumas: Total=${totalLines.toFixed(2)}, Subtotal=${subtotalLines.toFixed(2)}, Impuesto=${taxLines.toFixed(2)}`);
+  logInfo(`📊 Sumas: Total=${totalLines.toFixed(2)}, Subtotal=${subtotalLines.toFixed(2)}, IVA=${taxLines.toFixed(2)}, IEBLE=${iebleTotal.toFixed(2)}, Descuentos línea=${lineDiscounts.toFixed(2)}`);
   
-  return { total: totalLines, subtotal: subtotalLines, tax: taxLines, lineCount: processedLines };
+  return { 
+    total: totalLines, 
+    subtotal: subtotalLines, 
+    tax: taxLines, 
+    ieble: iebleTotal,
+    lineDiscounts,
+    lineCount: processedLines,
+    isCreditNote: hasNegativeTotal
+  };
 }
 
 // =============================================================
@@ -430,22 +487,25 @@ function validateTotalsStrict(xmlData: any, docTotalAmount: number, isCreditNote
     const lineCalc = calculateTotalFromLines(xmlData);
     const totalDescuentos = parseDescuentosTotal(xmlData);
     
-    logInfo(`📊 Cálculo líneas: Total=${lineCalc.total.toFixed(2)}, Subtotal=${lineCalc.subtotal.toFixed(2)}, Tax=${lineCalc.tax.toFixed(2)}, Líneas=${lineCalc.lineCount}`);
-    logInfo(`📊 Descuentos totales: ${totalDescuentos.toFixed(2)}, OtrosCargos: ${totalOtrosCargos.toFixed(2)}`);
+    // IEBLE is already included in montoTotalLinea for each line
+    const totalTaxes = lineCalc.tax + lineCalc.ieble;
+    
+    logInfo(`📊 Cálculo líneas: Total=${lineCalc.total.toFixed(2)}, Subtotal=${lineCalc.subtotal.toFixed(2)}, IVA=${lineCalc.tax.toFixed(2)}, IEBLE=${lineCalc.ieble.toFixed(2)}, Líneas=${lineCalc.lineCount}`);
+    logInfo(`📊 Descuentos totales: ${totalDescuentos.toFixed(2)}, Descuentos línea: ${lineCalc.lineDiscounts.toFixed(2)}, OtrosCargos: ${totalOtrosCargos.toFixed(2)}`);
+    logInfo(`📊 Es Nota de Crédito (por valores negativos): ${lineCalc.isCreditNote}`);
     
     // If montoTotalLinea is available and > 0, use it as primary validation
-    // montoTotalLinea already includes: (subtotal - descuento) + impuesto
+    // montoTotalLinea already includes: (subtotal - descuento) + impuesto (including IEBLE)
     // So we just add OtrosCargos (shipping, fees, etc.) - NO need to subtract discounts!
     if (lineCalc.total > 0) {
-      // CORRECT FORMULA: montoTotalLinea sums + OtrosCargos = TotalComprobante
-      // Discounts are ALREADY embedded in baseImponible/montoTotalLinea
+      // FORMULA 1: montoTotalLinea sums + OtrosCargos = TotalComprobante
+      // This works when discounts are ALREADY embedded in baseImponible
       const calculatedFromLines = lineCalc.total + totalOtrosCargos;
       const lineDifference = Math.abs(calculatedFromLines - xmlTotal);
       
-      logInfo(`📊 Validación líneas (SIN restar descuentos): ${calculatedFromLines.toFixed(2)} vs XML ${xmlTotal.toFixed(2)} (diff: ${lineDifference.toFixed(2)})`);
+      logInfo(`📊 [F1] montoTotalLinea + OtrosCargos: ${calculatedFromLines.toFixed(2)} vs XML ${xmlTotal.toFixed(2)} (diff: ${lineDifference.toFixed(2)})`);
       
       if (lineDifference <= tolerance) {
-        // Perfect match using line totals
         return {
           valid: true,
           xmlTotal,
@@ -453,7 +513,7 @@ function validateTotalsStrict(xmlData: any, docTotalAmount: number, isCreditNote
           difference: lineDifference,
           breakdown: {
             subtotal: lineCalc.subtotal,
-            totalImpuestos: lineCalc.tax,
+            totalImpuestos: totalTaxes,
             totalDescuentos,
             totalOtrosCargos,
             totalExoneraciones: 0
@@ -462,12 +522,12 @@ function validateTotalsStrict(xmlData: any, docTotalAmount: number, isCreditNote
         };
       }
       
-      // FALLBACK: Some older XMLs might need discount subtracted
-      // (if montoTotalLinea was calculated from subtotal WITHOUT discount applied first)
+      // FORMULA 2: Some XMLs have discounts NOT reflected in montoTotalLinea
+      // (montoTotalLinea was calculated from montoTotal, not baseImponible)
       const calculatedWithDiscounts = lineCalc.total + totalOtrosCargos - totalDescuentos;
       const withDiscountsDiff = Math.abs(calculatedWithDiscounts - xmlTotal);
       
-      logInfo(`📊 Validación líneas (CON descuentos): ${calculatedWithDiscounts.toFixed(2)} vs XML ${xmlTotal.toFixed(2)} (diff: ${withDiscountsDiff.toFixed(2)})`);
+      logInfo(`📊 [F2] montoTotalLinea - Descuentos + OtrosCargos: ${calculatedWithDiscounts.toFixed(2)} vs XML ${xmlTotal.toFixed(2)} (diff: ${withDiscountsDiff.toFixed(2)})`);
       
       if (withDiscountsDiff <= tolerance) {
         return {
@@ -477,7 +537,7 @@ function validateTotalsStrict(xmlData: any, docTotalAmount: number, isCreditNote
           difference: withDiscountsDiff,
           breakdown: {
             subtotal: lineCalc.subtotal,
-            totalImpuestos: lineCalc.tax,
+            totalImpuestos: totalTaxes,
             totalDescuentos,
             totalOtrosCargos,
             totalExoneraciones: 0
@@ -485,29 +545,87 @@ function validateTotalsStrict(xmlData: any, docTotalAmount: number, isCreditNote
           errors: []
         };
       }
+      
+      // FORMULA 3: For PINTURAS NANDY case - montoTotalLinea includes PRE-discount values
+      // baseImponible = subtotal - descuento, but montoTotal = precioUnitario * cantidad (NO discount)
+      // So: (subtotal after discount) + tax + OtrosCargos = Total
+      const calculatedFromBase = lineCalc.subtotal + totalTaxes + totalOtrosCargos;
+      const fromBaseDiff = Math.abs(calculatedFromBase - xmlTotal);
+      
+      logInfo(`📊 [F3] baseImponible + Impuestos + OtrosCargos: ${calculatedFromBase.toFixed(2)} vs XML ${xmlTotal.toFixed(2)} (diff: ${fromBaseDiff.toFixed(2)})`);
+      
+      if (fromBaseDiff <= tolerance) {
+        return {
+          valid: true,
+          xmlTotal,
+          calculatedTotal: calculatedFromBase,
+          difference: fromBaseDiff,
+          breakdown: {
+            subtotal: lineCalc.subtotal,
+            totalImpuestos: totalTaxes,
+            totalDescuentos,
+            totalOtrosCargos,
+            totalExoneraciones: 0
+          },
+          errors: []
+        };
+      }
+      
+      // FORMULA 4: AQUI MAS FRESCO case - IEBLE is separate and NOT in montoTotalLinea
+      // Some XMLs have tarifa:0 but impuestoNeto contains IEBLE that needs to be added
+      // montoTotalLinea might NOT include the IEBLE
+      if (lineCalc.ieble > 0) {
+        const calculatedWithIEBLE = lineCalc.total + lineCalc.ieble + totalOtrosCargos;
+        const iebleDiff = Math.abs(calculatedWithIEBLE - xmlTotal);
+        
+        logInfo(`📊 [F4] montoTotalLinea + IEBLE separado + OtrosCargos: ${calculatedWithIEBLE.toFixed(2)} vs XML ${xmlTotal.toFixed(2)} (diff: ${iebleDiff.toFixed(2)})`);
+        
+        if (iebleDiff <= tolerance) {
+          return {
+            valid: true,
+            xmlTotal,
+            calculatedTotal: calculatedWithIEBLE,
+            difference: iebleDiff,
+            breakdown: {
+              subtotal: lineCalc.subtotal,
+              totalImpuestos: totalTaxes,
+              totalDescuentos,
+              totalOtrosCargos,
+              totalExoneraciones: 0
+            },
+            errors: []
+          };
+        }
+      }
     }
     
-    // FALLBACK: Try with subtotal + tax calculation
+    // FALLBACK: Try with subtotal + tax + IEBLE calculation
     if (lineCalc.subtotal > 0) {
-      const calculatedStandard = lineCalc.subtotal + lineCalc.tax + totalOtrosCargos - totalDescuentos;
+      const calculatedStandard = lineCalc.subtotal + totalTaxes + totalOtrosCargos - totalDescuentos;
       const standardDiff = Math.abs(calculatedStandard - xmlTotal);
       
       // Also try exempt case (taxes not added)
       const calculatedExempt = lineCalc.subtotal + totalOtrosCargos - totalDescuentos;
       const exemptDiff = Math.abs(calculatedExempt - xmlTotal);
       
-      logInfo(`📊 Fallback: Standard=${calculatedStandard.toFixed(2)} (diff:${standardDiff.toFixed(2)}), Exento=${calculatedExempt.toFixed(2)} (diff:${exemptDiff.toFixed(2)})`);
+      // Try with IEBLE added but IVA exempt
+      const calculatedIebleOnly = lineCalc.subtotal + lineCalc.ieble + totalOtrosCargos - totalDescuentos;
+      const iebleOnlyDiff = Math.abs(calculatedIebleOnly - xmlTotal);
       
-      if (standardDiff <= tolerance || exemptDiff <= tolerance) {
-        const usedCalc = standardDiff <= tolerance ? calculatedStandard : calculatedExempt;
+      logInfo(`📊 Fallback: Standard=${calculatedStandard.toFixed(2)} (diff:${standardDiff.toFixed(2)}), Exento=${calculatedExempt.toFixed(2)} (diff:${exemptDiff.toFixed(2)}), IEBLE-only=${calculatedIebleOnly.toFixed(2)} (diff:${iebleOnlyDiff.toFixed(2)})`);
+      
+      const minDiff = Math.min(standardDiff, exemptDiff, iebleOnlyDiff);
+      if (minDiff <= tolerance) {
+        const usedCalc = standardDiff <= tolerance ? calculatedStandard : 
+                         exemptDiff <= tolerance ? calculatedExempt : calculatedIebleOnly;
         return {
           valid: true,
           xmlTotal,
           calculatedTotal: usedCalc,
-          difference: Math.min(standardDiff, exemptDiff),
+          difference: minDiff,
           breakdown: {
             subtotal: lineCalc.subtotal,
-            totalImpuestos: lineCalc.tax,
+            totalImpuestos: totalTaxes,
             totalDescuentos,
             totalOtrosCargos,
             totalExoneraciones: 0
@@ -516,8 +634,13 @@ function validateTotalsStrict(xmlData: any, docTotalAmount: number, isCreditNote
         };
       }
       
-      // Neither formula matched - report detailed error
-      errors.push(`Suma líneas (${lineCalc.total.toFixed(2)}) o Subtotal+Impuesto (${calculatedStandard.toFixed(2)}) no coincide con TotalComprobante (${xmlTotal.toFixed(2)})`);
+      // Neither formula matched - report detailed error with all attempts
+      errors.push(`Ninguna fórmula coincide con Total XML (${xmlTotal.toFixed(2)}): ` +
+                  `SumaLineas=${lineCalc.total.toFixed(2)}, ` +
+                  `Subtotal=${lineCalc.subtotal.toFixed(2)}, ` +
+                  `IVA=${lineCalc.tax.toFixed(2)}, IEBLE=${lineCalc.ieble.toFixed(2)}, ` +
+                  `Descuentos=${totalDescuentos.toFixed(2)}, OtrosCargos=${totalOtrosCargos.toFixed(2)}, ` +
+                  `Std=${calculatedStandard.toFixed(2)}`);
     }
   }
   
@@ -1421,25 +1544,55 @@ Deno.serve(async (req) => {
               subtotal = -Math.abs(subtotal);
             }
             
-            let montoImpuesto = 0;
+            let montoImpuestoIVA = 0;
+            let montoImpuestoIEBLE = 0;
             let tasaImpuesto = 0;
             
             if (item.impuestos && Array.isArray(item.impuestos)) {
-              const ivaImpuesto = item.impuestos.find((imp: any) => imp.codigo === '01');
-              if (ivaImpuesto) {
-                tasaImpuesto = parseFloat(ivaImpuesto.tarifa) || 0;
-                montoImpuesto = parseFloat(ivaImpuesto.monto) || 0;
-                if (isCreditNote) montoImpuesto = -Math.abs(montoImpuesto);
+              for (const imp of item.impuestos) {
+                const codigo = imp.codigo || '';
+                const monto = parseFloat(imp.monto) || 0;
+                
+                if (codigo === '01') {
+                  // IVA
+                  tasaImpuesto = parseFloat(imp.tarifa) || 0;
+                  montoImpuestoIVA = monto;
+                } else if (codigo === '07') {
+                  // IEBLE - Impuesto Específico sobre Bebidas Envasadas
+                  montoImpuestoIEBLE = monto;
+                  logInfo(`   📊 IEBLE detectado: ${monto.toFixed(2)}`);
+                }
+              }
+              if (isCreditNote) {
+                montoImpuestoIVA = -Math.abs(montoImpuestoIVA);
+                montoImpuestoIEBLE = -Math.abs(montoImpuestoIEBLE);
               }
             } else {
               tasaImpuesto = parseFloat(item.tarifa) || 0;
-              montoImpuesto = parseFloat(item.montoImpuesto) || 0;
-              if (isCreditNote) montoImpuesto = -Math.abs(montoImpuesto);
+              montoImpuestoIVA = parseFloat(item.montoImpuesto) || 0;
+              // Check for IEBLE in impuestoNeto when tarifa=0 but there's tax
+              if (tasaImpuesto === 0 && parseFloat(item.impuestoNeto || '0') > 0) {
+                montoImpuestoIEBLE = parseFloat(item.impuestoNeto) || 0;
+              }
+              if (isCreditNote) {
+                montoImpuestoIVA = -Math.abs(montoImpuestoIVA);
+                montoImpuestoIEBLE = -Math.abs(montoImpuestoIEBLE);
+              }
             }
             
+            // Calculate line amount
+            // CRITICAL: baseImponible already has discount applied
+            // We need to add IEBLE as it's a specific tax that goes into the expense
             let lineAmount = subtotal;
-            if (includeTaxInLines && Math.abs(montoImpuesto) > 0) {
-              lineAmount = subtotal + montoImpuesto;
+            
+            // If tax should be included in lines (IVA como gasto), add IVA to line
+            if (includeTaxInLines && Math.abs(montoImpuestoIVA) > 0) {
+              lineAmount = subtotal + montoImpuestoIVA;
+            }
+            
+            // ALWAYS add IEBLE to the line amount - it's always an expense, never recoverable
+            if (Math.abs(montoImpuestoIEBLE) > 0) {
+              lineAmount += Math.abs(montoImpuestoIEBLE);
             }
             
             if (Math.abs(lineAmount) > 0.001) {
@@ -1550,11 +1703,12 @@ Deno.serve(async (req) => {
         const xmlTotal = parseFloat(xmlData.totalComprobante || xmlData.TotalComprobante || doc.total_amount);
         const xmlSubtotal = parseFloat(xmlData.subTotal || xmlData.SubTotal || '0');
         const xmlTax = parseFloat(doc.total_tax as any) || 0;
-        const isTaxExempt = xmlTax > 0 && Math.abs(xmlTotal - xmlSubtotal) < 1.0;
+        const isTaxExempt = Math.abs(xmlTax) > 0 && Math.abs(Math.abs(xmlTotal) - Math.abs(xmlSubtotal)) < 1.0;
         
         // Solo reportar TxnTaxDetail si el IVA es recuperable Y NO está exonerado
         const effectiveUsesTax = (doc.uses_tax !== false) && orgDefaultUsesTax && !includeTaxInLines && !isTaxExempt;
-        const totalTax = effectiveUsesTax ? xmlTax : 0;
+        // CRITICAL: Use absolute value for tax - credit notes have negative tax values
+        const totalTax = effectiveUsesTax ? Math.abs(xmlTax) : 0;
         
         if (isTaxExempt) {
           logInfo(`   📋 ${doc.doc_number}: IMPUESTO EXONERADO detectado - Tax=${xmlTax.toFixed(2)} NO se suma al total`);
