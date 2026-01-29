@@ -423,19 +423,26 @@ function validateTotalsStrict(xmlData: any, docTotalAmount: number, isCreditNote
   logInfo(`📋 Validación: ${hasDetailLines ? detalle.length + ' líneas' : 'Sin líneas detalle'}, OtrosCargos=${totalOtrosCargos.toFixed(2)}`);
   
   // PRIMARY VALIDATION: Sum montoTotalLinea from all lines
-  // This is the most reliable method as montoTotalLinea = subtotal + tax for each line
+  // This is the most reliable method as montoTotalLinea = baseImponible + impuesto for each line
+  // CRITICAL: montoTotalLinea ALREADY has discounts applied (baseImponible = subtotal - descuento)
+  // So we should NOT subtract totalDescuentos again!
   if (hasDetailLines) {
     const lineCalc = calculateTotalFromLines(xmlData);
     const totalDescuentos = parseDescuentosTotal(xmlData);
     
     logInfo(`📊 Cálculo líneas: Total=${lineCalc.total.toFixed(2)}, Subtotal=${lineCalc.subtotal.toFixed(2)}, Tax=${lineCalc.tax.toFixed(2)}, Líneas=${lineCalc.lineCount}`);
+    logInfo(`📊 Descuentos totales: ${totalDescuentos.toFixed(2)}, OtrosCargos: ${totalOtrosCargos.toFixed(2)}`);
     
     // If montoTotalLinea is available and > 0, use it as primary validation
+    // montoTotalLinea already includes: (subtotal - descuento) + impuesto
+    // So we just add OtrosCargos (shipping, fees, etc.) - NO need to subtract discounts!
     if (lineCalc.total > 0) {
-      const calculatedFromLines = lineCalc.total + totalOtrosCargos - totalDescuentos;
+      // CORRECT FORMULA: montoTotalLinea sums + OtrosCargos = TotalComprobante
+      // Discounts are ALREADY embedded in baseImponible/montoTotalLinea
+      const calculatedFromLines = lineCalc.total + totalOtrosCargos;
       const lineDifference = Math.abs(calculatedFromLines - xmlTotal);
       
-      logInfo(`📊 Validación líneas: ${calculatedFromLines.toFixed(2)} vs XML ${xmlTotal.toFixed(2)} (diff: ${lineDifference.toFixed(2)})`);
+      logInfo(`📊 Validación líneas (SIN restar descuentos): ${calculatedFromLines.toFixed(2)} vs XML ${xmlTotal.toFixed(2)} (diff: ${lineDifference.toFixed(2)})`);
       
       if (lineDifference <= tolerance) {
         // Perfect match using line totals
@@ -444,6 +451,30 @@ function validateTotalsStrict(xmlData: any, docTotalAmount: number, isCreditNote
           xmlTotal,
           calculatedTotal: calculatedFromLines,
           difference: lineDifference,
+          breakdown: {
+            subtotal: lineCalc.subtotal,
+            totalImpuestos: lineCalc.tax,
+            totalDescuentos,
+            totalOtrosCargos,
+            totalExoneraciones: 0
+          },
+          errors: []
+        };
+      }
+      
+      // FALLBACK: Some older XMLs might need discount subtracted
+      // (if montoTotalLinea was calculated from subtotal WITHOUT discount applied first)
+      const calculatedWithDiscounts = lineCalc.total + totalOtrosCargos - totalDescuentos;
+      const withDiscountsDiff = Math.abs(calculatedWithDiscounts - xmlTotal);
+      
+      logInfo(`📊 Validación líneas (CON descuentos): ${calculatedWithDiscounts.toFixed(2)} vs XML ${xmlTotal.toFixed(2)} (diff: ${withDiscountsDiff.toFixed(2)})`);
+      
+      if (withDiscountsDiff <= tolerance) {
+        return {
+          valid: true,
+          xmlTotal,
+          calculatedTotal: calculatedWithDiscounts,
+          difference: withDiscountsDiff,
           breakdown: {
             subtotal: lineCalc.subtotal,
             totalImpuestos: lineCalc.tax,
