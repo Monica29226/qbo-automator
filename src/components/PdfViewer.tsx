@@ -142,33 +142,30 @@ export const PdfViewer = ({
 
     try {
       console.log('🔄 Cargando PDF desde storage:', path);
+      const startTime = performance.now();
 
-      // Verificar si el archivo existe
-      const folderPath = path.split('/').slice(0, -1).join('/');
-      const targetName = path.split('/').pop() || '';
-
-      const { data: fileList } = await supabase.storage
-        .from('company-documents')
-        .list(folderPath, { search: targetName });
-
-      const fileExists = fileList && fileList.some((f) => f.name === targetName);
-      console.log('📂 Archivo existe en storage:', fileExists, 'Buscando:', targetName);
-
-      if (!fileExists) {
-        console.warn('⚠️ Archivo PDF no encontrado en storage:', path);
-        setError(true);
-        setPdfNotFound(true);
-        return;
-      }
-
-      // Descargar el PDF
+      // Descargar directamente sin verificar existencia previa (más rápido)
       const { data: blob, error: downloadError } = await supabase.storage
         .from('company-documents')
         .download(path);
 
-      if (downloadError || !blob) {
+      const downloadTime = performance.now() - startTime;
+      console.log(`⏱️ Tiempo de descarga: ${downloadTime.toFixed(0)}ms`);
+
+      if (downloadError) {
+        // Si el error es "not found", marcar como no encontrado
+        if (downloadError.message?.includes('not found') || downloadError.message?.includes('Object not found')) {
+          console.warn('⚠️ Archivo PDF no encontrado en storage:', path);
+          setError(true);
+          setPdfNotFound(true);
+          return;
+        }
         console.error('❌ Error descargando PDF:', downloadError);
-        throw downloadError || new Error('No blob returned');
+        throw downloadError;
+      }
+
+      if (!blob) {
+        throw new Error('No blob returned');
       }
 
       const arrayBuffer = await blob.arrayBuffer();
