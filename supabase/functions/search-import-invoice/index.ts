@@ -650,15 +650,19 @@ serve(async (req) => {
       );
     }
     
-    // Update PDF URL if we got it
-    if (pdfUrl && processResult.document?.id) {
+    // Update PDF URL if we got it - fix: use documentId or doc_id from response
+    const documentId = processResult.documentId || processResult.doc_id;
+    
+    if (pdfUrl && documentId) {
+      log(`📎 Updating PDF URL for document ${documentId}...`);
       await supabase
         .from("processed_documents")
         .update({ pdf_attachment_url: pdfUrl })
-        .eq("id", processResult.document.id);
+        .eq("id", documentId);
+      log(`✅ PDF URL saved: ${pdfUrl}`);
+    } else if (pdfUrl && !documentId) {
+      log(`⚠️ PDF saved but no documentId to update!`);
     }
-
-    const documentId = processResult.document?.id;
     const issueDate = processResult.document?.issue_date;
 
     // Validate November 2025
