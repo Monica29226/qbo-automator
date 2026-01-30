@@ -758,6 +758,130 @@ const fetchWithRetry = async (
   throw lastError || new Error('Max retries exceeded');
 };
 
+// =============================================================
+// PDF ATTACHMENT TO QUICKBOOKS BILL
+// Uses QuickBooks Attachable API with multipart/form-data
+// =============================================================
+async function attachPdfToQuickBooks(
+  pdfUrl: string,
+  entityId: string,
+  entityType: string,
+  docNumber: string,
+  realmId: string,
+  accessToken: string,
+  supabase: any
+): Promise<boolean> {
+  try {
+    logInfo(`📎 ${docNumber}: Attaching PDF to ${entityType} ${entityId}...`);
+    
+    // Step 1: Download PDF from storage (handle both public URLs and storage paths)
+    let pdfData: ArrayBuffer;
+    let filename = `${docNumber}.pdf`;
+    
+    if (pdfUrl.startsWith('http')) {
+      // Public URL - fetch directly
+      const pdfResponse = await fetch(pdfUrl);
+      if (!pdfResponse.ok) {
+        logError(`❌ ${docNumber}: Failed to download PDF: ${pdfResponse.status}`);
+        return false;
+      }
+      pdfData = await pdfResponse.arrayBuffer();
+    } else {
+      // Storage path - use Supabase storage
+      const { data, error } = await supabase.storage
+        .from('company-documents')
+        .download(pdfUrl);
+      
+      if (error || !data) {
+        logError(`❌ ${docNumber}: Failed to download PDF from storage: ${error?.message}`);
+        return false;
+      }
+      pdfData = await data.arrayBuffer();
+    }
+    
+    if (!pdfData || pdfData.byteLength === 0) {
+      logError(`❌ ${docNumber}: PDF data is empty`);
+      return false;
+    }
+    
+    logInfo(`   📄 ${docNumber}: PDF downloaded (${Math.round(pdfData.byteLength / 1024)} KB)`);
+    
+    // Step 2: Create multipart form data for QuickBooks Upload API
+    const boundary = '----WebKitFormBoundary' + Math.random().toString(36).substring(2);
+    
+    // Metadata for the attachable
+    const metadata = {
+      AttachableRef: [{
+        EntityRef: {
+          type: entityType,
+          value: entityId
+        }
+      }],
+      FileName: filename,
+      ContentType: 'application/pdf'
+    };
+    
+    // Build multipart body
+    const metadataJson = JSON.stringify(metadata);
+    const pdfBytes = new Uint8Array(pdfData);
+    
+    // Create the multipart body parts
+    const metadataPart = `--${boundary}\r\nContent-Disposition: form-data; name="file_metadata_01"; filename="file_metadata_01"\r\nContent-Type: application/json\r\n\r\n${metadataJson}\r\n`;
+    const filePartHeader = `--${boundary}\r\nContent-Disposition: form-data; name="file_content_01"; filename="${filename}"\r\nContent-Type: application/pdf\r\n\r\n`;
+    const endBoundary = `\r\n--${boundary}--\r\n`;
+    
+    // Combine all parts into a single Uint8Array
+    const encoder = new TextEncoder();
+    const metadataBytes = encoder.encode(metadataPart);
+    const headerBytes = encoder.encode(filePartHeader);
+    const endBytes = encoder.encode(endBoundary);
+    
+    const totalLength = metadataBytes.length + headerBytes.length + pdfBytes.length + endBytes.length;
+    const body = new Uint8Array(totalLength);
+    
+    let offset = 0;
+    body.set(metadataBytes, offset); offset += metadataBytes.length;
+    body.set(headerBytes, offset); offset += headerBytes.length;
+    body.set(pdfBytes, offset); offset += pdfBytes.length;
+    body.set(endBytes, offset);
+    
+    // Step 3: Upload to QuickBooks
+    const uploadUrl = `https://quickbooks.api.intuit.com/v3/company/${realmId}/upload?minorversion=69`;
+    
+    const uploadResponse = await fetch(uploadUrl, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Accept': 'application/json',
+        'Content-Type': `multipart/form-data; boundary=${boundary}`,
+      },
+      body: body,
+    });
+    
+    if (!uploadResponse.ok) {
+      const errorText = await uploadResponse.text();
+      logError(`❌ ${docNumber}: QuickBooks upload failed: ${uploadResponse.status} - ${errorText.substring(0, 200)}`);
+      return false;
+    }
+    
+    const uploadResult = await uploadResponse.json();
+    const attachableId = uploadResult.AttachableResponse?.[0]?.Attachable?.Id;
+    
+    if (attachableId) {
+      logInfo(`✅ ${docNumber}: PDF attached to ${entityType} ${entityId} (Attachable ID: ${attachableId})`);
+      return true;
+    } else {
+      logInfo(`⚠️ ${docNumber}: Upload succeeded but no Attachable ID returned`);
+      return true; // Still consider it a success
+    }
+    
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    logError(`❌ ${docNumber}: PDF attachment error: ${errorMessage}`);
+    return false;
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -1469,11 +1593,46 @@ Deno.serve(async (req) => {
         }
         
         // =============================================================
-        // STEP 6: GET ACCOUNT
+        // STEP 6: GET ACCOUNT - Priority: vendor_defaults > vendors > document
+        // CRITICAL: Always check vendor config FIRST, then use document as fallback
         // =============================================================
-        let accountCode = doc.default_account_ref;
+        let accountCode: string | null = null;
         
-        // Check for auto_unclassified_account setting first
+        // PRIORITY 1: Try vendor_defaults table (highest priority - user-configured rules)
+        const { data: vendorDefault } = await supabase
+          .from("vendor_defaults")
+          .select("default_account_ref")
+          .eq("organization_id", organization_id)
+          .ilike("vendor_name", doc.supplier_name)
+          .maybeSingle();
+        
+        if (vendorDefault?.default_account_ref) {
+          accountCode = vendorDefault.default_account_ref;
+          logInfo(`   📋 ${doc.doc_number}: Using vendor_defaults account: ${accountCode}`);
+        }
+        
+        // PRIORITY 2: Try vendors table
+        if (!accountCode) {
+          const { data: vendor } = await supabase
+            .from("vendors")
+            .select("default_account_ref")
+            .eq("organization_id", organization_id)
+            .ilike("vendor_name", doc.supplier_name)
+            .maybeSingle();
+          
+          if (vendor?.default_account_ref) {
+            accountCode = vendor.default_account_ref;
+            logInfo(`   📋 ${doc.doc_number}: Using vendors table account: ${accountCode}`);
+          }
+        }
+        
+        // PRIORITY 3: Use document's default_account_ref (from UI assignment)
+        if (!accountCode && doc.default_account_ref) {
+          accountCode = doc.default_account_ref;
+          logInfo(`   📋 ${doc.doc_number}: Using document account: ${accountCode}`);
+        }
+        
+        // PRIORITY 4: Check for auto_unclassified_account setting
         if (!accountCode) {
           const { data: autoUnclassifiedSetting } = await supabase
             .from("system_settings")
@@ -1484,35 +1643,7 @@ Deno.serve(async (req) => {
           
           if (autoUnclassifiedSetting?.value) {
             accountCode = autoUnclassifiedSetting.value;
-            console.log(`🎯 [AUTO-UNCLASSIFIED] Using auto_unclassified_account: ${accountCode}`);
-          }
-        }
-        
-        if (!accountCode) {
-          // Try vendor_defaults
-          const { data: vendorDefault } = await supabase
-            .from("vendor_defaults")
-            .select("default_account_ref")
-            .eq("organization_id", organization_id)
-            .ilike("vendor_name", doc.supplier_name)
-            .maybeSingle();
-          
-          if (vendorDefault?.default_account_ref) {
-            accountCode = vendorDefault.default_account_ref;
-          }
-        }
-        
-        if (!accountCode) {
-          // Try vendors table
-          const { data: vendor } = await supabase
-            .from("vendors")
-            .select("default_account_ref")
-            .eq("organization_id", organization_id)
-            .ilike("vendor_name", doc.supplier_name)
-            .maybeSingle();
-          
-          if (vendor?.default_account_ref) {
-            accountCode = vendor.default_account_ref;
+            logInfo(`   🎯 ${doc.doc_number}: Using auto_unclassified_account: ${accountCode}`);
           }
         }
         
@@ -1958,9 +2089,21 @@ Deno.serve(async (req) => {
           })
           .eq("id", doc.id);
         
-        // Attach PDF (fire and forget)
-        if (doc.pdf_attachment_url) {
-          // TODO: Implement PDF attachment
+        // Attach PDF to QuickBooks Bill (fire and forget - don't block response)
+        if (doc.pdf_attachment_url && entityId) {
+          // Fire and forget - don't await, just log result
+          attachPdfToQuickBooks(
+            doc.pdf_attachment_url,
+            entityId,
+            entityType,
+            doc.doc_number,
+            realmId,
+            accessToken,
+            supabase
+          ).catch((err: unknown) => {
+            const errMsg = err instanceof Error ? err.message : String(err);
+            logError(`⚠️ ${doc.doc_number}: PDF attachment failed (non-blocking): ${errMsg}`);
+          });
         }
         
         const elapsedTime = Date.now() - startTime;
