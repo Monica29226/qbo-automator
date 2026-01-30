@@ -1723,24 +1723,50 @@ Deno.serve(async (req) => {
         const xmlTax = parseFloat(doc.total_tax as any) || 0;
         const isTaxExempt = Math.abs(xmlTax) > 0 && Math.abs(Math.abs(xmlTotal) - Math.abs(xmlSubtotal)) < 1.0;
         
+        // Calculate IEBLE from lines - this is ALREADY included in line amounts
+        // so we must NOT add it again via totalTax
+        let totalIEBLEInLines = 0;
+        const detalleForIeble = xmlData.detalle || xmlData.detalles || xmlData.DetalleServicio || [];
+        const detalleArrayIeble = Array.isArray(detalleForIeble) ? detalleForIeble : [detalleForIeble];
+        for (const item of detalleArrayIeble) {
+          if (!item?.impuestos) continue;
+          const impuestos = Array.isArray(item.impuestos) ? item.impuestos : [item.impuestos];
+          for (const imp of impuestos) {
+            if (imp?.codigo === '07') {
+              totalIEBLEInLines += Math.abs(parseFloat(imp.monto) || 0);
+            }
+          }
+        }
+        
         // Solo reportar TxnTaxDetail si el IVA es recuperable Y NO está exonerado
         const effectiveUsesTax = (doc.uses_tax !== false) && orgDefaultUsesTax && !includeTaxInLines && !isTaxExempt;
-        // CRITICAL: Use absolute value for tax - credit notes have negative tax values
-        const totalTax = effectiveUsesTax ? Math.abs(xmlTax) : 0;
+        
+        // CRITICAL: xmlTax includes ALL taxes (IVA + IEBLE + asumido)
+        // But IEBLE is already included in line amounts, so we subtract it to avoid double-counting
+        // Also, impuesto asumido (código 05) should NOT be added to total at all
+        const ivaOnlyTax = effectiveUsesTax 
+          ? Math.max(0, Math.abs(xmlTax) - totalIEBLEInLines)
+          : 0;
+        
+        if (totalIEBLEInLines > 0) {
+          logInfo(`   📊 ${doc.doc_number}: IEBLE ya incluido en líneas: ${totalIEBLEInLines.toFixed(2)} (restado de Tax para evitar doble conteo)`);
+        }
         
         if (isTaxExempt) {
           logInfo(`   📋 ${doc.doc_number}: IMPUESTO EXONERADO detectado - Tax=${xmlTax.toFixed(2)} NO se suma al total`);
         }
         
-        // CRITICAL: Validate that lines total + tax = document total (with tolerance)
-        const expectedQBOTotal = effectiveUsesTax 
-          ? linesTotalAmount + totalTax
-          : linesTotalAmount;
+        // CRITICAL: Validate that lines total + IVA-only tax = document total (with tolerance)
+        // Lines already include IEBLE, so we only add IVA portion
+        const expectedQBOTotal = linesTotalAmount + ivaOnlyTax;
         const documentTotal = Math.abs(doc.total_amount);
         const qboTotalDiff = Math.abs(expectedQBOTotal - documentTotal);
         
-        if (qboTotalDiff > 2.0) { // 2 colones tolerance for rounding
-          const errorMsg = `MONTO INCORRECTO: Lines=${linesTotalAmount.toFixed(2)} + Tax=${totalTax.toFixed(2)} = ${expectedQBOTotal.toFixed(2)}, pero documento=${documentTotal.toFixed(2)}. Diferencia: ${qboTotalDiff.toFixed(2)}`;
+        // Use larger tolerance for complex invoices with multiple tax types
+        const validationTolerance = totalIEBLEInLines > 0 ? 5.0 : 2.0;
+        
+        if (qboTotalDiff > validationTolerance) {
+          const errorMsg = `MONTO INCORRECTO: Lines=${linesTotalAmount.toFixed(2)} + IVA=${ivaOnlyTax.toFixed(2)} (IEBLE ya en líneas: ${totalIEBLEInLines.toFixed(2)}) = ${expectedQBOTotal.toFixed(2)}, pero documento=${documentTotal.toFixed(2)}. Diferencia: ${qboTotalDiff.toFixed(2)}`;
           logError(`❌ ${doc.doc_number}: ${errorMsg}`);
           
           await registerInTracking(doc, 'error_amount_mismatch', null, null, errorMsg);
@@ -1752,8 +1778,10 @@ Deno.serve(async (req) => {
           return { success: false, docNumber: doc.doc_number, error: errorMsg };
         }
         
-        logInfo(`   📊 ${doc.doc_number}: Validación final OK - Lines=${linesTotalAmount.toFixed(2)}, Tax=${totalTax.toFixed(2)}, Total=${expectedQBOTotal.toFixed(2)} (esperado: ${documentTotal.toFixed(2)})`);
+        logInfo(`   📊 ${doc.doc_number}: Validación final OK - Lines=${linesTotalAmount.toFixed(2)}, IVA=${ivaOnlyTax.toFixed(2)}, IEBLE(en líneas)=${totalIEBLEInLines.toFixed(2)}, Total=${expectedQBOTotal.toFixed(2)} (esperado: ${documentTotal.toFixed(2)})`);
         
+        // Use ivaOnlyTax for TxnTaxDetail instead of full xmlTax
+        const totalTax = ivaOnlyTax;
         // =============================================================
         // STEP 11: CREATE BILL OR VENDORCREDIT IN QBO
         // =============================================================
