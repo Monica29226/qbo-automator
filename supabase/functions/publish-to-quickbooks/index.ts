@@ -1236,27 +1236,42 @@ Deno.serve(async (req) => {
           if (byId) return byId.Id;
         }
         
-        // Extract code part
-        const codeOnly = searchCode.split(/[\s·\-:]/)[0].trim();
+        // FIXED: Account codes can include dashes for sub-accounts (e.g., "6130-03")
+        // Only split by space to separate code from description, NOT by dash
+        // Examples: "6130-03 Utencilios cafeteria" → "6130-03"
+        //           "661 Materiales Medicos" → "661"
+        const codeOnly = searchCode.split(' ')[0].trim();
         
-        // Exact match by AcctNum
+        logInfo(`🔍 Buscando cuenta: código="${codeOnly}" (original="${searchCode}")`);
+        
+        // Exact match by AcctNum (most reliable)
         let account = allAccounts.find((acc: any) => acc.AcctNum === codeOnly);
-        if (account) return account.Id;
+        if (account) {
+          logInfo(`✓ Cuenta encontrada por AcctNum: ${account.Name} (ID: ${account.Id})`);
+          return account.Id;
+        }
         
-        // Match by name starting with code
+        // Match by name starting with code (for sub-accounts like "6130-03")
         account = allAccounts.find((acc: any) => {
           const name = acc.Name || '';
-          return name.startsWith(codeOnly + ' ') || name.startsWith(codeOnly + '-');
+          return name === codeOnly || name.startsWith(codeOnly + ' ') || name.startsWith(codeOnly + '-');
         });
-        if (account) return account.Id;
+        if (account) {
+          logInfo(`✓ Cuenta encontrada por Name: ${account.Name} (ID: ${account.Id})`);
+          return account.Id;
+        }
         
         // Fallback: search by name containing
         account = allAccounts.find((acc: any) => {
           const name = (acc.Name || '').toLowerCase();
           return name.includes(searchCode.toLowerCase());
         });
-        if (account) return account.Id;
+        if (account) {
+          logInfo(`✓ Cuenta encontrada por búsqueda: ${account.Name} (ID: ${account.Id})`);
+          return account.Id;
+        }
         
+        logInfo(`⚠️ Cuenta no encontrada: ${codeOnly}`);
         return null;
       } catch (e) {
         logError('Error getting account:', e);
@@ -1511,6 +1526,9 @@ Deno.serve(async (req) => {
         }
         
         // Extract account code if it has description
+        // IMPORTANT: Account codes can be like "6130-03 Utencilios cafeteria"
+        // The dash is part of the code (subcuenta), NOT a separator
+        // Only split by space to separate code from description
         const extractedCode = accountCode.includes(' - ') 
           ? accountCode.split(' - ')[0].trim()
           : accountCode.split(' ')[0].trim();
