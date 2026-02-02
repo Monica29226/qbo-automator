@@ -94,31 +94,55 @@ export const HostingerFetchDialog = ({ onSuccess }: HostingerFetchDialogProps) =
     setIsProcessing(true);
     toast.info("Obteniendo facturas de Hostinger...");
 
+    let totalProcessed = 0;
+    let totalFailed = 0;
+    let skipCount = 0;
+    let continueProcessing = true;
+    let iterations = 0;
+    const maxIterations = 20; // Safety limit to prevent infinite loops
+
     try {
-      const body: Record<string, unknown> = { organization_id: activeOrganization };
-      
-      if (selectedMonth && selectedYear) {
-        body.month = parseInt(selectedMonth);
-        body.year = parseInt(selectedYear);
+      while (continueProcessing && iterations < maxIterations) {
+        iterations++;
+        
+        const body: Record<string, unknown> = { 
+          organization_id: activeOrganization,
+          skip_count: skipCount
+        };
+        
+        if (selectedMonth && selectedYear) {
+          body.month = parseInt(selectedMonth);
+          body.year = parseInt(selectedYear);
+        }
+
+        const { data, error } = await supabase.functions.invoke("hostinger-fetch-invoices", {
+          body,
+        });
+
+        if (error) throw error;
+
+        if (data?.success === false) {
+          setHostingerConnected(false);
+          toast.error(data.message || "Hostinger requiere reconexión. Por favor conecta tu cuenta nuevamente.");
+          return;
+        }
+
+        const processed = data.invoices_processed || 0;
+        const failed = data.invoices_failed || 0;
+        totalProcessed += processed;
+        totalFailed += failed;
+
+        // Check if there are more messages to process
+        if (data.partial && data.next_skip_count) {
+          skipCount = data.next_skip_count;
+          toast.info(`Procesando... ${data.message || ''}`);
+        } else {
+          continueProcessing = false;
+        }
       }
-
-      const { data, error } = await supabase.functions.invoke("hostinger-fetch-invoices", {
-        body,
-      });
-
-      if (error) throw error;
-
-      if (data?.success === false) {
-        setHostingerConnected(false);
-        toast.error(data.message || "Hostinger requiere reconexión. Por favor conecta tu cuenta nuevamente.");
-        return;
-      }
-
-      const processed = data.invoices_processed || 0;
-      const failed = data.invoices_failed || 0;
 
       toast.success(
-        `✓ ${processed} factura${processed !== 1 ? 's' : ''} obtenida${processed !== 1 ? 's' : ''}${failed > 0 ? ` (${failed} fallidas)` : ''}`
+        `✓ ${totalProcessed} factura${totalProcessed !== 1 ? 's' : ''} procesada${totalProcessed !== 1 ? 's' : ''}${totalFailed > 0 ? ` (${totalFailed} fallidas)` : ''}`
       );
 
       setOpen(false);
