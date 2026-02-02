@@ -112,13 +112,13 @@ async function fetchEmailsViaIMAP(
     const messageIds = searchLine.replace("* SEARCH ", "").trim().split(" ").map(Number).filter(n => n > 0);
     console.log(`[Hostinger IMAP] Found ${messageIds.length} messages`);
 
-    // CRITICAL: Limit to last 15 messages to avoid CPU timeout (reduced from 50)
-    const messagesToFetch = messageIds.slice(-15);
-    console.log(`[Hostinger IMAP] Fetching last ${messagesToFetch.length} messages (max 15 to avoid CPU timeout)`);
+    // Procesar más mensajes - aumentado de 15 a 25 para capturar más facturas
+    const messagesToFetch = messageIds.slice(-25);
+    console.log(`[Hostinger IMAP] Fetching last ${messagesToFetch.length} messages`);
 
     // Track execution time to exit early if approaching limit
     const functionStartTime = Date.now();
-    const MAX_EXECUTION_TIME_MS = 25000; // 25 seconds max (leave buffer before 30s limit)
+    const MAX_EXECUTION_TIME_MS = 28000; // 28 seconds max (leave 2s buffer)
     // Fetch each message with early exit on timeout
     for (let i = 0; i < messagesToFetch.length; i++) {
       // Check if approaching timeout
@@ -265,12 +265,10 @@ function extractXmlAttachments(rawEmail: string): Array<{ filename: string; cont
     if (encoding === "BASE64") {
       try {
         const cleanBase64 = content.replace(/[\r\n\s]/g, "");
-        const binaryStr = atob(cleanBase64);
-        const bytes = new Uint8Array(binaryStr.length);
-        for (let i = 0; i < binaryStr.length; i++) {
-          bytes[i] = binaryStr.charCodeAt(i);
-        }
-        decodedContent = new TextDecoder("utf-8").decode(bytes);
+        // Decodificar base64 correctamente para UTF-8
+        const binaryData = Uint8Array.from(atob(cleanBase64), c => c.charCodeAt(0));
+        // Usar TextDecoder con UTF-8 para manejar tildes correctamente
+        decodedContent = new TextDecoder("utf-8").decode(binaryData);
       } catch (e) {
         console.error(`[Hostinger] Error decoding base64 for ${filename}:`, e);
         continue;
@@ -562,7 +560,7 @@ serve(async (req) => {
     let stoppedEarly = false;
     const errors: string[] = [];
     const processingStartTime = Date.now();
-    const MAX_PROCESSING_TIME_MS = 20000; // 20 seconds for processing phase
+    const MAX_PROCESSING_TIME_MS = 25000; // 25 seconds for processing phase
 
     // Process each email with timeout protection
     for (const rawEmail of rawEmails) {
