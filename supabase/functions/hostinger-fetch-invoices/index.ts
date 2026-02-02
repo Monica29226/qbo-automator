@@ -112,12 +112,21 @@ async function fetchEmailsViaIMAP(
     const messageIds = searchLine.replace("* SEARCH ", "").trim().split(" ").map(Number).filter(n => n > 0);
     console.log(`[Hostinger IMAP] Found ${messageIds.length} messages`);
 
-    // Limit to last 50 messages to avoid timeouts
-    const messagesToFetch = messageIds.slice(-50);
-    console.log(`[Hostinger IMAP] Fetching last ${messagesToFetch.length} messages`);
+    // CRITICAL: Limit to last 15 messages to avoid CPU timeout (reduced from 50)
+    const messagesToFetch = messageIds.slice(-15);
+    console.log(`[Hostinger IMAP] Fetching last ${messagesToFetch.length} messages (max 15 to avoid CPU timeout)`);
 
-    // Fetch each message
+    // Track execution time to exit early if approaching limit
+    const functionStartTime = Date.now();
+    const MAX_EXECUTION_TIME_MS = 25000; // 25 seconds max (leave buffer before 30s limit)
+    // Fetch each message with early exit on timeout
     for (let i = 0; i < messagesToFetch.length; i++) {
+      // Check if approaching timeout
+      if (Date.now() - functionStartTime > MAX_EXECUTION_TIME_MS) {
+        console.log(`[Hostinger IMAP] ⚠️ Approaching timeout, stopping after ${i} messages`);
+        break;
+      }
+      
       const msgId = messagesToFetch[i];
       
       try {
@@ -550,10 +559,20 @@ serve(async (req) => {
 
     let invoicesProcessed = 0;
     let invoicesFailed = 0;
+    let stoppedEarly = false;
     const errors: string[] = [];
+    const processingStartTime = Date.now();
+    const MAX_PROCESSING_TIME_MS = 20000; // 20 seconds for processing phase
 
-    // Process each email
+    // Process each email with timeout protection
     for (const rawEmail of rawEmails) {
+      // Check for timeout
+      if (Date.now() - processingStartTime > MAX_PROCESSING_TIME_MS) {
+        console.log(`[Hostinger] ⚠️ Approaching timeout during processing, stopping early`);
+        stoppedEarly = true;
+        break;
+      }
+      
       try {
         const xmlAttachments = extractXmlAttachments(rawEmail);
         const pdfAttachments = extractPdfAttachments(rawEmail);
@@ -653,13 +672,17 @@ serve(async (req) => {
       }
     }
 
-    console.log(`[Hostinger] Completed: ${invoicesProcessed} processed, ${invoicesFailed} failed`);
+    console.log(`[Hostinger] Completed: ${invoicesProcessed} processed, ${invoicesFailed} failed${stoppedEarly ? ' (stopped early due to timeout)' : ''}`);
 
     return new Response(
       JSON.stringify({
         success: true,
         invoices_processed: invoicesProcessed,
         invoices_failed: invoicesFailed,
+        partial: stoppedEarly,
+        message: stoppedEarly 
+          ? `Procesadas ${invoicesProcessed} facturas. Ejecute de nuevo para continuar con las restantes.`
+          : undefined,
         errors: errors.length > 0 ? errors : undefined,
       }),
       {
