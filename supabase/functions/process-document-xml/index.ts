@@ -211,6 +211,8 @@ Deno.serve(async (req) => {
   try {
     const payload: ProcessDocumentRequest = await req.json();
     console.log("🚀 Processing document - NO AI");
+    console.log("📎 PDF attachment URL received:", payload.pdf_attachment_url || "NONE");
+    console.log("📂 XML attachment URL received:", payload.xml_attachment_url || "NONE");
     
     if (!payload.organization_id) {
       throw new Error("organization_id is required");
