@@ -123,18 +123,20 @@ async function fetchEmailsViaIMAP(
     const startIdx = skipCount || 0;
     const availableMessages = messageIds.slice(startIdx);
     
-    // Procesar hasta 25 mensajes por ejecución
-    const messagesToFetch = availableMessages.slice(0, 25);
-    console.log(`[Hostinger IMAP] Processing messages ${startIdx + 1} to ${startIdx + messagesToFetch.length} of ${messageIds.length} total`);
+    // REDUCIDO: Procesar solo 10 mensajes por ejecución para evitar WORKER_LIMIT
+    const BATCH_SIZE = 10;
+    const messagesToFetch = availableMessages.slice(0, BATCH_SIZE);
+    console.log(`[Hostinger IMAP] Processing messages ${startIdx + 1} to ${startIdx + messagesToFetch.length} of ${messageIds.length} total (batch size: ${BATCH_SIZE})`);
 
     // Track execution time to exit early if approaching limit
     const functionStartTime = Date.now();
-    const MAX_EXECUTION_TIME_MS = 28000; // 28 seconds max (leave 2s buffer)
+    const MAX_EXECUTION_TIME_MS = 20000; // REDUCIDO: 20 seconds max (leave 10s buffer)
     // Fetch each message with early exit on timeout
     for (let i = 0; i < messagesToFetch.length; i++) {
-      // Check if approaching timeout
-      if (Date.now() - functionStartTime > MAX_EXECUTION_TIME_MS) {
-        console.log(`[Hostinger IMAP] ⚠️ Approaching timeout, stopping after ${i} messages`);
+      // Check if approaching timeout - check BEFORE and AFTER each message
+      const elapsedMs = Date.now() - functionStartTime;
+      if (elapsedMs > MAX_EXECUTION_TIME_MS) {
+        console.log(`[Hostinger IMAP] ⚠️ Approaching timeout (${elapsedMs}ms), stopping after ${i} messages`);
         break;
       }
       
@@ -177,9 +179,9 @@ async function fetchEmailsViaIMAP(
         
         let emailContent = "";
         let fetchAttempts = 0;
-        const maxFetchTime = Date.now() + 30000; // 30 seconds max per message
+        const maxFetchTime = Date.now() + 8000; // REDUCIDO: 8 seconds max per message
         
-        while (Date.now() < maxFetchTime && fetchAttempts < 500) {
+        while (Date.now() < maxFetchTime && fetchAttempts < 200) {
           const n = await conn.read(buffer);
           if (n === null) break;
           emailContent += decoder.decode(buffer.subarray(0, n));
@@ -188,6 +190,12 @@ async function fetchEmailsViaIMAP(
           if (emailContent.includes(`A1${i}1 NO`) || emailContent.includes(`A1${i}1 BAD`)) break;
           
           fetchAttempts++;
+          
+          // Check global timeout during fetch
+          if (Date.now() - functionStartTime > MAX_EXECUTION_TIME_MS) {
+            console.log(`[Hostinger IMAP] ⚠️ Global timeout during message fetch, stopping`);
+            break;
+          }
         }
 
         if (emailContent.length > 0) {
@@ -583,7 +591,7 @@ serve(async (req) => {
     let stoppedEarly = false;
     const errors: string[] = [];
     const processingStartTime = Date.now();
-    const MAX_PROCESSING_TIME_MS = 25000; // 25 seconds for processing phase
+    const MAX_PROCESSING_TIME_MS = 18000; // REDUCIDO: 18 seconds for processing phase
 
     // Process each email with timeout protection
     for (const rawEmail of rawEmails) {
