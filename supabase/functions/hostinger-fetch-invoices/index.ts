@@ -621,6 +621,8 @@ serve(async (req) => {
             }
 
             // Call process-document-xml to parse and store
+            console.log(`[Hostinger] 📤 Sending to process-document-xml: clave=${clave}, pdf_attachment_url=${pdfUrl || 'NONE'}`);
+            
             const { data: processResult, error: processError } = await supabase.functions.invoke("process-document-xml", {
               body: {
                 organization_id,
@@ -636,7 +638,7 @@ serve(async (req) => {
               errors.push(`${clave}: ${processError.message}`);
               invoicesFailed++;
             } else {
-              console.log(`[Hostinger] ✓ Processed ${clave}`);
+              console.log(`[Hostinger] ✓ Processed ${clave} - PDF saved: ${pdfUrl ? 'YES' : 'NO'}`);
               invoicesProcessed++;
             }
           } catch (xmlErr) {
