@@ -12,8 +12,10 @@ async function fetchEmailsViaIMAP(
   port: number,
   email: string,
   password: string,
-  sinceDateStr: string
-): Promise<{ rawEmails: string[]; error?: string }> {
+  sinceDateStr: string,
+  beforeDateStr?: string,  // Para filtrar hasta cierta fecha
+  skipCount?: number       // Para paginación - saltar los primeros N mensajes
+): Promise<{ rawEmails: string[]; error?: string; totalFound?: number; processedCount?: number }> {
   const rawEmails: string[] = [];
   
   try {
@@ -97,7 +99,12 @@ async function fetchEmailsViaIMAP(
     }
 
     // Search by date - IMAP format: DD-Mon-YYYY
-    const searchResp = await sendCommand("A003", `SEARCH SINCE ${sinceDateStr}`);
+    // Use SINCE and optionally BEFORE for month-specific searches
+    let searchCmd = `SEARCH SINCE ${sinceDateStr}`;
+    if (beforeDateStr) {
+      searchCmd = `SEARCH SINCE ${sinceDateStr} BEFORE ${beforeDateStr}`;
+    }
+    const searchResp = await sendCommand("A003", searchCmd);
     console.log("[Hostinger IMAP] SEARCH response:", searchResp.substring(0, 300));
 
     // Extract UIDs from response
@@ -106,15 +113,19 @@ async function fetchEmailsViaIMAP(
       console.log("[Hostinger IMAP] No messages found");
       await sendCommand("A999", "LOGOUT");
       conn.close();
-      return { rawEmails: [] };
+      return { rawEmails: [], totalFound: 0, processedCount: 0 };
     }
 
     const messageIds = searchLine.replace("* SEARCH ", "").trim().split(" ").map(Number).filter(n => n > 0);
-    console.log(`[Hostinger IMAP] Found ${messageIds.length} messages`);
+    console.log(`[Hostinger IMAP] Found ${messageIds.length} messages in date range`);
 
-    // Procesar más mensajes - aumentado de 15 a 25 para capturar más facturas
-    const messagesToFetch = messageIds.slice(-25);
-    console.log(`[Hostinger IMAP] Fetching last ${messagesToFetch.length} messages`);
+    // Si hay skipCount, saltar esos mensajes (para paginación)
+    const startIdx = skipCount || 0;
+    const availableMessages = messageIds.slice(startIdx);
+    
+    // Procesar hasta 25 mensajes por ejecución
+    const messagesToFetch = availableMessages.slice(0, 25);
+    console.log(`[Hostinger IMAP] Processing messages ${startIdx + 1} to ${startIdx + messagesToFetch.length} of ${messageIds.length} total`);
 
     // Track execution time to exit early if approaching limit
     const functionStartTime = Date.now();
@@ -191,10 +202,14 @@ async function fetchEmailsViaIMAP(
     await sendCommand("A999", "LOGOUT");
     conn.close();
 
-    return { rawEmails };
+    return { 
+      rawEmails, 
+      totalFound: messageIds.length,
+      processedCount: messagesToFetch.length
+    };
   } catch (error) {
     console.error("[Hostinger IMAP] Connection error:", error);
-    return { rawEmails: [], error: String(error) };
+    return { rawEmails: [], error: String(error), totalFound: 0, processedCount: 0 };
   }
 }
 
@@ -412,10 +427,10 @@ serve(async (req) => {
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    const { organization_id, month, year, force_resync } = await req.json();
+    const { organization_id, month, year, force_resync, skip_count } = await req.json();
     if (!organization_id) throw new Error("organization_id required");
     
-    console.log(`[Hostinger] Fetching invoices for organization ${organization_id}`);
+    console.log(`[Hostinger] Fetching invoices for organization ${organization_id}${skip_count ? ` (skipping first ${skip_count} messages)` : ''}`);
 
     // Verify authorization
     const token = authHeader.replace("Bearer ", "");
@@ -480,9 +495,12 @@ serve(async (req) => {
 
     const startDateSetting = settings?.find(s => s.key === "start_date")?.value;
     let startDate: Date;
+    let endDate: Date | undefined;
     
     if (month && year) {
+      // Búsqueda específica de un mes - usar rango SINCE + BEFORE
       startDate = new Date(year, month - 1, 1);
+      endDate = new Date(year, month, 1); // Primer día del mes siguiente
     } else if (startDateSetting) {
       startDate = new Date(startDateSetting);
     } else {
@@ -490,19 +508,24 @@ serve(async (req) => {
       startDate.setDate(startDate.getDate() - 30);
     }
 
-    // Format date for IMAP: DD-Mon-YYYY
-    const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-    const sinceDateStr = `${startDate.getDate()}-${months[startDate.getMonth()]}-${startDate.getFullYear()}`;
+    // Format dates for IMAP: DD-Mon-YYYY
+    const monthsArr = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    const sinceDateStr = `${startDate.getDate()}-${monthsArr[startDate.getMonth()]}-${startDate.getFullYear()}`;
+    const beforeDateStr = endDate 
+      ? `${endDate.getDate()}-${monthsArr[endDate.getMonth()]}-${endDate.getFullYear()}`
+      : undefined;
     
-    console.log(`[Hostinger] Searching emails since ${sinceDateStr}`);
+    console.log(`[Hostinger] Searching emails since ${sinceDateStr}${beforeDateStr ? ` before ${beforeDateStr}` : ''}`);
 
     // Fetch emails via IMAP
-    const { rawEmails, error: imapError } = await fetchEmailsViaIMAP(
+    const { rawEmails, error: imapError, totalFound, processedCount } = await fetchEmailsViaIMAP(
       imapHost,
       imapPort,
       credentials.email,
       credentials.password,
-      sinceDateStr
+      sinceDateStr,
+      beforeDateStr,
+      skip_count || 0
     );
 
     if (imapError) {
@@ -670,17 +693,23 @@ serve(async (req) => {
       }
     }
 
-    console.log(`[Hostinger] Completed: ${invoicesProcessed} processed, ${invoicesFailed} failed${stoppedEarly ? ' (stopped early due to timeout)' : ''}`);
+    const currentSkip = skip_count || 0;
+    const nextSkip = currentSkip + (processedCount || 0);
+    const hasMoreMessages = totalFound ? (nextSkip < totalFound) : false;
+    console.log(`[Hostinger] Completed: ${invoicesProcessed} processed, ${invoicesFailed} failed. Total messages: ${totalFound || 'unknown'}, processed this run: ${processedCount || 'unknown'}, next_skip: ${nextSkip}${stoppedEarly ? ' (stopped early due to timeout)' : ''}`);
 
     return new Response(
       JSON.stringify({
         success: true,
         invoices_processed: invoicesProcessed,
         invoices_failed: invoicesFailed,
-        partial: stoppedEarly,
-        message: stoppedEarly 
-          ? `Procesadas ${invoicesProcessed} facturas. Ejecute de nuevo para continuar con las restantes.`
-          : undefined,
+        partial: stoppedEarly || hasMoreMessages,
+        total_messages_in_range: totalFound,
+        messages_processed_this_run: processedCount,
+        next_skip_count: hasMoreMessages ? nextSkip : undefined,
+        message: (stoppedEarly || hasMoreMessages)
+          ? `Procesadas ${invoicesProcessed} facturas (correos ${currentSkip + 1}-${nextSkip} de ${totalFound || '?'}). Ejecute de nuevo para continuar.`
+          : `Se procesaron ${invoicesProcessed} facturas de ${totalFound || '?'} correos encontrados.`,
         errors: errors.length > 0 ? errors : undefined,
       }),
       {
