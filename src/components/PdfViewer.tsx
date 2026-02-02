@@ -74,6 +74,15 @@ export const PdfViewer = ({
         return;
       }
 
+      // Detectar si es una ruta relativa de storage (no empieza con http)
+      // Formato típico: "{org_id}/pdf/{clave}.pdf"
+      const isStoragePath = !url.startsWith('http') && url.includes('/pdf/') && url.endsWith('.pdf');
+      if (isStoragePath) {
+        console.log('🔑 PdfViewer: Ruta de storage detectada. Cargando desde storage:', url);
+        loadPdfFromStorage(url);
+        return;
+      }
+
       // Si es una URL externa, cargar directamente
       console.log('✅ PdfViewer: Cargando desde URL externa');
       loadPdfFromUrl(url);
