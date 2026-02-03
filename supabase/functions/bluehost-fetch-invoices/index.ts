@@ -562,14 +562,11 @@ serve(async (req) => {
                   });
                 
                 if (!uploadError) {
-                  const { data: urlData } = supabase.storage
-                    .from("company-documents")
-                    .getPublicUrl(pdfPath);
-                  
+                  // Store relative path instead of public URL for private bucket access
                   await supabase
                     .from("processed_documents")
                     .update({ 
-                      pdf_attachment_url: urlData.publicUrl,
+                      pdf_attachment_url: pdfPath,
                       file_path: pdfPath
                     })
                     .eq("id", existing.id);
@@ -601,10 +598,8 @@ serve(async (req) => {
                 });
               
               if (!uploadError) {
-                const { data: urlData } = supabase.storage
-                  .from("company-documents")
-                  .getPublicUrl(pdfPath);
-                pdfUrl = urlData.publicUrl;
+                // Store relative path instead of public URL for private bucket access
+                pdfUrl = pdfPath;
                 console.log(`[Bluehost] ✅ Uploaded PDF: ${pdfPath}`);
               } else {
                 console.error(`[Bluehost] Error uploading PDF:`, uploadError);
