@@ -521,10 +521,8 @@ serve(async (req) => {
                       });
                     
                     if (!uploadError) {
-                      const { data: urlData } = supabase.storage
-                        .from("company-documents")
-                        .getPublicUrl(pdfPath);
-                      pdfUrl = urlData.publicUrl;
+                      // Store relative path instead of public URL for private bucket access
+                      pdfUrl = pdfPath;
                       console.log(`✓ PDF saved: ${pdfPath}`);
                     } else {
                       console.error(`Failed to upload PDF:`, uploadError);
