@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Document, Page, pdfjs } from 'react-pdf';
+import pdfWorkerSrc from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import 'react-pdf/dist/esm/Page/AnnotationLayer.css';
 import 'react-pdf/dist/esm/Page/TextLayer.css';
 import { Button } from '@/components/ui/button';
@@ -7,8 +8,8 @@ import { FileText, Download, ExternalLink, Loader2, RefreshCw, CloudDownload, Ch
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 
-// Configurar el worker de PDF.js
-pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
+// Configurar el worker de PDF.js (local, evita fallos por CDN/CSP)
+pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerSrc;
 
 interface PdfViewerProps {
   url?: string;
@@ -86,6 +87,14 @@ export const PdfViewer = ({
       // Si es una URL externa, cargar directamente
       console.log('✅ PdfViewer: Cargando desde URL externa');
       loadPdfFromUrl(url);
+      return;
+    }
+
+    // Fallback: si no hay url pero sí org+docNumber, intentar path estándar en bucket privado
+    if (!url && organizationId && docNumber) {
+      const guessedPdfPath = `${organizationId}/${docNumber}.pdf`;
+      console.log('🧩 PdfViewer: Sin url. Probando ruta estándar:', guessedPdfPath);
+      loadPdfFromStorage(guessedPdfPath);
       return;
     }
 
@@ -269,6 +278,11 @@ export const PdfViewer = ({
         return;
       }
       loadPdfFromUrl(url);
+      return;
+    }
+
+    if (organizationId && docNumber) {
+      loadPdfFromStorage(`${organizationId}/${docNumber}.pdf`);
       return;
     }
 

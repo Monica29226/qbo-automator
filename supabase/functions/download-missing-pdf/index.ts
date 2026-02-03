@@ -225,15 +225,11 @@ serve(async (req) => {
           throw new Error(`Error al guardar PDF: ${uploadError.message}`);
         }
 
-        // Generar URL pública
-        const { data: urlData } = supabase.storage
-          .from("company-documents")
-          .getPublicUrl(pdfPath);
-        
-        const pdfUrl = urlData.publicUrl;
+        // Guardar ruta RELATIVA (bucket privado)
+        const pdfUrl = pdfPath;
         console.log(`✅ PDF guardado: ${pdfPath}`);
 
-        // Actualizar el documento con la URL del PDF
+        // Actualizar el documento con la ruta del PDF
         if (document_id) {
           const { error: updateError } = await supabase
             .from("processed_documents")
