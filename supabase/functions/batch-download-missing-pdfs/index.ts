@@ -287,14 +287,10 @@ serve(async (req) => {
               continue;
             }
 
-            // Generar URL pública
-            const { data: urlData } = supabase.storage
-              .from("company-documents")
-              .getPublicUrl(pdfPath);
-            
-            const pdfUrl = urlData.publicUrl;
+            // Guardar ruta RELATIVA (bucket privado)
+            const pdfUrl = pdfPath;
 
-            // Actualizar el documento con la URL del PDF
+            // Actualizar el documento con la ruta del PDF
             await supabase
               .from("processed_documents")
               .update({ 
