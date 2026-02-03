@@ -1525,6 +1525,58 @@ Deno.serve(async (req) => {
         }
         
         // =============================================================
+        // STEP 2.5: VALIDATE HACIENDA ACCEPTANCE STATUS
+        // Only publish invoices with EstadoMensaje = "1" (Aceptado)
+        // This reads the Hacienda response XML field
+        // =============================================================
+        const estadoMensaje = xmlData.EstadoMensaje || 
+                              xmlData.estadoMensaje || 
+                              xmlData.estado_mensaje ||
+                              xmlData.respuesta_hacienda?.EstadoMensaje ||
+                              xmlData.respuesta_hacienda?.estadoMensaje ||
+                              xmlData.MensajeHacienda?.EstadoMensaje ||
+                              xmlData.mensaje_hacienda?.estado_mensaje ||
+                              xmlData.hacienda?.estado ||
+                              null;
+        
+        // Also check string representations
+        const estadoMensajeStr = String(estadoMensaje || '').toLowerCase();
+        const isAceptado = estadoMensaje === '1' || 
+                           estadoMensaje === 1 || 
+                           estadoMensajeStr === 'aceptado' ||
+                           estadoMensajeStr === 'accepted' ||
+                           estadoMensajeStr === '1';
+        
+        // If EstadoMensaje is present and is NOT "Aceptado", block the document
+        if (estadoMensaje !== null && estadoMensaje !== undefined && !isAceptado) {
+          const estadoStr = estadoMensaje === '2' || estadoMensaje === 2 ? 'Aceptado Parcialmente' :
+                            estadoMensaje === '3' || estadoMensaje === 3 ? 'Rechazado' : 
+                            `Estado: ${estadoMensaje}`;
+          
+          const errorMsg = `Factura no aceptada por Hacienda (${estadoStr})`;
+          logInfo(`🚫 ${doc.doc_number}: ${errorMsg}`);
+          
+          await registerInTracking(doc, 'blocked_hacienda', null, null, errorMsg);
+          
+          await supabase
+            .from("processed_documents")
+            .update({
+              status: "error",
+              error_message: errorMsg,
+            })
+            .eq("id", doc.id);
+          
+          return { success: false, docNumber: doc.doc_number, error: errorMsg };
+        }
+        
+        // If no EstadoMensaje field found, log warning but continue (legacy invoices)
+        if (estadoMensaje === null || estadoMensaje === undefined) {
+          logInfo(`⚠️ ${doc.doc_number}: No se encontró EstadoMensaje en XML - continuando...`);
+        } else {
+          logInfo(`✅ ${doc.doc_number}: Hacienda aceptó la factura (EstadoMensaje: ${estadoMensaje})`);
+        }
+        
+        // =============================================================
         // STEP 3: VALIDATE TOTALS (STRICT)
         // =============================================================
         const totalsValidation = validateTotalsStrict(xmlData, doc.total_amount, isCreditNote);
