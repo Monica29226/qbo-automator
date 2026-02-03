@@ -46,19 +46,21 @@ export const OrganizationSwitcher = () => {
         <DropdownMenuContent align="end" className="w-56">
           <DropdownMenuLabel>Cambiar Empresa</DropdownMenuLabel>
           <DropdownMenuSeparator />
-          {organizations.map((org) => (
-            <DropdownMenuItem
-              key={org.id}
-              onClick={() => switchOrganization(org.id)}
-              className="flex items-center justify-between cursor-pointer"
-            >
-              <div className="flex flex-col">
-                <span className="font-medium">{org.name}</span>
-                <span className="text-xs text-muted-foreground capitalize">{org.role}</span>
-              </div>
-              {org.id === activeOrganization && <Check className="h-4 w-4 text-primary" />}
-            </DropdownMenuItem>
-          ))}
+          {[...organizations]
+            .sort((a, b) => a.name.localeCompare(b.name, 'es', { sensitivity: 'base' }))
+            .map((org) => (
+              <DropdownMenuItem
+                key={org.id}
+                onClick={() => switchOrganization(org.id)}
+                className="flex items-center justify-between cursor-pointer"
+              >
+                <div className="flex flex-col">
+                  <span className="font-medium">{org.name}</span>
+                  <span className="text-xs text-muted-foreground capitalize">{org.role}</span>
+                </div>
+                {org.id === activeOrganization && <Check className="h-4 w-4 text-primary" />}
+              </DropdownMenuItem>
+            ))}
           <DropdownMenuSeparator />
           <DropdownMenuItem
             onClick={() => setIsDialogOpen(true)}
