@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { supabase } from "@/integrations/supabase/client";
 import { Calendar, CheckCircle2, XCircle, Clock, TrendingUp } from "lucide-react";
@@ -21,6 +21,10 @@ export const TodayProcessingReport = () => {
   });
   const [loading, setLoading] = useState(true);
   const [organizationId, setOrganizationId] = useState<string | null>(null);
+  
+  // Debounce ref to prevent excessive refetches
+  const debounceRef = useRef<NodeJS.Timeout | null>(null);
+  const lastFetchRef = useRef<number>(0);
 
   const fetchTodayStats = useCallback(async () => {
     try {
@@ -63,11 +67,27 @@ export const TodayProcessingReport = () => {
     }
   }, []);
 
+  // Debounced fetch function to prevent excessive refetches
+  const debouncedFetch = useCallback(() => {
+    const now = Date.now();
+    // Minimum 5 seconds between fetches for stats
+    if (now - lastFetchRef.current < 5000) {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      debounceRef.current = setTimeout(() => {
+        lastFetchRef.current = Date.now();
+        fetchTodayStats();
+      }, 5000);
+      return;
+    }
+    lastFetchRef.current = now;
+    fetchTodayStats();
+  }, [fetchTodayStats]);
+
   useEffect(() => {
     fetchTodayStats();
   }, [fetchTodayStats]);
 
-  // Suscripción realtime para actualizar cuando cambien documentos
+  // Suscripción realtime con filtro y debounce
   useEffect(() => {
     if (!organizationId) return;
 
@@ -82,16 +102,17 @@ export const TodayProcessingReport = () => {
           filter: `organization_id=eq.${organizationId}`
         },
         () => {
-          console.log('📊 TodayReport: documento actualizado, refrescando...');
-          fetchTodayStats();
+          // Use debounced fetch to prevent cascade
+          debouncedFetch();
         }
       )
       .subscribe();
 
     return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
       supabase.removeChannel(channel);
     };
-  }, [organizationId, fetchTodayStats]);
+  }, [organizationId, debouncedFetch]);
 
 
   const formatCurrency = (amount: number) => {

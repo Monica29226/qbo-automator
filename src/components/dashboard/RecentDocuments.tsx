@@ -1,7 +1,7 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { FileText, ExternalLink, Loader2, AlertCircle, Star } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useAuth } from "@/hooks/useAuth";
@@ -59,6 +59,10 @@ export const RecentDocuments = () => {
   const [qboAccounts, setQboAccounts] = useState<QBOAccount[]>([]);
   const [loadingAccounts, setLoadingAccounts] = useState(false);
   const [vendorDefaults, setVendorDefaults] = useState<Map<string, VendorDefault>>(new Map());
+  
+  // Debounce ref to prevent excessive refetches
+  const debounceRef = useRef<NodeJS.Timeout | null>(null);
+  const lastFetchRef = useRef<number>(0);
 
   const fetchVendorDefaults = async () => {
     if (!activeOrganization) return;
@@ -119,33 +123,51 @@ export const RecentDocuments = () => {
     }
   };
 
+  // Debounced fetch function to prevent excessive refetches
+  const debouncedFetch = useCallback(() => {
+    const now = Date.now();
+    // Minimum 3 seconds between fetches
+    if (now - lastFetchRef.current < 3000) {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      debounceRef.current = setTimeout(() => {
+        lastFetchRef.current = Date.now();
+        fetchDocuments();
+      }, 3000);
+      return;
+    }
+    lastFetchRef.current = now;
+    fetchDocuments();
+  }, [activeOrganization]);
+
   useEffect(() => {
     if (!activeOrganization) return;
     fetchVendorDefaults();
     fetchQBOAccounts();
     fetchDocuments();
 
-    // Subscribe to real-time updates
+    // Subscribe to real-time updates WITH organization filter
     const channel = supabase
-      .channel('processed_documents_changes')
+      .channel(`recent-docs-${activeOrganization}`)
       .on(
         'postgres_changes',
         {
           event: '*',
           schema: 'public',
-          table: 'processed_documents'
+          table: 'processed_documents',
+          filter: `organization_id=eq.${activeOrganization}`
         },
         () => {
-          console.log('Document updated, refetching...');
-          fetchDocuments();
+          // Use debounced fetch to prevent cascade
+          debouncedFetch();
         }
       )
       .subscribe();
 
     return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
       supabase.removeChannel(channel);
     };
-  }, [activeOrganization]);
+  }, [activeOrganization, debouncedFetch]);
 
   const fetchDocuments = async () => {
     if (!activeOrganization) {
