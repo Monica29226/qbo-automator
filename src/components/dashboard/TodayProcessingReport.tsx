@@ -41,19 +41,23 @@ export const TodayProcessingReport = () => {
 
       setOrganizationId(activeOrg.organization_id);
 
-      const today = format(new Date(), "yyyy-MM-dd");
+      // Use timezone-aware date range for Costa Rica (UTC-6)
+      const now = new Date();
+      const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
+      const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
 
       const { data: documents } = await supabase
         .from("processed_documents")
-        .select("status, total_amount")
+        .select("status, total_amount, qbo_entity_id")
         .eq("organization_id", activeOrg.organization_id)
-        .gte("created_at", `${today}T00:00:00`)
-        .lte("created_at", `${today}T23:59:59`);
+        .gte("created_at", todayStart.toISOString())
+        .lte("created_at", todayEnd.toISOString());
 
       if (documents) {
-        const published = documents.filter(d => d.status === "published").length;
+        // Count "published" and "processed" with qbo_entity_id as successfully published
+        const published = documents.filter(d => d.status === "published" || (d.status === "processed" && d.qbo_entity_id)).length;
         const errors = documents.filter(d => d.status === "error").length;
-        const pending = documents.filter(d => d.status === "pending").length;
+        const pending = documents.filter(d => d.status === "pending" || d.status === "review" || (d.status === "processed" && !d.qbo_entity_id)).length;
         const total_amount = documents
           .filter(d => d.status === "published")
           .reduce((sum, d) => sum + Math.abs(d.total_amount), 0);
