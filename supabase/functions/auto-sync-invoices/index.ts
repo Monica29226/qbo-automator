@@ -19,8 +19,25 @@ serve(async (req) => {
 
     console.log("Starting automatic invoice sync...");
 
-    // Verificar si el cron está pausado (solo para triggers automáticos)
+    // Parse trigger
     const { trigger = "cron" } = await req.json().catch(() => ({ trigger: "cron" }));
+
+    // Auto-clean sync_logs stuck in "running" for more than 30 minutes
+    const thirtyMinAgo = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+    const { data: stuckLogs } = await supabase
+      .from("sync_logs")
+      .update({
+        status: "error",
+        error_message: "Auto-cleanup: sync stuck in running for >30min",
+        completed_at: new Date().toISOString(),
+      })
+      .eq("status", "running")
+      .lt("created_at", thirtyMinAgo)
+      .select("id");
+    
+    if (stuckLogs && stuckLogs.length > 0) {
+      console.log(`🧹 Cleaned ${stuckLogs.length} stuck sync logs`);
+    }
     
     if (trigger === "cron") {
       const { data: cronSettings } = await supabase
