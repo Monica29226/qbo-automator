@@ -62,15 +62,15 @@ serve(async (req) => {
     // Obtener todas las organizaciones activas con correo (Gmail, Outlook O Bluehost) y QuickBooks conectados
     const { data: orgs } = await supabase
       .from("organizations")
-      .select("id, name, gmail_connected, outlook_connected, bluehost_connected")
+      .select("id, name, gmail_connected, outlook_connected, bluehost_connected, hostinger_connected")
       .eq("quickbooks_connected", true)
       .eq("is_active", true);
 
-    // Filtrar orgs que tengan al menos Gmail, Outlook o Bluehost conectado
-    const validOrgs = orgs?.filter(org => org.gmail_connected || org.outlook_connected || org.bluehost_connected) || [];
+    // Filtrar orgs que tengan al menos Gmail, Outlook, Bluehost o Hostinger conectado
+    const validOrgs = orgs?.filter(org => org.gmail_connected || org.outlook_connected || org.bluehost_connected || org.hostinger_connected) || [];
 
     if (validOrgs.length === 0) {
-      console.log("No organizations with email (Gmail/Outlook/Bluehost) and QuickBooks connected");
+      console.log("No organizations with email (Gmail/Outlook/Bluehost/Hostinger) and QuickBooks connected");
       return new Response(
         JSON.stringify({ message: "No organizations to sync" }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -80,7 +80,8 @@ serve(async (req) => {
     const gmailCount = validOrgs.filter(o => o.gmail_connected).length;
     const outlookCount = validOrgs.filter(o => o.outlook_connected).length;
     const bluehostCount = validOrgs.filter(o => o.bluehost_connected && !o.gmail_connected && !o.outlook_connected).length;
-    console.log(`Found ${validOrgs.length} organizations to sync (Gmail: ${gmailCount}, Outlook: ${outlookCount}, Bluehost: ${bluehostCount})`);
+    const hostingerCount = validOrgs.filter(o => o.hostinger_connected && !o.gmail_connected && !o.outlook_connected && !o.bluehost_connected).length;
+    console.log(`Found ${validOrgs.length} organizations to sync (Gmail: ${gmailCount}, Outlook: ${outlookCount}, Bluehost: ${bluehostCount}, Hostinger: ${hostingerCount})`);
     
     const orgsToProcess = validOrgs;
 
@@ -116,6 +117,9 @@ serve(async (req) => {
         } else if (org.bluehost_connected) {
           mailProvider = "bluehost";
           fetchFunctionName = "bluehost-fetch-invoices";
+        } else if (org.hostinger_connected) {
+          mailProvider = "hostinger";
+          fetchFunctionName = "hostinger-fetch-invoices";
         } else {
           throw new Error("No email provider configured");
         }

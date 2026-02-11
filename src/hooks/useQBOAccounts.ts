@@ -42,10 +42,10 @@ export const useQBOAccounts = () => {
     queryKey: ["qbo-accounts", activeOrganization],
     queryFn: () => fetchQBOAccountsFromAPI(activeOrganization!),
     enabled: !!activeOrganization,
-    staleTime: 10 * 60 * 1000, // 10 minutos - cuentas no cambian frecuentemente
+    staleTime: 5 * 60 * 1000, // 5 minutos - refrescar más seguido para detectar nuevas cuentas
     gcTime: 30 * 60 * 1000, // 30 minutos en cache
-    refetchOnWindowFocus: false, // NO refetch al enfocar ventana
-    refetchOnMount: false, // NO refetch al montar si hay datos en cache
+    refetchOnWindowFocus: true, // Refetch al enfocar ventana para detectar cambios
+    refetchOnMount: "always", // Siempre verificar al montar
     retry: 2,
   });
 
