@@ -148,9 +148,10 @@ export const TodayProcessingReport = () => {
   }
 
   const totalDocuments = stats.published + stats.errors + stats.pending;
-  const successRate = totalDocuments > 0 
-    ? ((stats.published / totalDocuments) * 100).toFixed(1)
-    : "0";
+  const resolvedDocuments = stats.published + stats.errors;
+  const successRate = resolvedDocuments > 0 
+    ? ((stats.published / resolvedDocuments) * 100).toFixed(1)
+    : (stats.pending > 0 ? "—" : "100");
 
   return (
     <Card>
