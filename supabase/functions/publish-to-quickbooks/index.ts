@@ -2141,21 +2141,25 @@ Deno.serve(async (req) => {
           })
           .eq("id", doc.id);
         
-        // Attach PDF to QuickBooks Bill (fire and forget - don't block response)
+        // Attach PDF to QuickBooks Bill - AWAIT to ensure it completes before function terminates
         if (doc.pdf_attachment_url && entityId) {
-          // Fire and forget - don't await, just log result
-          attachPdfToQuickBooks(
-            doc.pdf_attachment_url,
-            entityId,
-            entityType,
-            doc.doc_number,
-            realmId,
-            accessToken,
-            supabase
-          ).catch((err: unknown) => {
+          try {
+            const pdfAttached = await attachPdfToQuickBooks(
+              doc.pdf_attachment_url,
+              entityId,
+              entityType,
+              doc.doc_number,
+              realmId,
+              accessToken,
+              supabase
+            );
+            if (!pdfAttached) {
+              logError(`⚠️ ${doc.doc_number}: PDF attachment failed but bill was created successfully`);
+            }
+          } catch (err: unknown) {
             const errMsg = err instanceof Error ? err.message : String(err);
-            logError(`⚠️ ${doc.doc_number}: PDF attachment failed (non-blocking): ${errMsg}`);
-          });
+            logError(`⚠️ ${doc.doc_number}: PDF attachment error (non-blocking): ${errMsg}`);
+          }
         }
         
         const elapsedTime = Date.now() - startTime;
