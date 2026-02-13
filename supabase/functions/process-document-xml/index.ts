@@ -233,7 +233,7 @@ Deno.serve(async (req) => {
     // Obtener datos de la organización (nombre y cédula jurídica)
     const { data: organization, error: orgError } = await supabase
       .from('organizations')
-      .select('name, tax_id')
+      .select('name, tax_id, identification_number')
       .eq('id', payload.organization_id)
       .single();
     
@@ -268,10 +268,20 @@ Deno.serve(async (req) => {
     const normalizedOrgTaxId = organization.tax_id.replace(/[-\s]/g, '').trim();
     const normalizedReceptorId = receptor.identificacion.replace(/[-\s]/g, '').trim();
     
-    if (normalizedReceptorId && normalizedReceptorId !== normalizedOrgTaxId) {
+    // También verificar identification_number como cédula alternativa
+    const normalizedAltId = organization.identification_number 
+      ? organization.identification_number.replace(/[-\s]/g, '').trim() 
+      : null;
+    
+    const receptorMatches = normalizedReceptorId && (
+      normalizedReceptorId === normalizedOrgTaxId || 
+      (normalizedAltId && normalizedReceptorId === normalizedAltId)
+    );
+    
+    if (normalizedReceptorId && !receptorMatches) {
       console.warn(`⚠️ FACTURA RECHAZADA - Receptor no coincide con la organización`);
       console.warn(`   Receptor: ${receptor.nombre} (${receptor.identificacion})`);
-      console.warn(`   Esperado: ${organization.name} (${organization.tax_id})`);
+      console.warn(`   Esperado: ${organization.name} (${organization.tax_id}${normalizedAltId ? ` / ${organization.identification_number}` : ''})`);
       
       return new Response(
         JSON.stringify({
