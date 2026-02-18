@@ -112,8 +112,8 @@ async function fetchEmailsViaIMAP(
     const messageIds = searchLine.replace("* SEARCH ", "").trim().split(" ").map(Number).filter(n => n > 0);
     console.log(`[IMAP] Found ${messageIds.length} messages`);
 
-    // Limitar a últimos 50 mensajes para evitar timeouts
-    const messagesToFetch = messageIds.slice(-50);
+    // Limitar a últimos 200 mensajes para cubrir más histórico
+    const messagesToFetch = messageIds.slice(-200);
     console.log(`[IMAP] Fetching last ${messagesToFetch.length} messages`);
 
     // Fetch cada mensaje
