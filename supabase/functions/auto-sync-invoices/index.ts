@@ -214,13 +214,27 @@ async function processOrganization(
     
     console.log(`📧 ${mailProvider.toUpperCase()} sync for ${org.name}: ${emailData.invoices_processed} processed, ${invoicesSkipped} skipped, ${realFailures} failed${wasPartial ? ' (PARTIAL)' : ''}`);
 
-    // Publish to QuickBooks if new invoices were processed
+    // Publish to QuickBooks: ALWAYS run, not just when new invoices arrive.
+    // This ensures invoices already in 'processed' state (but never published) get picked up.
     let qboPublished = 0;
     let qboFailed = 0;
 
-    if (emailData.invoices_processed > 0) {
-      console.log(`Publishing to QuickBooks for ${org.name}...`);
-      await new Promise(resolve => setTimeout(resolve, 2000));
+    // Check if there are any pending/processed documents waiting to be published
+    const { count: pendingCount } = await supabase
+      .from("processed_documents")
+      .select("id", { count: "exact", head: true })
+      .eq("organization_id", org.id)
+      .in("status", ["pending", "processed"])
+      .is("qbo_entity_id", null);
+
+    const hasPendingDocs = (pendingCount || 0) > 0;
+    const hasNewInvoices = emailData.invoices_processed > 0;
+
+    if (hasNewInvoices || hasPendingDocs) {
+      console.log(`Publishing to QuickBooks for ${org.name}... (new: ${hasNewInvoices}, pending orphans: ${hasPendingDocs ? pendingCount : 0})`);
+      if (hasNewInvoices) {
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      }
 
       const qboResponse = await fetch(`${supabaseUrl}/functions/v1/publish-to-quickbooks`, {
         method: "POST",
@@ -241,6 +255,8 @@ async function processOrganization(
         console.error(`QuickBooks publish failed for ${org.name}: ${qboError}`);
         qboFailed = 1;
       }
+    } else {
+      console.log(`⏭️ No pending documents for ${org.name}, skipping QB publish`);
     }
 
     // Update sync log
