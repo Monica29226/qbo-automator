@@ -1309,7 +1309,7 @@ Deno.serve(async (req) => {
         if (!createResponse.ok) {
           const errorText = await createResponse.text();
           
-          // Check for duplicate error
+          // Check for duplicate error (vendor already exists)
           try {
             const errorJson = JSON.parse(errorText);
             const qboError = errorJson?.Fault?.Error?.[0];
@@ -1317,6 +1317,41 @@ Deno.serve(async (req) => {
               const idMatch = qboError.Detail?.match(/Id=(\d+)/);
               if (idMatch) {
                 return idMatch[1];
+              }
+            }
+            
+            // Check for name conflict with Customer/Employee (code 6000)
+            // QBO doesn't allow same DisplayName for Vendor and Customer
+            if (qboError?.code === '6000' || qboError?.Detail?.includes('tipo de nombre')) {
+              logInfo(`⚠️ Name conflict for "${vendorDisplayName}" - exists as Customer/Employee. Retrying with suffix...`);
+              const suffixedName = `${vendorDisplayName} (Proveedor)`;
+              const retryResponse = await fetch(
+                `https://quickbooks.api.intuit.com/v3/company/${realmId}/vendor`,
+                {
+                  method: "POST",
+                  headers: {
+                    "Authorization": `Bearer ${accessToken}`,
+                    "Accept": "application/json",
+                    "Content-Type": "application/json",
+                  },
+                  body: JSON.stringify({ ...vendorPayload, DisplayName: suffixedName }),
+                }
+              );
+              if (retryResponse.ok) {
+                const retryData = await retryResponse.json();
+                logInfo(`✅ Vendor created with suffix: ${suffixedName} (ID: ${retryData.Vendor.Id})`);
+                return retryData.Vendor.Id;
+              }
+              // Also try searching if suffixed vendor already exists
+              const searchSuffixed = await fetch(
+                `https://quickbooks.api.intuit.com/v3/company/${realmId}/query?query=${encodeURIComponent(`SELECT * FROM Vendor WHERE DisplayName = '${suffixedName.replace(/'/g, "\\'")}'`)}`,
+                { headers: { "Authorization": `Bearer ${accessToken}`, "Accept": "application/json" } }
+              );
+              if (searchSuffixed.ok) {
+                const searchData = await searchSuffixed.json();
+                if (searchData.QueryResponse?.Vendor?.length > 0) {
+                  return searchData.QueryResponse.Vendor[0].Id;
+                }
               }
             }
           } catch {}
@@ -2064,7 +2099,7 @@ Deno.serve(async (req) => {
           
           // CRITICAL FIX: If QBO returns tax calculation error, retry WITHOUT TxnTaxDetail
           if (!billResponse.ok) {
-            const errorText = await billResponse.text();
+            const errorText = await billResponse.clone().text();
             
             // Check if it's a tax calculation error
             if (errorText.includes('error al calcular el impuesto') || 
@@ -2105,7 +2140,7 @@ Deno.serve(async (req) => {
           }
           
           if (!billResponse.ok) {
-            const errorText = await billResponse.text();
+            const errorText = await billResponse.clone().text();
             await registerInTracking(doc, 'error', null, null, errorText.substring(0, 500));
             await supabase
               .from("processed_documents")
