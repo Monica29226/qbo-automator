@@ -414,9 +414,10 @@ serve(async (req) => {
             return false;
           }
           
-          // 3. Respuesta_MH (Respuesta Mensaje Hacienda)
-          if (filenameLower.includes('respuesta_mh') || filenameLower.includes('respuesta-mh')) {
-            console.log(`⏭️ Ignorando Respuesta MH: ${p.filename}`);
+          // 3. Respuesta_MH (Respuesta Mensaje Hacienda) o cualquier XML que empiece con Respuesta_
+          if (filenameLower.includes('respuesta_mh') || filenameLower.includes('respuesta-mh') ||
+              filename.startsWith('RESPUESTA_') || filenameLower.startsWith('respuesta_')) {
+            console.log(`⏭️ Ignorando Respuesta: ${p.filename}`);
             return false;
           }
           
