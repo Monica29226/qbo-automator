@@ -240,7 +240,15 @@ export const CronMonitor = () => {
     // Extraer el número de facturas con errores si existe
     const match = errorMessage.match(/(\d+) facturas? con errores? reales?/i);
     if (match) {
-      return `${match[1]} requieren configuración`;
+      return `${match[1]} con errores de procesamiento`;
+    }
+    
+    if (errorMessage.includes('Auto-cleanup') || errorMessage.includes('atascado')) {
+      return 'Limpieza manual: sync atascado en run...';
+    }
+    
+    if (errorMessage.includes('parcial') || errorMessage.includes('límite de tiempo')) {
+      return 'Sincronización parcial por tiempo';
     }
     
     if (errorMessage.includes('Account not found')) {
@@ -329,7 +337,7 @@ export const CronMonitor = () => {
               </div>
               <div className="text-xs text-muted-foreground flex items-center justify-center gap-1">
                 <AlertTriangle className="h-3 w-3" />
-                Requieren Atención
+                No Procesables
               </div>
             </div>
             <div className="text-center">
