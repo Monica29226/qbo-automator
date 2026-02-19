@@ -512,8 +512,20 @@ Deno.serve(async (req) => {
           // NUEVO: Buscar en vendor_defaults por nombre de proveedor
           // Esta es la tabla donde se guardan las configuraciones de cuenta
           // ============================================================
-          const normalizedSupplierName = supplier_name.toLowerCase().trim()
-            .normalize("NFD").replace(/[\u0300-\u036f]/g, ""); // Remove accents
+          // Normalización agresiva: quitar acentos, espacios, puntuación, solo alfanuméricos
+          const aggressiveNormalize = (name: string): string => {
+            return name
+              .toLowerCase()
+              .trim()
+              .normalize("NFD")
+              .replace(/[\u0300-\u036f]/g, "") // Remove accents
+              .replace(/&amp;/g, "") // Remove HTML entities
+              .replace(/&/g, "")
+              .replace(/[^a-z0-9]/g, ""); // Only alphanumeric
+          };
+          
+          const normalizedSupplierName = aggressiveNormalize(supplier_name);
+          console.log(`🔍 [VENDOR_DEFAULTS] Buscando por nombre normalizado: "${normalizedSupplierName}" (original: "${supplier_name}")`);
           
           const { data: vendorDefaults, error: vdError } = await supabase
             .from('vendor_defaults')
@@ -523,19 +535,25 @@ Deno.serve(async (req) => {
           if (vdError) {
             console.error("❌ Error buscando vendor_defaults:", vdError);
           } else if (vendorDefaults && vendorDefaults.length > 0) {
-            // Buscar coincidencia por nombre normalizado
+            // Buscar coincidencia por nombre normalizado agresivamente
             const matchedDefault = vendorDefaults.find(vd => {
-              const normalizedVdName = vd.vendor_name.toLowerCase().trim()
-                .normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-              return normalizedVdName === normalizedSupplierName;
+              const normalizedVdName = aggressiveNormalize(vd.vendor_name);
+              const isMatch = normalizedVdName === normalizedSupplierName;
+              if (isMatch) {
+                console.log(`✅ [VENDOR_DEFAULTS] Match encontrado: "${vd.vendor_name}" → "${normalizedVdName}"`);
+              }
+              return isMatch;
             });
             
             if (matchedDefault && matchedDefault.default_account_ref) {
               accountCode = matchedDefault.default_account_ref;
               status = "processed"; // Auto-procesar porque tiene cuenta configurada
-              console.log("✅ [VENDOR_DEFAULTS] Cuenta encontrada:", supplier_name, "→", accountCode);
+              console.log("✅ [VENDOR_DEFAULTS] Cuenta asignada automáticamente:", supplier_name, "→", accountCode);
             } else {
-              console.log("⚠️  No vendor_default encontrado para:", supplier_name);
+              console.log(`⚠️  No vendor_default encontrado para: "${supplier_name}" (normalizado: "${normalizedSupplierName}")`);
+              // Log first 5 vendor_defaults for debugging
+              const sample = vendorDefaults.slice(0, 5).map(vd => `"${vd.vendor_name}" → "${aggressiveNormalize(vd.vendor_name)}"`);
+              console.log(`   Primeros 5 vendor_defaults: ${sample.join(', ')}`);
             }
           }
           
