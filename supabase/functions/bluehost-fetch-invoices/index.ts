@@ -136,16 +136,23 @@ async function fetchEmailsViaIMAP(
           await new Promise(r => setTimeout(r, 50));
         }
 
-        // Verificar si tiene XML o PDF adjunto
+        // Verificar si tiene XML o PDF adjunto - detección amplia
         const lowerStructResp = structResp.toLowerCase();
         const hasXml = lowerStructResp.includes('"xml"') || 
                        lowerStructResp.includes('application/xml') ||
+                       lowerStructResp.includes('text/xml') ||
                        lowerStructResp.includes('.xml');
         const hasPdf = lowerStructResp.includes('"pdf"') ||
                        lowerStructResp.includes('application/pdf') ||
                        lowerStructResp.includes('.pdf');
+        // También detectar octet-stream con nombre de archivo (common para XML/PDF)
+        const hasOctetStream = lowerStructResp.includes('octet-stream') && 
+                               (lowerStructResp.includes('.xml') || lowerStructResp.includes('.pdf'));
+        // Detectar multipart/mixed que podría contener adjuntos
+        const hasAttachments = lowerStructResp.includes('"attachment"') || 
+                               lowerStructResp.includes('disposition');
 
-        if (!hasXml && !hasPdf) {
+        if (!hasXml && !hasPdf && !hasOctetStream && !hasAttachments) {
           continue;
         }
 
@@ -225,153 +232,175 @@ function isHaciendaResponse(filename: string, content: string): boolean {
   return false;
 }
 
-// Función para extraer adjuntos XML de un email raw
+// Función para extraer TODOS los boundaries de un email (incluyendo anidados)
+function findAllBoundaries(content: string): string[] {
+  const boundaries: string[] = [];
+  const regex = /boundary="?([^"\r\n;]+)"?/gi;
+  let match;
+  while ((match = regex.exec(content)) !== null) {
+    boundaries.push(match[1]);
+  }
+  return boundaries;
+}
+
+// Función para extraer adjuntos XML de un email raw (soporta MIME anidado)
 function extractXmlAttachments(rawEmail: string): Array<{ filename: string; content: string }> {
   const attachments: Array<{ filename: string; content: string }> = [];
   
-  // Buscar boundary
-  const boundaryMatch = rawEmail.match(/boundary="?([^"\r\n;]+)"?/i);
-  if (!boundaryMatch) {
+  // Encontrar TODOS los boundaries (incluyendo anidados)
+  const boundaries = findAllBoundaries(rawEmail);
+  if (boundaries.length === 0) {
     return attachments;
   }
 
-  const boundary = boundaryMatch[1];
-  const parts = rawEmail.split("--" + boundary);
+  // Procesar cada boundary encontrado
+  for (const boundary of boundaries) {
+    const parts = rawEmail.split("--" + boundary);
 
-  for (const part of parts) {
-    // Verificar si es un adjunto XML
-    const filenameMatch = part.match(/filename="?([^"\r\n]+\.xml)"?/i);
-    if (!filenameMatch) continue;
+    for (const part of parts) {
+      // Verificar si es un adjunto XML
+      const filenameMatch = part.match(/filename="?([^"\r\n]+\.xml)"?/i);
+      if (!filenameMatch) continue;
 
-    const filename = filenameMatch[1].trim();
+      const filename = filenameMatch[1].trim();
 
-    // Verificar encoding
-    const encodingMatch = part.match(/Content-Transfer-Encoding:\s*(\S+)/i);
-    const encoding = encodingMatch ? encodingMatch[1].toUpperCase() : "7BIT";
+      // Verificar encoding
+      const encodingMatch = part.match(/Content-Transfer-Encoding:\s*(\S+)/i);
+      const encoding = encodingMatch ? encodingMatch[1].toUpperCase() : "7BIT";
 
-    // Extraer contenido (después de línea vacía)
-    const contentStart = part.indexOf("\r\n\r\n");
-    if (contentStart === -1) continue;
+      // Extraer contenido (después de línea vacía)
+      const contentStart = part.indexOf("\r\n\r\n");
+      if (contentStart === -1) continue;
 
-    let content = part.substring(contentStart + 4);
-    
-    // Limpiar el final
-    const endIdx = content.indexOf("--" + boundary);
-    if (endIdx !== -1) {
-      content = content.substring(0, endIdx);
-    }
-    content = content.trim();
-
-    // Decodificar según encoding
-    let decodedContent: string;
-    
-    if (encoding === "BASE64") {
-      try {
-        // Limpiar y decodificar base64
-        const cleanBase64 = content.replace(/[\r\n\s]/g, "");
-        const binaryStr = atob(cleanBase64);
-        // Intentar decodificar como UTF-8
-        const bytes = new Uint8Array(binaryStr.length);
-        for (let i = 0; i < binaryStr.length; i++) {
-          bytes[i] = binaryStr.charCodeAt(i);
+      let content = part.substring(contentStart + 4);
+      
+      // Limpiar el final - remover cualquier boundary posterior
+      for (const b of boundaries) {
+        const endIdx = content.indexOf("--" + b);
+        if (endIdx !== -1) {
+          content = content.substring(0, endIdx);
         }
-        decodedContent = new TextDecoder("utf-8").decode(bytes);
-      } catch (e) {
-        console.error(`[Bluehost] Error decoding base64 for ${filename}:`, e);
+      }
+      content = content.trim();
+
+      // Decodificar según encoding
+      let decodedContent: string;
+      
+      if (encoding === "BASE64") {
+        try {
+          const cleanBase64 = content.replace(/[\r\n\s]/g, "");
+          const binaryStr = atob(cleanBase64);
+          const bytes = new Uint8Array(binaryStr.length);
+          for (let i = 0; i < binaryStr.length; i++) {
+            bytes[i] = binaryStr.charCodeAt(i);
+          }
+          decodedContent = new TextDecoder("utf-8").decode(bytes);
+        } catch (e) {
+          console.error(`[Bluehost] Error decoding base64 for ${filename}:`, e);
+          continue;
+        }
+      } else if (encoding === "QUOTED-PRINTABLE") {
+        decodedContent = content
+          .replace(/=\r?\n/g, "")
+          .replace(/=([0-9A-Fa-f]{2})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
+      } else {
+        decodedContent = content;
+      }
+
+      // Verificar si es una respuesta de Hacienda (no una factura)
+      if (isHaciendaResponse(filename, decodedContent)) {
+        console.log(`[Bluehost] Skipping Hacienda response/message: ${filename}`);
         continue;
       }
-    } else if (encoding === "QUOTED-PRINTABLE") {
-      decodedContent = content
-        .replace(/=\r?\n/g, "")
-        .replace(/=([0-9A-Fa-f]{2})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
-    } else {
-      decodedContent = content;
-    }
 
-    // Verificar si es una respuesta de Hacienda (no una factura)
-    if (isHaciendaResponse(filename, decodedContent)) {
-      console.log(`[Bluehost] Skipping Hacienda response/message: ${filename}`);
-      continue;
-    }
-
-    // Verificar que sea XML válido con Clave (facturas válidas)
-    if (decodedContent.includes("<Clave>")) {
-      console.log(`[Bluehost] ✓ Valid invoice XML found: ${filename}`);
-      attachments.push({ filename, content: decodedContent });
-    } else {
-      console.log(`[Bluehost] Skipping XML without Clave: ${filename}`);
+      // Verificar que sea XML válido con Clave (facturas válidas)
+      if (decodedContent.includes("<Clave>")) {
+        // Evitar duplicados por múltiples boundaries
+        const alreadyAdded = attachments.some(a => a.filename === filename);
+        if (!alreadyAdded) {
+          console.log(`[Bluehost] ✓ Valid invoice XML found: ${filename}`);
+          attachments.push({ filename, content: decodedContent });
+        }
+      } else {
+        console.log(`[Bluehost] Skipping XML without Clave: ${filename}`);
+      }
     }
   }
 
   return attachments;
 }
 
-// Función para extraer adjuntos PDF de un email raw
+// Función para extraer adjuntos PDF de un email raw (soporta MIME anidado)
 function extractPdfAttachments(rawEmail: string): Array<{ filename: string; content: Uint8Array }> {
   const attachments: Array<{ filename: string; content: Uint8Array }> = [];
   
-  // Buscar boundary
-  const boundaryMatch = rawEmail.match(/boundary="?([^"\r\n;]+)"?/i);
-  if (!boundaryMatch) {
+  // Encontrar TODOS los boundaries (incluyendo anidados)
+  const boundaries = findAllBoundaries(rawEmail);
+  if (boundaries.length === 0) {
     return attachments;
   }
 
-  const boundary = boundaryMatch[1];
-  const parts = rawEmail.split("--" + boundary);
+  for (const boundary of boundaries) {
+    const parts = rawEmail.split("--" + boundary);
 
-  for (const part of parts) {
-    // Verificar si es un adjunto PDF
-    const filenameMatch = part.match(/filename="?([^"\r\n]+\.pdf)"?/i);
-    if (!filenameMatch) continue;
+    for (const part of parts) {
+      // Verificar si es un adjunto PDF
+      const filenameMatch = part.match(/filename="?([^"\r\n]+\.pdf)"?/i);
+      if (!filenameMatch) continue;
 
-    const filename = filenameMatch[1].trim();
+      const filename = filenameMatch[1].trim();
+      
+      // Evitar duplicados
+      if (attachments.some(a => a.filename === filename)) continue;
 
-    // Verificar encoding
-    const encodingMatch = part.match(/Content-Transfer-Encoding:\s*(\S+)/i);
-    const encoding = encodingMatch ? encodingMatch[1].toUpperCase() : "7BIT";
+      // Verificar encoding
+      const encodingMatch = part.match(/Content-Transfer-Encoding:\s*(\S+)/i);
+      const encoding = encodingMatch ? encodingMatch[1].toUpperCase() : "7BIT";
 
-    // Extraer contenido (después de línea vacía)
-    const contentStart = part.indexOf("\r\n\r\n");
-    if (contentStart === -1) continue;
+      // Extraer contenido (después de línea vacía)
+      const contentStart = part.indexOf("\r\n\r\n");
+      if (contentStart === -1) continue;
 
-    let content = part.substring(contentStart + 4);
-    
-    // Limpiar el final
-    const endIdx = content.indexOf("--" + boundary);
-    if (endIdx !== -1) {
-      content = content.substring(0, endIdx);
-    }
-    content = content.trim();
-
-    // Decodificar según encoding
-    let decodedContent: Uint8Array;
-    
-    if (encoding === "BASE64") {
-      try {
-        const cleanBase64 = content.replace(/[\r\n\s]/g, "");
-        const binaryStr = atob(cleanBase64);
-        decodedContent = new Uint8Array(binaryStr.length);
-        for (let i = 0; i < binaryStr.length; i++) {
-          decodedContent[i] = binaryStr.charCodeAt(i);
+      let content = part.substring(contentStart + 4);
+      
+      // Limpiar el final - remover cualquier boundary posterior
+      for (const b of boundaries) {
+        const endIdx = content.indexOf("--" + b);
+        if (endIdx !== -1) {
+          content = content.substring(0, endIdx);
         }
-      } catch (e) {
-        console.error(`[Bluehost] Error decoding PDF base64 for ${filename}:`, e);
-        continue;
       }
-    } else {
-      // Para otros encodings, intentar convertir a bytes
-      const encoder = new TextEncoder();
-      decodedContent = encoder.encode(content);
-    }
+      content = content.trim();
 
-    // Verificar que comience con %PDF
-    if (decodedContent.length > 4) {
-      const header = String.fromCharCode(...decodedContent.slice(0, 4));
-      if (header === "%PDF") {
-        console.log(`[Bluehost] ✓ Valid PDF found: ${filename} (${decodedContent.length} bytes)`);
-        attachments.push({ filename, content: decodedContent });
+      // Decodificar según encoding
+      let decodedContent: Uint8Array;
+      
+      if (encoding === "BASE64") {
+        try {
+          const cleanBase64 = content.replace(/[\r\n\s]/g, "");
+          const binaryStr = atob(cleanBase64);
+          decodedContent = new Uint8Array(binaryStr.length);
+          for (let i = 0; i < binaryStr.length; i++) {
+            decodedContent[i] = binaryStr.charCodeAt(i);
+          }
+        } catch (e) {
+          console.error(`[Bluehost] Error decoding PDF base64 for ${filename}:`, e);
+          continue;
+        }
       } else {
-        console.log(`[Bluehost] Skipping invalid PDF (wrong header): ${filename}`);
+        const encoder = new TextEncoder();
+        decodedContent = encoder.encode(content);
+      }
+
+      // Verificar que comience con %PDF
+      if (decodedContent.length > 4) {
+        const header = String.fromCharCode(...decodedContent.slice(0, 4));
+        if (header === "%PDF") {
+          console.log(`[Bluehost] ✓ Valid PDF found: ${filename} (${decodedContent.length} bytes)`);
+          attachments.push({ filename, content: decodedContent });
+        } else {
+          console.log(`[Bluehost] Skipping invalid PDF (wrong header): ${filename}`);
+        }
       }
     }
   }
