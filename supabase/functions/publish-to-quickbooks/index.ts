@@ -1446,10 +1446,40 @@ Deno.serve(async (req) => {
     // HELPER: Get TaxCode
     // =============================================================
     let taxCodesCache: any[] | null = null;
+    let taxRatesCache: Map<string, number> | null = null;
+    
+    // Fetch TaxRates to map TaxCode IDs to their actual rates
+    const loadTaxRatesMap = async () => {
+      if (taxRatesCache) return;
+      taxRatesCache = new Map();
+      try {
+        const query = `SELECT Id, Name, RateValue, AgencyRef FROM TaxRate WHERE Active = true MAXRESULTS 200`;
+        const response = await fetchWithRetry(
+          `https://quickbooks.api.intuit.com/v3/company/${realmId}/query?query=${encodeURIComponent(query)}`,
+          {
+            headers: {
+              "Authorization": `Bearer ${accessToken}`,
+              "Accept": "application/json",
+            },
+          }
+        );
+        if (response.ok) {
+          const data = await response.json();
+          const rates = data.QueryResponse?.TaxRate || [];
+          for (const rate of rates) {
+            taxRatesCache!.set(rate.Id, parseFloat(rate.RateValue) || 0);
+          }
+          logInfo(`📊 TaxRates loaded: ${taxRatesCache!.size} rates`);
+        }
+      } catch (e) {
+        logError('Error loading TaxRates:', e);
+      }
+    };
+    
     const getTaxCodeRef = async (taxRate: number): Promise<string | null> => {
       if (!taxCodesCache) {
         try {
-          const query = `SELECT Id, Name, Description FROM TaxCode WHERE Active = true MAXRESULTS 100`;
+          const query = `SELECT Id, Name, Description, SalesTaxRateList, PurchaseTaxRateList FROM TaxCode WHERE Active = true MAXRESULTS 100`;
           const response = await fetchWithRetry(
             `https://quickbooks.api.intuit.com/v3/company/${realmId}/query?query=${encodeURIComponent(query)}`,
             {
@@ -1463,6 +1493,7 @@ Deno.serve(async (req) => {
           if (response.ok) {
             const data = await response.json();
             taxCodesCache = data.QueryResponse?.TaxCode || [];
+            logInfo(`📊 TaxCodes loaded: ${taxCodesCache!.length} codes: ${taxCodesCache!.map(tc => `${tc.Name}(${tc.Id})`).join(', ')}`);
           } else {
             taxCodesCache = [];
           }
@@ -1471,26 +1502,65 @@ Deno.serve(async (req) => {
         }
       }
       
+      // Also load TaxRates for accurate matching
+      await loadTaxRatesMap();
+      
       const rate = Math.round(taxRate);
       
+      // STEP 1: Match by name containing the rate percentage
       for (const taxCode of taxCodesCache!) {
         const name = (taxCode.Name || "").toLowerCase();
         
         if (rate === 0) {
-          if (name.includes('no vat') || name.includes('exento') || name.includes('out of scope')) {
+          if (name.includes('no vat') || name.includes('exento') || name.includes('out of scope') || name.includes('exempt')) {
             return taxCode.Id;
           }
         } else {
+          // Match exact rate in name: "4%", "(4%)", "IVA 4%"
           if (name.includes(`${rate}%`) || name.includes(`(${rate}%)`)) {
             return taxCode.Id;
           }
         }
       }
       
-      // Return first no-tax code as fallback
+      // STEP 2: Match by actual PurchaseTaxRateList rates (more reliable)
+      if (rate > 0 && taxRatesCache) {
+        for (const taxCode of taxCodesCache!) {
+          const purchaseRates = taxCode.PurchaseTaxRateList?.TaxRateDetail || [];
+          for (const detail of purchaseRates) {
+            const taxRateRef = detail.TaxRateRef?.value;
+            if (taxRateRef && taxRatesCache.has(taxRateRef)) {
+              const actualRate = taxRatesCache.get(taxRateRef)!;
+              if (Math.abs(actualRate - rate) < 0.5) {
+                logInfo(`   📋 TaxCode match by rate: ${taxCode.Name} (rate=${actualRate}%) for requested ${rate}%`);
+                return taxCode.Id;
+              }
+            }
+          }
+        }
+      }
+      
+      // STEP 3: For non-zero rates where we couldn't find a match, 
+      // use any tax code that has a non-zero rate (better than "No VAT")
+      if (rate > 0) {
+        for (const taxCode of taxCodesCache!) {
+          const name = (taxCode.Name || "").toLowerCase();
+          // Skip explicitly zero/exempt codes
+          if (name.includes('no vat') || name.includes('exento') || name.includes('out of scope') || name.includes('exempt') || name.includes('non')) {
+            continue;
+          }
+          // Use any tax code that looks like it has tax
+          if (name.includes('vat') || name.includes('iva') || name.includes('%')) {
+            logInfo(`   ⚠️ No exact TaxCode for ${rate}%, using closest: ${taxCode.Name}`);
+            return taxCode.Id;
+          }
+        }
+      }
+      
+      // STEP 4: Return first no-tax code as final fallback
       for (const taxCode of taxCodesCache!) {
         const name = (taxCode.Name || "").toLowerCase();
-        if (name.includes('no vat') || name.includes('non')) {
+        if (name.includes('no vat') || name.includes('non') || name.includes('exempt')) {
           return taxCode.Id;
         }
       }
@@ -1919,7 +1989,30 @@ Deno.serve(async (req) => {
           };
           
           // Solo aplicar código de impuesto si es IVA recuperable
-          const fallbackTaxCodeId = await getTaxCodeRef(effectiveUsesTax && doc.total_tax > 0 ? 13 : 0);
+          // Use actual tax rate from XML instead of hardcoded 13%
+          const xmlDetalle = xmlData.detalle || xmlData.detalles || xmlData.DetalleServicio || [];
+          const xmlDetalleArr = Array.isArray(xmlDetalle) ? xmlDetalle : [xmlDetalle];
+          let fallbackTaxRate = 0;
+          if (effectiveUsesTax && doc.total_tax > 0) {
+            for (const item of xmlDetalleArr) {
+              const impuestos = item?.impuestos || [];
+              const impArr = Array.isArray(impuestos) ? impuestos : [impuestos];
+              for (const imp of impArr) {
+                if ((!imp.codigo || imp.codigo === '01') && parseFloat(imp.tarifa) > 0) {
+                  fallbackTaxRate = parseFloat(imp.tarifa);
+                  break;
+                }
+              }
+              if (fallbackTaxRate > 0) break;
+              // Also check direct tarifa field
+              if (parseFloat(item?.tarifa) > 0 && (!item?.impuestos || !Array.isArray(item.impuestos))) {
+                fallbackTaxRate = parseFloat(item.tarifa);
+                break;
+              }
+            }
+            if (fallbackTaxRate === 0) fallbackTaxRate = 13; // Final fallback to 13%
+          }
+          const fallbackTaxCodeId = await getTaxCodeRef(fallbackTaxRate);
           if (fallbackTaxCodeId) {
             fallbackLine.AccountBasedExpenseLineDetail.TaxCodeRef = { value: fallbackTaxCodeId };
           }
