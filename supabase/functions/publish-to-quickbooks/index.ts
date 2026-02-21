@@ -2141,12 +2141,62 @@ Deno.serve(async (req) => {
           
           if (!billResponse.ok) {
             const errorText = await billResponse.clone().text();
-            await registerInTracking(doc, 'error', null, null, errorText.substring(0, 500));
-            await supabase
-              .from("processed_documents")
-              .update({ status: "error", error_message: `QBO Bill Error: ${errorText.substring(0, 500)}` })
-              .eq("id", doc.id);
-            return { success: false, docNumber: doc.doc_number, error: errorText.substring(0, 200) };
+            
+            // Check for Vendor/Customer name conflict at Bill level
+            if (errorText.includes('tipo de nombre') || errorText.includes('name type')) {
+              logInfo(`⚠️ ${doc.doc_number}: Name conflict at Bill level. Recreating vendor with suffix...`);
+              
+              // Try creating/finding vendor with " (Proveedor)" suffix
+              const suffixedName = `${doc.supplier_name} (Proveedor)`.substring(0, 100);
+              try {
+                const newVendorId = await findOrCreateVendor(doc.supplier_name + ' (Proveedor)', doc.supplier_tax_id || '', documentCurrency);
+                if (newVendorId) {
+                  billPayload.VendorRef = { value: newVendorId };
+                  await delay(1000);
+                  const retryBillResponse = await fetchWithRetry(
+                    `https://quickbooks.api.intuit.com/v3/company/${realmId}/bill`,
+                    {
+                      method: "POST",
+                      headers: {
+                        "Authorization": `Bearer ${accessToken}`,
+                        "Accept": "application/json",
+                        "Content-Type": "application/json",
+                      },
+                      body: JSON.stringify(billPayload),
+                    }
+                  );
+                  if (retryBillResponse.ok) {
+                    const retryData = await retryBillResponse.json();
+                    entityId = retryData.Bill.Id;
+                    entityType = "Bill";
+                    logInfo(`✅ ${doc.doc_number}: Bill created with suffixed vendor (ID: ${entityId})`);
+                  } else {
+                    const retryError = await retryBillResponse.text();
+                    await registerInTracking(doc, 'error', null, null, retryError.substring(0, 500));
+                    await supabase
+                      .from("processed_documents")
+                      .update({ status: "error", error_message: `QBO Bill Error (retry): ${retryError.substring(0, 500)}` })
+                      .eq("id", doc.id);
+                    return { success: false, docNumber: doc.doc_number, error: retryError.substring(0, 200) };
+                  }
+                }
+              } catch (retryErr: any) {
+                logInfo(`❌ ${doc.doc_number}: Suffix retry also failed: ${retryErr.message}`);
+                await registerInTracking(doc, 'error', null, null, errorText.substring(0, 500));
+                await supabase
+                  .from("processed_documents")
+                  .update({ status: "error", error_message: `QBO Bill Error: ${errorText.substring(0, 500)}` })
+                  .eq("id", doc.id);
+                return { success: false, docNumber: doc.doc_number, error: errorText.substring(0, 200) };
+              }
+            } else {
+              await registerInTracking(doc, 'error', null, null, errorText.substring(0, 500));
+              await supabase
+                .from("processed_documents")
+                .update({ status: "error", error_message: `QBO Bill Error: ${errorText.substring(0, 500)}` })
+                .eq("id", doc.id);
+              return { success: false, docNumber: doc.doc_number, error: errorText.substring(0, 200) };
+            }
           }
           
           const billData = await billResponse.json();
