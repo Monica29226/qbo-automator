@@ -216,6 +216,8 @@ Deno.serve(async (req) => {
 
     if (doc.currency === 'USD') {
       billPayload.CurrencyRef = { value: "USD" };
+      const exchangeRate = doc.exchange_rate || (doc.xml_data as any)?.resumen_factura?.tipoCambio || 1;
+      if (exchangeRate > 1) billPayload.ExchangeRate = parseFloat(String(exchangeRate));
     }
 
     console.log(`📤 Creating ${isCreditNote ? 'VendorCredit' : 'Bill'} with amount: ${totalAmount}`);
