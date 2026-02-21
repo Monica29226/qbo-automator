@@ -26,6 +26,7 @@ import {
 } from "@/components/ui/dialog";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
@@ -73,17 +74,36 @@ interface LogEntry {
 export function BatchImportInvoices() {
   const [open, setOpen] = useState(false);
   const [invoiceNumbers, setInvoiceNumbers] = useState("");
-  const [autoPublish, setAutoPublish] = useState(false); // DISABLED by default - QB publishing blocks import
+  const [autoPublish, setAutoPublish] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [progress, setProgress] = useState(0);
   const [importStatuses, setImportStatuses] = useState<ImportStatus[]>([]);
   const [hasSavedProgress, setHasSavedProgress] = useState(false);
   const [liveLog, setLiveLog] = useState<LogEntry[]>([]);
   const [showLog, setShowLog] = useState(true);
+  const [selectedMonth, setSelectedMonth] = useState<string>("");
+  const [selectedYear, setSelectedYear] = useState<string>("");
   const { toast } = useToast();
   const { activeOrganization } = useAuth();
   const abortRef = useRef(false);
   const logScrollRef = useRef<HTMLDivElement>(null);
+
+  const currentYear = new Date().getFullYear();
+  const years = Array.from({ length: 3 }, (_, i) => currentYear - i);
+  const monthOptions = [
+    { value: "1", label: "Enero" },
+    { value: "2", label: "Febrero" },
+    { value: "3", label: "Marzo" },
+    { value: "4", label: "Abril" },
+    { value: "5", label: "Mayo" },
+    { value: "6", label: "Junio" },
+    { value: "7", label: "Julio" },
+    { value: "8", label: "Agosto" },
+    { value: "9", label: "Septiembre" },
+    { value: "10", label: "Octubre" },
+    { value: "11", label: "Noviembre" },
+    { value: "12", label: "Diciembre" },
+  ];
 
   // Auto-scroll log
   useEffect(() => {
@@ -217,14 +237,18 @@ export function BatchImportInvoices() {
       });
 
       console.log(`[BatchImport] Invoking edge function for ${invoiceLine.invoiceNumber}...`);
-      const invokePromise = supabase.functions.invoke("search-import-invoice", {
-        body: {
+      const invokeBody: any = {
           organization_id: orgId,
           invoice_number: invoiceLine.invoiceNumber,
           expected_vendor: invoiceLine.vendorName,
           auto_publish: autoPub,
-          validate_november_2025: true,
-        },
+        };
+      if (selectedMonth && selectedYear) {
+        invokeBody.filter_month = parseInt(selectedMonth);
+        invokeBody.filter_year = parseInt(selectedYear);
+      }
+      const invokePromise = supabase.functions.invoke("search-import-invoice", {
+        body: invokeBody,
       });
 
       const { data, error } = await Promise.race([invokePromise, timeoutPromise]);
@@ -693,8 +717,38 @@ export function BatchImportInvoices() {
 
           {!isProcessing && importStatuses.length === 0 && !hasSavedProgress && (
             <>
+              {/* Selector de mes/año */}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <Label>Año (opcional)</Label>
+                  <Select value={selectedYear} onValueChange={(v) => { setSelectedYear(v); if (!v) setSelectedMonth(""); }}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Todos" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {years.map((y) => (
+                        <SelectItem key={y} value={y.toString()}>{y}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1">
+                  <Label>Mes (opcional)</Label>
+                  <Select value={selectedMonth} onValueChange={setSelectedMonth} disabled={!selectedYear}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Todos" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {monthOptions.map((m) => (
+                        <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
               <div className="space-y-2">
-                <Label htmlFor="invoice-numbers">Facturas Nov 2025 (Proveedor | Número)</Label>
+                <Label htmlFor="invoice-numbers">Facturas (Proveedor | Número)</Label>
                 <Textarea
                   id="invoice-numbers"
                   placeholder="PETROLEOS DELTA COSTA RICA, S.A.	05800104010005503&#10;1-130-671556 SRL	00100001010000101223&#10;AMERICAN DATA NETWORKS S.A.	00100001041026182&#10;..."
@@ -704,7 +758,8 @@ export function BatchImportInvoices() {
                   className="font-mono text-xs"
                 />
                 <p className="text-xs text-muted-foreground">
-                  {parsedLines.length} facturas detectadas - Solo Nov 2025
+                  {parsedLines.length} facturas detectadas
+                  {selectedMonth && selectedYear ? ` - Filtro: ${monthOptions.find(m => m.value === selectedMonth)?.label} ${selectedYear}` : " - Sin filtro de fecha"}
                 </p>
               </div>
 
