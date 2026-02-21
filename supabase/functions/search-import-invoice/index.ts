@@ -438,88 +438,200 @@ serve(async (req) => {
         );
       }
 
-      // Not found in DB - trigger a sync for this provider, then check again
-      log(`📥 No encontrada en DB, ejecutando sync de ${emailProvider}...`);
+      // Not found in DB - do a targeted IMAP search for this specific invoice
+      log(`📥 No encontrada en DB, buscando directamente en ${emailProvider} vía IMAP...`);
       
-      const fetchFunctionName = emailProvider === "bluehost" ? "bluehost-fetch-invoices" 
-        : emailProvider === "outlook" ? "outlook-fetch-invoices"
-        : emailProvider === "hostinger" ? "hostinger-fetch-invoices"
-        : null;
+      const credentials = emailAccount.credentials as any;
+      if (!credentials?.email || !credentials?.password) {
+        throw new Error(`Credenciales de ${emailProvider} incompletas`);
+      }
 
-      if (fetchFunctionName) {
-        try {
-          checkTimeout();
-          const syncResp = await fetchWithTimeout(
-            `${supabaseUrl}/functions/v1/${fetchFunctionName}`,
-            {
-              method: "POST",
-              headers: {
-                Authorization: `Bearer ${supabaseKey}`,
-                "Content-Type": "application/json",
-              },
-              body: JSON.stringify({ organization_id }),
-            },
-            25000 // 25s timeout for email sync
-          );
-          
-          const syncResult = await syncResp.json().catch(() => ({}));
-          log(`📧 Sync ${emailProvider} result: ${JSON.stringify(syncResult).substring(0, 200)}`);
-        } catch (e: any) {
-          log(`⚠️ Sync ${emailProvider} error: ${e.message}`);
+      const imapHost = credentials.imap_host || 
+        (emailProvider === "bluehost" ? "mail.bluehost.com" : 
+         emailProvider === "hostinger" ? "imap.hostinger.com" : 
+         emailProvider === "outlook" ? "outlook.office365.com" : "localhost");
+      const imapPort = credentials.imap_port || 993;
+
+      log(`📧 IMAP connect: ${imapHost}:${imapPort} as ${credentials.email}`);
+
+      try {
+        const conn = await Deno.connectTls({ hostname: imapHost, port: imapPort });
+        const encoder = new TextEncoder();
+        const decoder = new TextDecoder();
+        const buf = new Uint8Array(65536);
+
+        const readResp = async (): Promise<string> => {
+          let resp = "";
+          let attempts = 0;
+          while (attempts < 50) {
+            const n = await conn.read(buf);
+            if (n === null) break;
+            resp += decoder.decode(buf.subarray(0, n));
+            if (resp.includes("\r\n") && (resp.includes("OK") || resp.includes("NO") || resp.includes("BAD"))) {
+              if (resp.endsWith("\r\n")) break;
+            }
+            attempts++;
+            await new Promise(r => setTimeout(r, 100));
+          }
+          return resp;
+        };
+
+        let tagN = 1;
+        const cmd = async (command: string): Promise<string> => {
+          const tag = `T${tagN++}`;
+          await conn.write(encoder.encode(`${tag} ${command}\r\n`));
+          let resp = "";
+          let attempts = 0;
+          while (attempts < 100) {
+            const n = await conn.read(buf);
+            if (n === null) break;
+            resp += decoder.decode(buf.subarray(0, n));
+            if (resp.includes(`${tag} OK`) || resp.includes(`${tag} NO`) || resp.includes(`${tag} BAD`)) break;
+            attempts++;
+            await new Promise(r => setTimeout(r, 100));
+          }
+          return resp;
+        };
+
+        const greeting = await readResp();
+        if (!greeting.includes("OK")) {
+          conn.close();
+          throw new Error("IMAP greeting failed");
         }
 
-        // Check again after sync
-        const { data: afterSyncDocs } = await supabase
-          .from("processed_documents")
-          .select("id, doc_key, doc_number, supplier_name, supplier_tax_id, status, qbo_entity_id, default_account_ref, issue_date, total_amount, currency")
-          .eq("organization_id", organization_id)
-          .or(`doc_number.ilike.%${invoice_number}%,doc_key.ilike.%${invoice_number}%`);
+        const loginResp = await cmd(`LOGIN "${credentials.email}" "${credentials.password}"`);
+        if (!loginResp.includes("OK")) {
+          conn.close();
+          throw new Error("IMAP login failed");
+        }
 
-        if (afterSyncDocs && afterSyncDocs.length > 0) {
-          const doc = afterSyncDocs[0];
-          log(`✅ Encontrada después de sync: ${doc.doc_number} de ${doc.supplier_name}`);
+        // Select INBOX
+        await cmd('SELECT "INBOX"');
+
+        // Targeted IMAP search for this specific invoice number
+        checkTimeout();
+        const searchResp = await cmd(`SEARCH TEXT "${invoice_number}"`);
+        log(`🔍 IMAP SEARCH result: ${searchResp.substring(0, 200)}`);
+
+        const searchLine = searchResp.split("\r\n").find(l => l.startsWith("* SEARCH"));
+        const msgIds = searchLine && searchLine.trim() !== "* SEARCH" 
+          ? searchLine.replace("* SEARCH ", "").trim().split(" ").map(Number).filter(n => n > 0)
+          : [];
+        
+        log(`📬 IMAP found ${msgIds.length} messages matching invoice`);
+
+        let xmlContent = "";
+        let pdfBase64 = "";
+        let pdfFilename = "";
+
+        // Only fetch the last few matches (most recent)
+        for (const msgId of msgIds.slice(-3)) {
+          checkTimeout();
           
-          // Auto-publish if configured
-          if (auto_publish && doc.default_account_ref && !doc.qbo_entity_id) {
-            await supabase
-              .from("processed_documents")
-              .update({ status: "pending" })
-              .eq("id", doc.id);
-            
-            fetch(`${supabaseUrl}/functions/v1/publish-to-quickbooks`, {
-              method: "POST",
-              headers: {
-                Authorization: `Bearer ${supabaseKey}`,
-                "Content-Type": "application/json",
-              },
-              body: JSON.stringify({ organization_id, document_ids: [doc.id] }),
-            }).catch(e => log(`⚠️ QB publish error: ${e}`));
+          await conn.write(encoder.encode(`F${msgId} FETCH ${msgId} BODY[]\r\n`));
+          let emailContent = "";
+          let fetchAttempts = 0;
+          const maxTime = Date.now() + 15000;
+          
+          while (Date.now() < maxTime && fetchAttempts < 300) {
+            const n = await conn.read(buf);
+            if (n === null) break;
+            emailContent += decoder.decode(buf.subarray(0, n));
+            if (emailContent.includes(`F${msgId} OK`)) break;
+            if (emailContent.includes(`F${msgId} NO`) || emailContent.includes(`F${msgId} BAD`)) break;
+            fetchAttempts++;
           }
 
+          if (!emailContent) continue;
+
+          // Extract base64 parts - look for XML and PDF attachments
+          const boundaryMatch = emailContent.match(/boundary="([^"]+)"/i) || emailContent.match(/boundary=([^\s;]+)/i);
+          if (!boundaryMatch) continue;
+          const boundary = boundaryMatch[1];
+          const parts = emailContent.split(new RegExp(`--${boundary.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+
+          for (const part of parts) {
+            const filenameMatch = part.match(/filename="?([^"\r\n;]+)"?/i);
+            if (!filenameMatch) continue;
+            const fname = filenameMatch[1].trim();
+            
+            // Get the base64 content after the double newline
+            const contentStart = part.indexOf("\r\n\r\n");
+            if (contentStart < 0) continue;
+            const b64 = part.substring(contentStart + 4).replace(/[\r\n\s]/g, "").replace(/--$/, "");
+
+            if (fname.toLowerCase().endsWith(".xml") && !fname.toLowerCase().includes("ahc-") && !fname.toLowerCase().includes("mensaje")) {
+              try {
+                const decoded = atob(b64);
+                // Check if it's an invoice XML
+                if (decoded.includes("<FacturaElectronica") || decoded.includes("<NotaCreditoElectronica") || 
+                    decoded.includes("<NotaDebitoElectronica") || decoded.includes("<TiqueteElectronico") ||
+                    decoded.includes("<Emisor>")) {
+                  
+                  const docNum = parseNumeroConsecutivo(decoded);
+                  if (docNum === invoice_number || docNum.includes(invoice_number) || invoice_number.includes(docNum)) {
+                    xmlContent = decoded;
+                    log(`✅ XML match found: ${fname} (docNum: ${docNum})`);
+                  }
+                }
+              } catch (e) {
+                log(`⚠️ Failed to decode XML ${fname}: ${e}`);
+              }
+            } else if (fname.toLowerCase().endsWith(".pdf") && !pdfBase64) {
+              pdfBase64 = b64;
+              pdfFilename = fname;
+            }
+          }
+
+          if (xmlContent) break; // Found it, stop searching
+        }
+
+        // Logout and close
+        try { await cmd("LOGOUT"); } catch {}
+        try { conn.close(); } catch {}
+
+        if (xmlContent) {
+          log(`✅ Found XML via IMAP, processing...`);
+          // We found the XML! Set it as foundMessage so the rest of the function processes it
+          foundMessage = { id: `imap-${emailProvider}-${Date.now()}`, xmlContent };
+          
+          // If we also found a PDF, save it to storage
+          if (pdfBase64 && pdfFilename) {
+            try {
+              const pdfBytes = Uint8Array.from(atob(pdfBase64), c => c.charCodeAt(0));
+              const pdfPath = `${organization_id}/${pdfFilename}`;
+              await supabase.storage.from("company-documents").upload(pdfPath, pdfBytes, {
+                contentType: "application/pdf",
+                upsert: true,
+              });
+              const { data: urlData } = supabase.storage.from("company-documents").getPublicUrl(pdfPath);
+              foundPdfPart = { savedUrl: urlData?.publicUrl, filename: pdfFilename };
+              log(`📄 PDF saved: ${pdfFilename}`);
+            } catch (e) {
+              log(`⚠️ PDF save error: ${e}`);
+            }
+          }
+        } else {
           return new Response(
             JSON.stringify({
-              success: true,
-              message: doc.default_account_ref 
-                ? `Importada desde ${emailProvider} → QB en cola: ${doc.supplier_name}` 
-                : `Importada desde ${emailProvider} (pendiente cuenta): ${doc.supplier_name}`,
-              existing: doc,
-              qbQueued: !!doc.default_account_ref && auto_publish,
-              needsConfig: !doc.default_account_ref,
+              success: false,
+              message: `No se encontró la factura ${invoice_number} en ${emailProvider} (${emailAccount.account_email || ''})`,
               provider: emailProvider
             }),
             { headers: { ...corsHeaders, "Content-Type": "application/json" } }
           );
         }
+      } catch (imapErr: any) {
+        log(`❌ IMAP error: ${imapErr.message}`);
+        return new Response(
+          JSON.stringify({
+            success: false,
+            message: `Error conectando a ${emailProvider}: ${imapErr.message}`,
+            provider: emailProvider
+          }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
       }
-
-      return new Response(
-        JSON.stringify({
-          success: false,
-          message: `No se encontró la factura ${invoice_number} en ${emailProvider} (${emailAccount.account_email || ''})`,
-          provider: emailProvider
-        }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
     }
 
     // CRITICAL: Now that we have the XML, extract doc_key and check for REAL duplicates
@@ -714,6 +826,12 @@ serve(async (req) => {
     // Download PDF in parallel with XML processing (non-blocking)
     let pdfUrl = null;
     const pdfPromise = (async () => {
+      // For IMAP providers, PDF was already saved during search
+      if (foundPdfPart?.savedUrl) {
+        log(`✓ PDF already saved via IMAP: ${foundPdfPart.filename}`);
+        return foundPdfPart.savedUrl;
+      }
+      
       if (!foundPdfPart?.body?.attachmentId) return null;
       try {
         const pdfAttachmentResponse = await fetchWithTimeout(
