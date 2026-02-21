@@ -146,240 +146,377 @@ serve(async (req) => {
       return null;
     };
 
-    // NOTE: We NO LONGER check for duplicates here before downloading the XML
-    // This was causing false positives when the same invoice number exists from different vendors
-    // The duplicate check will happen in process-document-xml using the doc_key (unique 50-char Clave)
-
-    // Get Gmail account
-    log("📧 Getting Gmail account...");
-    const { data: gmailAccount, error: accountError } = await supabase
+    // Detect email provider for this organization
+    log("📧 Detecting email provider...");
+    const { data: emailAccounts } = await supabase
       .from("integration_accounts")
       .select("*")
       .eq("organization_id", organization_id)
-      .eq("service_type", "gmail")
       .eq("is_active", true)
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .single();
+      .in("service_type", ["gmail", "bluehost", "outlook", "hostinger"])
+      .order("created_at", { ascending: false });
 
-    if (accountError || !gmailAccount) {
-      throw new Error("No Gmail account found");
+    const emailAccount = emailAccounts?.[0];
+    if (!emailAccount) {
+      throw new Error("No hay cuenta de correo configurada para esta organización");
     }
 
-    const credentials = gmailAccount.credentials as any;
-    let accessToken = credentials?.access_token;
-    
-    if (!accessToken) {
-      throw new Error("No access token");
-    }
-
-    // Refresh token if needed
-    const expiresAt = typeof credentials.expires_at === 'string' 
-      ? new Date(credentials.expires_at).getTime() 
-      : credentials.expires_at;
-    
-    if (expiresAt && (expiresAt - Date.now()) < 2 * 60 * 60 * 1000) {
-      log("🔄 Refreshing token...");
-      const GOOGLE_CLIENT_ID = Deno.env.get("GOOGLE_CLIENT_ID");
-      const GOOGLE_CLIENT_SECRET = Deno.env.get("GOOGLE_CLIENT_SECRET");
-
-      if (credentials.refresh_token && GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET) {
-        try {
-          const refreshResponse = await fetchWithTimeout("https://oauth2.googleapis.com/token", {
-            method: "POST",
-            headers: { "Content-Type": "application/x-www-form-urlencoded" },
-            body: new URLSearchParams({
-              client_id: GOOGLE_CLIENT_ID,
-              client_secret: GOOGLE_CLIENT_SECRET,
-              refresh_token: credentials.refresh_token,
-              grant_type: "refresh_token",
-            }),
-          }, 5000);
-
-          if (refreshResponse.ok) {
-            const refreshData = await refreshResponse.json();
-            accessToken = refreshData.access_token;
-            
-            await supabase
-              .from("integration_accounts")
-              .update({
-                credentials: {
-                  ...credentials,
-                  access_token: refreshData.access_token,
-                  expires_at: Date.now() + (refreshData.expires_in * 1000),
-                },
-                updated_at: new Date().toISOString(),
-              })
-              .eq("id", gmailAccount.id);
-          }
-        } catch (e) {
-          log(`⚠️ Token refresh failed: ${e}`);
-        }
-      }
-    }
-
-// Search Gmail - PARALLEL queries for speed
-    log("🔍 Gmail search...");
-    
-    const query1 = `has:attachment filename:xml ${invoice_number}`;
-    const query2 = `has:attachment ${invoice_number}`;
-    
-    // Run BOTH queries in parallel - increased timeout to 8s for Gmail API
-    const [search1, search2] = await Promise.all([
-      fetchWithTimeout(
-        `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(query1)}&maxResults=3`,
-        { headers: { Authorization: `Bearer ${accessToken}` } },
-        8000
-      ).then(r => r.ok ? r.json() : { messages: [] }).catch((e) => {
-        log(`⚠️ Query1 error: ${e.message}`);
-        return { messages: [] };
-      }),
-      fetchWithTimeout(
-        `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(query2)}&maxResults=3`,
-        { headers: { Authorization: `Bearer ${accessToken}` } },
-        8000
-      ).then(r => r.ok ? r.json() : { messages: [] }).catch((e) => {
-        log(`⚠️ Query2 error: ${e.message}`);
-        return { messages: [] };
-      })
-    ]);
-    
-    // Merge and dedupe results (prefer query1)
-    const seenIds = new Set<string>();
-    let messages: any[] = [];
-    for (const msg of [...(search1.messages || []), ...(search2.messages || [])]) {
-      if (!seenIds.has(msg.id)) {
-        seenIds.add(msg.id);
-        messages.push(msg);
-      }
-    }
-    log(`📬 Found ${messages.length} messages (q1:${search1.messages?.length || 0}, q2:${search2.messages?.length || 0})`)
-
-    if (messages.length === 0) {
-      return new Response(
-        JSON.stringify({
-          success: false,
-          message: `No se encontró en Gmail: ${invoice_number}`
-        }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
+    const emailProvider = emailAccount.service_type;
+    log(`📧 Provider: ${emailProvider} (${emailAccount.account_email || 'N/A'})`);
 
     let foundMessage: { id: string; xmlContent: string } | null = null;
     let foundPdfPart: any = null;
 
-    // Fetch messages in parallel - increased timeout to 6s
-    const messagePromises = messages.slice(0, 2).map((msg: any) =>
-      fetchWithTimeout(
-        `https://gmail.googleapis.com/gmail/v1/users/me/messages/${msg.id}`,
-        { headers: { Authorization: `Bearer ${accessToken}` } },
-        6000
-      ).then(r => r.ok ? r.json() : null).catch((e) => {
-        log(`⚠️ Message fetch error: ${e.message}`);
-        return null;
-      })
-    );
-
-    const messageResults = await Promise.all(messagePromises);
-    log(`📩 Fetched ${messageResults.filter(Boolean).length} messages`);
-
-    // Helper function to recursively find all attachments (handles nested multipart)
-    function findAllParts(part: any, result: any[] = []): any[] {
-      if (!part) return result;
+    // ==================== GMAIL SEARCH ====================
+    if (emailProvider === "gmail") {
+      const credentials = emailAccount.credentials as any;
+      let accessToken = credentials?.access_token;
       
-      // If this part has a filename, it's an attachment
-      if (part.filename && part.filename.length > 0) {
-        result.push(part);
+      if (!accessToken) {
+        throw new Error("No access token para Gmail");
       }
-      
-      // Recursively search nested parts
-      if (part.parts && Array.isArray(part.parts)) {
-        for (const subPart of part.parts) {
-          findAllParts(subPart, result);
-        }
-      }
-      
-      return result;
-    }
 
-    // Process each message to find the invoice
-    for (const messageData of messageResults) {
-      if (!messageData || foundMessage) continue;
+      // Refresh token if needed
+      const expiresAt = typeof credentials.expires_at === 'string' 
+        ? new Date(credentials.expires_at).getTime() 
+        : credentials.expires_at;
       
-      // Find all attachments recursively (handles nested multipart structures)
-      const allParts = findAllParts(messageData.payload);
-      log(`📎 Found ${allParts.length} attachments: ${allParts.map((p: any) => p.filename).join(', ')}`);
-      
-      const xmlParts = allParts.filter((p: any) => p.filename?.toLowerCase().endsWith(".xml"));
-      const pdfPart = allParts.find((p: any) => p.filename?.toLowerCase().endsWith(".pdf"));
+      if (expiresAt && (expiresAt - Date.now()) < 2 * 60 * 60 * 1000) {
+        log("🔄 Refreshing Gmail token...");
+        const GOOGLE_CLIENT_ID = Deno.env.get("GOOGLE_CLIENT_ID");
+        const GOOGLE_CLIENT_SECRET = Deno.env.get("GOOGLE_CLIENT_SECRET");
 
-      // Download XMLs in parallel - reduced timeout
-      const xmlPromises = xmlParts.slice(0, 2).map(async (xmlPart: any) => {
-        if (!xmlPart?.body?.attachmentId) return null;
-        try {
-          const resp = await fetchWithTimeout(
-            `https://gmail.googleapis.com/gmail/v1/users/me/messages/${messageData.id}/attachments/${xmlPart.body.attachmentId}`,
-            { headers: { Authorization: `Bearer ${accessToken}` } },
-            2000
-          );
-          if (!resp.ok) return null;
-          const data = await resp.json();
-          // Decodificar base64 a bytes y luego a UTF-8 para preservar tildes
-          const base64Fixed = data.data.replace(/-/g, "+").replace(/_/g, "/");
-          const binaryString = atob(base64Fixed);
-          const bytes = new Uint8Array(binaryString.length);
-          for (let i = 0; i < binaryString.length; i++) {
-            bytes[i] = binaryString.charCodeAt(i);
+        if (credentials.refresh_token && GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET) {
+          try {
+            const refreshResponse = await fetchWithTimeout("https://oauth2.googleapis.com/token", {
+              method: "POST",
+              headers: { "Content-Type": "application/x-www-form-urlencoded" },
+              body: new URLSearchParams({
+                client_id: GOOGLE_CLIENT_ID,
+                client_secret: GOOGLE_CLIENT_SECRET,
+                refresh_token: credentials.refresh_token,
+                grant_type: "refresh_token",
+              }),
+            }, 5000);
+
+            if (refreshResponse.ok) {
+              const refreshData = await refreshResponse.json();
+              accessToken = refreshData.access_token;
+              
+              await supabase
+                .from("integration_accounts")
+                .update({
+                  credentials: {
+                    ...credentials,
+                    access_token: refreshData.access_token,
+                    expires_at: Date.now() + (refreshData.expires_in * 1000),
+                  },
+                  updated_at: new Date().toISOString(),
+                })
+                .eq("id", emailAccount.id);
+            }
+          } catch (e) {
+            log(`⚠️ Token refresh failed: ${e}`);
           }
-          const content = new TextDecoder('utf-8').decode(bytes);
-          return { xmlPart, content };
-        } catch { return null; }
-      });
-
-      const xmlResults = await Promise.all(xmlPromises);
-      
-      for (const result of xmlResults) {
-        if (!result || foundMessage) continue;
-        
-        const { content: xmlContent, xmlPart } = result;
-        
-        // Skip MensajeHacienda (not an invoice)
-        if (xmlContent.includes('<MensajeHacienda') || xmlContent.includes('mensajeHacienda')) {
-          log(`⏭️ Skip MensajeHacienda: ${xmlPart.filename}`);
-          continue;
-        }
-
-        // Verify it's an actual invoice
-        const isInvoice = xmlContent.includes('<FacturaElectronica') || 
-                          xmlContent.includes('<NotaCreditoElectronica') ||
-                          xmlContent.includes('<NotaDebitoElectronica') ||
-                          xmlContent.includes('<TiqueteElectronico') ||
-                          xmlContent.includes('<Emisor>');
-        
-        if (!isInvoice) {
-          log(`⏭️ Not an invoice: ${xmlPart.filename}`);
-          continue;
-        }
-
-        const docNumber = parseNumeroConsecutivo(xmlContent);
-        
-        // Check match
-        if (docNumber === invoice_number || 
-            docNumber.includes(invoice_number) || 
-            invoice_number.includes(docNumber)) {
-          log(`✅ MATCH: ${docNumber}`);
-          foundMessage = { id: messageData.id, xmlContent };
-          foundPdfPart = pdfPart;
-          break;
         }
       }
-    }
 
-    if (!foundMessage) {
+      // Search Gmail - PARALLEL queries for speed
+      log("🔍 Gmail search...");
+      
+      const query1 = `has:attachment filename:xml ${invoice_number}`;
+      const query2 = `has:attachment ${invoice_number}`;
+      
+      const [search1, search2] = await Promise.all([
+        fetchWithTimeout(
+          `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(query1)}&maxResults=3`,
+          { headers: { Authorization: `Bearer ${accessToken}` } },
+          8000
+        ).then(r => r.ok ? r.json() : { messages: [] }).catch((e) => {
+          log(`⚠️ Query1 error: ${e.message}`);
+          return { messages: [] };
+        }),
+        fetchWithTimeout(
+          `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(query2)}&maxResults=3`,
+          { headers: { Authorization: `Bearer ${accessToken}` } },
+          8000
+        ).then(r => r.ok ? r.json() : { messages: [] }).catch((e) => {
+          log(`⚠️ Query2 error: ${e.message}`);
+          return { messages: [] };
+        })
+      ]);
+      
+      const seenIds = new Set<string>();
+      let messages: any[] = [];
+      for (const msg of [...(search1.messages || []), ...(search2.messages || [])]) {
+        if (!seenIds.has(msg.id)) {
+          seenIds.add(msg.id);
+          messages.push(msg);
+        }
+      }
+      log(`📬 Found ${messages.length} messages (q1:${search1.messages?.length || 0}, q2:${search2.messages?.length || 0})`)
+
+      if (messages.length === 0) {
+        return new Response(
+          JSON.stringify({
+            success: false,
+            message: `No se encontró en Gmail: ${invoice_number}`
+          }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      // Fetch messages in parallel
+      const messagePromises = messages.slice(0, 2).map((msg: any) =>
+        fetchWithTimeout(
+          `https://gmail.googleapis.com/gmail/v1/users/me/messages/${msg.id}`,
+          { headers: { Authorization: `Bearer ${accessToken}` } },
+          6000
+        ).then(r => r.ok ? r.json() : null).catch((e) => {
+          log(`⚠️ Message fetch error: ${e.message}`);
+          return null;
+        })
+      );
+
+      const messageResults = await Promise.all(messagePromises);
+      log(`📩 Fetched ${messageResults.filter(Boolean).length} messages`);
+
+      // Helper function to recursively find all attachments
+      function findAllParts(part: any, result: any[] = []): any[] {
+        if (!part) return result;
+        if (part.filename && part.filename.length > 0) {
+          result.push(part);
+        }
+        if (part.parts && Array.isArray(part.parts)) {
+          for (const subPart of part.parts) {
+            findAllParts(subPart, result);
+          }
+        }
+        return result;
+      }
+
+      for (const messageData of messageResults) {
+        if (!messageData || foundMessage) continue;
+        
+        const allParts = findAllParts(messageData.payload);
+        log(`📎 Found ${allParts.length} attachments: ${allParts.map((p: any) => p.filename).join(', ')}`);
+        
+        const xmlParts = allParts.filter((p: any) => p.filename?.toLowerCase().endsWith(".xml"));
+        const pdfPart = allParts.find((p: any) => p.filename?.toLowerCase().endsWith(".pdf"));
+
+        const xmlPromises = xmlParts.slice(0, 2).map(async (xmlPart: any) => {
+          if (!xmlPart?.body?.attachmentId) return null;
+          try {
+            const resp = await fetchWithTimeout(
+              `https://gmail.googleapis.com/gmail/v1/users/me/messages/${messageData.id}/attachments/${xmlPart.body.attachmentId}`,
+              { headers: { Authorization: `Bearer ${accessToken}` } },
+              2000
+            );
+            if (!resp.ok) return null;
+            const data = await resp.json();
+            const base64Fixed = data.data.replace(/-/g, "+").replace(/_/g, "/");
+            const binaryString = atob(base64Fixed);
+            const bytes = new Uint8Array(binaryString.length);
+            for (let i = 0; i < binaryString.length; i++) {
+              bytes[i] = binaryString.charCodeAt(i);
+            }
+            const content = new TextDecoder('utf-8').decode(bytes);
+            return { xmlPart, content };
+          } catch { return null; }
+        });
+
+        const xmlResults = await Promise.all(xmlPromises);
+        
+        for (const result of xmlResults) {
+          if (!result || foundMessage) continue;
+          
+          const { content: xmlContent, xmlPart } = result;
+          
+          if (xmlContent.includes('<MensajeHacienda') || xmlContent.includes('mensajeHacienda')) {
+            log(`⏭️ Skip MensajeHacienda: ${xmlPart.filename}`);
+            continue;
+          }
+
+          const isInvoice = xmlContent.includes('<FacturaElectronica') || 
+                            xmlContent.includes('<NotaCreditoElectronica') ||
+                            xmlContent.includes('<NotaDebitoElectronica') ||
+                            xmlContent.includes('<TiqueteElectronico') ||
+                            xmlContent.includes('<Emisor>');
+          
+          if (!isInvoice) {
+            log(`⏭️ Not an invoice: ${xmlPart.filename}`);
+            continue;
+          }
+
+          const docNumber = parseNumeroConsecutivo(xmlContent);
+          
+          if (docNumber === invoice_number || 
+              docNumber.includes(invoice_number) || 
+              invoice_number.includes(docNumber)) {
+            log(`✅ MATCH: ${docNumber}`);
+            foundMessage = { id: messageData.id, xmlContent };
+            foundPdfPart = pdfPart;
+            break;
+          }
+        }
+      }
+
+      if (!foundMessage) {
+        return new Response(
+          JSON.stringify({
+            success: false,
+            message: `XML no encontrado en Gmail para: ${invoice_number}`
+          }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+    }
+    // ==================== NON-GMAIL (Bluehost/Outlook/Hostinger) ====================
+    else {
+      // For non-Gmail providers, first check if the invoice already exists in DB
+      log(`🔍 Buscando factura ${invoice_number} en documentos existentes (provider: ${emailProvider})...`);
+      
+      const { data: existingDocs } = await supabase
+        .from("processed_documents")
+        .select("id, doc_key, doc_number, supplier_name, supplier_tax_id, status, qbo_entity_id, default_account_ref, issue_date, total_amount, currency, xml_data")
+        .eq("organization_id", organization_id)
+        .or(`doc_number.ilike.%${invoice_number}%,doc_key.ilike.%${invoice_number}%`);
+
+      if (existingDocs && existingDocs.length > 0) {
+        const existingDoc = existingDocs[0];
+        log(`📋 Encontrado en DB: ${existingDoc.doc_number} de ${existingDoc.supplier_name} (status: ${existingDoc.status})`);
+        
+        // If already published, return info
+        if (existingDoc.qbo_entity_id) {
+          return new Response(
+            JSON.stringify({
+              success: true,
+              message: `Ya en QBO (ID: ${existingDoc.qbo_entity_id}): ${existingDoc.supplier_name}`,
+              existing: existingDoc,
+              alreadyPublished: true,
+            }),
+            { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
+        
+        // If has account, publish it
+        if (existingDoc.default_account_ref && auto_publish) {
+          log(`📤 Existe sin QB, publicando: ${existingDoc.id}`);
+          await supabase
+            .from("processed_documents")
+            .update({ status: "pending" })
+            .eq("id", existingDoc.id);
+          
+          fetch(`${supabaseUrl}/functions/v1/publish-to-quickbooks`, {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${supabaseKey}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ organization_id, document_ids: [existingDoc.id] }),
+          }).catch(e => log(`⚠️ QB publish error: ${e}`));
+          
+          return new Response(
+            JSON.stringify({
+              success: true,
+              message: `Existente → QB en cola: ${existingDoc.supplier_name}`,
+              existing: existingDoc,
+              qbQueued: true
+            }),
+            { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
+        
+        return new Response(
+          JSON.stringify({
+            success: true,
+            message: `Encontrada (pendiente configurar cuenta): ${existingDoc.supplier_name}`,
+            existing: existingDoc,
+            needsConfig: !existingDoc.default_account_ref
+          }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      // Not found in DB - trigger a sync for this provider, then check again
+      log(`📥 No encontrada en DB, ejecutando sync de ${emailProvider}...`);
+      
+      const fetchFunctionName = emailProvider === "bluehost" ? "bluehost-fetch-invoices" 
+        : emailProvider === "outlook" ? "outlook-fetch-invoices"
+        : emailProvider === "hostinger" ? "hostinger-fetch-invoices"
+        : null;
+
+      if (fetchFunctionName) {
+        try {
+          checkTimeout();
+          const syncResp = await fetchWithTimeout(
+            `${supabaseUrl}/functions/v1/${fetchFunctionName}`,
+            {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${supabaseKey}`,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({ organization_id }),
+            },
+            25000 // 25s timeout for email sync
+          );
+          
+          const syncResult = await syncResp.json().catch(() => ({}));
+          log(`📧 Sync ${emailProvider} result: ${JSON.stringify(syncResult).substring(0, 200)}`);
+        } catch (e: any) {
+          log(`⚠️ Sync ${emailProvider} error: ${e.message}`);
+        }
+
+        // Check again after sync
+        const { data: afterSyncDocs } = await supabase
+          .from("processed_documents")
+          .select("id, doc_key, doc_number, supplier_name, supplier_tax_id, status, qbo_entity_id, default_account_ref, issue_date, total_amount, currency")
+          .eq("organization_id", organization_id)
+          .or(`doc_number.ilike.%${invoice_number}%,doc_key.ilike.%${invoice_number}%`);
+
+        if (afterSyncDocs && afterSyncDocs.length > 0) {
+          const doc = afterSyncDocs[0];
+          log(`✅ Encontrada después de sync: ${doc.doc_number} de ${doc.supplier_name}`);
+          
+          // Auto-publish if configured
+          if (auto_publish && doc.default_account_ref && !doc.qbo_entity_id) {
+            await supabase
+              .from("processed_documents")
+              .update({ status: "pending" })
+              .eq("id", doc.id);
+            
+            fetch(`${supabaseUrl}/functions/v1/publish-to-quickbooks`, {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${supabaseKey}`,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({ organization_id, document_ids: [doc.id] }),
+            }).catch(e => log(`⚠️ QB publish error: ${e}`));
+          }
+
+          return new Response(
+            JSON.stringify({
+              success: true,
+              message: doc.default_account_ref 
+                ? `Importada desde ${emailProvider} → QB en cola: ${doc.supplier_name}` 
+                : `Importada desde ${emailProvider} (pendiente cuenta): ${doc.supplier_name}`,
+              existing: doc,
+              qbQueued: !!doc.default_account_ref && auto_publish,
+              needsConfig: !doc.default_account_ref,
+              provider: emailProvider
+            }),
+            { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
+      }
+
       return new Response(
         JSON.stringify({
           success: false,
-          message: `XML no encontrado para: ${invoice_number}`
+          message: `No se encontró la factura ${invoice_number} en ${emailProvider} (${emailAccount.account_email || ''})`,
+          provider: emailProvider
         }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );

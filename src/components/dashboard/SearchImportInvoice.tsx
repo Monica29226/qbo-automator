@@ -175,26 +175,26 @@ export function SearchImportInvoice() {
             <FileCheck className="h-5 w-5" />
             Buscar e Importar Factura
           </DialogTitle>
-          <DialogDescription>
-            Ingrese el número de factura para buscarla en Gmail, validar los totales e importarla a QuickBooks.
-          </DialogDescription>
-        </DialogHeader>
-
-        <div className="space-y-4 py-4">
-          <div className="space-y-2">
-            <Label htmlFor="invoice-number">Número de Factura (Consecutivo)</Label>
-            <Input
-              id="invoice-number"
-              placeholder="Ej: 50628062400010124253501181000010"
-              value={invoiceNumber}
-              onChange={(e) => setInvoiceNumber(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && handleSearch()}
-              disabled={isSearching}
-            />
-            <p className="text-xs text-muted-foreground">
-              Puede ingresar el número completo o parcial. El sistema buscará en Gmail.
-            </p>
-          </div>
+           <DialogDescription>
+             Ingrese el número de factura para buscarla en el correo configurado, validar los totales e importarla a QuickBooks.
+           </DialogDescription>
+         </DialogHeader>
+ 
+         <div className="space-y-4 py-4">
+           <div className="space-y-2">
+             <Label htmlFor="invoice-number">Número de Factura (Consecutivo)</Label>
+             <Input
+               id="invoice-number"
+               placeholder="Ej: 50628062400010124253501181000010"
+               value={invoiceNumber}
+               onChange={(e) => setInvoiceNumber(e.target.value)}
+               onKeyDown={(e) => e.key === "Enter" && handleSearch()}
+               disabled={isSearching}
+             />
+             <p className="text-xs text-muted-foreground">
+               Puede ingresar el número completo o parcial. El sistema detectará automáticamente el proveedor de correo.
+             </p>
+           </div>
 
           <div className="flex items-center space-x-2">
             <Checkbox
