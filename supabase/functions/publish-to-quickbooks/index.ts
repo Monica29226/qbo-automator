@@ -1034,8 +1034,12 @@ Deno.serve(async (req) => {
       .select("id")
       .eq("organization_id", organization_id)
       .is("qbo_entity_id", null)
-      .in("status", ["pending", "processed"])
-      .gte("issue_date", minDate);
+      .in("status", ["pending", "processed"]);
+    
+    // Only apply date filter when NOT targeting specific documents
+    if (!document_ids || document_ids.length === 0) {
+      findQuery = findQuery.gte("issue_date", minDate);
+    }
 
     if (document_ids && document_ids.length > 0) {
       findQuery = findQuery.in("id", document_ids);
