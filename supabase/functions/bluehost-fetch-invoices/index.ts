@@ -410,8 +410,9 @@ serve(async (req) => {
     } else if (startDateSetting) {
       startDate = new Date(startDateSetting);
     } else {
-      startDate = new Date();
-      startDate.setDate(startDate.getDate() - 30);
+      // Default: search from Jan 1 of current year to capture ALL invoices
+      const now = new Date();
+      startDate = new Date(now.getFullYear(), 0, 1);
     }
 
     const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
