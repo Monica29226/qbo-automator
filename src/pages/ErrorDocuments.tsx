@@ -237,13 +237,39 @@ const ErrorDocuments = () => {
         canForcePublish: true
       };
     }
+    // Vendor/Customer name conflict
+    if (errorMessage.includes("tipo de nombre asignado") || 
+        errorMessage.includes("Name Already Used") ||
+        errorMessage.includes("Vendor/Customer conflict")) {
+      return {
+        type: "Conflicto de nombre Vendor/Cliente",
+        description: "El nombre del proveedor ya existe como Cliente en QuickBooks. QBO no permite el mismo nombre para ambos.",
+        solution: "Usar 'Reintentar' (agrega sufijo automáticamente) o 'Forzar Publicación'",
+        canRetry: true,
+        canChangeAccount: false,
+        canForcePublish: true
+      };
+    }
+
+    // Body already consumed - transient error
+    if (errorMessage.includes("Body already consumed") || errorMessage.includes("body already consumed")) {
+      return {
+        type: "Error transitorio",
+        description: "Error técnico al leer la respuesta de QuickBooks (body already consumed)",
+        solution: "Reintentar - este error suele resolverse automáticamente",
+        canRetry: true,
+        canChangeAccount: false,
+        canForcePublish: true
+      };
+    }
+
     return {
       type: "Error desconocido",
       description: errorMessage.substring(0, 100) + "...",
       solution: "Revisar logs completos",
       canRetry: true,
       canChangeAccount: false,
-      canForcePublish: false
+      canForcePublish: true
     };
   };
 

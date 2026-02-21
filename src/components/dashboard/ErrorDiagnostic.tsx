@@ -5,10 +5,11 @@ import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import { RefreshCw, Database, FileText, AlertTriangle, CheckCircle } from "lucide-react";
+import { RefreshCw, Database, FileText, AlertTriangle, CheckCircle, Upload, Loader2 } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
 interface DiagnosticResult {
+  id: string;
   doc_number: string;
   supplier_name: string;
   error_message: string;
@@ -21,6 +22,8 @@ export const ErrorDiagnostic = () => {
   const { activeOrganization } = useAuth();
   const [diagnostics, setDiagnostics] = useState<DiagnosticResult[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [publishingIds, setPublishingIds] = useState<Set<string>>(new Set());
+  const [isPublishingAll, setIsPublishingAll] = useState(false);
   const [stats, setStats] = useState({
     ready: 0,
     needs_processing: 0,
@@ -34,7 +37,7 @@ export const ErrorDiagnostic = () => {
     try {
       const { data, error } = await supabase
         .from("processed_documents")
-        .select("doc_number, supplier_name, error_message, xml_data, file_path")
+        .select("id, doc_number, supplier_name, error_message, xml_data, file_path")
         .eq("organization_id", activeOrganization)
         .eq("status", "error")
         .order("created_at", { ascending: false });
@@ -55,6 +58,7 @@ export const ErrorDiagnostic = () => {
         }
 
         return {
+          id: doc.id,
           doc_number: doc.doc_number,
           supplier_name: doc.supplier_name,
           error_message: doc.error_message || "",
@@ -85,6 +89,54 @@ export const ErrorDiagnostic = () => {
       runDiagnostic();
     }
   }, [activeOrganization]);
+
+  const handleRepublishSingle = async (doc: DiagnosticResult) => {
+    if (!activeOrganization) return;
+    setPublishingIds(prev => new Set(prev).add(doc.id));
+    toast.info(`Republicando ${doc.doc_number}...`);
+    try {
+      const { data, error } = await supabase.functions.invoke("retry-failed-bills", {
+        body: { documentId: doc.id, organizationId: activeOrganization },
+      });
+      if (error) throw error;
+      if (data.success) {
+        toast.success(`✓ ${doc.doc_number} publicada exitosamente`);
+        runDiagnostic();
+      } else {
+        toast.error(`Error: ${data.message || data.error}`);
+      }
+    } catch (err: any) {
+      toast.error(`Error: ${err.message}`);
+    } finally {
+      setPublishingIds(prev => { const s = new Set(prev); s.delete(doc.id); return s; });
+    }
+  };
+
+  const handleRepublishAllReady = async () => {
+    if (!activeOrganization) return;
+    const readyDocs = diagnostics.filter(d => d.category === "ready");
+    if (readyDocs.length === 0) return;
+    setIsPublishingAll(true);
+    toast.info(`Republicando ${readyDocs.length} facturas...`);
+    try {
+      const { data, error } = await supabase.functions.invoke("republish-from-extracted-data", {
+        body: { organization_id: activeOrganization },
+      });
+      if (error) throw error;
+      const { published, failed } = data.results;
+      if (published > 0) {
+        toast.success(`✓ ${published} factura${published !== 1 ? 's' : ''} republicada${published !== 1 ? 's' : ''}`);
+      }
+      if (failed > 0) {
+        toast.warning(`${failed} factura${failed !== 1 ? 's' : ''} fallida${failed !== 1 ? 's' : ''}`);
+      }
+      runDiagnostic();
+    } catch (err: any) {
+      toast.error(`Error: ${err.message}`);
+    } finally {
+      setIsPublishingAll(false);
+    }
+  };
 
   const getCategoryInfo = (category: string) => {
     switch (category) {
@@ -132,15 +184,33 @@ export const ErrorDiagnostic = () => {
               Análisis de disponibilidad de datos para recuperación
             </CardDescription>
           </div>
-          <Button
-            onClick={runDiagnostic}
-            disabled={isLoading}
-            size="sm"
-            variant="outline"
-          >
-            <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? "animate-spin" : ""}`} />
-            Actualizar
-          </Button>
+          <div className="flex items-center gap-2">
+            {stats.ready > 0 && (
+              <Button
+                onClick={handleRepublishAllReady}
+                disabled={isPublishingAll}
+                size="sm"
+                variant="default"
+                className="bg-green-600 hover:bg-green-700"
+              >
+                {isPublishingAll ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <Upload className="h-4 w-4 mr-2" />
+                )}
+                Republicar Todos ({stats.ready})
+              </Button>
+            )}
+            <Button
+              onClick={runDiagnostic}
+              disabled={isLoading}
+              size="sm"
+              variant="outline"
+            >
+              <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? "animate-spin" : ""}`} />
+              Actualizar
+            </Button>
+          </div>
         </div>
       </CardHeader>
       <CardContent>
@@ -178,7 +248,7 @@ export const ErrorDiagnostic = () => {
             {diagnostics.map((doc, index) => {
               const categoryInfo = getCategoryInfo(doc.category);
               return (
-                <Card key={index} className="border-border/50">
+                <Card key={doc.id} className="border-border/50">
                   <CardContent className="pt-4">
                     <div className="flex items-start justify-between gap-4">
                       <div className="flex-1 min-w-0">
@@ -196,6 +266,22 @@ export const ErrorDiagnostic = () => {
                           {categoryInfo.description}
                         </div>
                       </div>
+                      {doc.category === "ready" && (
+                        <Button
+                          onClick={() => handleRepublishSingle(doc)}
+                          disabled={publishingIds.has(doc.id) || isPublishingAll}
+                          size="sm"
+                          variant="default"
+                          className="bg-green-600 hover:bg-green-700 flex-shrink-0"
+                        >
+                          {publishingIds.has(doc.id) ? (
+                            <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                          ) : (
+                            <Upload className="h-3 w-3 mr-1" />
+                          )}
+                          Republicar
+                        </Button>
+                      )}
                     </div>
                   </CardContent>
                 </Card>
