@@ -410,9 +410,11 @@ serve(async (req) => {
     } else if (startDateSetting) {
       startDate = new Date(startDateSetting);
     } else {
-      // Default: search from Jan 1 of current year to capture ALL invoices
-      const now = new Date();
-      startDate = new Date(now.getFullYear(), 0, 1);
+      // Default: rolling 7-day window for cron syncs (runs every 30 min)
+      // This prevents 504 timeouts from scanning too many emails
+      // Deduplication by doc_key ensures no invoices are missed over time
+      startDate = new Date();
+      startDate.setDate(startDate.getDate() - 7);
     }
 
     const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];

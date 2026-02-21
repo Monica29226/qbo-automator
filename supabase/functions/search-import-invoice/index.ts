@@ -505,20 +505,74 @@ serve(async (req) => {
           throw new Error("IMAP login failed");
         }
 
-        // Select INBOX
-        await cmd('SELECT "INBOX"');
+        // Search across multiple folders (INBOX, Junk, Spam)
+        const foldersToSearch = ["INBOX", "Junk", "SPAM", "Spam"];
+        let msgIds: number[] = [];
+        let selectedFolder = "";
 
-        // Targeted IMAP search for this specific invoice number
-        checkTimeout();
-        const searchResp = await cmd(`SEARCH TEXT "${invoice_number}"`);
-        log(`🔍 IMAP SEARCH result: ${searchResp.substring(0, 200)}`);
+        for (const folder of foldersToSearch) {
+          checkTimeout();
+          const selectResp = await cmd(`SELECT "${folder}"`);
+          if (selectResp.includes("NO") || selectResp.includes("BAD")) {
+            log(`⏭️ Folder ${folder} not available, skipping`);
+            continue;
+          }
+          
+          // Try TEXT search first (searches headers + body)
+          const searchResp = await cmd(`SEARCH TEXT "${invoice_number}"`);
+          log(`🔍 IMAP SEARCH ${folder}: ${searchResp.substring(0, 200)}`);
 
-        const searchLine = searchResp.split("\r\n").find(l => l.startsWith("* SEARCH"));
-        const msgIds = searchLine && searchLine.trim() !== "* SEARCH" 
-          ? searchLine.replace("* SEARCH ", "").trim().split(" ").map(Number).filter(n => n > 0)
-          : [];
+          const searchLine = searchResp.split("\r\n").find(l => l.startsWith("* SEARCH"));
+          const ids = searchLine && searchLine.trim() !== "* SEARCH" 
+            ? searchLine.replace("* SEARCH ", "").trim().split(" ").map(Number).filter(n => n > 0)
+            : [];
+          
+          if (ids.length > 0) {
+            msgIds = ids;
+            selectedFolder = folder;
+            log(`📬 Found ${ids.length} messages in ${folder}`);
+            break;
+          }
+          
+          // If TEXT search found nothing, try a broader SINCE search and scan attachments
+          // This catches cases where the invoice number is only inside the XML attachment
+          if (ids.length === 0 && folder === "INBOX") {
+            log(`🔍 TEXT search empty, trying SINCE-based scan in ${folder}...`);
+            const sinceDate = new Date();
+            sinceDate.setDate(sinceDate.getDate() - 30);
+            const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+            const sinceDateStr = `${sinceDate.getDate()}-${months[sinceDate.getMonth()]}-${sinceDate.getFullYear()}`;
+            
+            const sinceResp = await cmd(`SEARCH SINCE ${sinceDateStr}`);
+            const sinceLine = sinceResp.split("\r\n").find(l => l.startsWith("* SEARCH"));
+            const sinceIds = sinceLine && sinceLine.trim() !== "* SEARCH"
+              ? sinceLine.replace("* SEARCH ", "").trim().split(" ").map(Number).filter(n => n > 0)
+              : [];
+            
+            if (sinceIds.length > 0) {
+              // Take last 50 messages to scan their attachments
+              msgIds = sinceIds.slice(-50);
+              selectedFolder = folder;
+              log(`📬 Broader scan: ${sinceIds.length} messages since ${sinceDateStr}, checking last ${msgIds.length}`);
+              break;
+            }
+          }
+        }
         
-        log(`📬 IMAP found ${msgIds.length} messages matching invoice`);
+        log(`📬 Final: ${msgIds.length} messages to check in ${selectedFolder || 'none'}`);
+        
+        if (msgIds.length === 0) {
+          try { await cmd("LOGOUT"); } catch {}
+          try { conn.close(); } catch {}
+          return new Response(
+            JSON.stringify({
+              success: false,
+              message: `No se encontró la factura ${invoice_number} en ${emailProvider} (${emailAccount.account_email || ''})`,
+              provider: emailProvider
+            }),
+            { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
 
         let xmlContent = "";
         let pdfBase64 = "";
