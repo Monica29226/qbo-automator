@@ -6,14 +6,6 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-// Simple IMAP client usando conexión TCP nativa de Deno
-interface ParsedAttachment {
-  filename: string;
-  content: string; // base64-decoded text for XML, raw base64 for PDF
-  type: "xml" | "pdf";
-  rawBytes?: Uint8Array;
-}
-
 interface FetchedEmail {
   subject: string;
   from: string;
@@ -21,55 +13,107 @@ interface FetchedEmail {
   pdfAttachments: Array<{ filename: string; content: Uint8Array }>;
 }
 
-// Parse BODYSTRUCTURE to find attachment part numbers + filenames
-function parseBodystructureParts(resp: string): Array<{ partNum: string; filename: string; type: "xml" | "pdf"; encoding: string }> {
-  const parts: Array<{ partNum: string; filename: string; type: "xml" | "pdf"; encoding: string }> = [];
-  
-  // Strategy: split by sections and find filenames with their part positions
-  // IMAP BODYSTRUCTURE nests parts in parentheses. For multipart/mixed messages,
-  // attachments are typically parts 2, 3, 4, etc. (part 1 is usually text body)
-  
-  const respLower = resp.toLowerCase();
-  
-  // Find all filename occurrences and determine their part numbers
-  // We use a simpler heuristic: scan for filename patterns and count which 
-  // top-level MIME section they belong to
-  const filenameRegex = /filename[*]?(?:\*0\*?)?="?([^"\r\n;)]+)"?/gi;
-  let match;
-  const filenames: string[] = [];
-  
-  while ((match = filenameRegex.exec(resp)) !== null) {
-    filenames.push(match[1].trim());
-  }
-  
-  // Also try to find filenames with charset encoding like filename*=utf-8''name.xml
-  const charsetFnRegex = /filename\*=(?:utf-8''|UTF-8'')([^\s\r\n;)]+)/gi;
-  while ((match = charsetFnRegex.exec(resp)) !== null) {
-    const decoded = decodeURIComponent(match[1].trim());
-    if (!filenames.includes(decoded)) filenames.push(decoded);
-  }
-  
-  // Determine encoding for each section - scan for base64/7bit/quoted-printable
-  // In BODYSTRUCTURE, encoding appears right after the body type info
-  
-  // Assign part numbers: in a typical multipart message, part 1 = text body,
-  // parts 2+ = attachments, in order of appearance
-  let partCounter = 1; // Start at 1 (text body), attachments at 2+
-  
-  for (const fname of filenames) {
-    partCounter++;
-    const fnameLower = fname.toLowerCase();
-    
-    if (fnameLower.endsWith(".xml") && !fnameLower.startsWith("ahc-") && !fnameLower.includes("mensaje")) {
-      parts.push({ partNum: String(partCounter), filename: fname, type: "xml", encoding: "BASE64" });
-    } else if (fnameLower.endsWith(".pdf")) {
-      parts.push({ partNum: String(partCounter), filename: fname, type: "pdf", encoding: "BASE64" });
+// ─── Recursive MIME parser ───
+function parseMimeParts(body: string): Array<{ filename: string; content: string; contentType: string; encoding: string }> {
+  const parts: Array<{ filename: string; content: string; contentType: string; encoding: string }> = [];
+
+  function extractParts(section: string) {
+    // Find boundary
+    const boundaryMatch = section.match(/boundary="?([^\s";]+)"?/i);
+    if (!boundaryMatch) {
+      // Not multipart — check if it's an attachment itself
+      extractSinglePart(section);
+      return;
+    }
+
+    const boundary = boundaryMatch[1];
+    const segments = section.split(`--${boundary}`);
+
+    for (const seg of segments) {
+      if (seg.startsWith("--") || seg.trim() === "") continue;
+      
+      // Check if this segment is itself multipart (nested)
+      if (seg.match(/Content-Type:\s*multipart\//i)) {
+        extractParts(seg);
+      } else {
+        extractSinglePart(seg);
+      }
     }
   }
-  
+
+  function extractSinglePart(seg: string) {
+    const headerBodySplit = seg.indexOf("\r\n\r\n");
+    if (headerBodySplit < 0) return;
+
+    const headers = seg.substring(0, headerBodySplit);
+    const body = seg.substring(headerBodySplit + 4).trim();
+
+    if (body.length < 20) return;
+
+    // Extract content type
+    const ctMatch = headers.match(/Content-Type:\s*([^\s;]+)/i);
+    const contentType = ctMatch ? ctMatch[1].toLowerCase() : "";
+
+    // Extract encoding
+    const encMatch = headers.match(/Content-Transfer-Encoding:\s*(\S+)/i);
+    const encoding = encMatch ? encMatch[1].toLowerCase() : "7bit";
+
+    // Extract filename from Content-Disposition or Content-Type
+    let filename = "";
+    
+    // Try Content-Disposition filename
+    const dispMatch = headers.match(/filename\*?=(?:utf-8''|UTF-8'')?\"?([^"\r\n;]+)\"?/i);
+    if (dispMatch) {
+      filename = decodeURIComponent(dispMatch[1].trim());
+    }
+    
+    // Try name= in Content-Type
+    if (!filename) {
+      const nameMatch = headers.match(/name\*?=(?:utf-8''|UTF-8'')?\"?([^"\r\n;]+)\"?/i);
+      if (nameMatch) {
+        filename = decodeURIComponent(nameMatch[1].trim());
+      }
+    }
+
+    // Also handle RFC 2231 continuation: filename*0*= filename*1*= etc.
+    if (!filename) {
+      const contParts: string[] = [];
+      const contRegex = /filename\*(\d+)\*?=(?:utf-8''|UTF-8'')?\"?([^"\r\n;]+)\"?/gi;
+      let m;
+      while ((m = contRegex.exec(headers)) !== null) {
+        contParts[parseInt(m[1])] = m[2];
+      }
+      if (contParts.length > 0) {
+        filename = decodeURIComponent(contParts.join(""));
+      }
+    }
+
+    const fnameLower = filename.toLowerCase();
+    const isXml = fnameLower.endsWith(".xml") || contentType.includes("xml");
+    const isPdf = fnameLower.endsWith(".pdf") || contentType === "application/pdf";
+
+    if (isXml || isPdf || (filename && (contentType.includes("octet-stream") || contentType.includes("application/")))) {
+      parts.push({ filename, content: body, contentType, encoding });
+    }
+  }
+
+  extractParts(body);
   return parts;
 }
 
+function decodePartContent(content: string, encoding: string): Uint8Array {
+  const cleanB64 = content.replace(/[\r\n\s]/g, "");
+  if (encoding === "base64") {
+    const binaryStr = atob(cleanB64);
+    const bytes = new Uint8Array(binaryStr.length);
+    for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
+    return bytes;
+  }
+  // For quoted-printable or 7bit, treat as text
+  return new TextEncoder().encode(content);
+}
+
+// ─── IMAP Client ───
 async function fetchEmailsViaIMAP(
   host: string,
   port: number,
@@ -77,13 +121,16 @@ async function fetchEmailsViaIMAP(
   password: string,
   sinceDateStr: string
 ): Promise<{ emails: FetchedEmail[]; error?: string }> {
-  const emails: FetchedEmail[] = [];
-  
+  const allEmails: FetchedEmail[] = [];
+
   try {
     const conn = await Deno.connectTls({ hostname: host, port });
     const encoder = new TextEncoder();
     const decoder = new TextDecoder();
-    const buffer = new Uint8Array(131072); // 128KB buffer for large attachments
+
+    // Use a large buffer for attachment data (2MB)
+    const BUFFER_SIZE = 2 * 1024 * 1024;
+    const buffer = new Uint8Array(BUFFER_SIZE);
 
     const readResponse = async (): Promise<string> => {
       let response = "";
@@ -92,8 +139,8 @@ async function fetchEmailsViaIMAP(
         const n = await conn.read(buffer);
         if (n === null) break;
         response += decoder.decode(buffer.subarray(0, n));
-        if (response.includes("\r\n") && 
-            (response.includes("OK") || response.includes("NO") || response.includes("BAD") || response.includes("* "))) {
+        if (response.includes("\r\n") &&
+          (response.includes("OK") || response.includes("NO") || response.includes("BAD"))) {
           if (response.endsWith("\r\n")) break;
         }
         attempts++;
@@ -103,18 +150,19 @@ async function fetchEmailsViaIMAP(
     };
 
     let tagN = 1;
-    const cmd = async (command: string): Promise<string> => {
+    const cmd = async (command: string, expectLarge = false): Promise<string> => {
       const tag = `T${tagN++}`;
       await conn.write(encoder.encode(`${tag} ${command}\r\n`));
       let resp = "";
       let attempts = 0;
-      while (attempts < 200) {
+      const maxAttempts = expectLarge ? 600 : 200;
+      while (attempts < maxAttempts) {
         const n = await conn.read(buffer);
         if (n === null) break;
         resp += decoder.decode(buffer.subarray(0, n));
         if (resp.includes(`${tag} OK`) || resp.includes(`${tag} NO`) || resp.includes(`${tag} BAD`)) break;
         attempts++;
-        await new Promise(r => setTimeout(r, 50));
+        await new Promise(r => setTimeout(r, expectLarge ? 100 : 50));
       }
       return resp;
     };
@@ -131,145 +179,128 @@ async function fetchEmailsViaIMAP(
       return { emails: [], error: "Login failed" };
     }
 
-    await cmd('SELECT "INBOX"');
+    // Search multiple folders
+    const foldersToSearch = ['"INBOX"', '"Junk"', '"Spam"', '"INBOX.Junk"', '"INBOX.Spam"'];
 
-    const searchResp = await cmd(`SEARCH SINCE ${sinceDateStr}`);
-    const searchLine = searchResp.split("\r\n").find(l => l.startsWith("* SEARCH"));
-    if (!searchLine || searchLine.trim() === "* SEARCH") {
-      await cmd("LOGOUT");
-      conn.close();
-      return { emails: [] };
-    }
-
-    const allMsgIds = searchLine.replace("* SEARCH ", "").trim().split(" ").map(Number).filter(n => n > 0);
-    console.log(`[IMAP] Found ${allMsgIds.length} messages since ${sinceDateStr}`);
-
-    // STEP 1: Pre-filter with BODYSTRUCTURE — only check for XML/PDF attachments
-    const candidates: Array<{ msgId: number; parts: ReturnType<typeof parseBodystructureParts> }> = [];
-    
-    for (const msgId of allMsgIds) {
+    for (const folder of foldersToSearch) {
       try {
-        const structResp = await cmd(`FETCH ${msgId} BODYSTRUCTURE`);
-        const structLower = structResp.toLowerCase();
-        
-        const hasAttachment = structLower.includes('.xml') || structLower.includes('.pdf') ||
-                              structLower.includes('application/xml') || structLower.includes('text/xml') ||
-                              structLower.includes('application/pdf');
-        
-        if (hasAttachment) {
-          const parts = parseBodystructureParts(structResp);
-          if (parts.length > 0) {
-            candidates.push({ msgId, parts });
-          } else {
-            // Couldn't parse parts but has attachments — include as fallback
-            candidates.push({ msgId, parts: [] });
-          }
+        const selectResp = await cmd(`SELECT ${folder}`);
+        if (selectResp.includes("NO") || selectResp.includes("BAD")) {
+          continue; // Folder doesn't exist
         }
-      } catch {
-        candidates.push({ msgId, parts: [] });
-      }
-    }
 
-    console.log(`[IMAP] ${candidates.length} emails have XML/PDF attachments`);
+        const searchResp = await cmd(`SEARCH SINCE ${sinceDateStr}`);
+        const searchLine = searchResp.split("\r\n").find(l => l.startsWith("* SEARCH"));
+        if (!searchLine || searchLine.trim() === "* SEARCH") {
+          console.log(`[IMAP] Folder ${folder}: no messages since ${sinceDateStr}`);
+          continue;
+        }
 
-    // STEP 2: For each candidate, fetch ONLY the specific attachment parts (not full BODY[])
-    const messagesToFetch = candidates.slice(-100); // last 100
+        const allMsgIds = searchLine.replace("* SEARCH ", "").trim().split(" ").map(Number).filter(n => n > 0);
+        console.log(`[IMAP] Folder ${folder}: ${allMsgIds.length} messages since ${sinceDateStr}`);
 
-    for (const { msgId, parts } of messagesToFetch) {
-      const emailObj: FetchedEmail = { subject: "", from: "", xmlAttachments: [], pdfAttachments: [] };
-      
-      // Fetch headers only (lightweight)
-      try {
-        const headerResp = await cmd(`FETCH ${msgId} BODY[HEADER.FIELDS (Subject From)]`);
-        const subjectMatch = headerResp.match(/Subject:\s*([^\r\n]+)/i);
-        const fromMatch = headerResp.match(/From:\s*([^\r\n]+)/i);
-        emailObj.subject = subjectMatch ? subjectMatch[1].substring(0, 80) : "(no subject)";
-        emailObj.from = fromMatch ? fromMatch[1].substring(0, 60) : "(unknown)";
-      } catch { /* headers are optional */ }
-      
-      if (parts.length > 0) {
-        // TARGETED FETCH: download only specific MIME parts
-        for (const part of parts) {
+        // STEP 1: Pre-filter using BODYSTRUCTURE to find emails with attachments
+        const candidateIds: number[] = [];
+        for (const msgId of allMsgIds) {
           try {
-            const partResp = await cmd(`FETCH ${msgId} BODY[${part.partNum}]`);
-            
-            // Extract base64 data from response
-            const dataStart = partResp.indexOf("\r\n");
-            if (dataStart < 0) continue;
-            const tagMatch = partResp.match(/T\d+\s+OK/);
-            const dataEnd = tagMatch ? partResp.lastIndexOf(tagMatch[0]) : partResp.length;
-            let b64Data = partResp.substring(dataStart + 2, dataEnd).replace(/[\r\n\s]/g, "").replace(/\)$/,"");
-            
-            if (b64Data.length < 50) continue;
-            
-            if (part.type === "xml") {
-              try {
-                const binaryStr = atob(b64Data);
-                const bytes = new Uint8Array(binaryStr.length);
-                for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
-                const decoded = new TextDecoder("utf-8").decode(bytes);
-                
-                if (decoded.includes("<Clave>")) {
-                  emailObj.xmlAttachments.push({ filename: part.filename, content: decoded });
-                  console.log(`[IMAP] ✓ XML part ${part.partNum}: ${part.filename}`);
-                }
-              } catch { /* decode error */ }
-            } else if (part.type === "pdf") {
-              try {
-                const binaryStr = atob(b64Data);
-                const bytes = new Uint8Array(binaryStr.length);
-                for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
-                
-                if (bytes.length > 4 && String.fromCharCode(...bytes.slice(0, 4)) === "%PDF") {
-                  emailObj.pdfAttachments.push({ filename: part.filename, content: bytes });
-                  console.log(`[IMAP] ✓ PDF part ${part.partNum}: ${part.filename} (${bytes.length} bytes)`);
-                }
-              } catch { /* decode error */ }
+            const structResp = await cmd(`FETCH ${msgId} BODYSTRUCTURE`);
+            const structLower = structResp.toLowerCase();
+            const hasAttachment = structLower.includes('.xml') || structLower.includes('.pdf') ||
+              structLower.includes('application/xml') || structLower.includes('text/xml') ||
+              structLower.includes('application/pdf');
+            if (hasAttachment) {
+              candidateIds.push(msgId);
             }
-          } catch (e) {
-            console.error(`[IMAP] Error fetching part ${part.partNum} of msg ${msgId}:`, e);
+          } catch {
+            // If BODYSTRUCTURE fails, include as candidate anyway
+            candidateIds.push(msgId);
           }
         }
-      } else {
-        // FALLBACK: parts couldn't be parsed, try sequential parts 2-6
-        for (let pn = 2; pn <= 6; pn++) {
+
+        console.log(`[IMAP] Folder ${folder}: ${candidateIds.length} candidates with XML/PDF attachments`);
+
+        // STEP 2: Fetch FULL BODY for candidates (reliable MIME parsing)
+        // Process last 150 to cover enough history
+        const toFetch = candidateIds.slice(-150);
+
+        for (const msgId of toFetch) {
           try {
-            const partResp = await cmd(`FETCH ${msgId} BODY[${pn}]`);
-            if (partResp.includes("NIL") || partResp.includes(" NO ")) continue;
-            
-            const dataStart = partResp.indexOf("\r\n");
-            if (dataStart < 0) continue;
-            const tagMatch = partResp.match(/T\d+\s+OK/);
-            const dataEnd = tagMatch ? partResp.lastIndexOf(tagMatch[0]) : partResp.length;
-            let b64Data = partResp.substring(dataStart + 2, dataEnd).replace(/[\r\n\s]/g, "").replace(/\)$/,"");
-            
-            if (b64Data.length < 50) continue;
-            
-            try {
-              const binaryStr = atob(b64Data);
-              const bytes = new Uint8Array(binaryStr.length);
-              for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
-              const decoded = new TextDecoder("utf-8").decode(bytes);
-              
-              if (decoded.includes("<Clave>") && decoded.includes("<Emisor>")) {
-                emailObj.xmlAttachments.push({ filename: `part-${pn}.xml`, content: decoded });
-              } else if (bytes.length > 4 && String.fromCharCode(...bytes.slice(0, 4)) === "%PDF") {
-                emailObj.pdfAttachments.push({ filename: `part-${pn}.pdf`, content: bytes });
+            // Fetch full message body (expectLarge=true for big attachments)
+            const bodyResp = await cmd(`FETCH ${msgId} BODY[]`, true);
+
+            // Extract raw email content between the literal marker and the final tag
+            const literalMatch = bodyResp.match(/\{(\d+)\}\r\n/);
+            let rawEmail: string;
+            if (literalMatch) {
+              const start = bodyResp.indexOf(literalMatch[0]) + literalMatch[0].length;
+              const size = parseInt(literalMatch[1]);
+              rawEmail = bodyResp.substring(start, start + size);
+            } else {
+              rawEmail = bodyResp;
+            }
+
+            // Parse MIME parts recursively
+            const mimeParts = parseMimeParts(rawEmail);
+
+            const emailObj: FetchedEmail = { subject: "", from: "", xmlAttachments: [], pdfAttachments: [] };
+
+            // Extract subject/from from headers
+            const subjectMatch = rawEmail.match(/^Subject:\s*(.+)$/mi);
+            const fromMatch = rawEmail.match(/^From:\s*(.+)$/mi);
+            emailObj.subject = subjectMatch ? subjectMatch[1].substring(0, 80).trim() : "(no subject)";
+            emailObj.from = fromMatch ? fromMatch[1].substring(0, 60).trim() : "(unknown)";
+
+            for (const part of mimeParts) {
+              const fnameLower = part.filename.toLowerCase();
+
+              // Skip Hacienda response XMLs
+              if (fnameLower.startsWith("ahc-") || fnameLower.includes("mensaje") || fnameLower.startsWith("respuesta")) {
+                continue;
               }
-            } catch { /* not valid base64 */ }
-          } catch { /* part fetch failed */ }
+
+              try {
+                const bytes = decodePartContent(part.content, part.encoding);
+
+                if (fnameLower.endsWith(".xml") || part.contentType.includes("xml")) {
+                  const decoded = new TextDecoder("utf-8").decode(bytes);
+                  if (decoded.includes("<Clave>")) {
+                    emailObj.xmlAttachments.push({ filename: part.filename, content: decoded });
+                  }
+                } else if (fnameLower.endsWith(".pdf") || part.contentType === "application/pdf") {
+                  if (bytes.length > 4 && String.fromCharCode(bytes[0], bytes[1], bytes[2], bytes[3]) === "%PDF") {
+                    emailObj.pdfAttachments.push({ filename: part.filename, content: bytes });
+                  }
+                } else if (part.contentType.includes("octet-stream") && part.filename) {
+                  // Unknown type — try to detect by content
+                  const decoded = new TextDecoder("utf-8").decode(bytes);
+                  if (decoded.includes("<Clave>") && fnameLower.endsWith(".xml")) {
+                    emailObj.xmlAttachments.push({ filename: part.filename, content: decoded });
+                  } else if (bytes.length > 4 && String.fromCharCode(bytes[0], bytes[1], bytes[2], bytes[3]) === "%PDF") {
+                    emailObj.pdfAttachments.push({ filename: part.filename, content: bytes });
+                  }
+                }
+              } catch (decErr) {
+                console.error(`[IMAP] Decode error for ${part.filename}:`, decErr);
+              }
+            }
+
+            if (emailObj.xmlAttachments.length > 0 || emailObj.pdfAttachments.length > 0) {
+              allEmails.push(emailObj);
+              console.log(`[IMAP] ✓ ${folder} msg ${msgId}: ${emailObj.xmlAttachments.length} XML, ${emailObj.pdfAttachments.length} PDF | ${emailObj.subject}`);
+            }
+          } catch (fetchErr) {
+            console.error(`[IMAP] Error fetching msg ${msgId} from ${folder}:`, fetchErr);
+          }
         }
-      }
-      
-      if (emailObj.xmlAttachments.length > 0 || emailObj.pdfAttachments.length > 0) {
-        emails.push(emailObj);
+      } catch (folderErr) {
+        console.log(`[IMAP] Folder ${folder} not accessible: ${folderErr}`);
       }
     }
 
-    try { await cmd("LOGOUT"); } catch {}
-    try { conn.close(); } catch {}
+    try { await cmd("LOGOUT"); } catch { }
+    try { conn.close(); } catch { }
 
-    return { emails };
+    return { emails: allEmails };
   } catch (error) {
     console.error("[IMAP] Connection error:", error);
     return { emails: [], error: String(error) };
@@ -281,39 +312,37 @@ function matchPdfToXml(
   pdfAttachments: Array<{ filename: string; content: Uint8Array }>
 ): Map<string, { filename: string; content: Uint8Array } | null> {
   const matches = new Map<string, { filename: string; content: Uint8Array } | null>();
-  
+
   for (const xml of xmlAttachments) {
     const claveMatch = xml.content.match(/<Clave>(\d{50})<\/Clave>/);
     const clave = claveMatch ? claveMatch[1] : "";
-    
+
     const numConsecMatch = xml.content.match(/<NumeroConsecutivo>(\d+)<\/NumeroConsecutivo>/);
     const numConsec = numConsecMatch ? numConsecMatch[1] : "";
-    
+
     const xmlBaseName = xml.filename.replace(/\.xml$/i, "").toLowerCase();
-    
+
     let matchedPdf: { filename: string; content: Uint8Array } | null = null;
-    
+
     for (const pdf of pdfAttachments) {
       const pdfBaseName = pdf.filename.replace(/\.pdf$/i, "").toLowerCase();
-      
+
       if (pdfBaseName === xmlBaseName ||
-          (clave && pdf.filename.includes(clave)) ||
-          (numConsec && pdf.filename.includes(numConsec)) ||
-          (xmlBaseName.length >= 10 && pdfBaseName.includes(xmlBaseName.substring(0, 10)))) {
+        (clave && pdf.filename.includes(clave)) ||
+        (numConsec && pdf.filename.includes(numConsec)) ||
+        (xmlBaseName.length >= 10 && pdfBaseName.includes(xmlBaseName.substring(0, 10)))) {
         matchedPdf = pdf;
-        console.log(`[Bluehost] ✓ Matched PDF ${pdf.filename} to XML ${xml.filename}`);
         break;
       }
     }
-    
+
     if (!matchedPdf && pdfAttachments.length === 1 && xmlAttachments.length === 1) {
       matchedPdf = pdfAttachments[0];
-      console.log(`[Bluehost] ✓ Auto-matched single PDF ${matchedPdf.filename} to single XML ${xml.filename}`);
     }
-    
+
     matches.set(xml.filename, matchedPdf);
   }
-  
+
   return matches;
 }
 
@@ -332,12 +361,12 @@ serve(async (req) => {
 
     const { organization_id, month, year, force_resync } = await req.json();
     if (!organization_id) throw new Error("organization_id required");
-    
-    console.log(`[Bluehost] Fetching invoices for organization ${organization_id}`);
+
+    console.log(`[Bluehost] Fetching invoices for org ${organization_id}`);
 
     const token = authHeader.replace("Bearer ", "");
     const isServiceRole = token === supabaseKey;
-    
+
     if (!isServiceRole) {
       const { data: { user }, error: authError } = await supabase.auth.getUser(token);
       if (authError || !user) throw new Error("Invalid authorization");
@@ -364,7 +393,7 @@ serve(async (req) => {
 
     const imapHost = credentials.imap_host || "mail.bluehost.com";
     const imapPort = credentials.imap_port || 993;
-    
+
     console.log(`[Bluehost] Connecting to ${imapHost}:${imapPort} for ${credentials.email}`);
 
     const { data: settings } = await supabase
@@ -375,7 +404,7 @@ serve(async (req) => {
 
     const startDateSetting = settings?.find(s => s.key === "start_date")?.value;
     let startDate: Date;
-    
+
     if (month && year) {
       startDate = new Date(year, month - 1, 1);
     } else if (startDateSetting) {
@@ -387,7 +416,7 @@ serve(async (req) => {
 
     const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
     const sinceDateStr = `${startDate.getDate()}-${months[startDate.getMonth()]}-${startDate.getFullYear()}`;
-    
+
     console.log(`[Bluehost] Searching for emails since ${sinceDateStr}`);
 
     const { emails: fetchedEmails, error: imapError } = await fetchEmailsViaIMAP(
@@ -411,13 +440,13 @@ serve(async (req) => {
     for (const emailObj of fetchedEmails) {
       try {
         const { xmlAttachments, pdfAttachments } = emailObj;
-        
+
         if (xmlAttachments.length > 0 || pdfAttachments.length > 0) {
           console.log(`[Bluehost] Email from: ${emailObj.from} | Subject: ${emailObj.subject} | XMLs: ${xmlAttachments.length} PDFs: ${pdfAttachments.length}`);
         }
-        
+
         const pdfMatches = matchPdfToXml(xmlAttachments, pdfAttachments);
-        
+
         for (const xmlAttachment of xmlAttachments) {
           const claveMatch = xmlAttachment.content.match(/<Clave>(\d{50})<\/Clave>/);
           if (!claveMatch) {
@@ -445,23 +474,23 @@ serve(async (req) => {
                     contentType: "application/pdf",
                     upsert: true
                   });
-                
+
                 if (!uploadError) {
                   await supabase
                     .from("processed_documents")
-                    .update({ 
+                    .update({
                       pdf_attachment_url: pdfPath,
                       file_path: pdfPath
                     })
                     .eq("id", existing.id);
-                  
+
                   console.log(`[Bluehost] ✅ Added missing PDF for existing document: ${docKey}`);
                 }
               } catch (pdfErr) {
                 console.error(`[Bluehost] Error adding PDF to existing doc:`, pdfErr);
               }
             }
-            
+
             skippedInvoices.push({ doc_key: docKey, reason: "Already exists" });
             continue;
           }
@@ -469,7 +498,7 @@ serve(async (req) => {
           let pdfUrl: string | null = null;
           let pdfPath: string | null = null;
           const matchedPdf = pdfMatches.get(xmlAttachment.filename);
-          
+
           if (matchedPdf) {
             try {
               pdfPath = `${organization_id}/${docKey}.pdf`;
@@ -479,7 +508,7 @@ serve(async (req) => {
                   contentType: "application/pdf",
                   upsert: true
                 });
-              
+
               if (!uploadError) {
                 pdfUrl = pdfPath;
                 console.log(`[Bluehost] ✅ Uploaded PDF: ${pdfPath}`);
@@ -516,15 +545,14 @@ serve(async (req) => {
             });
             console.log(`[Bluehost] ✅ Processed: ${xmlAttachment.filename} (PDF: ${!!pdfUrl})`);
           } else if (processResult?.rejected) {
-            skippedInvoices.push({ 
-              filename: xmlAttachment.filename, 
-              reason: processResult?.message || "Rejected" 
+            skippedInvoices.push({
+              filename: xmlAttachment.filename,
+              reason: processResult?.message || "Rejected"
             });
-            console.log(`[Bluehost] ⚠️ Rejected: ${xmlAttachment.filename} - ${processResult?.message}`);
           } else {
-            skippedInvoices.push({ 
-              filename: xmlAttachment.filename, 
-              reason: processResult?.message || "Unknown" 
+            skippedInvoices.push({
+              filename: xmlAttachment.filename,
+              reason: processResult?.message || "Unknown"
             });
           }
         }
