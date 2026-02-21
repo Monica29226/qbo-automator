@@ -527,59 +527,143 @@ serve(async (req) => {
         // Only fetch the last few matches (most recent)
         for (const msgId of msgIds.slice(-3)) {
           checkTimeout();
+          log(`📩 Fetching BODYSTRUCTURE for msg ${msgId}...`);
           
-          await conn.write(encoder.encode(`F${msgId} FETCH ${msgId} BODY[]\r\n`));
-          let emailContent = "";
-          let fetchAttempts = 0;
-          const maxTime = Date.now() + 15000;
+          // Step 1: Get BODYSTRUCTURE to find attachment part numbers
+          const structResp = await cmd(`FETCH ${msgId} BODYSTRUCTURE`);
+          log(`📋 BODYSTRUCTURE (first 300): ${structResp.substring(0, 300)}`);
           
-          while (Date.now() < maxTime && fetchAttempts < 300) {
-            const n = await conn.read(buf);
-            if (n === null) break;
-            emailContent += decoder.decode(buf.subarray(0, n));
-            if (emailContent.includes(`F${msgId} OK`)) break;
-            if (emailContent.includes(`F${msgId} NO`) || emailContent.includes(`F${msgId} BAD`)) break;
-            fetchAttempts++;
-          }
-
-          if (!emailContent) continue;
-
-          // Extract base64 parts - look for XML and PDF attachments
-          const boundaryMatch = emailContent.match(/boundary="([^"]+)"/i) || emailContent.match(/boundary=([^\s;]+)/i);
-          if (!boundaryMatch) continue;
-          const boundary = boundaryMatch[1];
-          const parts = emailContent.split(new RegExp(`--${boundary.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
-
-          for (const part of parts) {
-            const filenameMatch = part.match(/filename="?([^"\r\n;]+)"?/i);
-            if (!filenameMatch) continue;
-            const fname = filenameMatch[1].trim();
+          // Parse part numbers for XML and PDF attachments
+          // BODYSTRUCTURE returns nested structure - we need to find parts with .xml and .pdf filenames
+          const structLower = structResp.toLowerCase();
+          
+          // Find all filename references with their approximate positions
+          const xmlParts: { partNum: string; filename: string }[] = [];
+          const pdfParts: { partNum: string; filename: string }[] = [];
+          
+          // Simple heuristic: count opening parens to determine part numbers
+          // For typical emails with attachments, parts are numbered 1, 2, 3, etc.
+          // We'll extract filenames and map them to sequential part numbers
+          const filenameRegex = /filename[*]?(?:="([^"]+)"|=([^\s\)]+)|[*]0[*]?="?([^";\s\)]+)"?|[*]1[*]?="?([^";\s\)]+)"?)/gi;
+          let fnMatch;
+          let partCounter = 0;
+          
+          // Split by major sections to count parts
+          // Each attachment typically appears as a separate MIME part
+          const sections = structResp.split(/\)\s*\(/);
+          
+          for (let si = 0; si < sections.length; si++) {
+            const section = sections[si].toLowerCase();
+            // Check if this section has a filename
+            const fnRegex = /filename[*]?(?:="([^"]+)"|=([^\s\)]+))/i;
+            const fnM = sections[si].match(fnRegex);
             
-            // Get the base64 content after the double newline
-            const contentStart = part.indexOf("\r\n\r\n");
-            if (contentStart < 0) continue;
-            const b64 = part.substring(contentStart + 4).replace(/[\r\n\s]/g, "").replace(/--$/, "");
-
-            if (fname.toLowerCase().endsWith(".xml") && !fname.toLowerCase().includes("ahc-") && !fname.toLowerCase().includes("mensaje")) {
+            if (fnM) {
+              partCounter++;
+              const fname = (fnM[1] || fnM[2] || "").trim();
+              const partNum = String(partCounter + 1); // Part 1 is usually text/html, attachments start at 2+
+              
+              if (fname.toLowerCase().endsWith(".xml") && !fname.toLowerCase().includes("ahc-") && !fname.toLowerCase().includes("mensaje")) {
+                xmlParts.push({ partNum, filename: fname });
+                log(`📎 XML attachment: ${fname} -> part ${partNum}`);
+              } else if (fname.toLowerCase().endsWith(".pdf")) {
+                pdfParts.push({ partNum, filename: fname });
+                log(`📎 PDF attachment: ${fname} -> part ${partNum}`);
+              }
+            }
+          }
+          
+          // If we couldn't parse parts, try a simpler approach: just try parts 2, 3, 4
+          if (xmlParts.length === 0) {
+            log(`⚠️ Could not parse BODYSTRUCTURE, trying sequential parts 2-5...`);
+            for (let partNum = 2; partNum <= 5; partNum++) {
+              checkTimeout();
               try {
-                const decoded = atob(b64);
-                // Check if it's an invoice XML
+                const partResp = await cmd(`FETCH ${msgId} BODY[${partNum}]`);
+                if (partResp.includes("NIL") || partResp.includes("NO")) continue;
+                
+                // Extract the base64 content between { and the tag OK
+                const dataStart = partResp.indexOf("\r\n");
+                if (dataStart < 0) continue;
+                const dataEnd = partResp.lastIndexOf(`\r\n`);
+                let b64Data = partResp.substring(dataStart + 2, dataEnd).replace(/[\r\n\s]/g, "");
+                // Remove trailing IMAP tag
+                b64Data = b64Data.replace(/T\d+\s+OK.*$/i, "").replace(/\)$/,"");
+                
+                if (b64Data.length < 100) continue;
+                
+                try {
+                  const decoded = atob(b64Data);
+                  if (decoded.includes("<?xml") || decoded.includes("<FacturaElectronica") || 
+                      decoded.includes("<NotaCreditoElectronica") || decoded.includes("<Emisor>")) {
+                    const docNum = parseNumeroConsecutivo(decoded);
+                    if (docNum === invoice_number || docNum.includes(invoice_number) || invoice_number.includes(docNum)) {
+                      xmlContent = decoded;
+                      log(`✅ XML match on part ${partNum}: docNum=${docNum}`);
+                    }
+                  } else if (decoded.startsWith("%PDF")) {
+                    pdfBase64 = b64Data;
+                    pdfFilename = `invoice-${invoice_number}.pdf`;
+                    log(`📄 PDF found on part ${partNum}`);
+                  }
+                } catch { /* not valid base64 */ }
+              } catch (e) {
+                log(`⚠️ Part ${partNum} fetch error: ${e}`);
+              }
+            }
+          } else {
+            // Fetch XML parts
+            for (const xp of xmlParts) {
+              checkTimeout();
+              log(`📥 Fetching XML part ${xp.partNum}...`);
+              const partResp = await cmd(`FETCH ${msgId} BODY[${xp.partNum}]`);
+              
+              // Extract base64 data
+              const dataStart = partResp.indexOf("\r\n");
+              if (dataStart < 0) continue;
+              const dataEnd = partResp.lastIndexOf(`\r\n`);
+              let b64Data = partResp.substring(dataStart + 2, dataEnd).replace(/[\r\n\s]/g, "");
+              b64Data = b64Data.replace(/T\d+\s+OK.*$/i, "").replace(/\)$/,"");
+              
+              if (b64Data.length < 50) continue;
+              
+              try {
+                const decoded = atob(b64Data);
                 if (decoded.includes("<FacturaElectronica") || decoded.includes("<NotaCreditoElectronica") || 
                     decoded.includes("<NotaDebitoElectronica") || decoded.includes("<TiqueteElectronico") ||
                     decoded.includes("<Emisor>")) {
-                  
                   const docNum = parseNumeroConsecutivo(decoded);
                   if (docNum === invoice_number || docNum.includes(invoice_number) || invoice_number.includes(docNum)) {
                     xmlContent = decoded;
-                    log(`✅ XML match found: ${fname} (docNum: ${docNum})`);
+                    log(`✅ XML match: ${xp.filename} (docNum: ${docNum})`);
+                    break;
                   }
                 }
               } catch (e) {
-                log(`⚠️ Failed to decode XML ${fname}: ${e}`);
+                log(`⚠️ Failed to decode XML ${xp.filename}: ${e}`);
               }
-            } else if (fname.toLowerCase().endsWith(".pdf") && !pdfBase64) {
-              pdfBase64 = b64;
-              pdfFilename = fname;
+            }
+            
+            // Fetch PDF if XML was found
+            if (xmlContent && pdfParts.length > 0) {
+              const pp = pdfParts[0];
+              log(`📥 Fetching PDF part ${pp.partNum}...`);
+              try {
+                const partResp = await cmd(`FETCH ${msgId} BODY[${pp.partNum}]`);
+                const dataStart = partResp.indexOf("\r\n");
+                if (dataStart >= 0) {
+                  const dataEnd = partResp.lastIndexOf(`\r\n`);
+                  let b64Data = partResp.substring(dataStart + 2, dataEnd).replace(/[\r\n\s]/g, "");
+                  b64Data = b64Data.replace(/T\d+\s+OK.*$/i, "").replace(/\)$/,"");
+                  if (b64Data.length > 100) {
+                    pdfBase64 = b64Data;
+                    pdfFilename = pp.filename;
+                    log(`📄 PDF fetched: ${pp.filename}`);
+                  }
+                }
+              } catch (e) {
+                log(`⚠️ PDF fetch error: ${e}`);
+              }
             }
           }
 
