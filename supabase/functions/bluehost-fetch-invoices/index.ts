@@ -17,7 +17,6 @@ async function fetchEmailsViaIMAP(
   const rawEmails: string[] = [];
   
   try {
-    // Conectar usando TLS
     const conn = await Deno.connectTls({
       hostname: host,
       port: port,
@@ -27,7 +26,6 @@ async function fetchEmailsViaIMAP(
     const decoder = new TextDecoder();
     const buffer = new Uint8Array(65536);
 
-    // Función para leer respuesta
     const readResponse = async (): Promise<string> => {
       let response = "";
       let attempts = 0;
@@ -38,10 +36,8 @@ async function fetchEmailsViaIMAP(
         
         response += decoder.decode(buffer.subarray(0, n));
         
-        // Verificar si la respuesta está completa
         if (response.includes("\r\n") && 
             (response.includes("OK") || response.includes("NO") || response.includes("BAD") || response.includes("* "))) {
-          // Para comandos que devuelven múltiples líneas, esperar a que termine
           if (!response.endsWith("\r\n")) {
             attempts++;
             await new Promise(r => setTimeout(r, 100));
@@ -56,14 +52,12 @@ async function fetchEmailsViaIMAP(
       return response;
     };
 
-    // Función para enviar comando
     const sendCommand = async (tag: string, command: string): Promise<string> => {
       const fullCommand = `${tag} ${command}\r\n`;
       await conn.write(encoder.encode(fullCommand));
       return await readResponse();
     };
 
-    // Leer greeting
     const greeting = await readResponse();
     console.log("[IMAP] Greeting:", greeting.substring(0, 100));
 
@@ -72,7 +66,6 @@ async function fetchEmailsViaIMAP(
       return { rawEmails: [], error: "Server did not send OK greeting" };
     }
 
-    // Login
     const loginResp = await sendCommand("A001", `LOGIN "${email}" "${password}"`);
     console.log("[IMAP] Login response:", loginResp.substring(0, 100));
     
@@ -81,27 +74,10 @@ async function fetchEmailsViaIMAP(
       return { rawEmails: [], error: "Login failed: " + loginResp.substring(0, 200) };
     }
 
-    // List all folders to search in multiple locations
-    const listResp = await sendCommand("A001B", 'LIST "" "*"');
-    const folderLines = listResp.split("\r\n").filter(l => l.startsWith("* LIST"));
-    const folders: string[] = ["INBOX"];
-    for (const line of folderLines) {
-      const folderMatch = line.match(/"([^"]+)"\s*$/);
-      if (folderMatch && folderMatch[1] !== "INBOX") {
-        const folder = folderMatch[1];
-        // Only add folders that might contain received emails
-        const lowerFolder = folder.toLowerCase();
-        if (lowerFolder.includes("junk") || lowerFolder.includes("spam") || 
-            lowerFolder.includes("inbox") || lowerFolder.includes("compra") ||
-            lowerFolder.includes("factur") || lowerFolder.includes("all")) {
-          folders.push(folder);
-        }
-      }
-    }
-    console.log(`[IMAP] Folders to search: ${folders.join(", ")}`);
-
-    // Search across all relevant folders
-    let allMessageData: Array<{folder: string; msgId: number}> = [];
+    // Only search INBOX - other folders are rarely needed and waste CPU
+    const folders = ["INBOX"];
+    
+    let allMessageIds: number[] = [];
     let tagCounter = 2;
 
     for (const folder of folders) {
@@ -123,69 +99,68 @@ async function fetchEmailsViaIMAP(
       const messageIds = searchLine.replace("* SEARCH ", "").trim().split(" ").map(Number).filter(n => n > 0);
       console.log(`[IMAP] ${folder}: Found ${messageIds.length} messages since ${sinceDateStr}`);
 
-      // Take last 200 per folder
-      const messagesToFetch = messageIds.slice(-200);
-      
-      // Need to select the folder before fetching
-      if (folder !== folders[folders.length - 1]) {
-        // We'll handle fetching per folder below
-      }
-      
-      for (const msgId of messagesToFetch) {
-        allMessageData.push({ folder, msgId });
-      }
+      allMessageIds = allMessageIds.concat(messageIds);
     }
 
-    console.log(`[IMAP] Total messages to fetch across all folders: ${allMessageData.length}`);
+    console.log(`[IMAP] Total messages to check: ${allMessageIds.length}`);
 
-    // Group by folder and fetch
-    const folderGroups = new Map<string, number[]>();
-    for (const item of allMessageData) {
-      if (!folderGroups.has(item.folder)) {
-        folderGroups.set(item.folder, []);
-      }
-      folderGroups.get(item.folder)!.push(item.msgId);
-    }
-
-    let globalMsgIndex = 0;
-    for (const [folder, msgIds] of folderGroups) {
-      // Select the folder
-      await sendCommand(`B${globalMsgIndex}`, `SELECT "${folder}"`);
-      
-      const messagesToFetch = msgIds.slice(-200);
-      console.log(`[IMAP] Fetching ${messagesToFetch.length} messages from ${folder}`);
-
-      // Fetch cada mensaje - descargar TODOS sin pre-filtro BODYSTRUCTURE
-      for (let i = 0; i < messagesToFetch.length; i++) {
-        const msgId = messagesToFetch[i];
+    // STEP 1: Pre-filter with BODYSTRUCTURE to find only emails with XML/PDF attachments
+    // This is much faster than downloading full BODY[] for every email
+    const candidateIds: number[] = [];
+    
+    for (let i = 0; i < allMessageIds.length; i++) {
+      const msgId = allMessageIds[i];
+      try {
+        const structResp = await sendCommand(`S${i}`, `FETCH ${msgId} BODYSTRUCTURE`);
+        const structLower = structResp.toLowerCase();
         
-        try {
-          const fetchCmd = `C${globalMsgIndex}_${i} FETCH ${msgId} BODY[]`;
-          await conn.write(encoder.encode(fetchCmd + "\r\n"));
-          
-          let emailContent = "";
-          let fetchAttempts = 0;
-          const maxFetchTime = Date.now() + 30000;
-          
-          while (Date.now() < maxFetchTime && fetchAttempts < 500) {
-            const n = await conn.read(buffer);
-            if (n === null) break;
-            emailContent += decoder.decode(buffer.subarray(0, n));
-            
-            if (emailContent.includes(`C${globalMsgIndex}_${i} OK`)) break;
-            if (emailContent.includes(`C${globalMsgIndex}_${i} NO`) || emailContent.includes(`C${globalMsgIndex}_${i} BAD`)) break;
-            
-            fetchAttempts++;
-          }
-
-          if (emailContent.length > 0) {
-            rawEmails.push(emailContent);
-          }
-        } catch (msgErr) {
-          console.error(`[IMAP] Error fetching message ${msgId} from ${folder}:`, msgErr);
+        // Check if this email has XML or PDF attachments
+        const hasXml = structLower.includes('.xml') || structLower.includes('application/xml') || 
+                       structLower.includes('text/xml') || structLower.includes('application/octet-stream');
+        const hasPdf = structLower.includes('.pdf') || structLower.includes('application/pdf');
+        
+        if (hasXml || hasPdf) {
+          candidateIds.push(msgId);
         }
+      } catch (e) {
+        // If BODYSTRUCTURE fails, include the message as candidate
+        candidateIds.push(msgId);
       }
-      globalMsgIndex++;
+    }
+
+    console.log(`[IMAP] ${candidateIds.length} emails have XML/PDF attachments (filtered from ${allMessageIds.length})`);
+
+    // STEP 2: Only download full BODY[] for candidates (limit to last 100 to prevent timeout)
+    const messagesToFetch = candidateIds.slice(-100);
+
+    for (let i = 0; i < messagesToFetch.length; i++) {
+      const msgId = messagesToFetch[i];
+      
+      try {
+        const fetchCmd = `F${i} FETCH ${msgId} BODY[]`;
+        await conn.write(encoder.encode(fetchCmd + "\r\n"));
+        
+        let emailContent = "";
+        let fetchAttempts = 0;
+        const maxFetchTime = Date.now() + 15000; // 15s per email max
+        
+        while (Date.now() < maxFetchTime && fetchAttempts < 300) {
+          const n = await conn.read(buffer);
+          if (n === null) break;
+          emailContent += decoder.decode(buffer.subarray(0, n));
+          
+          if (emailContent.includes(`F${i} OK`)) break;
+          if (emailContent.includes(`F${i} NO`) || emailContent.includes(`F${i} BAD`)) break;
+          
+          fetchAttempts++;
+        }
+
+        if (emailContent.length > 0) {
+          rawEmails.push(emailContent);
+        }
+      } catch (msgErr) {
+        console.error(`[IMAP] Error fetching message ${msgId}:`, msgErr);
+      }
     }
 
     // Logout
@@ -203,15 +178,12 @@ async function fetchEmailsViaIMAP(
 function isHaciendaResponse(filename: string, content: string): boolean {
   const upperFilename = filename.toUpperCase();
   
-  // Respuestas de Hacienda tienen prefijos específicos
   if (upperFilename.startsWith("AHC-") || 
       upperFilename.startsWith("RMH-") ||
       upperFilename.startsWith("MH-")) {
     return true;
   }
   
-  // Los XMLs de respuesta tienen tags específicos de mensaje de Hacienda
-  // Una factura tiene <FacturaElectronica> o similar, no <MensajeHacienda>
   if (content.includes("<MensajeHacienda") ||
       content.includes("<ConfirmacionComprobante") ||
       content.includes("<RespuestaXML") ||
@@ -220,8 +192,6 @@ function isHaciendaResponse(filename: string, content: string): boolean {
     return true;
   }
   
-  // Si es un mensaje de aceptación/rechazo puro (no una factura)
-  // Estos NO contienen <LineaDetalle> porque no son facturas
   if (content.includes("<Mensaje>") && 
       !content.includes("<LineaDetalle>") && 
       !content.includes("<FacturaElectronica") &&
@@ -249,34 +219,28 @@ function findAllBoundaries(content: string): string[] {
 function extractXmlAttachments(rawEmail: string): Array<{ filename: string; content: string }> {
   const attachments: Array<{ filename: string; content: string }> = [];
   
-  // Encontrar TODOS los boundaries (incluyendo anidados)
   const boundaries = findAllBoundaries(rawEmail);
   if (boundaries.length === 0) {
     return attachments;
   }
 
-  // Procesar cada boundary encontrado
   for (const boundary of boundaries) {
     const parts = rawEmail.split("--" + boundary);
 
     for (const part of parts) {
-      // Verificar si es un adjunto XML
       const filenameMatch = part.match(/filename="?([^"\r\n]+\.xml)"?/i);
       if (!filenameMatch) continue;
 
       const filename = filenameMatch[1].trim();
 
-      // Verificar encoding
       const encodingMatch = part.match(/Content-Transfer-Encoding:\s*(\S+)/i);
       const encoding = encodingMatch ? encodingMatch[1].toUpperCase() : "7BIT";
 
-      // Extraer contenido (después de línea vacía)
       const contentStart = part.indexOf("\r\n\r\n");
       if (contentStart === -1) continue;
 
       let content = part.substring(contentStart + 4);
       
-      // Limpiar el final - remover cualquier boundary posterior
       for (const b of boundaries) {
         const endIdx = content.indexOf("--" + b);
         if (endIdx !== -1) {
@@ -285,7 +249,6 @@ function extractXmlAttachments(rawEmail: string): Array<{ filename: string; cont
       }
       content = content.trim();
 
-      // Decodificar según encoding
       let decodedContent: string;
       
       if (encoding === "BASE64") {
@@ -309,15 +272,12 @@ function extractXmlAttachments(rawEmail: string): Array<{ filename: string; cont
         decodedContent = content;
       }
 
-      // Verificar si es una respuesta de Hacienda (no una factura)
       if (isHaciendaResponse(filename, decodedContent)) {
         console.log(`[Bluehost] Skipping Hacienda response/message: ${filename}`);
         continue;
       }
 
-      // Verificar que sea XML válido con Clave (facturas válidas)
       if (decodedContent.includes("<Clave>")) {
-        // Evitar duplicados por múltiples boundaries
         const alreadyAdded = attachments.some(a => a.filename === filename);
         if (!alreadyAdded) {
           console.log(`[Bluehost] ✓ Valid invoice XML found: ${filename}`);
@@ -336,7 +296,6 @@ function extractXmlAttachments(rawEmail: string): Array<{ filename: string; cont
 function extractPdfAttachments(rawEmail: string): Array<{ filename: string; content: Uint8Array }> {
   const attachments: Array<{ filename: string; content: Uint8Array }> = [];
   
-  // Encontrar TODOS los boundaries (incluyendo anidados)
   const boundaries = findAllBoundaries(rawEmail);
   if (boundaries.length === 0) {
     return attachments;
@@ -346,26 +305,21 @@ function extractPdfAttachments(rawEmail: string): Array<{ filename: string; cont
     const parts = rawEmail.split("--" + boundary);
 
     for (const part of parts) {
-      // Verificar si es un adjunto PDF
       const filenameMatch = part.match(/filename="?([^"\r\n]+\.pdf)"?/i);
       if (!filenameMatch) continue;
 
       const filename = filenameMatch[1].trim();
       
-      // Evitar duplicados
       if (attachments.some(a => a.filename === filename)) continue;
 
-      // Verificar encoding
       const encodingMatch = part.match(/Content-Transfer-Encoding:\s*(\S+)/i);
       const encoding = encodingMatch ? encodingMatch[1].toUpperCase() : "7BIT";
 
-      // Extraer contenido (después de línea vacía)
       const contentStart = part.indexOf("\r\n\r\n");
       if (contentStart === -1) continue;
 
       let content = part.substring(contentStart + 4);
       
-      // Limpiar el final - remover cualquier boundary posterior
       for (const b of boundaries) {
         const endIdx = content.indexOf("--" + b);
         if (endIdx !== -1) {
@@ -374,7 +328,6 @@ function extractPdfAttachments(rawEmail: string): Array<{ filename: string; cont
       }
       content = content.trim();
 
-      // Decodificar según encoding
       let decodedContent: Uint8Array;
       
       if (encoding === "BASE64") {
@@ -390,11 +343,10 @@ function extractPdfAttachments(rawEmail: string): Array<{ filename: string; cont
           continue;
         }
       } else {
-        const encoder = new TextEncoder();
-        decodedContent = encoder.encode(content);
+        const enc = new TextEncoder();
+        decodedContent = enc.encode(content);
       }
 
-      // Verificar que comience con %PDF
       if (decodedContent.length > 4) {
         const header = String.fromCharCode(...decodedContent.slice(0, 4));
         if (header === "%PDF") {
@@ -410,7 +362,6 @@ function extractPdfAttachments(rawEmail: string): Array<{ filename: string; cont
   return attachments;
 }
 
-// Función para hacer match entre XML y PDF por nombre de archivo
 function matchPdfToXml(
   xmlAttachments: Array<{ filename: string; content: string }>,
   pdfAttachments: Array<{ filename: string; content: Uint8Array }>
@@ -418,15 +369,12 @@ function matchPdfToXml(
   const matches = new Map<string, { filename: string; content: Uint8Array } | null>();
   
   for (const xml of xmlAttachments) {
-    // Extraer la clave del XML para buscar en PDFs
     const claveMatch = xml.content.match(/<Clave>(\d{50})<\/Clave>/);
     const clave = claveMatch ? claveMatch[1] : "";
     
-    // También extraer el número consecutivo
     const numConsecMatch = xml.content.match(/<NumeroConsecutivo>(\d+)<\/NumeroConsecutivo>/);
     const numConsec = numConsecMatch ? numConsecMatch[1] : "";
     
-    // Buscar PDF que coincida con el nombre base del XML, la clave o el consecutivo
     const xmlBaseName = xml.filename.replace(/\.xml$/i, "").toLowerCase();
     
     let matchedPdf: { filename: string; content: Uint8Array } | null = null;
@@ -434,10 +382,6 @@ function matchPdfToXml(
     for (const pdf of pdfAttachments) {
       const pdfBaseName = pdf.filename.replace(/\.pdf$/i, "").toLowerCase();
       
-      // Criterios de match:
-      // 1. Mismo nombre base
-      // 2. PDF contiene la clave
-      // 3. PDF contiene el número consecutivo
       if (pdfBaseName === xmlBaseName ||
           (clave && pdf.filename.includes(clave)) ||
           (numConsec && pdf.filename.includes(numConsec)) ||
@@ -446,6 +390,12 @@ function matchPdfToXml(
         console.log(`[Bluehost] ✓ Matched PDF ${pdf.filename} to XML ${xml.filename}`);
         break;
       }
+    }
+    
+    // If no match by name, try matching any unmatched PDF in same email
+    if (!matchedPdf && pdfAttachments.length === 1 && xmlAttachments.length === 1) {
+      matchedPdf = pdfAttachments[0];
+      console.log(`[Bluehost] ✓ Auto-matched single PDF ${matchedPdf.filename} to single XML ${xml.filename}`);
     }
     
     matches.set(xml.filename, matchedPdf);
@@ -472,7 +422,6 @@ serve(async (req) => {
     
     console.log(`[Bluehost] Fetching invoices for organization ${organization_id}`);
 
-    // Verificar autorización
     const token = authHeader.replace("Bearer ", "");
     const isServiceRole = token === supabaseKey;
     
@@ -481,7 +430,6 @@ serve(async (req) => {
       if (authError || !user) throw new Error("Invalid authorization");
     }
 
-    // Obtener cuenta de Bluehost activa
     const { data: bluehostAccount, error: accountError } = await supabase
       .from("integration_accounts")
       .select("*")
@@ -506,7 +454,6 @@ serve(async (req) => {
     
     console.log(`[Bluehost] Connecting to ${imapHost}:${imapPort} for ${credentials.email}`);
 
-    // Obtener settings de búsqueda
     const { data: settings } = await supabase
       .from("system_settings")
       .select("key, value")
@@ -525,13 +472,11 @@ serve(async (req) => {
       startDate.setDate(startDate.getDate() - 30);
     }
 
-    // Formatear fecha para IMAP: DD-Mon-YYYY
     const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
     const sinceDateStr = `${startDate.getDate()}-${months[startDate.getMonth()]}-${startDate.getFullYear()}`;
     
     console.log(`[Bluehost] Searching for emails since ${sinceDateStr}`);
 
-    // Fetch emails via IMAP
     const { rawEmails, error: imapError } = await fetchEmailsViaIMAP(
       imapHost,
       imapPort,
@@ -550,10 +495,8 @@ serve(async (req) => {
     const skippedInvoices: any[] = [];
     const errors: any[] = [];
 
-    // Procesar cada email
     for (const rawEmail of rawEmails) {
       try {
-        // Log email subject for diagnostics
         const subjectMatch = rawEmail.match(/Subject:\s*([^\r\n]+)/i);
         const fromMatch = rawEmail.match(/From:\s*([^\r\n]+)/i);
         const emailSubject = subjectMatch ? subjectMatch[1].substring(0, 80) : "(no subject)";
@@ -562,13 +505,13 @@ serve(async (req) => {
         const xmlAttachments = extractXmlAttachments(rawEmail);
         const pdfAttachments = extractPdfAttachments(rawEmail);
         
-        console.log(`[Bluehost] Email from: ${emailFrom} | Subject: ${emailSubject} | XMLs: ${xmlAttachments.length} PDFs: ${pdfAttachments.length}`);
+        if (xmlAttachments.length > 0 || pdfAttachments.length > 0) {
+          console.log(`[Bluehost] Email from: ${emailFrom} | Subject: ${emailSubject} | XMLs: ${xmlAttachments.length} PDFs: ${pdfAttachments.length}`);
+        }
         
-        // Match PDFs con XMLs
         const pdfMatches = matchPdfToXml(xmlAttachments, pdfAttachments);
         
         for (const xmlAttachment of xmlAttachments) {
-          // Extraer clave del XML
           const claveMatch = xmlAttachment.content.match(/<Clave>(\d{50})<\/Clave>/);
           if (!claveMatch) {
             console.log(`[Bluehost] Skipping XML without valid Clave: ${xmlAttachment.filename}`);
@@ -576,8 +519,12 @@ serve(async (req) => {
           }
 
           const docKey = claveMatch[1];
+          
+          // Log if this is the invoice being searched for
+          if (docKey.includes("68900209010000000713") || xmlAttachment.filename.includes("68900209010000000713")) {
+            console.log(`[Bluehost] 🎯 FOUND TARGET INVOICE: ${docKey} in file ${xmlAttachment.filename}`);
+          }
 
-          // Verificar si ya existe
           const { data: existing } = await supabase
             .from("processed_documents")
             .select("id, status, pdf_attachment_url")
@@ -586,7 +533,6 @@ serve(async (req) => {
             .maybeSingle();
 
           if (existing && !force_resync) {
-            // Si existe pero no tiene PDF, intentar agregar el PDF
             const matchedPdf = pdfMatches.get(xmlAttachment.filename);
             if (matchedPdf && !existing.pdf_attachment_url) {
               try {
@@ -599,7 +545,6 @@ serve(async (req) => {
                   });
                 
                 if (!uploadError) {
-                  // Store relative path instead of public URL for private bucket access
                   await supabase
                     .from("processed_documents")
                     .update({ 
@@ -619,7 +564,6 @@ serve(async (req) => {
             continue;
           }
 
-          // Subir PDF si existe match
           let pdfUrl: string | null = null;
           let pdfPath: string | null = null;
           const matchedPdf = pdfMatches.get(xmlAttachment.filename);
@@ -635,7 +579,6 @@ serve(async (req) => {
                 });
               
               if (!uploadError) {
-                // Store relative path instead of public URL for private bucket access
                 pdfUrl = pdfPath;
                 console.log(`[Bluehost] ✅ Uploaded PDF: ${pdfPath}`);
               } else {
@@ -646,7 +589,6 @@ serve(async (req) => {
             }
           }
 
-          // Procesar el XML
           const { data: processResult, error: processError } = await supabase.functions.invoke(
             "process-document-xml",
             {
