@@ -81,109 +81,111 @@ async function fetchEmailsViaIMAP(
       return { rawEmails: [], error: "Login failed: " + loginResp.substring(0, 200) };
     }
 
-    // Select INBOX
-    const selectResp = await sendCommand("A002", "SELECT INBOX");
-    console.log("[IMAP] SELECT response:", selectResp.substring(0, 200));
-
-    // Extraer número de mensajes
-    const existsMatch = selectResp.match(/\* (\d+) EXISTS/);
-    const totalMessages = existsMatch ? parseInt(existsMatch[1]) : 0;
-    console.log(`[IMAP] INBOX has ${totalMessages} messages`);
-
-    if (totalMessages === 0) {
-      await sendCommand("A999", "LOGOUT");
-      conn.close();
-      return { rawEmails: [] };
-    }
-
-    // Search por fecha - usar formato IMAP: DD-Mon-YYYY
-    const searchResp = await sendCommand("A003", `SEARCH SINCE ${sinceDateStr}`);
-    console.log("[IMAP] SEARCH response:", searchResp.substring(0, 300));
-
-    // Extraer UIDs de la respuesta
-    const searchLine = searchResp.split("\r\n").find(l => l.startsWith("* SEARCH"));
-    if (!searchLine || searchLine.trim() === "* SEARCH") {
-      console.log("[IMAP] No messages found");
-      await sendCommand("A999", "LOGOUT");
-      conn.close();
-      return { rawEmails: [] };
-    }
-
-    const messageIds = searchLine.replace("* SEARCH ", "").trim().split(" ").map(Number).filter(n => n > 0);
-    console.log(`[IMAP] Found ${messageIds.length} messages`);
-
-    // Limitar a últimos 200 mensajes para cubrir más histórico
-    const messagesToFetch = messageIds.slice(-200);
-    console.log(`[IMAP] Fetching last ${messagesToFetch.length} messages`);
-
-    // Fetch cada mensaje
-    for (let i = 0; i < messagesToFetch.length; i++) {
-      const msgId = messagesToFetch[i];
-      
-      try {
-        // Fetch solo el body structure primero para ver si tiene adjuntos XML o PDF
-        const structCmd = `A1${i}0 FETCH ${msgId} BODYSTRUCTURE`;
-        await conn.write(encoder.encode(structCmd + "\r\n"));
-        
-        let structResp = "";
-        let structAttempts = 0;
-        while (structAttempts < 20) {
-          const n = await conn.read(buffer);
-          if (n === null) break;
-          structResp += decoder.decode(buffer.subarray(0, n));
-          if (structResp.includes(`A1${i}0 OK`)) break;
-          structAttempts++;
-          await new Promise(r => setTimeout(r, 50));
+    // List all folders to search in multiple locations
+    const listResp = await sendCommand("A001B", 'LIST "" "*"');
+    const folderLines = listResp.split("\r\n").filter(l => l.startsWith("* LIST"));
+    const folders: string[] = ["INBOX"];
+    for (const line of folderLines) {
+      const folderMatch = line.match(/"([^"]+)"\s*$/);
+      if (folderMatch && folderMatch[1] !== "INBOX") {
+        const folder = folderMatch[1];
+        // Only add folders that might contain received emails
+        const lowerFolder = folder.toLowerCase();
+        if (lowerFolder.includes("junk") || lowerFolder.includes("spam") || 
+            lowerFolder.includes("inbox") || lowerFolder.includes("compra") ||
+            lowerFolder.includes("factur") || lowerFolder.includes("all")) {
+          folders.push(folder);
         }
-
-        // Verificar si tiene XML o PDF adjunto - detección amplia
-        const lowerStructResp = structResp.toLowerCase();
-        const hasXml = lowerStructResp.includes('"xml"') || 
-                       lowerStructResp.includes('application/xml') ||
-                       lowerStructResp.includes('text/xml') ||
-                       lowerStructResp.includes('.xml');
-        const hasPdf = lowerStructResp.includes('"pdf"') ||
-                       lowerStructResp.includes('application/pdf') ||
-                       lowerStructResp.includes('.pdf');
-        // También detectar octet-stream con nombre de archivo (common para XML/PDF)
-        const hasOctetStream = lowerStructResp.includes('octet-stream') && 
-                               (lowerStructResp.includes('.xml') || lowerStructResp.includes('.pdf'));
-        // Detectar multipart/mixed que podría contener adjuntos
-        const hasAttachments = lowerStructResp.includes('"attachment"') || 
-                               lowerStructResp.includes('disposition');
-
-        if (!hasXml && !hasPdf && !hasOctetStream && !hasAttachments) {
-          continue;
-        }
-
-        console.log(`[IMAP] Message ${msgId} has attachments (XML: ${hasXml}, PDF: ${hasPdf}), fetching full...`);
-
-        // Fetch mensaje completo
-        const fetchCmd = `A1${i}1 FETCH ${msgId} BODY[]`;
-        await conn.write(encoder.encode(fetchCmd + "\r\n"));
-        
-        let emailContent = "";
-        let fetchAttempts = 0;
-        const maxFetchTime = Date.now() + 30000; // 30 segundos max por mensaje
-        
-        while (Date.now() < maxFetchTime && fetchAttempts < 500) {
-          const n = await conn.read(buffer);
-          if (n === null) break;
-          emailContent += decoder.decode(buffer.subarray(0, n));
-          
-          // Verificar si terminó
-          if (emailContent.includes(`A1${i}1 OK`)) break;
-          if (emailContent.includes(`A1${i}1 NO`) || emailContent.includes(`A1${i}1 BAD`)) break;
-          
-          fetchAttempts++;
-        }
-
-        if (emailContent.length > 0) {
-          rawEmails.push(emailContent);
-        }
-      } catch (msgErr) {
-        console.error(`[IMAP] Error fetching message ${msgId}:`, msgErr);
       }
+    }
+    console.log(`[IMAP] Folders to search: ${folders.join(", ")}`);
+
+    // Search across all relevant folders
+    let allMessageData: Array<{folder: string; msgId: number}> = [];
+    let tagCounter = 2;
+
+    for (const folder of folders) {
+      const selectResp = await sendCommand(`A00${tagCounter}`, `SELECT "${folder}"`);
+      
+      const existsMatch = selectResp.match(/\* (\d+) EXISTS/);
+      const totalMessages = existsMatch ? parseInt(existsMatch[1]) : 0;
+      console.log(`[IMAP] ${folder} has ${totalMessages} messages`);
+      tagCounter++;
+
+      if (totalMessages === 0) continue;
+
+      const searchResp = await sendCommand(`A00${tagCounter}`, `SEARCH SINCE ${sinceDateStr}`);
+      tagCounter++;
+
+      const searchLine = searchResp.split("\r\n").find(l => l.startsWith("* SEARCH"));
+      if (!searchLine || searchLine.trim() === "* SEARCH") continue;
+
+      const messageIds = searchLine.replace("* SEARCH ", "").trim().split(" ").map(Number).filter(n => n > 0);
+      console.log(`[IMAP] ${folder}: Found ${messageIds.length} messages since ${sinceDateStr}`);
+
+      // Take last 200 per folder
+      const messagesToFetch = messageIds.slice(-200);
+      
+      // Need to select the folder before fetching
+      if (folder !== folders[folders.length - 1]) {
+        // We'll handle fetching per folder below
+      }
+      
+      for (const msgId of messagesToFetch) {
+        allMessageData.push({ folder, msgId });
+      }
+    }
+
+    console.log(`[IMAP] Total messages to fetch across all folders: ${allMessageData.length}`);
+
+    // Group by folder and fetch
+    const folderGroups = new Map<string, number[]>();
+    for (const item of allMessageData) {
+      if (!folderGroups.has(item.folder)) {
+        folderGroups.set(item.folder, []);
+      }
+      folderGroups.get(item.folder)!.push(item.msgId);
+    }
+
+    let globalMsgIndex = 0;
+    for (const [folder, msgIds] of folderGroups) {
+      // Select the folder
+      await sendCommand(`B${globalMsgIndex}`, `SELECT "${folder}"`);
+      
+      const messagesToFetch = msgIds.slice(-200);
+      console.log(`[IMAP] Fetching ${messagesToFetch.length} messages from ${folder}`);
+
+      // Fetch cada mensaje - descargar TODOS sin pre-filtro BODYSTRUCTURE
+      for (let i = 0; i < messagesToFetch.length; i++) {
+        const msgId = messagesToFetch[i];
+        
+        try {
+          const fetchCmd = `C${globalMsgIndex}_${i} FETCH ${msgId} BODY[]`;
+          await conn.write(encoder.encode(fetchCmd + "\r\n"));
+          
+          let emailContent = "";
+          let fetchAttempts = 0;
+          const maxFetchTime = Date.now() + 30000;
+          
+          while (Date.now() < maxFetchTime && fetchAttempts < 500) {
+            const n = await conn.read(buffer);
+            if (n === null) break;
+            emailContent += decoder.decode(buffer.subarray(0, n));
+            
+            if (emailContent.includes(`C${globalMsgIndex}_${i} OK`)) break;
+            if (emailContent.includes(`C${globalMsgIndex}_${i} NO`) || emailContent.includes(`C${globalMsgIndex}_${i} BAD`)) break;
+            
+            fetchAttempts++;
+          }
+
+          if (emailContent.length > 0) {
+            rawEmails.push(emailContent);
+          }
+        } catch (msgErr) {
+          console.error(`[IMAP] Error fetching message ${msgId} from ${folder}:`, msgErr);
+        }
+      }
+      globalMsgIndex++;
     }
 
     // Logout
@@ -551,10 +553,16 @@ serve(async (req) => {
     // Procesar cada email
     for (const rawEmail of rawEmails) {
       try {
+        // Log email subject for diagnostics
+        const subjectMatch = rawEmail.match(/Subject:\s*([^\r\n]+)/i);
+        const fromMatch = rawEmail.match(/From:\s*([^\r\n]+)/i);
+        const emailSubject = subjectMatch ? subjectMatch[1].substring(0, 80) : "(no subject)";
+        const emailFrom = fromMatch ? fromMatch[1].substring(0, 60) : "(unknown)";
+        
         const xmlAttachments = extractXmlAttachments(rawEmail);
         const pdfAttachments = extractPdfAttachments(rawEmail);
         
-        console.log(`[Bluehost] Email has ${xmlAttachments.length} XMLs and ${pdfAttachments.length} PDFs`);
+        console.log(`[Bluehost] Email from: ${emailFrom} | Subject: ${emailSubject} | XMLs: ${xmlAttachments.length} PDFs: ${pdfAttachments.length}`);
         
         // Match PDFs con XMLs
         const pdfMatches = matchPdfToXml(xmlAttachments, pdfAttachments);
