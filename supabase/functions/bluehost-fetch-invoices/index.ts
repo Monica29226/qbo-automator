@@ -220,8 +220,8 @@ async function fetchEmailsViaIMAP(
         console.log(`[IMAP] Folder ${folder}: ${candidateIds.length} candidates with XML/PDF attachments`);
 
         // STEP 2: Fetch FULL BODY for candidates (reliable MIME parsing)
-        // Process last 150 to cover enough history
-        const toFetch = candidateIds.slice(-150);
+        // Process last 500 to cover full month history
+        const toFetch = candidateIds.slice(-500);
 
         for (const msgId of toFetch) {
           try {
