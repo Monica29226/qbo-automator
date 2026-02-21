@@ -1568,6 +1568,21 @@ Deno.serve(async (req) => {
       return null;
     };
 
+    // =============================================================
+    // HELPER: Get TaxRate ID for TxnTaxDetail.TaxLine
+    // =============================================================
+    const getTaxRateRefForRate = async (taxRate: number): Promise<string | null> => {
+      await loadTaxRatesMap();
+      if (!taxRatesCache) return null;
+      const rate = Math.round(taxRate);
+      for (const [rateId, rateValue] of taxRatesCache.entries()) {
+        if (Math.abs(rateValue - rate) < 0.5) {
+          return rateId;
+        }
+      }
+      return null;
+    };
+
     const batchStartTime = Date.now();
 
     // =============================================================
@@ -1842,6 +1857,8 @@ Deno.serve(async (req) => {
         // =============================================================
         const lines: any[] = [];
         const includeTaxInLines = taxHandling === 'included_in_line_items';
+        // Tax accumulator: group IVA by rate for TxnTaxDetail.TaxLine
+        const taxByRate: Record<number, { taxAmount: number; netAmount: number }> = {};
         
         // Parse detail lines
         if (xmlData.detalle && Array.isArray(xmlData.detalle) && xmlData.detalle.length > 0) {
@@ -1927,6 +1944,16 @@ Deno.serve(async (req) => {
               }
               
               lines.push(lineDetail);
+              
+              // Accumulate IVA by rate for TxnTaxDetail.TaxLine
+              if (!includeTaxInLines && tasaImpuesto > 0 && Math.abs(montoImpuestoIVA) > 0.001) {
+                const rateKey = Math.round(tasaImpuesto);
+                if (!taxByRate[rateKey]) {
+                  taxByRate[rateKey] = { taxAmount: 0, netAmount: 0 };
+                }
+                taxByRate[rateKey].taxAmount += Math.abs(montoImpuestoIVA);
+                taxByRate[rateKey].netAmount += Math.abs(subtotal);
+              }
             }
           }
         }
@@ -2129,7 +2156,31 @@ Deno.serve(async (req) => {
           }
           
           if (effectiveUsesTax && totalTax > 0) {
-            vendorCreditPayload.TxnTaxDetail = { TotalTax: Math.abs(totalTax) };
+            const taxLines: any[] = [];
+            const rateKeys = Object.keys(taxByRate).map(Number);
+            for (const rate of rateKeys) {
+              const { taxAmount, netAmount } = taxByRate[rate];
+              if (taxAmount > 0.001) {
+                const taxRateId = await getTaxRateRefForRate(rate);
+                if (taxRateId) {
+                  taxLines.push({
+                    Amount: parseFloat(taxAmount.toFixed(2)),
+                    DetailType: "TaxLineDetail",
+                    TaxLineDetail: {
+                      TaxRateRef: { value: taxRateId },
+                      PercentBased: true,
+                      TaxPercent: rate,
+                      NetAmountTaxable: parseFloat(netAmount.toFixed(2)),
+                    },
+                  });
+                }
+              }
+            }
+            if (taxLines.length > 0) {
+              vendorCreditPayload.TxnTaxDetail = { TotalTax: parseFloat(Math.abs(totalTax).toFixed(2)), TaxLine: taxLines };
+            } else {
+              vendorCreditPayload.TxnTaxDetail = { TotalTax: parseFloat(Math.abs(totalTax).toFixed(2)) };
+            }
           }
           
           const vcResponse = await fetchWithRetry(
@@ -2178,7 +2229,37 @@ Deno.serve(async (req) => {
           }
           
           if (effectiveUsesTax && totalTax > 0) {
-            billPayload.TxnTaxDetail = { TotalTax: totalTax };
+            // Build detailed TaxLine entries so QBO knows exact rates
+            const taxLines: any[] = [];
+            const rateKeys = Object.keys(taxByRate).map(Number);
+            
+            for (const rate of rateKeys) {
+              const { taxAmount, netAmount } = taxByRate[rate];
+              if (taxAmount > 0.001) {
+                const taxRateId = await getTaxRateRefForRate(rate);
+                if (taxRateId) {
+                  taxLines.push({
+                    Amount: parseFloat(taxAmount.toFixed(2)),
+                    DetailType: "TaxLineDetail",
+                    TaxLineDetail: {
+                      TaxRateRef: { value: taxRateId },
+                      PercentBased: true,
+                      TaxPercent: rate,
+                      NetAmountTaxable: parseFloat(netAmount.toFixed(2)),
+                    },
+                  });
+                  logInfo(`   📊 ${doc.doc_number}: TaxLine: ${rate}% sobre ${netAmount.toFixed(2)} = ${taxAmount.toFixed(2)} (TaxRateRef: ${taxRateId})`);
+                }
+              }
+            }
+            
+            if (taxLines.length > 0) {
+              billPayload.TxnTaxDetail = { TotalTax: parseFloat(totalTax.toFixed(2)), TaxLine: taxLines };
+            } else {
+              // Fallback: just TotalTax if we couldn't resolve TaxRate IDs
+              billPayload.TxnTaxDetail = { TotalTax: parseFloat(totalTax.toFixed(2)) };
+              logInfo(`   ⚠️ ${doc.doc_number}: No TaxRate IDs found, using TotalTax only`);
+            }
           }
           
           let billResponse = await fetchWithRetry(
