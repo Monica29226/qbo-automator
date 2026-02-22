@@ -512,15 +512,17 @@ serve(async (req) => {
     } else if (startDateSetting) {
       startDate = new Date(startDateSetting);
     } else {
-      startDate = new Date();
-      startDate.setDate(startDate.getDate() - 30);
+      // Default: start of current month to capture ALL invoices in the current period
+      const now = new Date();
+      startDate = new Date(now.getFullYear(), now.getMonth(), 1);
     }
 
-    // Format dates for IMAP: DD-Mon-YYYY
+    // Format dates for IMAP: DD-Mon-YYYY (with zero-padded day)
     const monthsArr = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-    const sinceDateStr = `${startDate.getDate()}-${monthsArr[startDate.getMonth()]}-${startDate.getFullYear()}`;
+    const fmtDay = (d: Date) => String(d.getDate()).padStart(2, '0');
+    const sinceDateStr = `${fmtDay(startDate)}-${monthsArr[startDate.getMonth()]}-${startDate.getFullYear()}`;
     const beforeDateStr = endDate 
-      ? `${endDate.getDate()}-${monthsArr[endDate.getMonth()]}-${endDate.getFullYear()}`
+      ? `${fmtDay(endDate)}-${monthsArr[endDate.getMonth()]}-${endDate.getFullYear()}`
       : undefined;
     
     console.log(`[Hostinger] Searching emails since ${sinceDateStr}${beforeDateStr ? ` before ${beforeDateStr}` : ''}`);
