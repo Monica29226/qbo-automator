@@ -410,15 +410,15 @@ serve(async (req) => {
     } else if (startDateSetting) {
       startDate = new Date(startDateSetting);
     } else {
-      // Default: rolling 7-day window for cron syncs (runs every 30 min)
-      // This prevents 504 timeouts from scanning too many emails
-      // Deduplication by doc_key ensures no invoices are missed over time
-      startDate = new Date();
-      startDate.setDate(startDate.getDate() - 7);
+      // Default: start of current month to capture ALL invoices in the current period
+      // Deduplication by doc_key ensures no duplicates
+      const now = new Date();
+      startDate = new Date(now.getFullYear(), now.getMonth(), 1);
     }
 
     const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-    const sinceDateStr = `${startDate.getDate()}-${months[startDate.getMonth()]}-${startDate.getFullYear()}`;
+    const day = String(startDate.getDate()).padStart(2, '0');
+    const sinceDateStr = `${day}-${months[startDate.getMonth()]}-${startDate.getFullYear()}`;
 
     console.log(`[Bluehost] Searching for emails since ${sinceDateStr}`);
 
