@@ -44,7 +44,7 @@ serve(async (req) => {
       
       const { data: org } = await supabase
         .from("organizations")
-        .select("id, name, gmail_connected, outlook_connected, bluehost_connected, hostinger_connected")
+        .select("id, name, gmail_connected, outlook_connected, bluehost_connected, hostinger_connected, quickbooks_connected")
         .eq("id", singleOrgId)
         .single();
 
@@ -82,11 +82,10 @@ serve(async (req) => {
       }
     }
 
-    // Get all active organizations with email + QuickBooks connected
+    // Get all active organizations (no QuickBooks filter - invoices must be imported regardless)
     const { data: orgs } = await supabase
       .from("organizations")
-      .select("id, name, gmail_connected, outlook_connected, bluehost_connected, hostinger_connected")
-      .eq("quickbooks_connected", true)
+      .select("id, name, gmail_connected, outlook_connected, bluehost_connected, hostinger_connected, quickbooks_connected")
       .eq("is_active", true);
 
     const validOrgs = orgs?.filter(org => 
@@ -94,7 +93,7 @@ serve(async (req) => {
     ) || [];
 
     if (validOrgs.length === 0) {
-      console.log("No organizations with email and QuickBooks connected");
+      console.log("No active organizations with email connected");
       return new Response(
         JSON.stringify({ message: "No organizations to sync" }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -103,23 +102,41 @@ serve(async (req) => {
 
     console.log(`🚀 Dispatching sync for ${validOrgs.length} organizations in parallel`);
 
-    // Fire off individual sync calls for each org - fire and forget
-    const dispatches = validOrgs.map(org => {
+    // Fire off individual sync calls for each org with retry + error logging
+    const dispatches = validOrgs.map(async (org) => {
       console.log(`📤 Dispatching sync for ${org.name} (${org.id})`);
-      return fetch(`${supabaseUrl}/functions/v1/auto-sync-invoices`, {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${supabaseKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ 
-          organization_id: org.id, 
-          trigger 
-        }),
-      }).catch(err => {
-        console.error(`Failed to dispatch sync for ${org.name}:`, err);
-        return null;
+      
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          const resp = await fetch(`${supabaseUrl}/functions/v1/auto-sync-invoices`, {
+            method: "POST",
+            headers: {
+              "Authorization": `Bearer ${supabaseKey}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ 
+              organization_id: org.id, 
+              trigger 
+            }),
+          });
+          if (resp.ok || resp.status < 500) return resp;
+          console.warn(`⚠️ Dispatch attempt ${attempt + 1} failed for ${org.name}: ${resp.status}`);
+        } catch (err) {
+          console.warn(`⚠️ Dispatch attempt ${attempt + 1} network error for ${org.name}:`, err);
+        }
+        if (attempt === 0) await new Promise(r => setTimeout(r, 1000));
+      }
+      
+      // Both attempts failed - log to sync_logs
+      console.error(`❌ Dispatch failed for ${org.name} after 2 attempts`);
+      await supabase.from("sync_logs").insert({
+        organization_id: org.id,
+        trigger_type: trigger,
+        status: "error",
+        error_message: "Dispatch failed after 2 attempts",
+        completed_at: new Date().toISOString(),
       });
+      return null;
     });
 
     // Wait for all dispatches to be sent (not for completion)
@@ -214,49 +231,52 @@ async function processOrganization(
     
     console.log(`📧 ${mailProvider.toUpperCase()} sync for ${org.name}: ${emailData.invoices_processed} processed, ${invoicesSkipped} skipped, ${realFailures} failed${wasPartial ? ' (PARTIAL)' : ''}`);
 
-    // Publish to QuickBooks: ALWAYS run, not just when new invoices arrive.
-    // This ensures invoices already in 'processed' state (but never published) get picked up.
+    // Publish to QuickBooks: only if the organization has QuickBooks connected
     let qboPublished = 0;
     let qboFailed = 0;
 
-    // Check if there are any pending/processed documents waiting to be published
-    const { count: pendingCount } = await supabase
-      .from("processed_documents")
-      .select("id", { count: "exact", head: true })
-      .eq("organization_id", org.id)
-      .in("status", ["pending", "processed"])
-      .is("qbo_entity_id", null);
+    if (org.quickbooks_connected) {
+      // Check if there are any pending/processed documents waiting to be published
+      const { count: pendingCount } = await supabase
+        .from("processed_documents")
+        .select("id", { count: "exact", head: true })
+        .eq("organization_id", org.id)
+        .in("status", ["pending", "processed"])
+        .is("qbo_entity_id", null);
 
-    const hasPendingDocs = (pendingCount || 0) > 0;
-    const hasNewInvoices = emailData.invoices_processed > 0;
+      const hasPendingDocs = (pendingCount || 0) > 0;
+      const hasNewInvoices = emailData.invoices_processed > 0;
 
-    if (hasNewInvoices || hasPendingDocs) {
-      console.log(`Publishing to QuickBooks for ${org.name}... (new: ${hasNewInvoices}, pending orphans: ${hasPendingDocs ? pendingCount : 0})`);
-      if (hasNewInvoices) {
-        await new Promise(resolve => setTimeout(resolve, 2000));
-      }
+      if (hasNewInvoices || hasPendingDocs) {
+        console.log(`Publishing to QuickBooks for ${org.name}... (new: ${hasNewInvoices}, pending orphans: ${hasPendingDocs ? pendingCount : 0})`);
+        if (hasNewInvoices) {
+          await new Promise(resolve => setTimeout(resolve, 2000));
+        }
 
-      const qboResponse = await fetch(`${supabaseUrl}/functions/v1/publish-to-quickbooks`, {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${supabaseKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ organization_id: org.id }),
-      });
+        const qboResponse = await fetch(`${supabaseUrl}/functions/v1/publish-to-quickbooks`, {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${supabaseKey}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ organization_id: org.id }),
+        });
 
-      if (qboResponse.ok) {
-        const qboData = await qboResponse.json();
-        qboPublished = qboData?.published || 0;
-        qboFailed = qboData?.failed || 0;
-        console.log(`✅ QuickBooks sync for ${org.name}: ${qboPublished} published, ${qboFailed} failed`);
+        if (qboResponse.ok) {
+          const qboData = await qboResponse.json();
+          qboPublished = qboData?.published || 0;
+          qboFailed = qboData?.failed || 0;
+          console.log(`✅ QuickBooks sync for ${org.name}: ${qboPublished} published, ${qboFailed} failed`);
+        } else {
+          const qboError = await qboResponse.text().catch(() => "Unknown");
+          console.error(`QuickBooks publish failed for ${org.name}: ${qboError}`);
+          qboFailed = 1;
+        }
       } else {
-        const qboError = await qboResponse.text().catch(() => "Unknown");
-        console.error(`QuickBooks publish failed for ${org.name}: ${qboError}`);
-        qboFailed = 1;
+        console.log(`⏭️ No pending documents for ${org.name}, skipping QB publish`);
       }
     } else {
-      console.log(`⏭️ No pending documents for ${org.name}, skipping QB publish`);
+      console.log(`⏭️ QuickBooks not connected for ${org.name}, skipping QB publish`);
     }
 
     // Update sync log

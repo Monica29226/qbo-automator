@@ -410,10 +410,10 @@ serve(async (req) => {
     } else if (startDateSetting) {
       startDate = new Date(startDateSetting);
     } else {
-      // Default: start of current month to capture ALL invoices in the current period
+      // Default: start of PREVIOUS month to capture invoices that may have failed at month boundaries
       // Deduplication by doc_key ensures no duplicates
       const now = new Date();
-      startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+      startDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
     }
 
     const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
