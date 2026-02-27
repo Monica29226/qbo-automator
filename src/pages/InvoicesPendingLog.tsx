@@ -136,6 +136,8 @@ const InvoicesPendingLog = () => {
   const [showBulkClassifyDialog, setShowBulkClassifyDialog] = useState(false);
   const [bulkAccountId, setBulkAccountId] = useState("");
   const [isBulkClassifying, setIsBulkClassifying] = useState(false);
+  const [showBulkDeleteDialog, setShowBulkDeleteDialog] = useState(false);
+  const [isBulkDeleting, setIsBulkDeleting] = useState(false);
   
   // ===== PREVENIR ACTUALIZACIONES DUPLICADAS =====
   const updatingInvoicesRef = useRef<Set<string>>(new Set());
@@ -571,7 +573,6 @@ const InvoicesPendingLog = () => {
 
   const handleDeleteInvoice = async (id: string) => {
     try {
-      // Optimistic update
       setFilteredInvoices((prev) => prev.filter((inv) => inv.id !== id));
       
       const { error } = await supabase
@@ -580,7 +581,7 @@ const InvoicesPendingLog = () => {
         .eq("id", id);
 
       if (error) {
-        invalidateInvoices(); // Restore on error
+        invalidateInvoices();
         throw error;
       }
 
@@ -588,6 +589,38 @@ const InvoicesPendingLog = () => {
     } catch (error: any) {
       console.error("Error deleting invoice:", error);
       toast.error("Error al eliminar factura");
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    if (selectedIds.size === 0) return;
+    
+    setIsBulkDeleting(true);
+    const idsToDelete = Array.from(selectedIds);
+    
+    try {
+      // Optimistic update
+      setFilteredInvoices((prev) => prev.filter((inv) => !selectedIds.has(inv.id)));
+      setSelectedIds(new Set());
+      setShowBulkDeleteDialog(false);
+      
+      const { error } = await supabase
+        .from("processed_documents")
+        .delete()
+        .in("id", idsToDelete);
+
+      if (error) {
+        invalidateInvoices();
+        throw error;
+      }
+
+      toast.success(`✓ ${idsToDelete.length} factura(s) eliminada(s)`);
+      invalidateInvoices();
+    } catch (error: any) {
+      console.error("Error en eliminación masiva:", error);
+      toast.error(`Error al eliminar: ${error.message || "Error desconocido"}`);
+    } finally {
+      setIsBulkDeleting(false);
     }
   };
 
@@ -854,6 +887,14 @@ const InvoicesPendingLog = () => {
               >
                 <ListChecks className="h-4 w-4 mr-2" />
                 Clasificar Seleccionadas
+              </Button>
+              <Button
+                onClick={() => setShowBulkDeleteDialog(true)}
+                variant="destructive"
+                size="default"
+              >
+                <Trash2 className="h-4 w-4 mr-2" />
+                Eliminar ({selectedIds.size})
               </Button>
               <Button
                 onClick={clearSelection}
@@ -1524,6 +1565,44 @@ const InvoicesPendingLog = () => {
                 <>
                   <CheckCircle2 className="h-4 w-4 mr-2" />
                   Clasificar y Publicar
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Dialog de Eliminación Masiva */}
+      <Dialog open={showBulkDeleteDialog} onOpenChange={setShowBulkDeleteDialog}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Eliminar Facturas</DialogTitle>
+            <DialogDescription>
+              ¿Estás seguro de que deseas eliminar {selectedIds.size} factura(s)?
+              Esta acción no se puede deshacer y las facturas no se enviarán a QuickBooks.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2">
+            <Button
+              variant="outline"
+              onClick={() => setShowBulkDeleteDialog(false)}
+            >
+              Cancelar
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleBulkDelete}
+              disabled={isBulkDeleting}
+            >
+              {isBulkDeleting ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                  Eliminando...
+                </>
+              ) : (
+                <>
+                  <Trash2 className="h-4 w-4 mr-2" />
+                  Eliminar {selectedIds.size} factura(s)
                 </>
               )}
             </Button>
