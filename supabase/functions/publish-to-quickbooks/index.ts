@@ -2196,19 +2196,74 @@ Deno.serve(async (req) => {
             }
           );
           
+          // CRITICAL FIX: If QBO returns tax calculation error on VendorCredit, retry WITHOUT TxnTaxDetail
           if (!vcResponse.ok) {
-            const errorText = await vcResponse.text();
-            await registerInTracking(doc, 'error', null, null, errorText.substring(0, 500));
-            await supabase
-              .from("processed_documents")
-              .update({ status: "error", error_message: `QBO VendorCredit Error: ${errorText.substring(0, 500)}` })
-              .eq("id", doc.id);
-            return { success: false, docNumber: doc.doc_number, error: errorText.substring(0, 200) };
+            const errorText = await vcResponse.clone().text();
+            
+            // Check if it's a tax calculation error
+            if (errorText.includes('impositiva no válida') ||
+                errorText.includes('error al calcular el impuesto') || 
+                errorText.includes('calculating the tax') ||
+                errorText.includes('tax rate') ||
+                errorText.includes('Invalid tax rate') ||
+                errorText.includes('TaxCodeRef')) {
+              
+              logInfo(`⚠️ ${doc.doc_number}: Error de impuesto en VendorCredit, reintentando SIN TxnTaxDetail...`);
+              
+              // Remove TxnTaxDetail and TaxCodeRef from lines
+              delete vendorCreditPayload.TxnTaxDetail;
+              for (const line of vendorCreditPayload.Line) {
+                if (line.AccountBasedExpenseLineDetail?.TaxCodeRef) {
+                  delete line.AccountBasedExpenseLineDetail.TaxCodeRef;
+                }
+              }
+              vendorCreditPayload.GlobalTaxCalculation = "NotApplicable";
+              
+              // Retry without tax
+              await delay(1000);
+              const vcRetryResponse = await fetchWithRetry(
+                `https://quickbooks.api.intuit.com/v3/company/${realmId}/vendorcredit`,
+                {
+                  method: "POST",
+                  headers: {
+                    "Authorization": `Bearer ${accessToken}`,
+                    "Accept": "application/json",
+                    "Content-Type": "application/json",
+                  },
+                  body: JSON.stringify(vendorCreditPayload),
+                }
+              );
+              
+              if (vcRetryResponse.ok) {
+                logInfo(`✅ ${doc.doc_number}: Reintento VendorCredit exitoso sin impuestos`);
+                const vcRetryData = await vcRetryResponse.json();
+                entityId = vcRetryData.VendorCredit.Id;
+                entityType = "VendorCredit";
+              } else {
+                const retryErrorText = await vcRetryResponse.text();
+                await registerInTracking(doc, 'error', null, null, retryErrorText.substring(0, 500));
+                await supabase
+                  .from("processed_documents")
+                  .update({ status: "error", error_message: `QBO VendorCredit Error (retry): ${retryErrorText.substring(0, 500)}` })
+                  .eq("id", doc.id);
+                return { success: false, docNumber: doc.doc_number, error: retryErrorText.substring(0, 200) };
+              }
+            } else {
+              await registerInTracking(doc, 'error', null, null, errorText.substring(0, 500));
+              await supabase
+                .from("processed_documents")
+                .update({ status: "error", error_message: `QBO VendorCredit Error: ${errorText.substring(0, 500)}` })
+                .eq("id", doc.id);
+              return { success: false, docNumber: doc.doc_number, error: errorText.substring(0, 200) };
+            }
           }
           
-          const vcData = await vcResponse.json();
-          entityId = vcData.VendorCredit.Id;
-          entityType = "VendorCredit";
+          // Only parse original response if entityId wasn't set by retry
+          if (!entityId) {
+            const vcData = await vcResponse.json();
+            entityId = vcData.VendorCredit.Id;
+            entityType = "VendorCredit";
+          }
           
         } else {
           // Bill
