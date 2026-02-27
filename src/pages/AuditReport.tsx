@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { Link } from "react-router-dom";
@@ -10,9 +10,12 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { FileText, ArrowLeft, Download, AlertTriangle, CheckCircle2, Search, RefreshCw, ExternalLink } from "lucide-react";
+import { FileText, ArrowLeft, Download, AlertTriangle, CheckCircle2, Search, RefreshCw, ExternalLink, Send } from "lucide-react";
 import { OrganizationSwitcher } from "@/components/OrganizationSwitcher";
 import { PdfViewer } from "@/components/PdfViewer";
+import { AccountCombobox } from "@/components/AccountCombobox";
+import { useQBOAccounts } from "@/hooks/useQBOAccounts";
+import { usePublishQueue } from "@/hooks/usePublishQueue";
 import { toast } from "sonner";
 
 interface AuditDocument {
@@ -52,6 +55,10 @@ export default function AuditReport() {
   const [accountFilter, setAccountFilter] = useState("all");
   const [selectedDocument, setSelectedDocument] = useState<AuditDocument | null>(null);
   const [pdfDialogOpen, setPdfDialogOpen] = useState(false);
+  const [assigningDocId, setAssigningDocId] = useState<string | null>(null);
+
+  const { accounts, getAccountById } = useQBOAccounts();
+  const { addToQueue } = usePublishQueue();
 
   useEffect(() => {
     if (activeOrganization) {
@@ -64,7 +71,6 @@ export default function AuditReport() {
   const fetchData = async () => {
     setIsLoading(true);
     try {
-      // Fetch ALL documents (sin filtro de fecha para auditoría completa)
       const { data: docs, error: docsError } = await supabase
         .from("processed_documents")
         .select("*")
@@ -74,7 +80,6 @@ export default function AuditReport() {
 
       if (docsError) throw docsError;
 
-      // Fetch vendor rules
       const { data: rules, error: rulesError } = await supabase
         .from("vendor_classification_rules")
         .select("vendor_name, account_code, account_description")
@@ -83,7 +88,6 @@ export default function AuditReport() {
 
       if (rulesError) throw rulesError;
 
-      console.log(`📊 Audit Report: ${docs?.length || 0} documents loaded`);
       setDocuments(docs || []);
       setVendorRules(rules || []);
     } catch (error) {
@@ -94,38 +98,121 @@ export default function AuditReport() {
     }
   };
 
+  const handleAssignAccount = useCallback(async (doc: AuditDocument, accountId: string) => {
+    if (!activeOrganization || assigningDocId) return;
+    
+    const account = getAccountById(accountId);
+    if (!account) return;
+
+    setAssigningDocId(doc.id);
+    const accountRef = account.accountNumber 
+      ? `${account.accountNumber} ${account.name}` 
+      : account.name;
+
+    try {
+      // 1. Update this document
+      await supabase
+        .from("processed_documents")
+        .update({ 
+          default_account_ref: accountRef, 
+          status: "processed",
+          error_message: null 
+        })
+        .eq("id", doc.id);
+
+      // 2. Update ALL docs from same vendor without account
+      const { data: sameVendorDocs } = await supabase
+        .from("processed_documents")
+        .select("id")
+        .eq("organization_id", activeOrganization)
+        .eq("supplier_name", doc.supplier_name)
+        .is("qbo_entity_id", null)
+        .neq("id", doc.id);
+
+      if (sameVendorDocs && sameVendorDocs.length > 0) {
+        await supabase
+          .from("processed_documents")
+          .update({ 
+            default_account_ref: accountRef, 
+            status: "processed",
+            error_message: null 
+          })
+          .in("id", sameVendorDocs.map(d => d.id));
+      }
+
+      // 3. Save vendor_defaults rule for future invoices
+      await supabase
+        .from("vendor_defaults")
+        .upsert({
+          organization_id: activeOrganization,
+          vendor_name: doc.supplier_name,
+          default_account_ref: accountRef,
+        }, { onConflict: "organization_id,vendor_name" });
+
+      // 4. Save vendor_classification_rules too
+      await supabase
+        .from("vendor_classification_rules")
+        .upsert({
+          organization_id: activeOrganization,
+          vendor_name: doc.supplier_name,
+          account_code: accountRef,
+          account_description: account.name,
+          is_active: true,
+        }, { onConflict: "organization_id,vendor_name" });
+
+      const allDocIds = [doc.id, ...(sameVendorDocs?.map(d => d.id) || [])];
+      const totalUpdated = allDocIds.length;
+
+      toast.success(`✅ ${doc.supplier_name}: cuenta asignada a ${totalUpdated} factura(s). Publicando...`);
+
+      // 5. Auto-publish all updated docs
+      addToQueue({
+        documentIds: allDocIds,
+        vendorName: doc.supplier_name,
+        organizationId: activeOrganization,
+      });
+
+      // 6. Refresh data
+      await fetchData();
+    } catch (error: any) {
+      console.error("Error assigning account:", error);
+      toast.error(`Error al asignar cuenta: ${error.message}`);
+    } finally {
+      setAssigningDocId(null);
+    }
+  }, [activeOrganization, getAccountById, addToQueue, assigningDocId]);
+
+  const handlePublishUnpublished = useCallback(async (doc: AuditDocument) => {
+    if (!activeOrganization) return;
+
+    toast.info(`Publicando ${doc.doc_number}...`);
+    addToQueue({
+      documentIds: [doc.id],
+      vendorName: doc.supplier_name,
+      organizationId: activeOrganization,
+    });
+  }, [activeOrganization, addToQueue]);
+
   const getAccountForDocument = (doc: AuditDocument): string => {
-    // 1. First priority: Use the assigned account from the document
     if (doc.default_account_ref) {
-      // Extract just the account code (e.g., "5105" from "5105 Costo de ventas")
       return doc.default_account_ref.split(" ")[0];
     }
-
-    // 2. Try to get from vendor rule
     const rule = vendorRules.find(r => 
       r.vendor_name.toLowerCase() === doc.supplier_name.toLowerCase()
     );
-    
     if (rule) {
       return rule.account_code.split(" ")[0];
     }
-
-    // 3. Try to get from xml_data
     if (doc.xml_data?.cuentaContable) {
       return doc.xml_data.cuentaContable.split(" ")[0];
     }
-
-    // 4. No account assigned
     return "Sin asignar";
   };
 
   const getAccountDescriptionFromDoc = (doc: AuditDocument): string => {
-    // First try to get description from the default_account_ref (e.g., "5105 Costo de ventas:Alimentos")
     if (doc.default_account_ref && doc.default_account_ref.includes(" ")) {
       return doc.default_account_ref.split(" ").slice(1).join(" ");
     }
-    
-    // Try from vendor rules
     const accountCode = getAccountForDocument(doc);
     const rule = vendorRules.find(r => r.account_code.startsWith(accountCode));
     return rule?.account_description || "Sin descripción";
@@ -136,7 +223,6 @@ export default function AuditReport() {
     return rule?.account_description || accountCode;
   };
 
-  // Map doc_type to category: Factura or Nota de Crédito
   const getDocTypeCategory = (docType: string): "factura" | "nota_credito" => {
     const ncTypes = ["NotaCreditoElectronica", "NC"];
     return ncTypes.includes(docType) ? "nota_credito" : "factura";
@@ -146,14 +232,10 @@ export default function AuditReport() {
     const matchesSearch = 
       doc.doc_number.toLowerCase().includes(searchTerm.toLowerCase()) ||
       doc.supplier_name.toLowerCase().includes(searchTerm.toLowerCase());
-    
     const matchesStatus = statusFilter === "all" || doc.status === statusFilter;
-    
     const matchesDocType = docTypeFilter === "all" || getDocTypeCategory(doc.doc_type) === docTypeFilter;
-    
     const docAccount = getAccountForDocument(doc);
     const matchesAccount = accountFilter === "all" || docAccount === accountFilter;
-    
     return matchesSearch && matchesStatus && matchesDocType && matchesAccount;
   });
 
@@ -187,43 +269,32 @@ export default function AuditReport() {
     a.click();
     document.body.removeChild(a);
     window.URL.revokeObjectURL(url);
-    
     toast.success("Reporte exportado correctamente");
   };
 
   const handleRepublishCreditNotes = async () => {
     if (!activeOrganization) return;
-
     const creditNotes = documents.filter(d => d.doc_type === "NC" && d.status === "processed");
-    
     if (creditNotes.length === 0) {
       toast.info("No hay notas de crédito publicadas para republicar");
       return;
     }
-
     const confirmed = window.confirm(
       `Se van a republicar ${creditNotes.length} notas de crédito con montos negativos.\n\n` +
       "Esto eliminará las NC existentes en QuickBooks y las volverá a crear correctamente.\n\n" +
       "¿Deseas continuar?"
     );
-
     if (!confirmed) return;
-
     setIsRepublishing(true);
     toast.info(`Republicando ${creditNotes.length} notas de crédito...`);
-
     try {
       const { data, error } = await supabase.functions.invoke("republish-credit-notes", {
         body: { organization_id: activeOrganization },
       });
-
       if (error) throw error;
-
       toast.success(
         `✓ ${data.republished} NC republicadas correctamente (${data.deleted} eliminadas, ${data.failed} fallidas)`
       );
-
-      // Recargar datos
       await fetchData();
     } catch (error) {
       console.error("Error republishing credit notes:", error);
@@ -235,40 +306,35 @@ export default function AuditReport() {
 
   const uniqueAccounts = Array.from(new Set(documents.map(getAccountForDocument))).sort();
 
-  // Calculate invoices for current month
-  const getCurrentMonthName = () => {
-    const months = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 
-                    'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
-    return months[new Date().getMonth()];
-  };
-
-  const currentMonthInvoices = documents.filter(doc => {
-    const docDate = new Date(doc.issue_date);
-    const now = new Date();
-    return docDate.getMonth() === now.getMonth() && docDate.getFullYear() === now.getFullYear();
-  }).length;
-
   const getStatusBadge = (status: string) => {
     const variants: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
       published: "default",
       processed: "secondary",
       error: "destructive",
       pending: "outline",
+      review: "outline",
     };
-
     const labels: Record<string, string> = {
       published: "Publicado",
       processed: "Procesado",
       error: "Error",
       pending: "Pendiente",
+      review: "Revisión",
     };
-
     return (
       <Badge variant={variants[status] || "outline"}>
         {labels[status] || status}
       </Badge>
     );
   };
+
+  const needsAccountAssignment = (doc: AuditDocument) => 
+    !doc.qbo_entity_id && !doc.default_account_ref && 
+    (doc.status === "review" || doc.status === "pending" || doc.status === "pending_config");
+
+  const canPublish = (doc: AuditDocument) => 
+    !doc.qbo_entity_id && doc.default_account_ref && 
+    (doc.status === "processed" || doc.status === "review" || doc.status === "pending");
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-background via-background to-primary/5">
@@ -297,9 +363,7 @@ export default function AuditReport() {
         <div className="grid gap-4 md:grid-cols-5">
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">
-                Total Facturas
-              </CardTitle>
+              <CardTitle className="text-sm font-medium text-muted-foreground">Total Facturas</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold">{documents.length}</div>
@@ -307,9 +371,7 @@ export default function AuditReport() {
           </Card>
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">
-                Publicadas en QBO
-              </CardTitle>
+              <CardTitle className="text-sm font-medium text-muted-foreground">Publicadas en QBO</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold text-green-600">
@@ -319,36 +381,32 @@ export default function AuditReport() {
           </Card>
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">
-                Pendientes Publicar
-              </CardTitle>
+              <CardTitle className="text-sm font-medium text-muted-foreground">Sin Cuenta</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold text-warning">
-                {documents.filter(d => d.qbo_entity_id === null && d.default_account_ref && d.status !== 'error' && d.status !== 'review').length}
+              <div className="text-2xl font-bold text-orange-500">
+                {documents.filter(d => needsAccountAssignment(d)).length}
               </div>
             </CardContent>
           </Card>
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">
-                Con Errores
-              </CardTitle>
+              <CardTitle className="text-sm font-medium text-muted-foreground">Listas para Publicar</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold text-blue-500">
+                {documents.filter(d => canPublish(d)).length}
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground">Con Errores</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold text-destructive">
                 {documents.filter(d => d.status === "error").length}
               </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">
-                Cuentas Únicas
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{uniqueAccounts.length}</div>
             </CardContent>
           </Card>
         </div>
@@ -359,9 +417,7 @@ export default function AuditReport() {
             <div className="flex items-center justify-between">
               <div>
                 <CardTitle>Facturas Procesadas</CardTitle>
-                <CardDescription>
-                  Filtrar y analizar facturas por cuenta contable
-                </CardDescription>
+                <CardDescription>Filtrar y analizar facturas por cuenta contable</CardDescription>
               </div>
               <div className="flex gap-2">
                 <Button 
@@ -371,20 +427,13 @@ export default function AuditReport() {
                   className="border-orange-500 text-orange-600 hover:bg-orange-50 dark:hover:bg-orange-950"
                 >
                   {isRepublishing ? (
-                    <>
-                      <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
-                      Republicando...
-                    </>
+                    <><RefreshCw className="h-4 w-4 mr-2 animate-spin" />Republicando...</>
                   ) : (
-                    <>
-                      <RefreshCw className="h-4 w-4 mr-2" />
-                      Republicar NC
-                    </>
+                    <><RefreshCw className="h-4 w-4 mr-2" />Republicar NC</>
                   )}
                 </Button>
                 <Button onClick={exportToCSV} variant="outline">
-                  <Download className="h-4 w-4 mr-2" />
-                  Exportar CSV
+                  <Download className="h-4 w-4 mr-2" />Exportar CSV
                 </Button>
               </div>
             </div>
@@ -402,9 +451,7 @@ export default function AuditReport() {
                 />
               </div>
               <Select value={docTypeFilter} onValueChange={setDocTypeFilter}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Filtrar por tipo" />
-                </SelectTrigger>
+                <SelectTrigger><SelectValue placeholder="Filtrar por tipo" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">Todos los tipos</SelectItem>
                   <SelectItem value="factura">Factura</SelectItem>
@@ -412,21 +459,18 @@ export default function AuditReport() {
                 </SelectContent>
               </Select>
               <Select value={statusFilter} onValueChange={setStatusFilter}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Filtrar por estado" />
-                </SelectTrigger>
+                <SelectTrigger><SelectValue placeholder="Filtrar por estado" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">Todos los estados</SelectItem>
                   <SelectItem value="published">Publicado</SelectItem>
                   <SelectItem value="processed">Procesado</SelectItem>
+                  <SelectItem value="review">Revisión</SelectItem>
                   <SelectItem value="error">Error</SelectItem>
                   <SelectItem value="pending">Pendiente</SelectItem>
                 </SelectContent>
               </Select>
               <Select value={accountFilter} onValueChange={setAccountFilter}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Filtrar por cuenta" />
-                </SelectTrigger>
+                <SelectTrigger><SelectValue placeholder="Filtrar por cuenta" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">Todas las cuentas</SelectItem>
                   {uniqueAccounts.map(account => (
@@ -455,7 +499,7 @@ export default function AuditReport() {
                       <TableHead>Proveedor</TableHead>
                       <TableHead>Fecha</TableHead>
                       <TableHead>Monto</TableHead>
-                      <TableHead>Cuenta Contable</TableHead>
+                      <TableHead className="min-w-[200px]">Cuenta Contable</TableHead>
                       <TableHead>Estado</TableHead>
                       <TableHead>QBO ID</TableHead>
                     </TableRow>
@@ -471,9 +515,11 @@ export default function AuditReport() {
                       filteredDocuments.map((doc) => {
                         const accountCode = getAccountForDocument(doc);
                         const accountDesc = getAccountDescriptionFromDoc(doc);
+                        const showAccountPicker = needsAccountAssignment(doc);
+                        const showPublishBtn = canPublish(doc);
                         
                         return (
-                          <TableRow key={doc.id}>
+                          <TableRow key={doc.id} className={showAccountPicker ? "bg-orange-50/50 dark:bg-orange-950/10" : ""}>
                             <TableCell className="font-mono text-sm">
                               {doc.pdf_attachment_url ? (
                                 <button
@@ -503,22 +549,39 @@ export default function AuditReport() {
                               {doc.currency} {doc.total_amount.toLocaleString()}
                             </TableCell>
                             <TableCell>
-                              <div className="space-y-1">
-                                <div className="font-semibold">{accountCode}</div>
-                                <div className="text-xs text-muted-foreground">
-                                  {accountDesc}
+                              {showAccountPicker ? (
+                                <AccountCombobox
+                                  accounts={accounts}
+                                  value=""
+                                  onValueChange={(accountId) => handleAssignAccount(doc, accountId)}
+                                  placeholder="Asignar cuenta..."
+                                  disabled={assigningDocId === doc.id}
+                                  className="w-full text-xs h-8"
+                                />
+                              ) : (
+                                <div className="space-y-1">
+                                  <div className="font-semibold">{accountCode}</div>
+                                  <div className="text-xs text-muted-foreground">{accountDesc}</div>
                                 </div>
-                              </div>
+                              )}
                             </TableCell>
                             <TableCell>{getStatusBadge(doc.status)}</TableCell>
                             <TableCell>
                               {doc.qbo_entity_id ? (
                                 <div className="flex items-center gap-1 text-green-600">
                                   <CheckCircle2 className="h-4 w-4" />
-                                  <span className="font-mono text-xs">
-                                    {doc.qbo_entity_id}
-                                  </span>
+                                  <span className="font-mono text-xs">{doc.qbo_entity_id}</span>
                                 </div>
+                              ) : showPublishBtn ? (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-7 text-xs border-blue-500 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950"
+                                  onClick={() => handlePublishUnpublished(doc)}
+                                >
+                                  <Send className="h-3 w-3 mr-1" />
+                                  Publicar
+                                </Button>
                               ) : (
                                 <div className="flex items-center gap-1 text-muted-foreground">
                                   <AlertTriangle className="h-4 w-4" />
