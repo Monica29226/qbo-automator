@@ -2288,7 +2288,7 @@ Deno.serve(async (req) => {
             DocNumber: qboDocNumber,
             Line: lines,
             PrivateNote: `Factura XML: ${doc.doc_number}\nClave: ${claveHacienda}\nProveedor: ${doc.supplier_name}`,
-            GlobalTaxCalculation: includeTaxInLines ? "TaxInclusive" : "TaxExcluded",
+            GlobalTaxCalculation: earlyIsTaxExempt ? "NotApplicable" : (includeTaxInLines ? "TaxInclusive" : "TaxExcluded"),
           };
           
           if (documentCurrency === 'USD') {
