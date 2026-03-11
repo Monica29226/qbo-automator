@@ -2073,12 +2073,11 @@ Deno.serve(async (req) => {
         const linesTotalAmount = lines.reduce((sum, line) => sum + (parseFloat(line.Amount) || 0), 0);
         const documentCurrency = doc.currency || xmlData.moneda || 'CRC';
         
-        // Detect tax exemption case: when subtotal = total but tax > 0
-        // This means the tax is NOT added to the total (exonerado/asumido)
+        // Use early-detected tax exemption from STEP 7 pre-detection
         const xmlTotal = parseFloat(xmlData.totalComprobante || xmlData.TotalComprobante || doc.total_amount);
         const xmlSubtotal = parseFloat(xmlData.subTotal || xmlData.SubTotal || '0');
         const xmlTax = parseFloat(doc.total_tax as any) || 0;
-        const isTaxExempt = Math.abs(xmlTax) > 0 && Math.abs(Math.abs(xmlTotal) - Math.abs(xmlSubtotal)) < 1.0;
+        const isTaxExempt = earlyIsTaxExempt;
         
         // Calculate IEBLE from lines - this is ALREADY included in line amounts
         // so we must NOT add it again via totalTax
