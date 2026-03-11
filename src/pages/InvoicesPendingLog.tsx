@@ -467,7 +467,7 @@ const InvoicesPendingLog = () => {
     const vendorInvoices = rawInvoices.filter(inv => 
       inv.supplier_name === vendorName && 
       !inv.qbo_entity_id &&
-      (inv.status === 'pending' || inv.status === 'pending_config')
+      (inv.status === 'pending' || inv.status === 'pending_config' || inv.status === 'review')
     );
     const documentIds = vendorInvoices.map(inv => inv.id);
     const count = documentIds.length;
