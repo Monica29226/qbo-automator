@@ -503,14 +503,28 @@ const InvoicesPendingLog = () => {
       try {
         const promises: PromiseLike<any>[] = [];
 
-        // 1. Actualizar documento
-        promises.push(
-          supabase
-            .from("processed_documents")
-            .update({ [field]: valueToSave })
-            .eq("id", id)
-            .select()
-        );
+        // 1. Actualizar TODOS los documentos del mismo proveedor (no solo el seleccionado)
+        if (field === "default_account_ref" && typeof valueToSave === 'string' && valueToSave.trim() !== '' && documentIds.length > 0) {
+          promises.push(
+            supabase
+              .from("processed_documents")
+              .update({ 
+                default_account_ref: valueToSave,
+                status: 'processed',
+                processed_at: new Date().toISOString()
+              })
+              .in("id", documentIds)
+              .select()
+          );
+        } else {
+          promises.push(
+            supabase
+              .from("processed_documents")
+              .update({ [field]: valueToSave })
+              .eq("id", id)
+              .select()
+          );
+        }
 
         // 2. Actualizar vendor si existe
         if ((field === "default_account_ref" || field === "default_class_ref") && invoice.vendor_id) {
