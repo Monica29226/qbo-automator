@@ -23,7 +23,7 @@ export const TodayProcessingReport = () => {
   const [organizationId, setOrganizationId] = useState<string | null>(null);
   
   // Debounce ref to prevent excessive refetches
-  const debounceRef = useRef<NodeJS.Timeout | null>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastFetchRef = useRef<number>(0);
 
   const fetchTodayStats = useCallback(async () => {

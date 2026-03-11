@@ -61,7 +61,7 @@ export const RecentDocuments = () => {
   const [vendorDefaults, setVendorDefaults] = useState<Map<string, VendorDefault>>(new Map());
   
   // Debounce ref to prevent excessive refetches
-  const debounceRef = useRef<NodeJS.Timeout | null>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastFetchRef = useRef<number>(0);
 
   const fetchVendorDefaults = async () => {
