@@ -1856,7 +1856,22 @@ Deno.serve(async (req) => {
         // STEP 7: BUILD LINES FROM XML
         // =============================================================
         const lines: any[] = [];
-        const includeTaxInLines = taxHandling === 'included_in_line_items';
+        
+        // PRE-DETECT tax exemption: when subTotal ≈ totalComprobante but tax > 0
+        // This means "impuesto asumido" - tax is NOT added to total, it's informational
+        // In this case, IVA must be included in line amounts so QBO total = totalComprobante
+        const earlyXmlTotal = parseFloat(xmlData.totalComprobante || xmlData.TotalComprobante || doc.total_amount);
+        const earlyXmlSubtotal = parseFloat(xmlData.subTotal || xmlData.SubTotal || '0');
+        const earlyXmlTax = parseFloat(doc.total_tax as any) || 0;
+        const earlyIsTaxExempt = Math.abs(earlyXmlTax) > 0 && earlyXmlSubtotal > 0 && Math.abs(Math.abs(earlyXmlTotal) - Math.abs(earlyXmlSubtotal)) < 1.0;
+        
+        // Force IVA into line amounts when tax is "asumido" (exempt from total)
+        const includeTaxInLines = taxHandling === 'included_in_line_items' || earlyIsTaxExempt;
+        
+        if (earlyIsTaxExempt) {
+          logInfo(`   📋 ${doc.doc_number}: IMPUESTO ASUMIDO detectado temprano - SubTotal=${earlyXmlSubtotal.toFixed(2)} ≈ Total=${earlyXmlTotal.toFixed(2)}, Tax=${earlyXmlTax.toFixed(2)} → IVA incluido en líneas`);
+        }
+        
         // Tax accumulator: group IVA by rate for TxnTaxDetail.TaxLine
         const taxByRate: Record<number, { taxAmount: number; netAmount: number }> = {};
         
@@ -2058,12 +2073,11 @@ Deno.serve(async (req) => {
         const linesTotalAmount = lines.reduce((sum, line) => sum + (parseFloat(line.Amount) || 0), 0);
         const documentCurrency = doc.currency || xmlData.moneda || 'CRC';
         
-        // Detect tax exemption case: when subtotal = total but tax > 0
-        // This means the tax is NOT added to the total (exonerado/asumido)
+        // Use early-detected tax exemption from STEP 7 pre-detection
         const xmlTotal = parseFloat(xmlData.totalComprobante || xmlData.TotalComprobante || doc.total_amount);
         const xmlSubtotal = parseFloat(xmlData.subTotal || xmlData.SubTotal || '0');
         const xmlTax = parseFloat(doc.total_tax as any) || 0;
-        const isTaxExempt = Math.abs(xmlTax) > 0 && Math.abs(Math.abs(xmlTotal) - Math.abs(xmlSubtotal)) < 1.0;
+        const isTaxExempt = earlyIsTaxExempt;
         
         // Calculate IEBLE from lines - this is ALREADY included in line amounts
         // so we must NOT add it again via totalTax
@@ -2146,7 +2160,7 @@ Deno.serve(async (req) => {
             DocNumber: qboDocNumber,
             Line: lines,
             PrivateNote: `Nota de Crédito - Clave: ${claveHacienda}\nProveedor: ${doc.supplier_name}`,
-            GlobalTaxCalculation: includeTaxInLines ? "TaxInclusive" : "TaxExcluded",
+            GlobalTaxCalculation: earlyIsTaxExempt ? "NotApplicable" : (includeTaxInLines ? "TaxInclusive" : "TaxExcluded"),
           };
           
           if (documentCurrency === 'USD') {
@@ -2274,7 +2288,7 @@ Deno.serve(async (req) => {
             DocNumber: qboDocNumber,
             Line: lines,
             PrivateNote: `Factura XML: ${doc.doc_number}\nClave: ${claveHacienda}\nProveedor: ${doc.supplier_name}`,
-            GlobalTaxCalculation: includeTaxInLines ? "TaxInclusive" : "TaxExcluded",
+            GlobalTaxCalculation: earlyIsTaxExempt ? "NotApplicable" : (includeTaxInLines ? "TaxInclusive" : "TaxExcluded"),
           };
           
           if (documentCurrency === 'USD') {
