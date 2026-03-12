@@ -1383,7 +1383,7 @@ const InvoicesPendingLog = () => {
         open={showPublishDialog}
         onOpenChange={setShowPublishDialog}
         onConfirm={handlePublishAll}
-        documentIds={filteredInvoices.map((inv) => inv.id)}
+        documentIds={publishableInvoices.map((inv) => inv.id)}
       />
 
       <Dialog open={showDetailDialog} onOpenChange={setShowDetailDialog}>
