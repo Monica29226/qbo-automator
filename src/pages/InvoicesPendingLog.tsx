@@ -931,7 +931,7 @@ const InvoicesPendingLog = () => {
           )}
           <Button
             onClick={() => setShowPublishDialog(true)}
-            disabled={filteredInvoices.length === 0 || isPublishing}
+            disabled={publishableInvoices.length === 0 || isPublishing}
             size="lg"
           >
             {isPublishing ? (
@@ -942,7 +942,7 @@ const InvoicesPendingLog = () => {
             ) : (
               <>
                 <Upload className="h-4 w-4 mr-2" />
-                Publicar Todas ({filteredInvoices.length})
+                Publicar Todas ({publishableInvoices.length})
               </>
             )}
           </Button>
