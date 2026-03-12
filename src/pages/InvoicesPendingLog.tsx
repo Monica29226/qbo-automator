@@ -664,14 +664,23 @@ const InvoicesPendingLog = () => {
     }
   };
 
+  const publishableInvoices = useMemo(() => {
+    return filteredInvoices.filter(inv => inv.default_account_ref && inv.default_account_ref.trim() !== '');
+  }, [filteredInvoices]);
+
   const handlePublishAll = async () => {
-    if (filteredInvoices.length === 0) {
-      toast.error("No hay facturas para publicar");
+    if (publishableInvoices.length === 0) {
+      toast.error("No hay facturas con cuenta contable configurada para publicar");
       return;
     }
 
-    const totalInvoices = filteredInvoices.length;
+    const totalInvoices = publishableInvoices.length;
+    const unconfigured = filteredInvoices.length - publishableInvoices.length;
     setIsPublishing(true);
+    
+    if (unconfigured > 0) {
+      toast.info(`${unconfigured} factura(s) sin cuenta contable serán omitidas`);
+    }
     
     // Mostrar toast de progreso con estimación de tiempo
     const estimatedTime = Math.ceil((totalInvoices * 3) / 60); // ~3 segundos por factura
@@ -681,7 +690,7 @@ const InvoicesPendingLog = () => {
     );
 
     try {
-      const documentIds = filteredInvoices.map((inv) => inv.id);
+      const documentIds = publishableInvoices.map((inv) => inv.id);
       
       // Usar AbortController para timeout más largo (5 minutos)
       const controller = new AbortController();
@@ -922,7 +931,7 @@ const InvoicesPendingLog = () => {
           )}
           <Button
             onClick={() => setShowPublishDialog(true)}
-            disabled={filteredInvoices.length === 0 || isPublishing}
+            disabled={publishableInvoices.length === 0 || isPublishing}
             size="lg"
           >
             {isPublishing ? (
@@ -933,7 +942,7 @@ const InvoicesPendingLog = () => {
             ) : (
               <>
                 <Upload className="h-4 w-4 mr-2" />
-                Publicar Todas ({filteredInvoices.length})
+                Publicar Todas ({publishableInvoices.length})
               </>
             )}
           </Button>
@@ -1374,7 +1383,7 @@ const InvoicesPendingLog = () => {
         open={showPublishDialog}
         onOpenChange={setShowPublishDialog}
         onConfirm={handlePublishAll}
-        documentIds={filteredInvoices.map((inv) => inv.id)}
+        documentIds={publishableInvoices.map((inv) => inv.id)}
       />
 
       <Dialog open={showDetailDialog} onOpenChange={setShowDetailDialog}>
