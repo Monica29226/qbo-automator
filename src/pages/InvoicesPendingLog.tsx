@@ -664,14 +664,23 @@ const InvoicesPendingLog = () => {
     }
   };
 
+  const publishableInvoices = useMemo(() => {
+    return filteredInvoices.filter(inv => inv.default_account_ref && inv.default_account_ref.trim() !== '');
+  }, [filteredInvoices]);
+
   const handlePublishAll = async () => {
-    if (filteredInvoices.length === 0) {
-      toast.error("No hay facturas para publicar");
+    if (publishableInvoices.length === 0) {
+      toast.error("No hay facturas con cuenta contable configurada para publicar");
       return;
     }
 
-    const totalInvoices = filteredInvoices.length;
+    const totalInvoices = publishableInvoices.length;
+    const unconfigured = filteredInvoices.length - publishableInvoices.length;
     setIsPublishing(true);
+    
+    if (unconfigured > 0) {
+      toast.info(`${unconfigured} factura(s) sin cuenta contable serán omitidas`);
+    }
     
     // Mostrar toast de progreso con estimación de tiempo
     const estimatedTime = Math.ceil((totalInvoices * 3) / 60); // ~3 segundos por factura
@@ -681,7 +690,7 @@ const InvoicesPendingLog = () => {
     );
 
     try {
-      const documentIds = filteredInvoices.map((inv) => inv.id);
+      const documentIds = publishableInvoices.map((inv) => inv.id);
       
       // Usar AbortController para timeout más largo (5 minutos)
       const controller = new AbortController();
