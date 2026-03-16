@@ -2369,13 +2369,25 @@ Deno.serve(async (req) => {
               logInfo(`⚠️ ${doc.doc_number}: Error de impuesto en QBO, reintentando SIN TxnTaxDetail...`);
               
               // Remove TxnTaxDetail and TaxCodeRef from lines
+              const billTotalTaxToRedistribute = billPayload.TxnTaxDetail?.TotalTax || 0;
               delete billPayload.TxnTaxDetail;
+              
+              // CRITICAL: Redistribute tax into line amounts so total matches document
+              const billExpenseLines = billPayload.Line.filter((l: any) => l.DetailType === "AccountBasedExpenseLineDetail");
+              const billLinesTotalBeforeTax = billExpenseLines.reduce((sum: number, l: any) => sum + (l.Amount || 0), 0);
+              
               for (const line of billPayload.Line) {
                 if (line.AccountBasedExpenseLineDetail?.TaxCodeRef) {
                   delete line.AccountBasedExpenseLineDetail.TaxCodeRef;
                 }
+                // Proportionally add tax to each expense line
+                if (line.DetailType === "AccountBasedExpenseLineDetail" && billTotalTaxToRedistribute > 0 && billLinesTotalBeforeTax > 0) {
+                  const proportion = line.Amount / billLinesTotalBeforeTax;
+                  line.Amount = parseFloat((line.Amount + billTotalTaxToRedistribute * proportion).toFixed(2));
+                }
               }
               billPayload.GlobalTaxCalculation = "NotApplicable";
+              logInfo(`   📊 ${doc.doc_number}: IVA redistribuido en líneas: ${billTotalTaxToRedistribute.toFixed(2)} sobre ${billExpenseLines.length} líneas`);
               
               // Retry without tax
               await delay(1000);
