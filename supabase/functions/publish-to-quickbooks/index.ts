@@ -2225,13 +2225,25 @@ Deno.serve(async (req) => {
               logInfo(`⚠️ ${doc.doc_number}: Error de impuesto en VendorCredit, reintentando SIN TxnTaxDetail...`);
               
               // Remove TxnTaxDetail and TaxCodeRef from lines
+              const vcTotalTaxToRedistribute = vendorCreditPayload.TxnTaxDetail?.TotalTax || 0;
               delete vendorCreditPayload.TxnTaxDetail;
+              
+              // CRITICAL: Redistribute tax into line amounts so total matches document
+              const vcExpenseLines = vendorCreditPayload.Line.filter((l: any) => l.DetailType === "AccountBasedExpenseLineDetail");
+              const vcLinesTotalBeforeTax = vcExpenseLines.reduce((sum: number, l: any) => sum + (l.Amount || 0), 0);
+              
               for (const line of vendorCreditPayload.Line) {
                 if (line.AccountBasedExpenseLineDetail?.TaxCodeRef) {
                   delete line.AccountBasedExpenseLineDetail.TaxCodeRef;
                 }
+                // Proportionally add tax to each expense line
+                if (line.DetailType === "AccountBasedExpenseLineDetail" && vcTotalTaxToRedistribute > 0 && vcLinesTotalBeforeTax > 0) {
+                  const proportion = line.Amount / vcLinesTotalBeforeTax;
+                  line.Amount = parseFloat((line.Amount + vcTotalTaxToRedistribute * proportion).toFixed(2));
+                }
               }
               vendorCreditPayload.GlobalTaxCalculation = "NotApplicable";
+              logInfo(`   📊 ${doc.doc_number}: IVA redistribuido en líneas: ${vcTotalTaxToRedistribute.toFixed(2)} sobre ${vcExpenseLines.length} líneas`);
               
               // Retry without tax
               await delay(1000);
