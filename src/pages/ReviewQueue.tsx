@@ -49,6 +49,7 @@ interface Document {
   default_account_ref: string | null;
   pdf_attachment_url: string | null;
   file_path: string | null;
+  status: string;
 }
 
 interface Vendor {
