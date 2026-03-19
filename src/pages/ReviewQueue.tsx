@@ -49,6 +49,7 @@ interface Document {
   default_account_ref: string | null;
   pdf_attachment_url: string | null;
   file_path: string | null;
+  status: string;
 }
 
 interface Vendor {
@@ -98,7 +99,6 @@ const ReviewQueue = () => {
         .from("processed_documents")
         .select("*")
         .eq("organization_id", activeOrganization)
-        .eq("status", "review")
         .gte("issue_date", "2026-01-01")
         .order("issue_date", { ascending: false }),
       supabase
@@ -287,9 +287,9 @@ const ReviewQueue = () => {
               </p>
             </div>
           </div>
-          {documents.length > 0 ? (
+          {documents.filter(d => d.status === "review").length > 0 ? (
             <Badge variant="secondary" className="text-lg px-4 py-2">
-              {documents.length} pendientes
+              {documents.filter(d => d.status === "review").length} pendientes
             </Badge>
           ) : (
             <Badge variant="secondary" className="text-lg px-4 py-2 bg-green-100 text-green-800 border-green-300">
@@ -307,9 +307,9 @@ const ReviewQueue = () => {
             </div>
           ) : documents.length === 0 ? (
             <div className="text-center py-12">
-              <CheckCircle className="h-16 w-16 text-success mx-auto mb-4" />
-              <h3 className="text-lg font-semibold mb-2">¡Todo al día!</h3>
-              <p className="text-muted-foreground">No hay documentos pendientes de revisión</p>
+              <CheckCircle className="h-16 w-16 text-green-500 mx-auto mb-4" />
+              <h3 className="text-lg font-semibold mb-2">Sin documentos</h3>
+              <p className="text-muted-foreground">No se encontraron documentos para esta empresa</p>
             </div>
           ) : (
             <Table>
@@ -320,7 +320,7 @@ const ReviewQueue = () => {
                   <TableHead>Proveedor</TableHead>
                   <TableHead>Cédula</TableHead>
                   <TableHead>Monto</TableHead>
-                  <TableHead>Motivo</TableHead>
+                  <TableHead>Estado</TableHead>
                   <TableHead className="text-right">Acciones</TableHead>
                 </TableRow>
               </TableHeader>
@@ -347,9 +347,17 @@ const ReviewQueue = () => {
                       {formatCurrency(doc.total_amount, doc.currency)}
                     </TableCell>
                     <TableCell>
-                      <span className="text-xs text-muted-foreground">
-                        {doc.error_message || "Sin clasificar"}
-                      </span>
+                      {doc.status === "review" ? (
+                        <Badge variant="outline" className="bg-yellow-50 text-yellow-700 border-yellow-300">Pendiente</Badge>
+                      ) : doc.status === "published" ? (
+                        <Badge variant="outline" className="bg-green-50 text-green-700 border-green-300">Publicada</Badge>
+                      ) : doc.status === "error" ? (
+                        <Badge variant="outline" className="bg-red-50 text-red-700 border-red-300">Error</Badge>
+                      ) : doc.status === "processed" ? (
+                        <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-300">Procesada</Badge>
+                      ) : (
+                        <Badge variant="outline">{doc.status}</Badge>
+                      )}
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-2">
@@ -363,9 +371,11 @@ const ReviewQueue = () => {
                             <Eye className="h-4 w-4" />
                           </Button>
                         )}
-                        <Button variant="outline" size="sm" onClick={() => openDialog(doc)}>
-                          Revisar
-                        </Button>
+                        {doc.status === "review" && (
+                          <Button variant="outline" size="sm" onClick={() => openDialog(doc)}>
+                            Revisar
+                          </Button>
+                        )}
                       </div>
                     </TableCell>
                   </TableRow>
