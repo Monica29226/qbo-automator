@@ -287,9 +287,15 @@ const ReviewQueue = () => {
               </p>
             </div>
           </div>
-          <Badge variant="secondary" className="text-lg px-4 py-2">
-            {documents.length} pendientes
-          </Badge>
+          {documents.length > 0 ? (
+            <Badge variant="secondary" className="text-lg px-4 py-2">
+              {documents.length} pendientes
+            </Badge>
+          ) : (
+            <Badge variant="secondary" className="text-lg px-4 py-2 bg-green-100 text-green-800 border-green-300">
+              ✓ Al día
+            </Badge>
+          )}
         </div>
       </header>
 
