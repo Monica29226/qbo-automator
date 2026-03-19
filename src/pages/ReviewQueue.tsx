@@ -338,10 +338,11 @@ const ReviewQueue = () => {
                 const isExpanded = expandedDocId === doc.id;
                 const lines = doc.xml_data?.lineas || doc.xml_data?.items || [];
                 const vendor = vendors.find(v => v.id === doc.vendor_id);
+                const isNC = doc.doc_type === "NC" || doc.doc_type === "ND" || doc.doc_key?.substring(29, 31) === "04";
                 return (
                   <React.Fragment key={doc.id}>
                     <TableRow 
-                      className="cursor-pointer hover:bg-muted/60 transition-colors"
+                      className={`cursor-pointer hover:bg-muted/60 transition-colors ${isNC ? "bg-purple-50/50" : ""}`}
                       onClick={() => setExpandedDocId(isExpanded ? null : doc.id)}
                     >
                       <TableCell className="font-mono text-sm">
