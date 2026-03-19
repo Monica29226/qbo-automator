@@ -287,9 +287,9 @@ const ReviewQueue = () => {
               </p>
             </div>
           </div>
-          {documents.length > 0 ? (
+          {documents.filter(d => d.status === "review").length > 0 ? (
             <Badge variant="secondary" className="text-lg px-4 py-2">
-              {documents.length} pendientes
+              {documents.filter(d => d.status === "review").length} pendientes
             </Badge>
           ) : (
             <Badge variant="secondary" className="text-lg px-4 py-2 bg-green-100 text-green-800 border-green-300">
