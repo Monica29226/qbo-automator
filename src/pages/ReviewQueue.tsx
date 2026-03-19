@@ -64,7 +64,8 @@ interface Account {
 }
 
 const ReviewQueue = () => {
-  const { activeOrganization } = useAuth();
+  const { activeOrganization, organizations } = useAuth();
+  const currentOrg = organizations.find((org) => org.id === activeOrganization);
   const [documents, setDocuments] = useState<Document[]>([]);
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
