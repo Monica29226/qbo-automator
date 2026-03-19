@@ -25,7 +25,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { FileText, ArrowLeft, Loader2, CheckCircle, X, Eye } from "lucide-react";
+import { FileText, ArrowLeft, Loader2, CheckCircle, X, Eye, ChevronDown, ChevronUp } from "lucide-react";
 import { PdfViewer } from "@/components/PdfViewer";
 import { Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
