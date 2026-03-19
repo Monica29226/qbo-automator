@@ -43,7 +43,7 @@ export const OrganizationSwitcher = () => {
             <span className="hidden md:inline">{currentOrg?.name || "Seleccionar empresa"}</span>
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="w-56">
+        <DropdownMenuContent align="end" className="w-56 max-h-80 overflow-y-auto">
           <DropdownMenuLabel>Cambiar Empresa</DropdownMenuLabel>
           <DropdownMenuSeparator />
           {[...organizations]
