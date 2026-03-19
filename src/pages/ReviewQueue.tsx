@@ -99,7 +99,6 @@ const ReviewQueue = () => {
         .from("processed_documents")
         .select("*")
         .eq("organization_id", activeOrganization)
-        .eq("status", "review")
         .gte("issue_date", "2026-01-01")
         .order("issue_date", { ascending: false }),
       supabase
