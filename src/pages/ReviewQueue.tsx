@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -25,7 +25,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { FileText, ArrowLeft, Loader2, CheckCircle, X, Eye } from "lucide-react";
+import { FileText, ArrowLeft, Loader2, CheckCircle, X, Eye, ChevronDown, ChevronUp } from "lucide-react";
 import { PdfViewer } from "@/components/PdfViewer";
 import { Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
@@ -42,14 +42,22 @@ interface Document {
   issue_date: string;
   supplier_name: string;
   supplier_tax_id: string | null;
+  supplier_email: string | null;
   total_amount: number;
+  total_tax: number | null;
+  total_discount: number | null;
   currency: string;
+  exchange_rate: number | null;
   error_message: string | null;
   vendor_id: string | null;
   default_account_ref: string | null;
   pdf_attachment_url: string | null;
   file_path: string | null;
   status: string;
+  qbo_entity_id: string | null;
+  xml_data: any;
+  processed_at: string | null;
+  created_at: string;
 }
 
 interface Vendor {
@@ -79,6 +87,7 @@ const ReviewQueue = () => {
   const [showPdfPreview, setShowPdfPreview] = useState(false);
   const [pdfOnlyDoc, setPdfOnlyDoc] = useState<Document | null>(null);
   const [isPdfDialogOpen, setIsPdfDialogOpen] = useState(false);
+  const [expandedDocId, setExpandedDocId] = useState<string | null>(null);
 
   useEffect(() => {
     if (activeOrganization) {
@@ -325,61 +334,151 @@ const ReviewQueue = () => {
                 </TableRow>
               </TableHeader>
               <TableBody>
-              {documents.map((doc) => (
-                  <TableRow key={doc.id}>
-                    <TableCell className="font-mono text-sm">
-                      {(doc.pdf_attachment_url || doc.file_path) ? (
-                        <button
-                          onClick={() => openPdfOnly(doc)}
-                          className="text-primary hover:text-primary/80 hover:underline cursor-pointer font-mono"
-                          title="Ver PDF de la factura"
-                        >
+              {documents.map((doc) => {
+                const isExpanded = expandedDocId === doc.id;
+                const lines = doc.xml_data?.lineas || doc.xml_data?.items || [];
+                const vendor = vendors.find(v => v.id === doc.vendor_id);
+                return (
+                  <React.Fragment key={doc.id}>
+                    <TableRow 
+                      className="cursor-pointer hover:bg-muted/60 transition-colors"
+                      onClick={() => setExpandedDocId(isExpanded ? null : doc.id)}
+                    >
+                      <TableCell className="font-mono text-sm">
+                        <div className="flex items-center gap-1">
+                          {isExpanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
                           {doc.doc_number}
-                        </button>
-                      ) : (
-                        doc.doc_number
-                      )}
-                    </TableCell>
-                    <TableCell>{new Date(doc.issue_date).toLocaleDateString("es-CR")}</TableCell>
-                    <TableCell className="font-medium">{doc.supplier_name}</TableCell>
-                    <TableCell>{doc.supplier_tax_id || "-"}</TableCell>
-                    <TableCell className="font-semibold">
-                      {formatCurrency(doc.total_amount, doc.currency)}
-                    </TableCell>
-                    <TableCell>
-                      {doc.status === "review" ? (
-                        <Badge variant="outline" className="bg-yellow-50 text-yellow-700 border-yellow-300">Pendiente</Badge>
-                      ) : doc.status === "published" ? (
-                        <Badge variant="outline" className="bg-green-50 text-green-700 border-green-300">Publicada</Badge>
-                      ) : doc.status === "error" ? (
-                        <Badge variant="outline" className="bg-red-50 text-red-700 border-red-300">Error</Badge>
-                      ) : doc.status === "processed" ? (
-                        <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-300">Procesada</Badge>
-                      ) : (
-                        <Badge variant="outline">{doc.status}</Badge>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex items-center justify-end gap-2">
-                        {(doc.pdf_attachment_url || doc.file_path) && (
-                          <Button 
-                            variant="ghost" 
-                            size="sm" 
-                            onClick={() => openPdfOnly(doc)}
-                            title="Ver PDF"
-                          >
-                            <Eye className="h-4 w-4" />
-                          </Button>
+                        </div>
+                      </TableCell>
+                      <TableCell>{new Date(doc.issue_date).toLocaleDateString("es-CR")}</TableCell>
+                      <TableCell className="font-medium">{doc.supplier_name}</TableCell>
+                      <TableCell>{doc.supplier_tax_id || "-"}</TableCell>
+                      <TableCell className="font-semibold">
+                        {formatCurrency(doc.total_amount, doc.currency)}
+                      </TableCell>
+                      <TableCell>
+                        {doc.status === "review" ? (
+                          <Badge variant="outline" className="bg-yellow-50 text-yellow-700 border-yellow-300">Pendiente</Badge>
+                        ) : doc.status === "published" ? (
+                          <Badge variant="outline" className="bg-green-50 text-green-700 border-green-300">Publicada</Badge>
+                        ) : doc.status === "error" ? (
+                          <Badge variant="outline" className="bg-red-50 text-red-700 border-red-300">Error</Badge>
+                        ) : doc.status === "processed" ? (
+                          <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-300">Procesada</Badge>
+                        ) : (
+                          <Badge variant="outline">{doc.status}</Badge>
                         )}
-                        {doc.status === "review" && (
-                          <Button variant="outline" size="sm" onClick={() => openDialog(doc)}>
-                            Revisar
-                          </Button>
-                        )}
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex items-center justify-end gap-2">
+                          {(doc.pdf_attachment_url || doc.file_path) && (
+                            <Button 
+                              variant="ghost" 
+                              size="sm" 
+                              onClick={(e) => { e.stopPropagation(); openPdfOnly(doc); }}
+                              title="Ver PDF"
+                            >
+                              <Eye className="h-4 w-4" />
+                            </Button>
+                          )}
+                          {doc.status === "review" && (
+                            <Button variant="outline" size="sm" onClick={(e) => { e.stopPropagation(); openDialog(doc); }}>
+                              Revisar
+                            </Button>
+                          )}
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                    {isExpanded && (
+                      <TableRow>
+                        <TableCell colSpan={7} className="bg-muted/30 p-0">
+                          <div className="px-6 py-4 space-y-4">
+                            {/* Info general */}
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                              <div>
+                                <span className="text-muted-foreground block text-xs">Tipo documento</span>
+                                <span className="font-medium">{doc.doc_type || "-"}</span>
+                              </div>
+                              <div>
+                                <span className="text-muted-foreground block text-xs">Moneda</span>
+                                <span className="font-medium">{doc.currency}{doc.exchange_rate ? ` (TC: ${doc.exchange_rate})` : ""}</span>
+                              </div>
+                              <div>
+                                <span className="text-muted-foreground block text-xs">IVA total</span>
+                                <span className="font-medium">{doc.total_tax != null ? formatCurrency(doc.total_tax, doc.currency) : "-"}</span>
+                              </div>
+                              <div>
+                                <span className="text-muted-foreground block text-xs">Descuento</span>
+                                <span className="font-medium">{doc.total_discount ? formatCurrency(doc.total_discount, doc.currency) : "-"}</span>
+                              </div>
+                              <div>
+                                <span className="text-muted-foreground block text-xs">Email proveedor</span>
+                                <span className="font-medium">{doc.supplier_email || "-"}</span>
+                              </div>
+                              <div>
+                                <span className="text-muted-foreground block text-xs">Vendor QBO</span>
+                                <span className="font-medium">{vendor?.vendor_name || "-"}</span>
+                              </div>
+                              <div>
+                                <span className="text-muted-foreground block text-xs">Cuenta asignada</span>
+                                <span className="font-medium">{doc.default_account_ref || "-"}</span>
+                              </div>
+                              <div>
+                                <span className="text-muted-foreground block text-xs">QBO ID</span>
+                                <span className="font-medium">{doc.qbo_entity_id || "-"}</span>
+                              </div>
+                            </div>
+
+                            {/* Error message */}
+                            {doc.error_message && (
+                              <div className="text-sm p-2 rounded bg-red-50 text-red-700 border border-red-200">
+                                <span className="font-medium">Error: </span>{doc.error_message}
+                              </div>
+                            )}
+
+                            {/* Líneas del documento */}
+                            {lines.length > 0 && (
+                              <div>
+                                <h4 className="text-xs font-semibold text-muted-foreground mb-2 uppercase">Detalle de líneas</h4>
+                                <div className="border rounded overflow-hidden">
+                                  <table className="w-full text-sm">
+                                    <thead className="bg-muted/50">
+                                      <tr>
+                                        <th className="text-left px-3 py-1.5 font-medium">Descripción</th>
+                                        <th className="text-right px-3 py-1.5 font-medium">Cant</th>
+                                        <th className="text-right px-3 py-1.5 font-medium">Precio</th>
+                                        <th className="text-right px-3 py-1.5 font-medium">IVA</th>
+                                        <th className="text-right px-3 py-1.5 font-medium">Subtotal</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {lines.map((line: any, idx: number) => (
+                                        <tr key={idx} className="border-t">
+                                          <td className="px-3 py-1.5">{line.descripcion || line.description || "-"}</td>
+                                          <td className="px-3 py-1.5 text-right">{line.cantidad || line.quantity || 1}</td>
+                                          <td className="px-3 py-1.5 text-right">{formatCurrency(line.precioUnitario || line.unitPrice || 0, doc.currency)}</td>
+                                          <td className="px-3 py-1.5 text-right">{line.montoImpuesto || line.taxAmount || 0}</td>
+                                          <td className="px-3 py-1.5 text-right">{formatCurrency(line.montoTotalLinea || line.lineTotal || 0, doc.currency)}</td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Clave electrónica */}
+                            <div className="text-xs text-muted-foreground">
+                              <span className="font-medium">Clave: </span>
+                              <span className="font-mono">{doc.doc_key}</span>
+                            </div>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </React.Fragment>
+                );
+              })}
               </TableBody>
             </Table>
           )}
