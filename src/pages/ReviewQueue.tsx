@@ -307,9 +307,9 @@ const ReviewQueue = () => {
             </div>
           ) : documents.length === 0 ? (
             <div className="text-center py-12">
-              <CheckCircle className="h-16 w-16 text-success mx-auto mb-4" />
-              <h3 className="text-lg font-semibold mb-2">¡Todo al día!</h3>
-              <p className="text-muted-foreground">No hay documentos pendientes de revisión</p>
+              <CheckCircle className="h-16 w-16 text-green-500 mx-auto mb-4" />
+              <h3 className="text-lg font-semibold mb-2">Sin documentos</h3>
+              <p className="text-muted-foreground">No se encontraron documentos para esta empresa</p>
             </div>
           ) : (
             <Table>
