@@ -338,16 +338,18 @@ const ReviewQueue = () => {
                 const isExpanded = expandedDocId === doc.id;
                 const lines = doc.xml_data?.lineas || doc.xml_data?.items || [];
                 const vendor = vendors.find(v => v.id === doc.vendor_id);
+                const isNC = doc.doc_type === "NC" || doc.doc_type === "ND" || doc.doc_key?.substring(29, 31) === "04";
                 return (
                   <React.Fragment key={doc.id}>
                     <TableRow 
-                      className="cursor-pointer hover:bg-muted/60 transition-colors"
+                      className={`cursor-pointer hover:bg-muted/60 transition-colors ${isNC ? "bg-purple-50/50" : ""}`}
                       onClick={() => setExpandedDocId(isExpanded ? null : doc.id)}
                     >
                       <TableCell className="font-mono text-sm">
-                        <div className="flex items-center gap-1">
+                        <div className="flex items-center gap-2">
                           {isExpanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
                           {doc.doc_number}
+                          {isNC && <Badge variant="outline" className="bg-purple-50 text-purple-700 border-purple-300 text-[10px] px-1.5 py-0">NC</Badge>}
                         </div>
                       </TableCell>
                       <TableCell>{new Date(doc.issue_date).toLocaleDateString("es-CR")}</TableCell>
