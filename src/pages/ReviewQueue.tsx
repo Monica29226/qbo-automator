@@ -338,7 +338,7 @@ const ReviewQueue = () => {
                 const isExpanded = expandedDocId === doc.id;
                 const lines = doc.xml_data?.lineas || doc.xml_data?.items || [];
                 const vendor = vendors.find(v => v.id === doc.vendor_id);
-                const isNC = doc.doc_type === "NC" || doc.doc_type === "ND" || doc.doc_key?.substring(29, 31) === "04";
+                const isNC = doc.doc_type?.toLowerCase().includes("nota") || doc.doc_type?.toLowerCase().includes("credit") || doc.doc_type === "NC" || doc.doc_type === "ND";
                 return (
                   <React.Fragment key={doc.id}>
                     <TableRow 
