@@ -87,6 +87,7 @@ const ReviewQueue = () => {
   const [showPdfPreview, setShowPdfPreview] = useState(false);
   const [pdfOnlyDoc, setPdfOnlyDoc] = useState<Document | null>(null);
   const [isPdfDialogOpen, setIsPdfDialogOpen] = useState(false);
+  const [expandedDocId, setExpandedDocId] = useState<string | null>(null);
 
   useEffect(() => {
     if (activeOrganization) {
