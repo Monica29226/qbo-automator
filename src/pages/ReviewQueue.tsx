@@ -347,9 +347,17 @@ const ReviewQueue = () => {
                       {formatCurrency(doc.total_amount, doc.currency)}
                     </TableCell>
                     <TableCell>
-                      <span className="text-xs text-muted-foreground">
-                        {doc.error_message || "Sin clasificar"}
-                      </span>
+                      {doc.status === "review" ? (
+                        <Badge variant="outline" className="bg-yellow-50 text-yellow-700 border-yellow-300">Pendiente</Badge>
+                      ) : doc.status === "published" ? (
+                        <Badge variant="outline" className="bg-green-50 text-green-700 border-green-300">Publicada</Badge>
+                      ) : doc.status === "error" ? (
+                        <Badge variant="outline" className="bg-red-50 text-red-700 border-red-300">Error</Badge>
+                      ) : doc.status === "processed" ? (
+                        <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-300">Procesada</Badge>
+                      ) : (
+                        <Badge variant="outline">{doc.status}</Badge>
+                      )}
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-2">
@@ -363,9 +371,11 @@ const ReviewQueue = () => {
                             <Eye className="h-4 w-4" />
                           </Button>
                         )}
-                        <Button variant="outline" size="sm" onClick={() => openDialog(doc)}>
-                          Revisar
-                        </Button>
+                        {doc.status === "review" && (
+                          <Button variant="outline" size="sm" onClick={() => openDialog(doc)}>
+                            Revisar
+                          </Button>
+                        )}
                       </div>
                     </TableCell>
                   </TableRow>
