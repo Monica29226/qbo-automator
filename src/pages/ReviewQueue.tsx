@@ -464,6 +464,30 @@ const ReviewQueue = () => {
                                         </tr>
                                       ))}
                                     </tbody>
+                                    <tfoot className="bg-muted/30 border-t font-medium">
+                                      <tr>
+                                        <td colSpan={3} className="px-3 py-1.5"></td>
+                                        <td className="px-3 py-1.5 text-right text-xs text-muted-foreground">Subtotal</td>
+                                        <td className="px-3 py-1.5 text-right">{formatCurrency((doc.total_amount - (doc.total_tax || 0) + (doc.total_discount || 0)), doc.currency)}</td>
+                                      </tr>
+                                      {(doc.total_discount || 0) > 0 && (
+                                        <tr>
+                                          <td colSpan={3} className="px-3 py-1.5"></td>
+                                          <td className="px-3 py-1.5 text-right text-xs text-muted-foreground">Descuento</td>
+                                          <td className="px-3 py-1.5 text-right text-red-600">-{formatCurrency(doc.total_discount || 0, doc.currency)}</td>
+                                        </tr>
+                                      )}
+                                      <tr>
+                                        <td colSpan={3} className="px-3 py-1.5"></td>
+                                        <td className="px-3 py-1.5 text-right text-xs text-muted-foreground">Impuestos</td>
+                                        <td className="px-3 py-1.5 text-right">{formatCurrency(doc.total_tax || 0, doc.currency)}</td>
+                                      </tr>
+                                      <tr className="border-t">
+                                        <td colSpan={3} className="px-3 py-2"></td>
+                                        <td className="px-3 py-2 text-right text-xs font-semibold">Total</td>
+                                        <td className="px-3 py-2 text-right font-semibold">{formatCurrency(doc.total_amount, doc.currency)}</td>
+                                      </tr>
+                                    </tfoot>
                                   </table>
                                 </div>
                               </div>
