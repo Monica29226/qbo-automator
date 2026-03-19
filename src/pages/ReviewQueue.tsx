@@ -320,7 +320,7 @@ const ReviewQueue = () => {
                   <TableHead>Proveedor</TableHead>
                   <TableHead>Cédula</TableHead>
                   <TableHead>Monto</TableHead>
-                  <TableHead>Motivo</TableHead>
+                  <TableHead>Estado</TableHead>
                   <TableHead className="text-right">Acciones</TableHead>
                 </TableRow>
               </TableHeader>
