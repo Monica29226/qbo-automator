@@ -346,9 +346,10 @@ const ReviewQueue = () => {
                       onClick={() => setExpandedDocId(isExpanded ? null : doc.id)}
                     >
                       <TableCell className="font-mono text-sm">
-                        <div className="flex items-center gap-1">
+                        <div className="flex items-center gap-2">
                           {isExpanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
                           {doc.doc_number}
+                          {isNC && <Badge variant="outline" className="bg-purple-50 text-purple-700 border-purple-300 text-[10px] px-1.5 py-0">NC</Badge>}
                         </div>
                       </TableCell>
                       <TableCell>{new Date(doc.issue_date).toLocaleDateString("es-CR")}</TableCell>
