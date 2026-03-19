@@ -282,7 +282,9 @@ const ReviewQueue = () => {
             </div>
             <div>
               <h1 className="text-xl font-bold text-foreground">Cola de Revisión</h1>
-              <p className="text-xs text-muted-foreground">Documentos pendientes de clasificación manual</p>
+              <p className="text-xs text-muted-foreground">
+                {currentOrg ? <span className="font-semibold">{currentOrg.name}</span> : "Documentos"} — Documentos pendientes de clasificación manual
+              </p>
             </div>
           </div>
           <Badge variant="secondary" className="text-lg px-4 py-2">
