@@ -42,14 +42,22 @@ interface Document {
   issue_date: string;
   supplier_name: string;
   supplier_tax_id: string | null;
+  supplier_email: string | null;
   total_amount: number;
+  total_tax: number | null;
+  total_discount: number | null;
   currency: string;
+  exchange_rate: number | null;
   error_message: string | null;
   vendor_id: string | null;
   default_account_ref: string | null;
   pdf_attachment_url: string | null;
   file_path: string | null;
   status: string;
+  qbo_entity_id: string | null;
+  xml_data: any;
+  processed_at: string | null;
+  created_at: string;
 }
 
 interface Vendor {
