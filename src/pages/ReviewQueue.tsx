@@ -494,25 +494,31 @@ const ReviewQueue = () => {
                             )}
 
                             {/* Resumen de totales - siempre visible */}
-                            <div className="border rounded overflow-hidden">
-                              <table className="w-full text-sm">
-                                <tbody>
-                                  <tr className="bg-muted/20">
-                                    <td className="px-3 py-1.5 text-muted-foreground">Subtotal</td>
-                                    <td className="px-3 py-1.5 text-right font-medium">{formatCurrency((doc.total_amount - (doc.total_tax || 0) + (doc.total_discount || 0)), doc.currency)}</td>
-                                    <td className="px-3 py-1.5 text-muted-foreground">Impuestos</td>
-                                    <td className="px-3 py-1.5 text-right font-medium">{formatCurrency(doc.total_tax || 0, doc.currency)}</td>
+                            <div className="flex justify-end">
+                              <div className="border rounded overflow-hidden w-64">
+                                <table className="w-full text-sm">
+                                  <tbody>
+                                    <tr className="bg-muted/20">
+                                      <td className="px-3 py-1 text-muted-foreground">Subtotal</td>
+                                      <td className="px-3 py-1 text-right font-medium">{formatCurrency((doc.total_amount - (doc.total_tax || 0) + (doc.total_discount || 0)), doc.currency)}</td>
+                                    </tr>
                                     {(doc.total_discount || 0) > 0 && (
-                                      <>
-                                        <td className="px-3 py-1.5 text-muted-foreground">Descuento</td>
-                                        <td className="px-3 py-1.5 text-right font-medium text-destructive">-{formatCurrency(doc.total_discount || 0, doc.currency)}</td>
-                                      </>
+                                      <tr className="bg-muted/20">
+                                        <td className="px-3 py-1 text-muted-foreground">Descuento</td>
+                                        <td className="px-3 py-1 text-right font-medium text-destructive">-{formatCurrency(doc.total_discount || 0, doc.currency)}</td>
+                                      </tr>
                                     )}
-                                    <td className="px-3 py-1.5 font-semibold">Total</td>
-                                    <td className="px-3 py-1.5 text-right font-semibold">{formatCurrency(doc.total_amount, doc.currency)}</td>
-                                  </tr>
-                                </tbody>
-                              </table>
+                                    <tr className="bg-muted/20">
+                                      <td className="px-3 py-1 text-muted-foreground">Impuestos</td>
+                                      <td className="px-3 py-1 text-right font-medium">{formatCurrency(doc.total_tax || 0, doc.currency)}</td>
+                                    </tr>
+                                    <tr className="bg-muted/30 border-t">
+                                      <td className="px-3 py-1.5 font-semibold">Total</td>
+                                      <td className="px-3 py-1.5 text-right font-semibold">{formatCurrency(doc.total_amount, doc.currency)}</td>
+                                    </tr>
+                                  </tbody>
+                                </table>
+                              </div>
                             </div>
 
                             {/* Clave electrónica */}
