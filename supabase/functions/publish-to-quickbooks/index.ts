@@ -2291,6 +2291,56 @@ Deno.serve(async (req) => {
             const vcData = await vcResponse.json();
             entityId = vcData.VendorCredit.Id;
             entityType = "VendorCredit";
+            
+            // POST-CREATION VERIFICATION for VendorCredit
+            const vcQboTotal = parseFloat(vcData.VendorCredit.TotalAmt || '0');
+            const vcExpectedTotal = Math.abs(doc.total_amount);
+            const vcDiscrepancy = Math.abs(vcQboTotal - vcExpectedTotal);
+            
+            if (vcDiscrepancy > 1.0 && vendorCreditPayload.GlobalTaxCalculation !== "NotApplicable") {
+              logInfo(`⚠️ ${doc.doc_number}: DISCREPANCIA en VendorCredit! QBO=${vcQboTotal}, Esperado=${vcExpectedTotal}, Diff=${vcDiscrepancy.toFixed(2)}`);
+              logInfo(`   🔄 Eliminando VendorCredit ${entityId} y recreando...`);
+              
+              try {
+                const delUrl = `https://quickbooks.api.intuit.com/v3/company/${realmId}/vendorcredit?operation=delete`;
+                await fetchWithRetry(delUrl, {
+                  method: "POST",
+                  headers: { "Authorization": `Bearer ${accessToken}`, "Accept": "application/json", "Content-Type": "application/json" },
+                  body: JSON.stringify({ Id: entityId, SyncToken: vcData.VendorCredit.SyncToken }),
+                });
+              } catch (_) { /* continue */ }
+              
+              const vcTaxRedist = vendorCreditPayload.TxnTaxDetail?.TotalTax || totalTax || 0;
+              delete vendorCreditPayload.TxnTaxDetail;
+              const vcLines = vendorCreditPayload.Line.filter((l: any) => l.DetailType === "AccountBasedExpenseLineDetail");
+              const vcLinesTotal = vcLines.reduce((sum: number, l: any) => sum + (l.Amount || 0), 0);
+              for (const line of vendorCreditPayload.Line) {
+                if (line.AccountBasedExpenseLineDetail?.TaxCodeRef) delete line.AccountBasedExpenseLineDetail.TaxCodeRef;
+                if (line.DetailType === "AccountBasedExpenseLineDetail" && vcTaxRedist > 0 && vcLinesTotal > 0) {
+                  const p = line.Amount / vcLinesTotal;
+                  line.Amount = parseFloat((line.Amount + vcTaxRedist * p).toFixed(2));
+                }
+              }
+              vendorCreditPayload.GlobalTaxCalculation = "NotApplicable";
+              
+              await delay(1500);
+              const vcRetry2 = await fetchWithRetry(`https://quickbooks.api.intuit.com/v3/company/${realmId}/vendorcredit`, {
+                method: "POST",
+                headers: { "Authorization": `Bearer ${accessToken}`, "Accept": "application/json", "Content-Type": "application/json" },
+                body: JSON.stringify(vendorCreditPayload),
+              });
+              
+              if (vcRetry2.ok) {
+                const vcRetry2Data = await vcRetry2.json();
+                entityId = vcRetry2Data.VendorCredit.Id;
+                logInfo(`✅ ${doc.doc_number}: VendorCredit recreado (ID: ${entityId}, Total: ${vcRetry2Data.VendorCredit.TotalAmt})`);
+              } else {
+                const vcRetryErr = await vcRetry2.text();
+                await registerInTracking(doc, 'error', null, null, `Discrepancia VC: QBO=${vcQboTotal} vs Esperado=${vcExpectedTotal}`);
+                await supabase.from("processed_documents").update({ status: "error", error_message: `Discrepancia VC total` }).eq("id", doc.id);
+                return { success: false, docNumber: doc.doc_number, error: `VC total discrepancy: ${vcDiscrepancy.toFixed(2)}` };
+              }
+            }
           }
           
         } else {
