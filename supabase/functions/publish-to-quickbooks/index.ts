@@ -1517,7 +1517,9 @@ Deno.serve(async (req) => {
           }
         } else {
           // Match exact rate in name: "4%", "(4%)", "IVA 4%"
-          if (name.includes(`${rate}%`) || name.includes(`(${rate}%)`)) {
+          // CRITICAL: Use regex to prevent "1%" matching "13%" via substring
+          const ratePattern = new RegExp(`(^|[^0-9])${rate}%`);
+          if (ratePattern.test(name)) {
             return taxCode.Id;
           }
         }
