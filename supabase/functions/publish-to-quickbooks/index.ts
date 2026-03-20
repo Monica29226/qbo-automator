@@ -2475,6 +2475,82 @@ Deno.serve(async (req) => {
           const billData = await billResponse.json();
           entityId = billData.Bill.Id;
           entityType = "Bill";
+          
+          // POST-CREATION VERIFICATION: Compare QBO TotalAmt with expected total
+          const qboTotalAmt = parseFloat(billData.Bill.TotalAmt || '0');
+          const expectedTotal = Math.abs(doc.total_amount);
+          const totalDiscrepancy = Math.abs(qboTotalAmt - expectedTotal);
+          
+          if (totalDiscrepancy > 1.0 && billPayload.GlobalTaxCalculation !== "NotApplicable") {
+            logInfo(`⚠️ ${doc.doc_number}: DISCREPANCIA detectada! QBO Total=${qboTotalAmt}, Esperado=${expectedTotal}, Diff=${totalDiscrepancy.toFixed(2)}`);
+            logInfo(`   🔄 Eliminando Bill ${entityId} y recreando con impuesto redistribuido...`);
+            
+            // Delete the incorrect bill
+            try {
+              const deleteUrl = `https://quickbooks.api.intuit.com/v3/company/${realmId}/bill?operation=delete`;
+              await fetchWithRetry(deleteUrl, {
+                method: "POST",
+                headers: {
+                  "Authorization": `Bearer ${accessToken}`,
+                  "Accept": "application/json",
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify({ Id: entityId, SyncToken: billData.Bill.SyncToken }),
+              });
+              logInfo(`   🗑️ ${doc.doc_number}: Bill ${entityId} eliminado`);
+            } catch (delErr) {
+              logInfo(`   ⚠️ ${doc.doc_number}: No se pudo eliminar Bill ${entityId}, continuando...`);
+            }
+            
+            // Rebuild payload with tax redistributed into lines
+            const taxToRedistribute = billPayload.TxnTaxDetail?.TotalTax || totalTax || 0;
+            delete billPayload.TxnTaxDetail;
+            
+            const expenseLines = billPayload.Line.filter((l: any) => l.DetailType === "AccountBasedExpenseLineDetail");
+            const linesTotalBeforeTax = expenseLines.reduce((sum: number, l: any) => sum + (l.Amount || 0), 0);
+            
+            for (const line of billPayload.Line) {
+              if (line.AccountBasedExpenseLineDetail?.TaxCodeRef) {
+                delete line.AccountBasedExpenseLineDetail.TaxCodeRef;
+              }
+              if (line.DetailType === "AccountBasedExpenseLineDetail" && taxToRedistribute > 0 && linesTotalBeforeTax > 0) {
+                const proportion = line.Amount / linesTotalBeforeTax;
+                line.Amount = parseFloat((line.Amount + taxToRedistribute * proportion).toFixed(2));
+              }
+            }
+            billPayload.GlobalTaxCalculation = "NotApplicable";
+            
+            await delay(1500);
+            const verifyRetryResponse = await fetchWithRetry(
+              `https://quickbooks.api.intuit.com/v3/company/${realmId}/bill`,
+              {
+                method: "POST",
+                headers: {
+                  "Authorization": `Bearer ${accessToken}`,
+                  "Accept": "application/json",
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify(billPayload),
+              }
+            );
+            
+            if (verifyRetryResponse.ok) {
+              const retryData = await verifyRetryResponse.json();
+              entityId = retryData.Bill.Id;
+              logInfo(`✅ ${doc.doc_number}: Bill recreado correctamente (ID: ${entityId}, Total: ${retryData.Bill.TotalAmt})`);
+            } else {
+              const retryErr = await verifyRetryResponse.text();
+              logError(`❌ ${doc.doc_number}: Recreación falló: ${retryErr.substring(0, 300)}`);
+              await registerInTracking(doc, 'error', null, null, `Discrepancia de total: QBO=${qboTotalAmt} vs Esperado=${expectedTotal}`);
+              await supabase.from("processed_documents").update({ 
+                status: "error", 
+                error_message: `Discrepancia de total: QBO=${qboTotalAmt} vs Esperado=${expectedTotal}` 
+              }).eq("id", doc.id);
+              return { success: false, docNumber: doc.doc_number, error: `Total discrepancy: ${totalDiscrepancy.toFixed(2)}` };
+            }
+          } else if (totalDiscrepancy > 1.0) {
+            logInfo(`⚠️ ${doc.doc_number}: Discrepancia de ${totalDiscrepancy.toFixed(2)} (QBO=${qboTotalAmt} vs Esperado=${expectedTotal}) pero ya es NotApplicable, no se puede corregir`);
+          }
         }
         
         logInfo(`✅ ${doc.doc_number}: ${entityType} created (ID: ${entityId})`);
