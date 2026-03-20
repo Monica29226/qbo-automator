@@ -394,40 +394,60 @@ const ReviewQueue = () => {
                     {isExpanded && (
                       <TableRow>
                         <TableCell colSpan={7} className="bg-muted/30 p-0">
-                          <div className="px-6 py-4 space-y-4">
-                            {/* Info general */}
-                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-                              <div>
-                                <span className="text-muted-foreground block text-xs">Tipo documento</span>
-                                <span className="font-medium">{doc.doc_type || "-"}</span>
+                          <div className="px-6 py-4 space-y-3">
+                            <div className="flex gap-6">
+                              {/* Left: document info */}
+                              <div className="flex-1 grid grid-cols-3 gap-x-6 gap-y-2 text-sm">
+                                <div>
+                                  <span className="text-muted-foreground block text-xs">Tipo documento</span>
+                                  <span className="font-medium">{doc.doc_type || "-"}</span>
+                                </div>
+                                <div>
+                                  <span className="text-muted-foreground block text-xs">Moneda</span>
+                                  <span className="font-medium">{doc.currency}{doc.exchange_rate ? ` (TC: ${doc.exchange_rate})` : ""}</span>
+                                </div>
+                                <div>
+                                  <span className="text-muted-foreground block text-xs">Email proveedor</span>
+                                  <span className="font-medium text-xs">{doc.supplier_email || "-"}</span>
+                                </div>
+                                <div>
+                                  <span className="text-muted-foreground block text-xs">Vendor QBO</span>
+                                  <span className="font-medium">{vendor?.vendor_name || "-"}</span>
+                                </div>
+                                <div>
+                                  <span className="text-muted-foreground block text-xs">Cuenta asignada</span>
+                                  <span className="font-medium">{doc.default_account_ref || "-"}</span>
+                                </div>
+                                <div>
+                                  <span className="text-muted-foreground block text-xs">QBO ID</span>
+                                  <span className="font-medium">{doc.qbo_entity_id || "-"}</span>
+                                </div>
                               </div>
-                              <div>
-                                <span className="text-muted-foreground block text-xs">Moneda</span>
-                                <span className="font-medium">{doc.currency}{doc.exchange_rate ? ` (TC: ${doc.exchange_rate})` : ""}</span>
-                              </div>
-                              <div>
-                                <span className="text-muted-foreground block text-xs">IVA total</span>
-                                <span className="font-medium">{doc.total_tax != null ? formatCurrency(doc.total_tax, doc.currency) : "-"}</span>
-                              </div>
-                              <div>
-                                <span className="text-muted-foreground block text-xs">Descuento</span>
-                                <span className="font-medium">{doc.total_discount ? formatCurrency(doc.total_discount, doc.currency) : "-"}</span>
-                              </div>
-                              <div>
-                                <span className="text-muted-foreground block text-xs">Email proveedor</span>
-                                <span className="font-medium">{doc.supplier_email || "-"}</span>
-                              </div>
-                              <div>
-                                <span className="text-muted-foreground block text-xs">Vendor QBO</span>
-                                <span className="font-medium">{vendor?.vendor_name || "-"}</span>
-                              </div>
-                              <div>
-                                <span className="text-muted-foreground block text-xs">Cuenta asignada</span>
-                                <span className="font-medium">{doc.default_account_ref || "-"}</span>
-                              </div>
-                              <div>
-                                <span className="text-muted-foreground block text-xs">QBO ID</span>
-                                <span className="font-medium">{doc.qbo_entity_id || "-"}</span>
+
+                              {/* Right: totals */}
+                              <div className="border rounded overflow-hidden w-56 shrink-0 self-start">
+                                <table className="w-full text-sm">
+                                  <tbody>
+                                    <tr className="bg-muted/20">
+                                      <td className="px-3 py-1 text-muted-foreground">Subtotal</td>
+                                      <td className="px-3 py-1 text-right font-medium">{formatCurrency((doc.total_amount - (doc.total_tax || 0) + (doc.total_discount || 0)), doc.currency)}</td>
+                                    </tr>
+                                    {(doc.total_discount || 0) > 0 && (
+                                      <tr className="bg-muted/20">
+                                        <td className="px-3 py-1 text-muted-foreground">Descuento</td>
+                                        <td className="px-3 py-1 text-right font-medium text-destructive">-{formatCurrency(doc.total_discount || 0, doc.currency)}</td>
+                                      </tr>
+                                    )}
+                                    <tr className="bg-muted/20">
+                                      <td className="px-3 py-1 text-muted-foreground">Impuestos</td>
+                                      <td className="px-3 py-1 text-right font-medium">{formatCurrency(doc.total_tax || 0, doc.currency)}</td>
+                                    </tr>
+                                    <tr className="bg-muted/30 border-t">
+                                      <td className="px-3 py-1.5 font-semibold">Total</td>
+                                      <td className="px-3 py-1.5 text-right font-semibold">{formatCurrency(doc.total_amount, doc.currency)}</td>
+                                    </tr>
+                                  </tbody>
+                                </table>
                               </div>
                             </div>
 
@@ -464,62 +484,10 @@ const ReviewQueue = () => {
                                         </tr>
                                       ))}
                                     </tbody>
-                                    <tfoot className="bg-muted/30 border-t font-medium">
-                                      <tr>
-                                        <td colSpan={3} className="px-3 py-1.5"></td>
-                                        <td className="px-3 py-1.5 text-right text-xs text-muted-foreground">Subtotal</td>
-                                        <td className="px-3 py-1.5 text-right">{formatCurrency((doc.total_amount - (doc.total_tax || 0) + (doc.total_discount || 0)), doc.currency)}</td>
-                                      </tr>
-                                      {(doc.total_discount || 0) > 0 && (
-                                        <tr>
-                                          <td colSpan={3} className="px-3 py-1.5"></td>
-                                          <td className="px-3 py-1.5 text-right text-xs text-muted-foreground">Descuento</td>
-                                          <td className="px-3 py-1.5 text-right text-red-600">-{formatCurrency(doc.total_discount || 0, doc.currency)}</td>
-                                        </tr>
-                                      )}
-                                      <tr>
-                                        <td colSpan={3} className="px-3 py-1.5"></td>
-                                        <td className="px-3 py-1.5 text-right text-xs text-muted-foreground">Impuestos</td>
-                                        <td className="px-3 py-1.5 text-right">{formatCurrency(doc.total_tax || 0, doc.currency)}</td>
-                                      </tr>
-                                      <tr className="border-t">
-                                        <td colSpan={3} className="px-3 py-2"></td>
-                                        <td className="px-3 py-2 text-right text-xs font-semibold">Total</td>
-                                        <td className="px-3 py-2 text-right font-semibold">{formatCurrency(doc.total_amount, doc.currency)}</td>
-                                      </tr>
-                                    </tfoot>
                                   </table>
                                 </div>
                               </div>
                             )}
-
-                            {/* Resumen de totales - siempre visible */}
-                            <div className="flex justify-end">
-                              <div className="border rounded overflow-hidden w-64">
-                                <table className="w-full text-sm">
-                                  <tbody>
-                                    <tr className="bg-muted/20">
-                                      <td className="px-3 py-1 text-muted-foreground">Subtotal</td>
-                                      <td className="px-3 py-1 text-right font-medium">{formatCurrency((doc.total_amount - (doc.total_tax || 0) + (doc.total_discount || 0)), doc.currency)}</td>
-                                    </tr>
-                                    {(doc.total_discount || 0) > 0 && (
-                                      <tr className="bg-muted/20">
-                                        <td className="px-3 py-1 text-muted-foreground">Descuento</td>
-                                        <td className="px-3 py-1 text-right font-medium text-destructive">-{formatCurrency(doc.total_discount || 0, doc.currency)}</td>
-                                      </tr>
-                                    )}
-                                    <tr className="bg-muted/20">
-                                      <td className="px-3 py-1 text-muted-foreground">Impuestos</td>
-                                      <td className="px-3 py-1 text-right font-medium">{formatCurrency(doc.total_tax || 0, doc.currency)}</td>
-                                    </tr>
-                                    <tr className="bg-muted/30 border-t">
-                                      <td className="px-3 py-1.5 font-semibold">Total</td>
-                                      <td className="px-3 py-1.5 text-right font-semibold">{formatCurrency(doc.total_amount, doc.currency)}</td>
-                                    </tr>
-                                  </tbody>
-                                </table>
-                              </div>
-                            </div>
 
                             {/* Clave electrónica */}
                             <div className="text-xs text-muted-foreground">
