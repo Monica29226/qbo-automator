@@ -334,7 +334,13 @@ const ReviewQueue = () => {
                 </TableRow>
               </TableHeader>
               <TableBody>
-              {documents.map((doc) => {
+              {[...documents].sort((a, b) => {
+                const statusOrder: Record<string, number> = { error: 0, pending: 1, pending_config: 1, review: 1, processed: 2, published: 3 };
+                const aOrder = statusOrder[a.status] ?? 2;
+                const bOrder = statusOrder[b.status] ?? 2;
+                if (aOrder !== bOrder) return aOrder - bOrder;
+                return new Date(b.issue_date).getTime() - new Date(a.issue_date).getTime();
+              }).map((doc) => {
                 const isExpanded = expandedDocId === doc.id;
                 const lines = doc.xml_data?.lineas || doc.xml_data?.items || [];
                 const vendor = vendors.find(v => v.id === doc.vendor_id);
