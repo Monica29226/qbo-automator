@@ -241,6 +241,7 @@ export default function SalesInvoices() {
                     <TableHead>Monto</TableHead>
                     <TableHead>Estado</TableHead>
                     <TableHead>QB ID</TableHead>
+                    <TableHead>Acción</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
