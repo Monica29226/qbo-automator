@@ -21,8 +21,14 @@ function escapeImapQuotedString(value: string) {
 // ─── Recursive MIME parser ───
 function parseMimeParts(body: string): Array<{ filename: string; content: string; contentType: string; encoding: string }> {
   const parts: Array<{ filename: string; content: string; contentType: string; encoding: string }> = [];
+  const MAX_DEPTH = 10;
 
-  function extractParts(section: string) {
+  function extractParts(section: string, depth: number = 0) {
+    if (depth > MAX_DEPTH) {
+      console.warn(`[MIME] Max recursion depth (${MAX_DEPTH}) reached, skipping nested parts`);
+      return;
+    }
+
     const boundaryMatch = section.match(/boundary="?([^\s";]+)"?/i);
     if (!boundaryMatch) {
       extractSinglePart(section);
@@ -35,7 +41,7 @@ function parseMimeParts(body: string): Array<{ filename: string; content: string
     for (const seg of segments) {
       if (seg.startsWith("--") || seg.trim() === "") continue;
       if (seg.match(/Content-Type:\s*multipart\//i)) {
-        extractParts(seg);
+        extractParts(seg, depth + 1);
       } else {
         extractSinglePart(seg);
       }
@@ -89,7 +95,7 @@ function parseMimeParts(body: string): Array<{ filename: string; content: string
     }
   }
 
-  extractParts(body);
+  extractParts(body, 0);
   return parts;
 }
 
