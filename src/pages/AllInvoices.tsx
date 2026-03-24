@@ -38,6 +38,7 @@ interface Invoice {
   doc_number: string;
   supplier_name: string;
   supplier_tax_id: string | null;
+  supplier_email: string | null;
   total_amount: number;
   currency: string;
   issue_date: string;
