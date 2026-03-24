@@ -356,6 +356,15 @@ const AllInvoices = () => {
                           >
                             <Eye className="h-4 w-4" />
                           </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleSendEmail(invoice)}
+                            disabled={isSendingEmail}
+                            title="Enviar por correo"
+                          >
+                            {isSendingEmail ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mail className="h-4 w-4" />}
+                          </Button>
                         </div>
                       </TableCell>
                     </TableRow>
