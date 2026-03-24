@@ -261,6 +261,17 @@ export default function SalesInvoices() {
                       <TableCell className="text-xs text-muted-foreground">
                         {invoice.qbo_entity_id || "-"}
                       </TableCell>
+                      <TableCell>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleSendEmail(invoice)}
+                          disabled={sendingEmailId === invoice.id}
+                          title="Enviar por correo"
+                        >
+                          {sendingEmailId === invoice.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mail className="h-4 w-4" />}
+                        </Button>
+                      </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
