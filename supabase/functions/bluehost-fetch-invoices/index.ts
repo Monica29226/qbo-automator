@@ -205,13 +205,17 @@ async function fetchEmailsViaIMAP(
     const safePassword = escapeImapQuotedString(password);
     const loginResp = await cmd(`LOGIN "${safeEmail}" "${safePassword}"`);
     
-    if (loginResp.includes("AUTHENTICATIONFAILED") || loginResp.includes("NO")) {
+    // Use tag-specific checks to avoid false positives (e.g. "NO" appearing in capability strings)
+    const loginTag = `T${tagN - 1}`;
+    console.log(`[IMAP] Login response (first 300 chars): ${loginResp.substring(0, 300)}`);
+    
+    if (loginResp.includes("AUTHENTICATIONFAILED") || loginResp.includes(`${loginTag} NO`)) {
       conn.close();
-      return { emails: [], error: `AUTH_FAILED: IMAP login failed for ${email}. Check credentials (use mailbox password, not panel password). If 2FA is enabled, use an app password.`, error_code: "AUTH_FAILED" };
+      return { emails: [], error: `AUTH_FAILED: IMAP login failed for ${email}. Server response: ${loginResp.substring(0, 200)}. Check credentials (use mailbox password, not panel password). If 2FA is enabled, use an app password.`, error_code: "IMAP_AUTH_FAILED" };
     }
-    if (!loginResp.includes("OK")) {
+    if (!loginResp.includes(`${loginTag} OK`)) {
       conn.close();
-      return { emails: [], error: `AUTH_ERROR: Unexpected login response: ${loginResp.substring(0, 200)}`, error_code: "AUTH_ERROR" };
+      return { emails: [], error: `AUTH_ERROR: Unexpected login response: ${loginResp.substring(0, 300)}`, error_code: "AUTH_ERROR" };
     }
 
     console.log(`[IMAP] ✅ Login successful for ${email}`);
