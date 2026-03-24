@@ -14,7 +14,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { ArrowLeft, Search, RefreshCw, FileText, CheckCircle, Clock, AlertTriangle, Eye } from "lucide-react";
+import { ArrowLeft, Search, RefreshCw, FileText, CheckCircle, Clock, AlertTriangle, Eye, Mail, Loader2 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
