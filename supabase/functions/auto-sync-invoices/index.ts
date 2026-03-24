@@ -216,7 +216,17 @@ async function processOrganization(
 
     if (!emailResponse.ok) {
       const errorText = await emailResponse.text().catch(() => "Unknown error");
-      throw new Error(`${mailProvider} fetch failed (${emailResponse.status}): ${errorText}`);
+      // Try to parse JSON error for more descriptive message
+      let errorDetail = errorText;
+      try {
+        const parsed = JSON.parse(errorText);
+        if (parsed.error_category && parsed.error) {
+          errorDetail = `[${parsed.error_category}] ${parsed.error}`;
+        } else if (parsed.error) {
+          errorDetail = parsed.error;
+        }
+      } catch { }
+      throw new Error(`${mailProvider} fetch failed (${emailResponse.status}): ${errorDetail}`);
     }
 
     const emailData = await emailResponse.json();
