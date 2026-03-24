@@ -13,15 +13,18 @@ interface FetchedEmail {
   pdfAttachments: Array<{ filename: string; content: Uint8Array }>;
 }
 
+// ─── Escape IMAP quoted string ───
+function escapeImapQuotedString(value: string) {
+  return value.replace(/\\/g, "\\\\").replace(/\"/g, "\\\"").replace(/[\r\n]/g, "");
+}
+
 // ─── Recursive MIME parser ───
 function parseMimeParts(body: string): Array<{ filename: string; content: string; contentType: string; encoding: string }> {
   const parts: Array<{ filename: string; content: string; contentType: string; encoding: string }> = [];
 
   function extractParts(section: string) {
-    // Find boundary
     const boundaryMatch = section.match(/boundary="?([^\s";]+)"?/i);
     if (!boundaryMatch) {
-      // Not multipart — check if it's an attachment itself
       extractSinglePart(section);
       return;
     }
@@ -31,8 +34,6 @@ function parseMimeParts(body: string): Array<{ filename: string; content: string
 
     for (const seg of segments) {
       if (seg.startsWith("--") || seg.trim() === "") continue;
-      
-      // Check if this segment is itself multipart (nested)
       if (seg.match(/Content-Type:\s*multipart\//i)) {
         extractParts(seg);
       } else {
@@ -50,32 +51,23 @@ function parseMimeParts(body: string): Array<{ filename: string; content: string
 
     if (body.length < 20) return;
 
-    // Extract content type
     const ctMatch = headers.match(/Content-Type:\s*([^\s;]+)/i);
     const contentType = ctMatch ? ctMatch[1].toLowerCase() : "";
 
-    // Extract encoding
     const encMatch = headers.match(/Content-Transfer-Encoding:\s*(\S+)/i);
     const encoding = encMatch ? encMatch[1].toLowerCase() : "7bit";
 
-    // Extract filename from Content-Disposition or Content-Type
     let filename = "";
-    
-    // Try Content-Disposition filename
     const dispMatch = headers.match(/filename\*?=(?:utf-8''|UTF-8'')?\"?([^"\r\n;]+)\"?/i);
     if (dispMatch) {
       filename = decodeURIComponent(dispMatch[1].trim());
     }
-    
-    // Try name= in Content-Type
     if (!filename) {
       const nameMatch = headers.match(/name\*?=(?:utf-8''|UTF-8'')?\"?([^"\r\n;]+)\"?/i);
       if (nameMatch) {
         filename = decodeURIComponent(nameMatch[1].trim());
       }
     }
-
-    // Also handle RFC 2231 continuation: filename*0*= filename*1*= etc.
     if (!filename) {
       const contParts: string[] = [];
       const contRegex = /filename\*(\d+)\*?=(?:utf-8''|UTF-8'')?\"?([^"\r\n;]+)\"?/gi;
@@ -109,26 +101,58 @@ function decodePartContent(content: string, encoding: string): Uint8Array {
     for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
     return bytes;
   }
-  // For quoted-printable or 7bit, treat as text
   return new TextEncoder().encode(content);
 }
 
-// ─── IMAP Client ───
+// ─── IMAP Client with timeouts ───
 async function fetchEmailsViaIMAP(
   host: string,
   port: number,
   email: string,
   password: string,
-  sinceDateStr: string
-): Promise<{ emails: FetchedEmail[]; error?: string }> {
+  sinceDateStr: string,
+  globalDeadlineMs: number = 100_000 // 100 seconds max for entire IMAP operation
+): Promise<{ emails: FetchedEmail[]; error?: string; error_code?: string }> {
   const allEmails: FetchedEmail[] = [];
+  const deadline = Date.now() + globalDeadlineMs;
+
+  function checkDeadline() {
+    if (Date.now() > deadline) {
+      throw new Error("TIMEOUT: IMAP operation exceeded time limit");
+    }
+  }
+
+  let conn: Deno.TlsConn | null = null;
 
   try {
-    const conn = await Deno.connectTls({ hostname: host, port });
+    // Connection timeout: 15 seconds
+    const connectPromise = Deno.connectTls({ hostname: host, port });
+    const timeoutPromise = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(`CONNECTION_TIMEOUT: Could not connect to ${host}:${port} within 15 seconds`)), 15_000)
+    );
+
+    try {
+      conn = await Promise.race([connectPromise, timeoutPromise]);
+    } catch (connErr) {
+      const errMsg = connErr instanceof Error ? connErr.message : String(connErr);
+      
+      if (errMsg.includes("No route to host") || errMsg.includes("os error 113")) {
+        return { emails: [], error: `CONNECT_FAILED: Cannot reach IMAP server ${host}:${port}. The server may be down or blocking connections from this IP.`, error_code: "CONNECT_FAILED" };
+      }
+      if (errMsg.includes("CONNECTION_TIMEOUT")) {
+        return { emails: [], error: errMsg, error_code: "CONNECTION_TIMEOUT" };
+      }
+      if (errMsg.includes("Connection refused") || errMsg.includes("os error 111")) {
+        return { emails: [], error: `CONNECT_REFUSED: IMAP server ${host}:${port} refused the connection. Check host/port settings.`, error_code: "CONNECT_REFUSED" };
+      }
+      if (errMsg.includes("certificate") || errMsg.includes("ssl") || errMsg.includes("tls")) {
+        return { emails: [], error: `TLS_ERROR: SSL/TLS error connecting to ${host}:${port}: ${errMsg}`, error_code: "TLS_ERROR" };
+      }
+      return { emails: [], error: `CONNECT_ERROR: ${errMsg}`, error_code: "CONNECT_ERROR" };
+    }
+
     const encoder = new TextEncoder();
     const decoder = new TextDecoder();
-
-    // Use a large buffer for attachment data (2MB)
     const BUFFER_SIZE = 2 * 1024 * 1024;
     const buffer = new Uint8Array(BUFFER_SIZE);
 
@@ -136,7 +160,8 @@ async function fetchEmailsViaIMAP(
       let response = "";
       let attempts = 0;
       while (attempts < 50) {
-        const n = await conn.read(buffer);
+        checkDeadline();
+        const n = await conn!.read(buffer);
         if (n === null) break;
         response += decoder.decode(buffer.subarray(0, n));
         if (response.includes("\r\n") &&
@@ -151,13 +176,15 @@ async function fetchEmailsViaIMAP(
 
     let tagN = 1;
     const cmd = async (command: string, expectLarge = false): Promise<string> => {
+      checkDeadline();
       const tag = `T${tagN++}`;
-      await conn.write(encoder.encode(`${tag} ${command}\r\n`));
+      await conn!.write(encoder.encode(`${tag} ${command}\r\n`));
       let resp = "";
       let attempts = 0;
-      const maxAttempts = expectLarge ? 600 : 200;
+      const maxAttempts = expectLarge ? 300 : 100;
       while (attempts < maxAttempts) {
-        const n = await conn.read(buffer);
+        checkDeadline();
+        const n = await conn!.read(buffer);
         if (n === null) break;
         resp += decoder.decode(buffer.subarray(0, n));
         if (resp.includes(`${tag} OK`) || resp.includes(`${tag} NO`) || resp.includes(`${tag} BAD`)) break;
@@ -170,23 +197,43 @@ async function fetchEmailsViaIMAP(
     const greeting = await readResponse();
     if (!greeting.includes("OK")) {
       conn.close();
-      return { emails: [], error: "Server did not send OK greeting" };
+      return { emails: [], error: `PROTOCOL_ERROR: Server greeting invalid: ${greeting.substring(0, 200)}`, error_code: "PROTOCOL_ERROR" };
     }
 
-    const loginResp = await cmd(`LOGIN "${email}" "${password}"`);
+    // Login with properly escaped credentials
+    const safeEmail = escapeImapQuotedString(email);
+    const safePassword = escapeImapQuotedString(password);
+    const loginResp = await cmd(`LOGIN "${safeEmail}" "${safePassword}"`);
+    
+    if (loginResp.includes("AUTHENTICATIONFAILED") || loginResp.includes("NO")) {
+      conn.close();
+      return { emails: [], error: `AUTH_FAILED: IMAP login failed for ${email}. Check credentials (use mailbox password, not panel password). If 2FA is enabled, use an app password.`, error_code: "AUTH_FAILED" };
+    }
     if (!loginResp.includes("OK")) {
       conn.close();
-      return { emails: [], error: "Login failed" };
+      return { emails: [], error: `AUTH_ERROR: Unexpected login response: ${loginResp.substring(0, 200)}`, error_code: "AUTH_ERROR" };
     }
 
-    // Search multiple folders
+    console.log(`[IMAP] ✅ Login successful for ${email}`);
+
+    // Search folders - try primary first, then junk/spam
     const foldersToSearch = ['"INBOX"', '"Junk"', '"Spam"', '"INBOX.Junk"', '"INBOX.Spam"'];
+    let totalCandidatesFetched = 0;
+    const MAX_TOTAL_CANDIDATES = 200; // Global limit to prevent timeouts
+    let timeLimitReached = false;
 
     for (const folder of foldersToSearch) {
+      if (timeLimitReached || Date.now() > deadline - 10_000) {
+        // Stop 10s before deadline to allow cleanup
+        timeLimitReached = true;
+        console.log(`[IMAP] ⏱️ Time limit approaching, stopping folder scan`);
+        break;
+      }
+
       try {
         const selectResp = await cmd(`SELECT ${folder}`);
         if (selectResp.includes("NO") || selectResp.includes("BAD")) {
-          continue; // Folder doesn't exist
+          continue;
         }
 
         const searchResp = await cmd(`SEARCH SINCE ${sinceDateStr}`);
@@ -199,9 +246,15 @@ async function fetchEmailsViaIMAP(
         const allMsgIds = searchLine.replace("* SEARCH ", "").trim().split(" ").map(Number).filter(n => n > 0);
         console.log(`[IMAP] Folder ${folder}: ${allMsgIds.length} messages since ${sinceDateStr}`);
 
-        // STEP 1: Pre-filter using BODYSTRUCTURE to find emails with attachments
+        // STEP 1: Pre-filter using BODYSTRUCTURE - limit to latest 300 per folder
+        const msgIdsToScan = allMsgIds.slice(-300);
         const candidateIds: number[] = [];
-        for (const msgId of allMsgIds) {
+        
+        for (const msgId of msgIdsToScan) {
+          if (Date.now() > deadline - 15_000) {
+            timeLimitReached = true;
+            break;
+          }
           try {
             const structResp = await cmd(`FETCH ${msgId} BODYSTRUCTURE`);
             const structLower = structResp.toLowerCase();
@@ -212,23 +265,27 @@ async function fetchEmailsViaIMAP(
               candidateIds.push(msgId);
             }
           } catch {
-            // If BODYSTRUCTURE fails, include as candidate anyway
             candidateIds.push(msgId);
           }
         }
 
         console.log(`[IMAP] Folder ${folder}: ${candidateIds.length} candidates with XML/PDF attachments`);
 
-        // STEP 2: Fetch FULL BODY for candidates (reliable MIME parsing)
-        // Process last 500 to cover full month history
-        const toFetch = candidateIds.slice(-500);
+        // STEP 2: Fetch full body for candidates - respect global limit
+        const remainingSlots = MAX_TOTAL_CANDIDATES - totalCandidatesFetched;
+        const toFetch = candidateIds.slice(-Math.min(remainingSlots, 150));
 
         for (const msgId of toFetch) {
-          try {
-            // Fetch full message body (expectLarge=true for big attachments)
-            const bodyResp = await cmd(`FETCH ${msgId} BODY[]`, true);
+          if (Date.now() > deadline - 15_000) {
+            timeLimitReached = true;
+            console.log(`[IMAP] ⏱️ Time limit reached during fetch, stopping`);
+            break;
+          }
 
-            // Extract raw email content between the literal marker and the final tag
+          try {
+            const bodyResp = await cmd(`FETCH ${msgId} BODY[]`, true);
+            totalCandidatesFetched++;
+
             const literalMatch = bodyResp.match(/\{(\d+)\}\r\n/);
             let rawEmail: string;
             if (literalMatch) {
@@ -239,12 +296,9 @@ async function fetchEmailsViaIMAP(
               rawEmail = bodyResp;
             }
 
-            // Parse MIME parts recursively
             const mimeParts = parseMimeParts(rawEmail);
-
             const emailObj: FetchedEmail = { subject: "", from: "", xmlAttachments: [], pdfAttachments: [] };
 
-            // Extract subject/from from headers
             const subjectMatch = rawEmail.match(/^Subject:\s*(.+)$/mi);
             const fromMatch = rawEmail.match(/^From:\s*(.+)$/mi);
             emailObj.subject = subjectMatch ? subjectMatch[1].substring(0, 80).trim() : "(no subject)";
@@ -253,7 +307,6 @@ async function fetchEmailsViaIMAP(
             for (const part of mimeParts) {
               const fnameLower = part.filename.toLowerCase();
 
-              // Skip Hacienda response XMLs
               if (fnameLower.startsWith("ahc-") || fnameLower.includes("mensaje") || fnameLower.startsWith("respuesta")) {
                 continue;
               }
@@ -271,7 +324,6 @@ async function fetchEmailsViaIMAP(
                     emailObj.pdfAttachments.push({ filename: part.filename, content: bytes });
                   }
                 } else if (part.contentType.includes("octet-stream") && part.filename) {
-                  // Unknown type — try to detect by content
                   const decoded = new TextDecoder("utf-8").decode(bytes);
                   if (decoded.includes("<Clave>") && fnameLower.endsWith(".xml")) {
                     emailObj.xmlAttachments.push({ filename: part.filename, content: decoded });
@@ -292,6 +344,11 @@ async function fetchEmailsViaIMAP(
             console.error(`[IMAP] Error fetching msg ${msgId} from ${folder}:`, fetchErr);
           }
         }
+
+        if (totalCandidatesFetched >= MAX_TOTAL_CANDIDATES) {
+          timeLimitReached = true;
+          console.log(`[IMAP] Reached max candidates limit (${MAX_TOTAL_CANDIDATES})`);
+        }
       } catch (folderErr) {
         console.log(`[IMAP] Folder ${folder} not accessible: ${folderErr}`);
       }
@@ -300,10 +357,21 @@ async function fetchEmailsViaIMAP(
     try { await cmd("LOGOUT"); } catch { }
     try { conn.close(); } catch { }
 
-    return { emails: allEmails };
+    return { 
+      emails: allEmails, 
+      ...(timeLimitReached ? { error: "PARTIAL: Time limit reached, not all emails were scanned", error_code: "PARTIAL" } : {})
+    };
   } catch (error) {
-    console.error("[IMAP] Connection error:", error);
-    return { emails: [], error: String(error) };
+    const errMsg = error instanceof Error ? error.message : String(error);
+    console.error("[IMAP] Error:", errMsg);
+    
+    try { conn?.close(); } catch { }
+
+    if (errMsg.includes("TIMEOUT")) {
+      return { emails: allEmails, error: errMsg, error_code: "TIMEOUT" };
+    }
+    
+    return { emails: allEmails, error: errMsg, error_code: "UNKNOWN" };
   }
 }
 
@@ -316,17 +384,14 @@ function matchPdfToXml(
   for (const xml of xmlAttachments) {
     const claveMatch = xml.content.match(/<Clave>(\d{50})<\/Clave>/);
     const clave = claveMatch ? claveMatch[1] : "";
-
     const numConsecMatch = xml.content.match(/<NumeroConsecutivo>(\d+)<\/NumeroConsecutivo>/);
     const numConsec = numConsecMatch ? numConsecMatch[1] : "";
-
     const xmlBaseName = xml.filename.replace(/\.xml$/i, "").toLowerCase();
 
     let matchedPdf: { filename: string; content: Uint8Array } | null = null;
 
     for (const pdf of pdfAttachments) {
       const pdfBaseName = pdf.filename.replace(/\.pdf$/i, "").toLowerCase();
-
       if (pdfBaseName === xmlBaseName ||
         (clave && pdf.filename.includes(clave)) ||
         (numConsec && pdf.filename.includes(numConsec)) ||
@@ -350,6 +415,8 @@ serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
+
+  const startTime = Date.now();
 
   try {
     const authHeader = req.headers.get("Authorization");
@@ -383,12 +450,13 @@ serve(async (req) => {
       .single();
 
     if (accountError || !bluehostAccount) {
-      throw new Error("No active Bluehost account found");
+      console.error(`[Bluehost] No active account found. accountError: ${JSON.stringify(accountError)}`);
+      throw new Error(`No active Bluehost account found for org ${organization_id}`);
     }
 
     const credentials = bluehostAccount.credentials as any;
     if (!credentials?.email || !credentials?.password) {
-      throw new Error("Bluehost credentials incomplete");
+      throw new Error("Bluehost credentials incomplete - email or password missing");
     }
 
     const imapHost = credentials.imap_host || "mail.bluehost.com";
@@ -410,28 +478,34 @@ serve(async (req) => {
     } else if (startDateSetting) {
       startDate = new Date(startDateSetting);
     } else {
-      // Default: start of PREVIOUS month to capture invoices that may have failed at month boundaries
-      // Deduplication by doc_key ensures no duplicates
       const now = new Date();
       startDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
     }
 
-    const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
     const day = String(startDate.getDate()).padStart(2, '0');
-    const sinceDateStr = `${day}-${months[startDate.getMonth()]}-${startDate.getFullYear()}`;
+    const sinceDateStr = `${day}-${monthNames[startDate.getMonth()]}-${startDate.getFullYear()}`;
 
     console.log(`[Bluehost] Searching for emails since ${sinceDateStr}`);
 
-    const { emails: fetchedEmails, error: imapError } = await fetchEmailsViaIMAP(
+    // Use 100s deadline for IMAP to leave room for document processing
+    const { emails: fetchedEmails, error: imapError, error_code: imapErrorCode } = await fetchEmailsViaIMAP(
       imapHost,
       imapPort,
       credentials.email,
       credentials.password,
-      sinceDateStr
+      sinceDateStr,
+      100_000
     );
 
+    // For fatal IMAP errors (auth, connection), throw immediately
+    if (imapError && imapErrorCode && !["PARTIAL", "TIMEOUT"].includes(imapErrorCode) && fetchedEmails.length === 0) {
+      throw new Error(`IMAP_${imapErrorCode}: ${imapError}`);
+    }
+
+    // For partial/timeout, continue with whatever emails we got
     if (imapError) {
-      throw new Error(`IMAP error: ${imapError}`);
+      console.warn(`[Bluehost] IMAP warning: ${imapError} (got ${fetchedEmails.length} emails before issue)`);
     }
 
     console.log(`[Bluehost] Retrieved ${fetchedEmails.length} emails with attachments`);
@@ -441,6 +515,12 @@ serve(async (req) => {
     const errors: any[] = [];
 
     for (const emailObj of fetchedEmails) {
+      // Check if we're running out of time (leave 10s buffer)
+      if (Date.now() - startTime > 130_000) {
+        console.warn(`[Bluehost] ⏱️ Time limit reached during processing, stopping`);
+        break;
+      }
+
       try {
         const { xmlAttachments, pdfAttachments } = emailObj;
 
@@ -565,11 +645,16 @@ serve(async (req) => {
       }
     }
 
-    console.log(`[Bluehost] Complete: ${processedInvoices.length} processed, ${skippedInvoices.length} skipped, ${errors.length} errors`);
+    const wasPartial = imapErrorCode === "PARTIAL" || imapErrorCode === "TIMEOUT";
+    const elapsedMs = Date.now() - startTime;
+
+    console.log(`[Bluehost] Complete in ${elapsedMs}ms: ${processedInvoices.length} processed, ${skippedInvoices.length} skipped, ${errors.length} errors${wasPartial ? ' (PARTIAL)' : ''}`);
 
     return new Response(
       JSON.stringify({
         success: true,
+        status: wasPartial ? "partial" : "complete",
+        time_limit_reached: wasPartial,
         messages_found: fetchedEmails.length,
         invoices_processed: processedInvoices.length,
         invoices_skipped: skippedInvoices.length,
@@ -577,6 +662,7 @@ serve(async (req) => {
         processed: processedInvoices,
         skipped: skippedInvoices,
         errors: errors.length > 0 ? errors : undefined,
+        elapsed_ms: elapsedMs,
       }),
       {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -584,11 +670,26 @@ serve(async (req) => {
       }
     );
   } catch (error) {
-    console.error("[Bluehost] Error:", error);
+    const elapsedMs = Date.now() - startTime;
     const errorMessage = error instanceof Error ? error.message : "Unknown error";
+    console.error(`[Bluehost] Error after ${elapsedMs}ms:`, errorMessage);
+
+    // Return descriptive error with category
+    let errorCategory = "UNKNOWN";
+    if (errorMessage.includes("AUTH_FAILED")) errorCategory = "AUTH_FAILED";
+    else if (errorMessage.includes("CONNECT_FAILED") || errorMessage.includes("CONNECT_REFUSED")) errorCategory = "CONNECT_FAILED";
+    else if (errorMessage.includes("CONNECTION_TIMEOUT")) errorCategory = "CONNECTION_TIMEOUT";
+    else if (errorMessage.includes("TIMEOUT")) errorCategory = "TIMEOUT";
+    else if (errorMessage.includes("TLS_ERROR")) errorCategory = "TLS_ERROR";
+    else if (errorMessage.includes("No active Bluehost account")) errorCategory = "NO_ACCOUNT";
+    else if (errorMessage.includes("credentials incomplete")) errorCategory = "CREDENTIALS_INCOMPLETE";
 
     return new Response(
-      JSON.stringify({ error: errorMessage }),
+      JSON.stringify({ 
+        error: errorMessage, 
+        error_category: errorCategory,
+        elapsed_ms: elapsedMs,
+      }),
       {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
         status: 500,
