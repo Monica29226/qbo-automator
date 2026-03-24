@@ -31,6 +31,32 @@ export default function SalesInvoices() {
   const { data: invoices, isLoading, refetch } = useSalesInvoices();
   const [searchTerm, setSearchTerm] = useState("");
   const [isPublishing, setIsPublishing] = useState(false);
+  const [sendingEmailId, setSendingEmailId] = useState<string | null>(null);
+
+  const handleSendEmail = async (invoice: any) => {
+    const email = invoice.customer_email || prompt("Ingrese el correo del cliente:");
+    if (!email) return;
+
+    setSendingEmailId(invoice.id);
+    try {
+      const { data, error } = await supabase.functions.invoke("send-invoice-email", {
+        body: {
+          invoice_id: invoice.id,
+          organization_id: activeOrganization,
+          to_email: email,
+          include_pdf: true,
+          invoice_type: "sales",
+        },
+      });
+      if (error) throw error;
+      if (!data?.success) throw new Error(data?.error || "Error al enviar");
+      toast({ title: "✅ Factura enviada", description: `Enviada a ${email}` });
+    } catch (err: any) {
+      toast({ title: "Error al enviar", description: err.message, variant: "destructive" });
+    } finally {
+      setSendingEmailId(null);
+    }
+  };
 
   const filteredInvoices = invoices?.filter(inv =>
     inv.doc_number.toLowerCase().includes(searchTerm.toLowerCase()) ||
