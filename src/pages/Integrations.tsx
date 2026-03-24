@@ -52,7 +52,7 @@ const Integrations = () => {
   const [accountEmail, setAccountEmail] = useState("");
   const [accountName, setAccountName] = useState("");
   const [bluehostPassword, setBluehostPassword] = useState("");
-  const [bluehostHost, setBluehostHost] = useState("mail.bluehost.com");
+  const [bluehostHost, setBluehostHost] = useState("mail.cemsacr.com");
   const [bluehostPort, setBluehostPort] = useState("993");
   const [hostingerPassword, setHostingerPassword] = useState("");
   const [hostingerHost, setHostingerHost] = useState("imap.hostinger.com");
@@ -220,7 +220,7 @@ const Integrations = () => {
       setIsDialogOpen(false);
       setAccountEmail("");
       setBluehostPassword("");
-      setBluehostHost("mail.bluehost.com");
+      setBluehostHost("mail.cemsacr.com");
       setBluehostPort("993");
       setSelectedService("");
       fetchData();
@@ -971,7 +971,7 @@ const Integrations = () => {
                     id="bluehost-host"
                     value={bluehostHost}
                     onChange={(e) => setBluehostHost(e.target.value)}
-                    placeholder="mail.bluehost.com"
+                    placeholder="mail.cemsacr.com"
                   />
                 </div>
                 <div className="space-y-2">
