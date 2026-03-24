@@ -14,7 +14,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { ArrowLeft, Search, RefreshCw, FileText, CheckCircle, Clock, AlertTriangle, Eye } from "lucide-react";
+import { ArrowLeft, Search, RefreshCw, FileText, CheckCircle, Clock, AlertTriangle, Eye, Mail, Loader2 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
@@ -38,6 +38,7 @@ interface Invoice {
   doc_number: string;
   supplier_name: string;
   supplier_tax_id: string | null;
+  supplier_email: string | null;
   total_amount: number;
   currency: string;
   issue_date: string;
@@ -60,6 +61,33 @@ const AllInvoices = () => {
   const [currentPdfName, setCurrentPdfName] = useState("");
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
   const [showDetailDialog, setShowDetailDialog] = useState(false);
+  const [isSendingEmail, setIsSendingEmail] = useState(false);
+
+  const handleSendEmail = async (invoice: Invoice) => {
+    const email = invoice.supplier_email || prompt("Ingrese el correo del destinatario:");
+    if (!email) return;
+
+    setIsSendingEmail(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("send-invoice-email", {
+        body: {
+          invoice_id: invoice.id,
+          organization_id: activeOrganization,
+          to_email: email,
+          include_pdf: !!invoice.pdf_attachment_url,
+          invoice_type: "purchase",
+        },
+      });
+      if (error) throw error;
+      if (!data?.success) throw new Error(data?.error || "Error al enviar");
+      toast.success(`✅ Factura enviada a ${email}`);
+    } catch (err: any) {
+      console.error("Error sending email:", err);
+      toast.error("Error al enviar factura por correo", { description: err.message });
+    } finally {
+      setIsSendingEmail(false);
+    }
+  };
 
   const fetchAllInvoices = async () => {
     if (!activeOrganization) return;
@@ -328,6 +356,15 @@ const AllInvoices = () => {
                             }}
                           >
                             <Eye className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleSendEmail(invoice)}
+                            disabled={isSendingEmail}
+                            title="Enviar por correo"
+                          >
+                            {isSendingEmail ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mail className="h-4 w-4" />}
                           </Button>
                         </div>
                       </TableCell>

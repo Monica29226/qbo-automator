@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowLeft, TrendingUp, DollarSign, CheckCircle2, Clock, AlertCircle } from "lucide-react";
+import { ArrowLeft, TrendingUp, DollarSign, CheckCircle2, Clock, AlertCircle, Mail, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -31,6 +31,32 @@ export default function SalesInvoices() {
   const { data: invoices, isLoading, refetch } = useSalesInvoices();
   const [searchTerm, setSearchTerm] = useState("");
   const [isPublishing, setIsPublishing] = useState(false);
+  const [sendingEmailId, setSendingEmailId] = useState<string | null>(null);
+
+  const handleSendEmail = async (invoice: any) => {
+    const email = invoice.customer_email || prompt("Ingrese el correo del cliente:");
+    if (!email) return;
+
+    setSendingEmailId(invoice.id);
+    try {
+      const { data, error } = await supabase.functions.invoke("send-invoice-email", {
+        body: {
+          invoice_id: invoice.id,
+          organization_id: activeOrganization,
+          to_email: email,
+          include_pdf: true,
+          invoice_type: "sales",
+        },
+      });
+      if (error) throw error;
+      if (!data?.success) throw new Error(data?.error || "Error al enviar");
+      toast({ title: "✅ Factura enviada", description: `Enviada a ${email}` });
+    } catch (err: any) {
+      toast({ title: "Error al enviar", description: err.message, variant: "destructive" });
+    } finally {
+      setSendingEmailId(null);
+    }
+  };
 
   const filteredInvoices = invoices?.filter(inv =>
     inv.doc_number.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -215,6 +241,7 @@ export default function SalesInvoices() {
                     <TableHead>Monto</TableHead>
                     <TableHead>Estado</TableHead>
                     <TableHead>QB ID</TableHead>
+                    <TableHead>Acción</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -233,6 +260,17 @@ export default function SalesInvoices() {
                       <TableCell>{getStatusBadge(invoice.status)}</TableCell>
                       <TableCell className="text-xs text-muted-foreground">
                         {invoice.qbo_entity_id || "-"}
+                      </TableCell>
+                      <TableCell>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleSendEmail(invoice)}
+                          disabled={sendingEmailId === invoice.id}
+                          title="Enviar por correo"
+                        >
+                          {sendingEmailId === invoice.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mail className="h-4 w-4" />}
+                        </Button>
                       </TableCell>
                     </TableRow>
                   ))}

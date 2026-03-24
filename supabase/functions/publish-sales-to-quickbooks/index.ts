@@ -184,6 +184,26 @@ serve(async (req) => {
           .eq("id", invoice.id);
 
         published++;
+
+        // Auto-send email if customer has email
+        if (invoice.customer_email) {
+          try {
+            console.log(`📧 Auto-sending invoice email to ${invoice.customer_email}...`);
+            await supabase.functions.invoke("send-invoice-email", {
+              body: {
+                invoice_id: invoice.id,
+                organization_id,
+                to_email: invoice.customer_email,
+                include_pdf: !!invoice.pdf_attachment_url,
+                invoice_type: "sales",
+              },
+            });
+            console.log(`✅ Email sent to ${invoice.customer_email}`);
+          } catch (emailErr: any) {
+            console.warn(`⚠️ Email send failed for ${invoice.doc_number}:`, emailErr.message);
+          }
+        }
+
         await delay(2000); // Rate limiting
 
       } catch (error: any) {
