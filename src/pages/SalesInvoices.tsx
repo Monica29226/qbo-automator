@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowLeft, TrendingUp, DollarSign, CheckCircle2, Clock, AlertCircle } from "lucide-react";
+import { ArrowLeft, TrendingUp, DollarSign, CheckCircle2, Clock, AlertCircle, Mail, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Card,
