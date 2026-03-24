@@ -60,6 +60,33 @@ const AllInvoices = () => {
   const [currentPdfName, setCurrentPdfName] = useState("");
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
   const [showDetailDialog, setShowDetailDialog] = useState(false);
+  const [isSendingEmail, setIsSendingEmail] = useState(false);
+
+  const handleSendEmail = async (invoice: Invoice) => {
+    const email = invoice.supplier_email || prompt("Ingrese el correo del destinatario:");
+    if (!email) return;
+
+    setIsSendingEmail(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("send-invoice-email", {
+        body: {
+          invoice_id: invoice.id,
+          organization_id: activeOrganization,
+          to_email: email,
+          include_pdf: !!invoice.pdf_attachment_url,
+          invoice_type: "purchase",
+        },
+      });
+      if (error) throw error;
+      if (!data?.success) throw new Error(data?.error || "Error al enviar");
+      toast.success(`✅ Factura enviada a ${email}`);
+    } catch (err: any) {
+      console.error("Error sending email:", err);
+      toast.error("Error al enviar factura por correo", { description: err.message });
+    } finally {
+      setIsSendingEmail(false);
+    }
+  };
 
   const fetchAllInvoices = async () => {
     if (!activeOrganization) return;
