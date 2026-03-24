@@ -447,7 +447,7 @@ serve(async (req) => {
       }
 
       const imapHost = credentials.imap_host || 
-        (emailProvider === "bluehost" ? "mail.bluehost.com" : 
+        (emailProvider === "bluehost" ? "mail.cemsacr.com" : 
          emailProvider === "hostinger" ? "imap.hostinger.com" : 
          emailProvider === "outlook" ? "outlook.office365.com" : "localhost");
       const imapPort = credentials.imap_port || 993;

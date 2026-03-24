@@ -459,7 +459,7 @@ serve(async (req) => {
       throw new Error("Bluehost credentials incomplete - email or password missing");
     }
 
-    const imapHost = credentials.imap_host || "mail.bluehost.com";
+const imapHost = credentials.imap_host || "mail.cemsacr.com";
     const imapPort = credentials.imap_port || 993;
 
     console.log(`[Bluehost] Connecting to ${imapHost}:${imapPort} for ${credentials.email}`);

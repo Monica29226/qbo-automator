@@ -32,8 +32,8 @@ serve(async (req) => {
       throw new Error("Missing required parameters");
     }
 
-    // Default IMAP settings for Bluehost
-    const host = imap_host || "mail.bluehost.com";
+    // Default IMAP settings for Bluehost (CEMSA)
+    const host = imap_host || "mail.cemsacr.com";
     const port = imap_port || 993;
 
     console.log(`Connecting Bluehost for organization: ${organization_id}, email: ${email}`);
