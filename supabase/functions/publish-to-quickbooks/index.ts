@@ -2307,10 +2307,8 @@ Deno.serve(async (req) => {
             DocNumber: qboDocNumber,
             Line: lines,
             PrivateNote: `Factura XML: ${doc.doc_number}\nClave: ${claveHacienda}\nProveedor: ${doc.supplier_name}`,
-            // CRITICAL FIX: Use TaxInclusive for impuesto asumido so QBO shows the tax rate
-            // and backs it out of the line amount, keeping total = XML total
-            // NotApplicable would mark it as "Out of Scope" which is incorrect
-            GlobalTaxCalculation: earlyIsTaxExempt ? "TaxInclusive" : (includeTaxInLines ? "TaxInclusive" : "TaxExcluded"),
+            // SIMPLE: Always TaxExcluded. Lines = XML subtotal, tax goes in TxnTaxDetail separated
+            GlobalTaxCalculation: includeTaxInLines ? "TaxInclusive" : "TaxExcluded",
           };
           
           if (documentCurrency === 'USD') {
