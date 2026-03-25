@@ -383,40 +383,6 @@ const Dashboard = () => {
               
               <div className="flex items-center gap-2 ml-auto">
                 <OrganizationSwitcher />
-                <Button variant="outline" size="sm" asChild>
-                  <Link to="/upload">
-                    <Upload className="h-4 w-4 mr-2" />
-                    Cargar XML
-                  </Link>
-                </Button>
-                {hasRequiredConnections.gmail && (
-                  <GmailFetchDialog 
-                    onSuccess={() => {
-                      refreshData();
-                    }}
-                  />
-                )}
-                {hasRequiredConnections.outlook && (
-                  <OutlookFetchDialog 
-                    onSuccess={() => {
-                      refreshData();
-                    }}
-                  />
-                )}
-                {hasRequiredConnections.hostinger && (
-                  <HostingerFetchDialog 
-                    onSuccess={() => {
-                      refreshData();
-                    }}
-                  />
-                )}
-                {hasRequiredConnections.bluehost && (
-                  <BluehostFetchDialog 
-                    onSuccess={() => {
-                      refreshData();
-                    }}
-                  />
-                )}
                 <Button 
                   variant="default" 
                   size="sm" 
@@ -488,118 +454,47 @@ const Dashboard = () => {
             <GmailTokenAlert />
             <QuickBooksTokenAlert />
 
-            {/* Quick Actions Section */}
+            {/* Quick Actions Section - Redesigned */}
             <Card className="mb-6">
               <CardHeader>
                 <CardTitle className="text-lg">Acciones Rápidas</CardTitle>
                 <CardDescription>Gestión y sincronización de facturas</CardDescription>
               </CardHeader>
-              <CardContent>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
-                  {isAdmin && (
-                    <Suspense fallback={<div className="h-9 bg-muted animate-pulse rounded" />}>
-                      <VerifyBillButton />
-                    </Suspense>
-                  )}
-                  {isAdmin && (
-                    <Suspense fallback={<div className="h-9 bg-muted animate-pulse rounded" />}>
-                      <QBOConnectionDiagnostic />
-                    </Suspense>
-                  )}
-                  {isAdmin && (
-                    <Suspense fallback={<div className="h-9 bg-muted animate-pulse rounded" />}>
-                      <AuditQBOBills />
-                    </Suspense>
-                  )}
-                  <Button 
-                    variant="secondary" 
-                    size="sm" 
-                    onClick={handleAutoSync}
-                    disabled={isAutoSyncing}
-                    className="bg-green-600 hover:bg-green-700 text-white w-full"
-                  >
-                    {isAutoSyncing ? (
-                      <>
-                        <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
-                        Sincronizando...
-                      </>
-                    ) : (
-                      <>
-                        <RefreshCw className="h-4 w-4 mr-2" />
-                        Sincronizar Ahora
-                      </>
-                    )}
-                  </Button>
-                  <Button 
-                    variant="outline" 
-                    size="sm" 
-                    onClick={handleForceResync}
+              <CardContent className="space-y-3">
+                {/* Row 1: Import + Search (50/50) */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <ImportBatchDialog onSuccess={refreshData} />
+                  <SearchInvoiceDialog />
+                </div>
+
+                {/* Row 2: Publish + Diagnostic + Error Log */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <Button
+                    variant="default"
+                    className="w-full h-10"
+                    onClick={handlePublishToQuickBooks}
                     disabled={isFetchingEmails}
-                    className="border-orange-500 text-orange-600 hover:bg-orange-50 dark:hover:bg-orange-950 w-full"
                   >
                     {isFetchingEmails ? (
                       <>
                         <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
-                        Reprocesando...
+                        Publicando...
                       </>
                     ) : (
                       <>
-                        <RefreshCw className="h-4 w-4 mr-2" />
-                        Forzar Resync Hoy
+                        <Send className="h-4 w-4 mr-2" />
+                        Publicar a QuickBooks
                       </>
                     )}
                   </Button>
-                  <Suspense fallback={<div className="h-9 bg-muted animate-pulse rounded" />}>
-                    <SyncFromExcelDialog />
+
+                  <Suspense fallback={<div className="h-10 bg-muted animate-pulse rounded" />}>
+                    <QBOConnectionDiagnostic />
                   </Suspense>
-                  <Suspense fallback={<div className="h-9 bg-muted animate-pulse rounded" />}>
-                    <SearchImportInvoice />
+
+                  <Suspense fallback={<div className="h-10 bg-muted animate-pulse rounded" />}>
+                    <ErrorLogsViewer />
                   </Suspense>
-                  <Suspense fallback={<div className="h-9 bg-muted animate-pulse rounded" />}>
-                    <BatchImportInvoices />
-                  </Suspense>
-                  <Suspense fallback={<div className="h-9 bg-muted animate-pulse rounded" />}>
-                    <PublishOrphanedInvoices />
-                  </Suspense>
-                </div>
-                
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 mt-3">
-                  <Suspense fallback={<div className="h-9 bg-muted animate-pulse rounded" />}>
-                    <TestAutoSyncFlow />
-                  </Suspense>
-                  <Suspense fallback={<div className="h-9 bg-muted animate-pulse rounded" />}>
-                    <PendingDocumentsLog />
-                  </Suspense>
-                  <Suspense fallback={<div className="h-9 bg-muted animate-pulse rounded" />}>
-                    <BatchUploadToDriveButton />
-                  </Suspense>
-                  <Suspense fallback={<div className="h-9 bg-muted animate-pulse rounded" />}>
-                    <BatchDownloadMissingPdfs onComplete={refreshData} />
-                  </Suspense>
-                  <Button 
-                    variant="outline" 
-                    size="sm"
-                    onClick={() => setIsErrorModalOpen(true)}
-                    className="w-full"
-                  >
-                    <AlertCircle className="h-4 w-4 mr-2 text-destructive" />
-                    Ver Facturas con Errores
-                  </Button>
-                  {stats.errors > 0 && (
-                    <Suspense fallback={<div className="h-9 bg-muted animate-pulse rounded" />}>
-                      <CleanIrrecoverableErrorsButton />
-                    </Suspense>
-                  )}
-                  {isAdmin && stats.errors > 0 && (
-                    <Suspense fallback={<div className="h-9 bg-muted animate-pulse rounded" />}>
-                      <ErrorLogsViewer />
-                    </Suspense>
-                  )}
-                  {isAdmin && (
-                    <Suspense fallback={<div className="h-9 bg-muted animate-pulse rounded" />}>
-                      <QBOAccountsDiagnostic />
-                    </Suspense>
-                  )}
                 </div>
               </CardContent>
             </Card>
