@@ -2172,8 +2172,8 @@ Deno.serve(async (req) => {
             DocNumber: qboDocNumber,
             Line: lines,
             PrivateNote: `Nota de Crédito - Clave: ${claveHacienda}\nProveedor: ${doc.supplier_name}`,
-            // CRITICAL FIX: Use TaxInclusive for impuesto asumido (same as Bill)
-            GlobalTaxCalculation: earlyIsTaxExempt ? "TaxInclusive" : (includeTaxInLines ? "TaxInclusive" : "TaxExcluded"),
+            // SIMPLE: Always TaxExcluded. Lines = subtotal, tax goes in TxnTaxDetail separated
+            GlobalTaxCalculation: includeTaxInLines ? "TaxInclusive" : "TaxExcluded",
           };
           
           if (documentCurrency === 'USD') {
