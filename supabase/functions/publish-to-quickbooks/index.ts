@@ -2083,7 +2083,6 @@ Deno.serve(async (req) => {
         const xmlTotal = parseFloat(xmlData.totalComprobante || xmlData.TotalComprobante || doc.total_amount);
         const xmlSubtotal = parseFloat(xmlData.subTotal || xmlData.SubTotal || '0');
         const xmlTax = parseFloat(doc.total_tax as any) || 0;
-        const isTaxExempt = earlyIsTaxExempt;
         
         // Calculate IEBLE from lines - this is ALREADY included in line amounts
         // so we must NOT add it again via totalTax
