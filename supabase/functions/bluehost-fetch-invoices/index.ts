@@ -117,10 +117,22 @@ async function fetchEmailsViaIMAP(
   email: string,
   password: string,
   sinceDateStr: string,
+  beforeDateStr?: string,
+  skipCount: number = 0,
   globalDeadlineMs: number = 100_000 // 100 seconds max for entire IMAP operation
-): Promise<{ emails: FetchedEmail[]; error?: string; error_code?: string }> {
+): Promise<{
+  emails: FetchedEmail[];
+  error?: string;
+  error_code?: string;
+  total_messages_in_range?: number;
+  emails_with_xml?: number;
+  emails_with_pdf?: number;
+  next_skip_count?: number;
+  partial?: boolean;
+}> {
   const allEmails: FetchedEmail[] = [];
   const deadline = Date.now() + globalDeadlineMs;
+  const safeSkipCount = Math.max(0, skipCount || 0);
 
   function checkDeadline() {
     if (Date.now() > deadline) {
@@ -229,7 +241,13 @@ async function fetchEmailsViaIMAP(
     // Search folders - try primary first, then junk/spam
     const foldersToSearch = ['"INBOX"', '"Junk"', '"Spam"', '"INBOX.Junk"', '"INBOX.Spam"'];
     let totalCandidatesFetched = 0;
-    const MAX_TOTAL_CANDIDATES = 200; // Global limit to prevent timeouts
+    let totalMessagesInRange = 0;
+    let emailsWithXml = 0;
+    let emailsWithPdf = 0;
+    let totalCandidatesSeen = 0;
+
+    const MAX_TOTAL_CANDIDATES = 120; // Global limit to prevent timeouts
+    const BATCH_SIZE = 40;
     let timeLimitReached = false;
 
     for (const folder of foldersToSearch) {
@@ -246,15 +264,19 @@ async function fetchEmailsViaIMAP(
           continue;
         }
 
-        const searchResp = await cmd(`SEARCH SINCE ${sinceDateStr}`);
+        const searchQuery = beforeDateStr
+          ? `SEARCH SINCE ${sinceDateStr} BEFORE ${beforeDateStr}`
+          : `SEARCH SINCE ${sinceDateStr}`;
+        const searchResp = await cmd(searchQuery);
         const searchLine = searchResp.split("\r\n").find(l => l.startsWith("* SEARCH"));
         if (!searchLine || searchLine.trim() === "* SEARCH") {
-          console.log(`[IMAP] Folder ${folder}: no messages since ${sinceDateStr}`);
+          console.log(`[IMAP] Folder ${folder}: no messages for range ${sinceDateStr}${beforeDateStr ? `..${beforeDateStr}` : '+'}`);
           continue;
         }
 
         const allMsgIds = searchLine.replace("* SEARCH ", "").trim().split(" ").map(Number).filter(n => n > 0);
-        console.log(`[IMAP] Folder ${folder}: ${allMsgIds.length} messages since ${sinceDateStr}`);
+        totalMessagesInRange += allMsgIds.length;
+        console.log(`[IMAP] Folder ${folder}: ${allMsgIds.length} messages in range`);
 
         // STEP 1: Pre-filter using BODYSTRUCTURE - limit to latest 300 per folder
         const msgIdsToScan = allMsgIds.slice(-300);
@@ -282,8 +304,16 @@ async function fetchEmailsViaIMAP(
         console.log(`[IMAP] Folder ${folder}: ${candidateIds.length} candidates with XML/PDF attachments`);
 
         // STEP 2: Fetch full body for candidates - respect global limit
+        const skipInThisFolder = Math.max(0, safeSkipCount - totalCandidatesSeen);
+        totalCandidatesSeen += candidateIds.length;
+
+        const candidatesAfterSkip = candidateIds.slice(skipInThisFolder);
         const remainingSlots = MAX_TOTAL_CANDIDATES - totalCandidatesFetched;
-        const toFetch = candidateIds.slice(-Math.min(remainingSlots, 150));
+        const toFetch = candidatesAfterSkip.slice(0, Math.min(remainingSlots, BATCH_SIZE));
+
+        if (skipInThisFolder > 0) {
+          console.log(`[IMAP] Folder ${folder}: skipped ${skipInThisFolder} candidates (pagination)`);
+        }
 
         for (const msgId of toFetch) {
           if (Date.now() > deadline - 15_000) {
@@ -348,6 +378,8 @@ async function fetchEmailsViaIMAP(
 
             if (emailObj.xmlAttachments.length > 0 || emailObj.pdfAttachments.length > 0) {
               allEmails.push(emailObj);
+              if (emailObj.xmlAttachments.length > 0) emailsWithXml += 1;
+              if (emailObj.pdfAttachments.length > 0) emailsWithPdf += 1;
               console.log(`[IMAP] ✓ ${folder} msg ${msgId}: ${emailObj.xmlAttachments.length} XML, ${emailObj.pdfAttachments.length} PDF | ${emailObj.subject}`);
             }
           } catch (fetchErr) {
@@ -367,9 +399,18 @@ async function fetchEmailsViaIMAP(
     try { await cmd("LOGOUT"); } catch { }
     try { conn.close(); } catch { }
 
-    return { 
-      emails: allEmails, 
-      ...(timeLimitReached ? { error: "PARTIAL: Time limit reached, not all emails were scanned", error_code: "PARTIAL" } : {})
+    const nextSkipCount = safeSkipCount + totalCandidatesFetched;
+    const hasMoreCandidates = totalCandidatesSeen > nextSkipCount;
+    const isPartial = timeLimitReached || hasMoreCandidates || totalCandidatesFetched >= MAX_TOTAL_CANDIDATES;
+
+    return {
+      emails: allEmails,
+      total_messages_in_range: totalMessagesInRange,
+      emails_with_xml: emailsWithXml,
+      emails_with_pdf: emailsWithPdf,
+      next_skip_count: nextSkipCount,
+      partial: isPartial,
+      ...(isPartial ? { error: "PARTIAL: Time limit reached or pagination required", error_code: "PARTIAL" } : {})
     };
   } catch (error) {
     const errMsg = error instanceof Error ? error.message : String(error);
@@ -436,8 +477,10 @@ serve(async (req) => {
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    const { organization_id, month, year, force_resync } = await req.json();
+    const { organization_id, month, year, skip_count, force_resync } = await req.json();
     if (!organization_id) throw new Error("organization_id required");
+
+    const parsedSkipCount = Number.isFinite(Number(skip_count)) ? Number(skip_count) : 0;
 
     console.log(`[Bluehost] Fetching invoices for org ${organization_id}`);
 
@@ -482,29 +525,57 @@ const imapHost = credentials.imap_host || "mail.cemsacr.com";
 
     const startDateSetting = settings?.find(s => s.key === "start_date")?.value;
     let startDate: Date;
+    let beforeDate: Date | undefined;
 
     if (month && year) {
       startDate = new Date(year, month - 1, 1);
+      beforeDate = new Date(year, month, 1);
     } else if (startDateSetting) {
       startDate = new Date(startDateSetting);
     } else {
-      const now = new Date();
-      startDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      const { data: latestImported } = await supabase
+        .from("processed_documents")
+        .select("issue_date")
+        .eq("organization_id", organization_id)
+        .order("issue_date", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (latestImported?.issue_date) {
+        startDate = new Date(`${latestImported.issue_date}T00:00:00`);
+      } else {
+        const now = new Date();
+        startDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      }
     }
 
     const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
     const day = String(startDate.getDate()).padStart(2, '0');
     const sinceDateStr = `${day}-${monthNames[startDate.getMonth()]}-${startDate.getFullYear()}`;
+    const beforeDateStr = beforeDate
+      ? `${String(beforeDate.getDate()).padStart(2, '0')}-${monthNames[beforeDate.getMonth()]}-${beforeDate.getFullYear()}`
+      : undefined;
 
-    console.log(`[Bluehost] Searching for emails since ${sinceDateStr}`);
+    console.log(`[Bluehost] Searching emails with range: SINCE ${sinceDateStr}${beforeDateStr ? ` BEFORE ${beforeDateStr}` : ''} | skip_count=${parsedSkipCount}`);
 
     // Use 100s deadline for IMAP to leave room for document processing
-    const { emails: fetchedEmails, error: imapError, error_code: imapErrorCode } = await fetchEmailsViaIMAP(
+    const {
+      emails: fetchedEmails,
+      error: imapError,
+      error_code: imapErrorCode,
+      total_messages_in_range,
+      emails_with_xml,
+      emails_with_pdf,
+      next_skip_count,
+      partial: imapPartial,
+    } = await fetchEmailsViaIMAP(
       imapHost,
       imapPort,
       credentials.email,
       credentials.password,
       sinceDateStr,
+      beforeDateStr,
+      parsedSkipCount,
       100_000
     );
 
@@ -655,7 +726,10 @@ const imapHost = credentials.imap_host || "mail.cemsacr.com";
       }
     }
 
-    const wasPartial = imapErrorCode === "PARTIAL" || imapErrorCode === "TIMEOUT";
+    const existingSkippedCount = skippedInvoices.filter((item) => item.reason === "Already exists").length;
+    const missingPdfImportedCount = processedInvoices.filter((item) => !item.has_pdf).length;
+    const wasPartial = imapErrorCode === "PARTIAL" || imapErrorCode === "TIMEOUT" || !!imapPartial;
+    const hasMoreToProcess = wasPartial && typeof next_skip_count === "number" && next_skip_count > parsedSkipCount;
     const elapsedMs = Date.now() - startTime;
 
     console.log(`[Bluehost] Complete in ${elapsedMs}ms: ${processedInvoices.length} processed, ${skippedInvoices.length} skipped, ${errors.length} errors${wasPartial ? ' (PARTIAL)' : ''}`);
@@ -663,11 +737,18 @@ const imapHost = credentials.imap_host || "mail.cemsacr.com";
     return new Response(
       JSON.stringify({
         success: true,
-        status: wasPartial ? "partial" : "complete",
+        status: hasMoreToProcess ? "partial" : "complete",
+        partial: hasMoreToProcess,
+        next_skip_count: hasMoreToProcess ? next_skip_count : undefined,
         time_limit_reached: wasPartial,
+        total_messages_in_range,
         messages_found: fetchedEmails.length,
+        emails_with_xml,
+        emails_with_pdf,
         invoices_processed: processedInvoices.length,
         invoices_skipped: skippedInvoices.length,
+        invoices_existing_skipped: existingSkippedCount,
+        invoices_missing_pdf: missingPdfImportedCount,
         invoices_failed: errors.length,
         processed: processedInvoices,
         skipped: skippedInvoices,
