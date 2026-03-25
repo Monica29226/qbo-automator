@@ -2115,8 +2115,8 @@ Deno.serve(async (req) => {
           logInfo(`   📊 ${doc.doc_number}: IEBLE ya incluido en líneas: ${totalIEBLEInLines.toFixed(2)} (restado de Tax para evitar doble conteo)`);
         }
         
-        if (isTaxExempt) {
-          logInfo(`   📋 ${doc.doc_number}: IMPUESTO EXONERADO detectado - Tax=${xmlTax.toFixed(2)} NO se suma al total`);
+        if (earlyIsTaxExempt) {
+          logInfo(`   📋 ${doc.doc_number}: IMPUESTO ASUMIDO detectado - Tax=${xmlTax.toFixed(2)} se envía separado en TxnTaxDetail`);
         }
         
         // CRITICAL: Validate that lines total + IVA-only tax = document total (with tolerance)
