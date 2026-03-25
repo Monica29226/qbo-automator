@@ -314,58 +314,65 @@ Deno.serve(async (req) => {
       if (exchangeRate > 1) billPayload.ExchangeRate = parseFloat(String(exchangeRate));
     }
 
-    console.log(`📤 Creating ${isCreditNote ? 'VendorCredit' : 'Bill'} with amount: ${totalAmount}`);
+    const lineTotal = billLines.reduce((sum: number, l: any) => sum + l.Amount, 0);
+    console.log(`📤 Creating ${isCreditNote ? 'VendorCredit' : 'Bill'} - Lines: ${lineTotal.toFixed(2)}, Tax: ${hasTax ? totalTax.toFixed(2) : '0'}`);
 
     await delay(500);
 
     let entityId: string;
     let entityType: string;
+    const endpoint = isCreditNote ? 'vendorcredit' : 'bill';
 
-    if (isCreditNote) {
-      const vcResponse = await fetch(
-        `https://quickbooks.api.intuit.com/v3/company/${realmId}/vendorcredit`,
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-            Accept: "application/json",
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(billPayload),
-        }
-      );
-
-      if (!vcResponse.ok) {
-        const errorText = await vcResponse.text();
-        throw new Error(`QuickBooks VendorCredit Error: ${errorText}`);
+    let response = await fetch(
+      `https://quickbooks.api.intuit.com/v3/company/${realmId}/${endpoint}`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          Accept: "application/json",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(billPayload),
       }
+    );
 
-      const vcData = await vcResponse.json();
-      entityId = vcData.VendorCredit.Id;
-      entityType = "VendorCredit";
-    } else {
-      const billResponse = await fetch(
-        `https://quickbooks.api.intuit.com/v3/company/${realmId}/bill`,
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-            Accept: "application/json",
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(billPayload),
+    // Tax error retry: switch to TaxInclusive
+    if (!response.ok && hasTax) {
+      const errorText = await response.text();
+      if (errorText.includes('impuesto') || errorText.includes('tax') || errorText.includes('TaxCodeRef') || errorText.includes('impositiva')) {
+        console.log(`⚠️ Tax error, retrying with TaxInclusive...`);
+        delete billPayload.TxnTaxDetail;
+        billPayload.GlobalTaxCalculation = "TaxInclusive";
+        for (const line of billPayload.Line) {
+          if (line._montoTotalLinea && line._montoTotalLinea > line.Amount) {
+            line.Amount = parseFloat(line._montoTotalLinea.toFixed(2));
+          }
         }
-      );
-
-      if (!billResponse.ok) {
-        const errorText = await billResponse.text();
-        throw new Error(`QuickBooks Bill Error: ${errorText}`);
+        await delay(500);
+        response = await fetch(
+          `https://quickbooks.api.intuit.com/v3/company/${realmId}/${endpoint}`,
+          {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+              Accept: "application/json",
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(billPayload),
+          }
+        );
       }
-
-      const billData = await billResponse.json();
-      entityId = billData.Bill.Id;
-      entityType = "Bill";
     }
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`QuickBooks ${isCreditNote ? 'VendorCredit' : 'Bill'} Error: ${errorText}`);
+    }
+
+    const responseData = await response.json();
+    const entityKey = isCreditNote ? 'VendorCredit' : 'Bill';
+    entityId = responseData[entityKey].Id;
+    entityType = entityKey;
 
     console.log(`✅ ${entityType} created: ${entityId}`);
 
