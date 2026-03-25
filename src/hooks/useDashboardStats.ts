@@ -17,6 +17,7 @@ interface ConnectionStatus {
   quickbooks: boolean;
   outlook: boolean;
   hostinger: boolean;
+  bluehost: boolean;
 }
 
 export const useDashboardStats = (organizationId: string | null) => {
