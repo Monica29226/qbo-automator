@@ -2378,13 +2378,21 @@ Deno.serve(async (req) => {
                 errorText.includes('tax rate') ||
                 errorText.includes('TaxCodeRef')) {
               
-              logInfo(`⚠️ ${doc.doc_number}: Error de impuesto en QBO, reintentando sin TxnTaxDetail...`);
+              logInfo(`⚠️ ${doc.doc_number}: Error de impuesto en QBO, reintentando con TaxInclusive...`);
               
-              // Remove TxnTaxDetail - let QBO auto-calculate from TaxCodeRef on lines
-              // DO NOT redistribute tax into line amounts - keep XML subtotal amounts intact
+              // FIXED: Switch to TaxInclusive and use montoTotalLinea (subtotal+tax) as line amounts
+              // QBO will back out the tax from the inclusive amount, preserving the correct total
               delete billPayload.TxnTaxDetail;
-              // Keep GlobalTaxCalculation = TaxExcluded so QBO calculates tax from TaxCodeRef
-              logInfo(`   📊 ${doc.doc_number}: Reintento sin TxnTaxDetail, QBO calculará impuesto automáticamente desde TaxCodeRef`);
+              billPayload.GlobalTaxCalculation = "TaxInclusive";
+              
+              // Redistribute: each line amount becomes montoTotalLinea (full amount including tax)
+              for (const line of billPayload.Line) {
+                if (line._montoTotalLinea && line._montoTotalLinea > line.Amount) {
+                  logInfo(`   📊 ${doc.doc_number}: Line ${line.Amount} → ${line._montoTotalLinea} (TaxInclusive)`);
+                  line.Amount = parseFloat(line._montoTotalLinea.toFixed(2));
+                }
+              }
+              logInfo(`   📊 ${doc.doc_number}: Reintento TaxInclusive - QBO descontará impuesto del monto total de cada línea`);
               
               // Retry without tax
               await delay(1000);
