@@ -2595,7 +2595,7 @@ Deno.serve(async (req) => {
               return { success: false, docNumber: doc.doc_number, error: `Total discrepancy: ${totalDiscrepancy.toFixed(2)}` };
             }
           } else if (totalDiscrepancy > 1.0) {
-            logInfo(`⚠️ ${doc.doc_number}: Discrepancia de ${totalDiscrepancy.toFixed(2)} (QBO=${qboTotalAmt} vs Esperado=${expectedTotal}) pero ya es NotApplicable, no se puede corregir`);
+            logInfo(`⚠️ ${doc.doc_number}: Discrepancia de ${totalDiscrepancy.toFixed(2)} (QBO=${qboTotalAmt} vs Esperado=${expectedTotal}) pero ya es ${billPayload.GlobalTaxCalculation}, no se puede corregir más`);
           }
         }
         
