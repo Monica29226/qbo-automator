@@ -2235,25 +2235,13 @@ Deno.serve(async (req) => {
                 errorText.includes('Invalid tax rate') ||
                 errorText.includes('TaxCodeRef')) {
               
-              logInfo(`⚠️ ${doc.doc_number}: Error de impuesto en VendorCredit, reintentando con TaxInclusive...`);
+              logInfo(`⚠️ ${doc.doc_number}: Error de impuesto en VendorCredit, reintentando sin TxnTaxDetail...`);
               
-              // Remove TxnTaxDetail but KEEP TaxCodeRef on lines
-              const vcTotalTaxToRedistribute = vendorCreditPayload.TxnTaxDetail?.TotalTax || 0;
+              // Remove TxnTaxDetail - let QBO auto-calculate from TaxCodeRef on lines
+              // DO NOT redistribute tax into line amounts - keep XML subtotal amounts intact
               delete vendorCreditPayload.TxnTaxDetail;
-              
-              const vcExpenseLines = vendorCreditPayload.Line.filter((l: any) => l.DetailType === "AccountBasedExpenseLineDetail");
-              const vcLinesTotalBeforeTax = vcExpenseLines.reduce((sum: number, l: any) => sum + (l.Amount || 0), 0);
-              
-              for (const line of vendorCreditPayload.Line) {
-                // KEEP TaxCodeRef so QBO knows which tax rate applies
-                if (line.DetailType === "AccountBasedExpenseLineDetail" && vcTotalTaxToRedistribute > 0 && vcLinesTotalBeforeTax > 0) {
-                  const proportion = line.Amount / vcLinesTotalBeforeTax;
-                  line.Amount = parseFloat((line.Amount + vcTotalTaxToRedistribute * proportion).toFixed(2));
-                }
-              }
-              // Use TaxInclusive so QBO correctly reports tax
-              vendorCreditPayload.GlobalTaxCalculation = "TaxInclusive";
-              logInfo(`   📊 ${doc.doc_number}: IVA redistribuido en líneas: ${vcTotalTaxToRedistribute.toFixed(2)} sobre ${vcExpenseLines.length} líneas`);
+              // Keep GlobalTaxCalculation = TaxExcluded so QBO calculates tax from TaxCodeRef
+              logInfo(`   📊 ${doc.doc_number}: Reintento sin TxnTaxDetail, QBO calculará impuesto automáticamente desde TaxCodeRef`);
               
               // Retry without tax
               await delay(1000);
