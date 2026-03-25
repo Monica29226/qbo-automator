@@ -107,7 +107,7 @@ export const useOrganizationConnections = (organizationId: string | null) => {
     queryKey: ["organization-connections", organizationId],
     queryFn: async (): Promise<ConnectionStatus> => {
       if (!organizationId) {
-        return { gmail: false, quickbooks: false, outlook: false, hostinger: false };
+        return { gmail: false, quickbooks: false, outlook: false, hostinger: false, bluehost: false };
       }
 
       const { data, error } = await supabase
