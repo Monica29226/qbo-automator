@@ -1860,22 +1860,20 @@ Deno.serve(async (req) => {
         const lines: any[] = [];
         
         // PRE-DETECT tax exemption: when subTotal ≈ totalComprobante but tax > 0
-        // This means "impuesto asumido" - tax is NOT added to total, it's informational
-        // In this case, IVA must be included in line amounts so QBO total = totalComprobante
+        // This means "impuesto asumido" - tax is NOT added to total in XML
+        // But we STILL send tax separately to QBO so it's reported correctly
         const earlyXmlTotal = parseFloat(xmlData.totalComprobante || xmlData.TotalComprobante || doc.total_amount);
         const earlyXmlSubtotal = parseFloat(xmlData.subTotal || xmlData.SubTotal || '0');
         const earlyXmlTax = parseFloat(doc.total_tax as any) || 0;
         const earlyIsTaxExempt = Math.abs(earlyXmlTax) > 0 && earlyXmlSubtotal > 0 && Math.abs(Math.abs(earlyXmlTotal) - Math.abs(earlyXmlSubtotal)) < 1.0;
         
-        // Force IVA into line amounts when tax is "asumido" (exempt from total)
-        // CRITICAL FIX: Do NOT include tax in lines for "impuesto asumido" (earlyIsTaxExempt)
-        // For impuesto asumido, line amount = subtotal (base), and we use TaxInclusive so QBO
-        // backs out the tax from the line amount, keeping total = XML total
-        // Only include tax in lines when org setting explicitly says IVA is expense
+        // SIMPLE RULE: Never add tax to line amounts (unless org treats IVA as expense)
+        // Line amounts = XML subtotal per line (baseImponible)
+        // Tax goes ALWAYS as separate TxnTaxDetail
         const includeTaxInLines = taxHandling === 'included_in_line_items';
         
         if (earlyIsTaxExempt) {
-          logInfo(`   📋 ${doc.doc_number}: IMPUESTO ASUMIDO detectado - SubTotal=${earlyXmlSubtotal.toFixed(2)} ≈ Total=${earlyXmlTotal.toFixed(2)}, Tax=${earlyXmlTax.toFixed(2)} → Usando TaxInclusive (líneas = subtotal sin IVA encima, QBO calcula IVA incluido)`);
+          logInfo(`   📋 ${doc.doc_number}: IMPUESTO ASUMIDO detectado - SubTotal=${earlyXmlSubtotal.toFixed(2)} ≈ Total=${earlyXmlTotal.toFixed(2)}, Tax=${earlyXmlTax.toFixed(2)} → Impuesto se envía separado, QBO total será subtotal+tax`);
         }
         
         // Tax accumulator: group IVA by rate for TxnTaxDetail.TaxLine
