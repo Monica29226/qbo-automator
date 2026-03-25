@@ -292,7 +292,8 @@ async function fetchEmailsViaIMAP(
             const structLower = structResp.toLowerCase();
             const hasAttachment = structLower.includes('.xml') || structLower.includes('.pdf') ||
               structLower.includes('application/xml') || structLower.includes('text/xml') ||
-              structLower.includes('application/pdf');
+              structLower.includes('application/pdf') || structLower.includes('message/rfc822') ||
+              structLower.includes('attachment') || structLower.includes('multipart/mixed');
             if (hasAttachment) {
               candidateIds.push(msgId);
             }
