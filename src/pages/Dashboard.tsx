@@ -39,6 +39,21 @@ const LazyFallback = () => (
   <div className="animate-pulse bg-muted rounded-lg h-32 w-full" />
 );
 
+const CEMSAN_ORG_ID = "e06ff1bc-bcfc-4158-a10c-5dbc9c6b0c2f";
+const CEMSAN_MARCH_TARGET = 50;
+const CEMSAN_MARCH_DOC_NUMBERS = [
+  "00100001010000000116", "00100001010000000117", "00200001010011922652", "00290094010104996431", "00100001010000004418",
+  "00100001010000034707", "00100001010000000384", "00100001010000000221", "00200001010000328716", "00100001010000005237",
+  "00200001010000001563", "00100002010000008579", "15000016010000050491", "00100002010000008586", "00100001010000001182",
+  "00100111012600075860", "00100001010000000383", "00100001010000060238", "00100001010000142683", "00100001010000000692",
+  "00100001010000001452", "00100001010000142279", "00100001030000016114", "68900209010000000964", "00100001010000000032",
+  "00100001010000142177", "00100001010000129471", "00100001010000129872", "00100001010000000198", "00100001010000000005",
+  "00100001010043494344", "00100002010000029243", "00100001010000370428", "02400001010000001231", "00100001010000000067",
+  "00100001010000000157", "00100001010000000156", "00100001010000008978", "00100001010000000573", "00100001010000000572",
+  "02600002010000050397", "00100001010000000381", "00100001010000001454", "00100001010000001451", "00100001010000261136",
+  "22300041010000015461", "00100001010000001764", "00100001010000004321", "15000019010000059065", "00100001010000000956",
+];
+
 const Dashboard = () => {
   const { user, isAdmin, activeOrganization, signOut, isLoading: authLoading } = useAuth();
   const navigate = useNavigate();
@@ -64,6 +79,35 @@ const Dashboard = () => {
     staleTime: 30_000,
     refetchInterval: 60_000,
   });
+  const { data: cemsanMarchCoverage } = useQuery({
+    queryKey: ["dashboard-cemsan-march-gap", activeOrganization],
+    queryFn: async () => {
+      if (activeOrganization !== CEMSAN_ORG_ID) return null;
+
+      const { data, error } = await supabase
+        .from("processed_documents")
+        .select("doc_number")
+        .eq("organization_id", CEMSAN_ORG_ID)
+        .gte("issue_date", "2026-03-01")
+        .lt("issue_date", "2026-03-25")
+        .in("doc_number", CEMSAN_MARCH_DOC_NUMBERS);
+
+      if (error) throw error;
+
+      const importedSet = new Set((data ?? []).map((row) => row.doc_number).filter(Boolean));
+      const imported = importedSet.size;
+      const missingDocNumbers = CEMSAN_MARCH_DOC_NUMBERS.filter((doc) => !importedSet.has(doc));
+
+      return {
+        imported,
+        missing: Math.max(0, CEMSAN_MARCH_TARGET - imported),
+        missingDocNumbers,
+      };
+    },
+    enabled: !!activeOrganization,
+    staleTime: 30_000,
+    refetchInterval: 60_000,
+  });
 
   const [isFetchingEmails, setIsFetchingEmails] = useState(false);
   const [isRetryingErrors, setIsRetryingErrors] = useState(false);
@@ -81,6 +125,7 @@ const Dashboard = () => {
     queryClient.invalidateQueries({ queryKey: ["dashboard-stats"] });
     queryClient.invalidateQueries({ queryKey: ["recent-documents"] });
     queryClient.invalidateQueries({ queryKey: ["organization-connections"] });
+    queryClient.invalidateQueries({ queryKey: ["dashboard-cemsan-march-gap"] });
   }, [queryClient]);
 
 
@@ -319,6 +364,28 @@ const Dashboard = () => {
                   </Badge>
                 </div>
               </div>
+
+              {activeOrganization === CEMSAN_ORG_ID && cemsanMarchCoverage && (
+                <Card className="mb-4">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-base">Control ATV Marzo 2026 (CEMSAN)</CardTitle>
+                    <CardDescription>Meta oficial: 50 facturas aceptadas (1–24 marzo)</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge variant="secondary">Importadas: {cemsanMarchCoverage.imported}</Badge>
+                      <Badge variant={cemsanMarchCoverage.missing > 0 ? "destructive" : "default"}>
+                        Faltantes: {cemsanMarchCoverage.missing}
+                      </Badge>
+                    </div>
+                    {cemsanMarchCoverage.missingDocNumbers.length > 0 && (
+                      <p className="text-xs text-muted-foreground">
+                        Consecutivos faltantes (muestra): {cemsanMarchCoverage.missingDocNumbers.slice(0, 8).join(", ")}
+                      </p>
+                    )}
+                  </CardContent>
+                </Card>
+              )}
             </div>
 
             {/* Quick Actions Section - FIRST, most visible */}
