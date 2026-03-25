@@ -204,36 +204,93 @@ async function processOrganization(
     
     console.log(`📧 Fetching invoices from ${mailProvider.toUpperCase()} for ${org.name}...`);
     
-    // Call fetch function directly via HTTP to get its own timeout
-    const emailResponse = await fetch(`${supabaseUrl}/functions/v1/${fetchFunctionName}`, {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${supabaseKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ organization_id: org.id }),
-    });
+    const aggregatedEmailData = {
+      messages_found: 0,
+      invoices_processed: 0,
+      invoices_skipped: 0,
+      invoices_failed: 0,
+      status: "complete",
+      time_limit_reached: false,
+      total_messages_in_range: 0,
+    };
 
-    if (!emailResponse.ok) {
-      const errorText = await emailResponse.text().catch(() => "Unknown error");
-      // Try to parse JSON error for more descriptive message
-      let errorDetail = errorText;
-      try {
-        const parsed = JSON.parse(errorText);
-        if (parsed.error_category && parsed.error) {
-          errorDetail = `[${parsed.error_category}] ${parsed.error}`;
-        } else if (parsed.error) {
-          errorDetail = parsed.error;
-        }
-      } catch { }
-      throw new Error(`${mailProvider} fetch failed (${emailResponse.status}): ${errorDetail}`);
+    let skipCount = 0;
+    let continueFetching = true;
+    let iteration = 0;
+    const maxIterations = 8;
+
+    while (continueFetching && iteration < maxIterations) {
+      iteration += 1;
+
+      const fetchBody: Record<string, unknown> = { organization_id: org.id };
+      if ((mailProvider === "bluehost" || mailProvider === "hostinger") && skipCount > 0) {
+        fetchBody.skip_count = skipCount;
+      }
+
+      const emailResponse = await fetch(`${supabaseUrl}/functions/v1/${fetchFunctionName}`, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${supabaseKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(fetchBody),
+      });
+
+      if (!emailResponse.ok) {
+        const errorText = await emailResponse.text().catch(() => "Unknown error");
+        let errorDetail = errorText;
+        try {
+          const parsed = JSON.parse(errorText);
+          if (parsed.error_category && parsed.error) {
+            errorDetail = `[${parsed.error_category}] ${parsed.error}`;
+          } else if (parsed.error) {
+            errorDetail = parsed.error;
+          }
+        } catch { }
+        throw new Error(`${mailProvider} fetch failed (${emailResponse.status}): ${errorDetail}`);
+      }
+
+      const chunk = await emailResponse.json();
+      if (!chunk) {
+        throw new Error(`${mailProvider} fetch returned no data`);
+      }
+
+      aggregatedEmailData.messages_found = Math.max(
+        aggregatedEmailData.messages_found,
+        Number(chunk.total_messages_in_range || chunk.messages_found || 0)
+      );
+      aggregatedEmailData.total_messages_in_range = Math.max(
+        aggregatedEmailData.total_messages_in_range,
+        Number(chunk.total_messages_in_range || chunk.messages_found || 0)
+      );
+      aggregatedEmailData.invoices_processed += Number(chunk.invoices_processed || 0);
+      aggregatedEmailData.invoices_skipped += Number(chunk.invoices_skipped || 0);
+      aggregatedEmailData.invoices_failed += Number(chunk.invoices_failed || 0);
+
+      const nextSkip = Number(chunk.next_skip_count);
+      const hasNextChunk =
+        chunk.partial === true && Number.isFinite(nextSkip) && nextSkip > skipCount;
+
+      if (hasNextChunk) {
+        skipCount = nextSkip;
+        aggregatedEmailData.status = "partial";
+        aggregatedEmailData.time_limit_reached = true;
+        console.log(`📦 ${mailProvider.toUpperCase()} chunk ${iteration}: processed=${chunk.invoices_processed || 0}, next_skip_count=${skipCount}`);
+        await new Promise((resolve) => setTimeout(resolve, 300));
+      } else {
+        aggregatedEmailData.status = chunk.status || (chunk.partial ? "partial" : "complete");
+        aggregatedEmailData.time_limit_reached = Boolean(chunk.time_limit_reached || chunk.partial);
+        continueFetching = false;
+      }
     }
 
-    const emailData = await emailResponse.json();
-    
-    if (!emailData) {
-      throw new Error(`${mailProvider} fetch returned no data`);
+    if (continueFetching && iteration >= maxIterations) {
+      aggregatedEmailData.status = "partial";
+      aggregatedEmailData.time_limit_reached = true;
+      console.warn(`⚠️ ${mailProvider.toUpperCase()} reached max chunk iterations (${maxIterations}) for ${org.name}`);
     }
+
+    const emailData = aggregatedEmailData;
 
     const invoicesSkipped = emailData.invoices_skipped || 0;
     const realFailures = emailData.invoices_failed || 0;
