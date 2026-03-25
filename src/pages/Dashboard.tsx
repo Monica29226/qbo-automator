@@ -7,6 +7,7 @@ import { OrganizationSwitcher } from "@/components/OrganizationSwitcher";
 import { GmailFetchDialog } from "@/components/GmailFetchDialog";
 import { OutlookFetchDialog } from "@/components/OutlookFetchDialog";
 import { HostingerFetchDialog } from "@/components/HostingerFetchDialog";
+import { BluehostFetchDialog } from "@/components/BluehostFetchDialog";
 import { GmailTokenAlert } from "@/components/dashboard/GmailTokenAlert";
 import { QuickBooksTokenAlert } from "@/components/dashboard/QuickBooksTokenAlert";
 import { DashboardSidebar } from "@/components/DashboardSidebar";
