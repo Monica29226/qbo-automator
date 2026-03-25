@@ -1868,10 +1868,14 @@ Deno.serve(async (req) => {
         const earlyIsTaxExempt = Math.abs(earlyXmlTax) > 0 && earlyXmlSubtotal > 0 && Math.abs(Math.abs(earlyXmlTotal) - Math.abs(earlyXmlSubtotal)) < 1.0;
         
         // Force IVA into line amounts when tax is "asumido" (exempt from total)
-        const includeTaxInLines = taxHandling === 'included_in_line_items' || earlyIsTaxExempt;
+        // CRITICAL FIX: Do NOT include tax in lines for "impuesto asumido" (earlyIsTaxExempt)
+        // For impuesto asumido, line amount = subtotal (base), and we use TaxInclusive so QBO
+        // backs out the tax from the line amount, keeping total = XML total
+        // Only include tax in lines when org setting explicitly says IVA is expense
+        const includeTaxInLines = taxHandling === 'included_in_line_items';
         
         if (earlyIsTaxExempt) {
-          logInfo(`   📋 ${doc.doc_number}: IMPUESTO ASUMIDO detectado temprano - SubTotal=${earlyXmlSubtotal.toFixed(2)} ≈ Total=${earlyXmlTotal.toFixed(2)}, Tax=${earlyXmlTax.toFixed(2)} → IVA incluido en líneas`);
+          logInfo(`   📋 ${doc.doc_number}: IMPUESTO ASUMIDO detectado - SubTotal=${earlyXmlSubtotal.toFixed(2)} ≈ Total=${earlyXmlTotal.toFixed(2)}, Tax=${earlyXmlTax.toFixed(2)} → Usando TaxInclusive (líneas = subtotal sin IVA encima, QBO calcula IVA incluido)`);
         }
         
         // Tax accumulator: group IVA by rate for TxnTaxDetail.TaxLine
@@ -2164,7 +2168,8 @@ Deno.serve(async (req) => {
             DocNumber: qboDocNumber,
             Line: lines,
             PrivateNote: `Nota de Crédito - Clave: ${claveHacienda}\nProveedor: ${doc.supplier_name}`,
-            GlobalTaxCalculation: earlyIsTaxExempt ? "NotApplicable" : (includeTaxInLines ? "TaxInclusive" : "TaxExcluded"),
+            // CRITICAL FIX: Use TaxInclusive for impuesto asumido (same as Bill)
+            GlobalTaxCalculation: earlyIsTaxExempt ? "TaxInclusive" : (includeTaxInLines ? "TaxInclusive" : "TaxExcluded"),
           };
           
           if (documentCurrency === 'USD') {
@@ -2351,7 +2356,10 @@ Deno.serve(async (req) => {
             DocNumber: qboDocNumber,
             Line: lines,
             PrivateNote: `Factura XML: ${doc.doc_number}\nClave: ${claveHacienda}\nProveedor: ${doc.supplier_name}`,
-            GlobalTaxCalculation: earlyIsTaxExempt ? "NotApplicable" : (includeTaxInLines ? "TaxInclusive" : "TaxExcluded"),
+            // CRITICAL FIX: Use TaxInclusive for impuesto asumido so QBO shows the tax rate
+            // and backs it out of the line amount, keeping total = XML total
+            // NotApplicable would mark it as "Out of Scope" which is incorrect
+            GlobalTaxCalculation: earlyIsTaxExempt ? "TaxInclusive" : (includeTaxInLines ? "TaxInclusive" : "TaxExcluded"),
           };
           
           if (documentCurrency === 'USD') {
