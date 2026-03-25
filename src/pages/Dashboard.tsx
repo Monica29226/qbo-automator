@@ -366,22 +366,39 @@ const Dashboard = () => {
               </div>
 
               {activeOrganization === CEMSAN_ORG_ID && cemsanMarchCoverage && (
-                <Card className="mb-4">
+                <Card className={`mb-4 border-l-4 ${cemsanMarchCoverage.missing <= 2 ? 'border-l-green-500' : 'border-l-destructive'}`}>
                   <CardHeader className="pb-2">
-                    <CardTitle className="text-base">Control ATV Marzo 2026 (CEMSAN)</CardTitle>
-                    <CardDescription>Meta oficial: 50 facturas aceptadas (1–24 marzo)</CardDescription>
+                    <CardTitle className="text-base flex items-center gap-2">
+                      <Database className="h-4 w-4" />
+                      Control ATV Marzo 2026 (CEMSAN)
+                    </CardTitle>
+                    <CardDescription>Meta oficial: 50 facturas aceptadas según Hacienda (1–24 marzo)</CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-2">
                     <div className="flex flex-wrap items-center gap-2">
-                      <Badge variant="secondary">Importadas: {cemsanMarchCoverage.imported}</Badge>
-                      <Badge variant={cemsanMarchCoverage.missing > 0 ? "destructive" : "default"}>
-                        Faltantes: {cemsanMarchCoverage.missing}
+                      <Badge variant="default" className="bg-green-600">
+                        <CheckCircle className="h-3 w-3 mr-1" />
+                        Importadas: {cemsanMarchCoverage.imported}/50
                       </Badge>
+                      {cemsanMarchCoverage.missing > 0 ? (
+                        <Badge variant="destructive">
+                          <AlertCircle className="h-3 w-3 mr-1" />
+                          Faltantes: {cemsanMarchCoverage.missing}
+                        </Badge>
+                      ) : (
+                        <Badge variant="default" className="bg-green-600">
+                          ✓ Conciliación completa
+                        </Badge>
+                      )}
                     </div>
                     {cemsanMarchCoverage.missingDocNumbers.length > 0 && (
-                      <p className="text-xs text-muted-foreground">
-                        Consecutivos faltantes (muestra): {cemsanMarchCoverage.missingDocNumbers.slice(0, 8).join(", ")}
-                      </p>
+                      <div className="text-xs text-muted-foreground space-y-1">
+                        <p className="font-medium">Consecutivos faltantes (no encontrados en correo):</p>
+                        {cemsanMarchCoverage.missingDocNumbers.map(doc => (
+                          <span key={doc} className="inline-block bg-muted px-2 py-0.5 rounded mr-1 mb-1 font-mono">{doc}</span>
+                        ))}
+                        <p className="text-yellow-600 mt-1">⚠ Estas facturas no llegaron al correo facturacion@cemsacr.com. Requieren importación manual vía XML.</p>
+                      </div>
                     )}
                   </CardContent>
                 </Card>
