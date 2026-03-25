@@ -1875,7 +1875,7 @@ Deno.serve(async (req) => {
         const includeTaxInLines = taxHandling === 'included_in_line_items';
         
         if (earlyIsTaxExempt) {
-          logInfo(`   📋 ${doc.doc_number}: IMPUESTO ASUMIDO detectado temprano - SubTotal=${earlyXmlSubtotal.toFixed(2)} ≈ Total=${earlyXmlTotal.toFixed(2)}, Tax=${earlyXmlTax.toFixed(2)} → IVA incluido en líneas`);
+          logInfo(`   📋 ${doc.doc_number}: IMPUESTO ASUMIDO detectado - SubTotal=${earlyXmlSubtotal.toFixed(2)} ≈ Total=${earlyXmlTotal.toFixed(2)}, Tax=${earlyXmlTax.toFixed(2)} → Usando TaxInclusive (líneas = subtotal sin IVA encima, QBO calcula IVA incluido)`);
         }
         
         // Tax accumulator: group IVA by rate for TxnTaxDetail.TaxLine
