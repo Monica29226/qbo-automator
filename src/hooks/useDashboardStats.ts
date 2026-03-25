@@ -17,6 +17,7 @@ interface ConnectionStatus {
   quickbooks: boolean;
   outlook: boolean;
   hostinger: boolean;
+  bluehost: boolean;
 }
 
 export const useDashboardStats = (organizationId: string | null) => {
@@ -106,7 +107,7 @@ export const useOrganizationConnections = (organizationId: string | null) => {
     queryKey: ["organization-connections", organizationId],
     queryFn: async (): Promise<ConnectionStatus> => {
       if (!organizationId) {
-        return { gmail: false, quickbooks: false, outlook: false, hostinger: false };
+        return { gmail: false, quickbooks: false, outlook: false, hostinger: false, bluehost: false };
       }
 
       const { data, error } = await supabase
@@ -123,6 +124,7 @@ export const useOrganizationConnections = (organizationId: string | null) => {
         quickbooks: accounts.some(a => a.service_type === "quickbooks"),
         outlook: accounts.some(a => a.service_type === "outlook"),
         hostinger: accounts.some(a => a.service_type === "hostinger"),
+        bluehost: accounts.some(a => a.service_type === "bluehost"),
       };
     },
     enabled: !!organizationId,

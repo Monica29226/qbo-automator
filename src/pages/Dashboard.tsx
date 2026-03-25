@@ -7,6 +7,7 @@ import { OrganizationSwitcher } from "@/components/OrganizationSwitcher";
 import { GmailFetchDialog } from "@/components/GmailFetchDialog";
 import { OutlookFetchDialog } from "@/components/OutlookFetchDialog";
 import { HostingerFetchDialog } from "@/components/HostingerFetchDialog";
+import { BluehostFetchDialog } from "@/components/BluehostFetchDialog";
 import { GmailTokenAlert } from "@/components/dashboard/GmailTokenAlert";
 import { QuickBooksTokenAlert } from "@/components/dashboard/QuickBooksTokenAlert";
 import { DashboardSidebar } from "@/components/DashboardSidebar";
@@ -60,7 +61,7 @@ const Dashboard = () => {
   
   // React Query hooks for cached data
   const { data: stats = { processed: 0, review: 0, pending: 0, total: 0, errors: 0, published: 0, pendingConfig: 0 }, isLoading: statsLoading } = useDashboardStats(activeOrganization);
-  const { data: connections = { gmail: false, quickbooks: false, outlook: false, hostinger: false }, isLoading: connectionsLoading } = useOrganizationConnections(activeOrganization);
+  const { data: connections = { gmail: false, quickbooks: false, outlook: false, hostinger: false, bluehost: false }, isLoading: connectionsLoading } = useOrganizationConnections(activeOrganization);
   
   const [isFetchingEmails, setIsFetchingEmails] = useState(false);
   const [isAutoSyncing, setIsAutoSyncing] = useState(false);
@@ -79,9 +80,10 @@ const Dashboard = () => {
     quickbooks: connections.quickbooks,
     outlook: connections.outlook,
     hostinger: connections.hostinger,
-    email: connections.gmail || connections.outlook || connections.hostinger,
-    both: (connections.gmail || connections.outlook || connections.hostinger) && connections.quickbooks
-  }), [connections.gmail, connections.quickbooks, connections.outlook, connections.hostinger]);
+    bluehost: connections.bluehost,
+    email: connections.gmail || connections.outlook || connections.hostinger || connections.bluehost,
+    both: (connections.gmail || connections.outlook || connections.hostinger || connections.bluehost) && connections.quickbooks
+  }), [connections.gmail, connections.quickbooks, connections.outlook, connections.hostinger, connections.bluehost]);
   
   // Helper to refresh data after actions
   const refreshData = useCallback(() => {
@@ -418,6 +420,13 @@ const Dashboard = () => {
                 )}
                 {hasRequiredConnections.hostinger && (
                   <HostingerFetchDialog 
+                    onSuccess={() => {
+                      refreshData();
+                    }}
+                  />
+                )}
+                {hasRequiredConnections.bluehost && (
+                  <BluehostFetchDialog 
                     onSuccess={() => {
                       refreshData();
                     }}
