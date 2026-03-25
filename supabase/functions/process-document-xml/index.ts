@@ -26,6 +26,20 @@ function parseXMLValue(xml: string, tag: string): string {
   return match ? match[1].trim() : '';
 }
 
+function isInvoiceXml(xml: string): boolean {
+  return /<(?:[\w]+:)?(?:FacturaElectronica|NotaCreditoElectronica|NotaDebitoElectronica|TiqueteElectronico)\b/i.test(xml);
+}
+
+function parseIssueDate(xml: string): string {
+  const rawDate =
+    parseXMLValue(xml, 'FechaEmision') ||
+    parseXMLValue(xml, 'FechaEmisionDoc') ||
+    parseXMLValue(xml, 'Fecha');
+
+  if (!rawDate) return '';
+  return rawDate.includes('T') ? rawDate.split('T')[0] : rawDate;
+}
+
 // Función mejorada para extraer NumeroConsecutivo
 // El NumeroConsecutivo es usualmente de 20 dígitos y está al final de la Clave de 50 dígitos
 function parseNumeroConsecutivo(xml: string): string {
@@ -225,6 +239,18 @@ Deno.serve(async (req) => {
     const xmlContent = payload.xml_content || '';
     
     console.log("📄 XML Preview:", xmlContent.substring(0, 500));
+
+    if (!isInvoiceXml(xmlContent)) {
+      return new Response(
+        JSON.stringify({
+          success: false,
+          rejected: true,
+          message: "XML no procesable: no corresponde a Factura/Tiquete/Nota de Crédito/Nota de Débito",
+          reason: "non_invoice_xml"
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
     
     // ============================================================
     // VALIDACIÓN CRÍTICA: Solo procesar facturas dirigidas a la organización
@@ -311,8 +337,7 @@ Deno.serve(async (req) => {
       throw new Error("NumeroConsecutivo inválido - demasiado largo. Verificar estructura del XML.");
     }
     
-    const issue_date_str = parseXMLValue(xmlContent, 'FechaEmision');
-    const issue_date = issue_date_str ? issue_date_str.split('T')[0] : '';
+    const issue_date = parseIssueDate(xmlContent);
     
     // Usar parseEmisorData para obtener datos del proveedor correctamente
     const emisor = parseEmisorData(xmlContent);
@@ -325,13 +350,37 @@ Deno.serve(async (req) => {
     // Validate required fields
     if (!doc_number) {
       console.error("❌ NumeroConsecutivo not found. XML structure:", xmlContent.substring(0, 1000));
-      throw new Error("Document number (NumeroConsecutivo) not found in XML");
+      return new Response(
+        JSON.stringify({
+          success: false,
+          rejected: true,
+          message: "XML sin NumeroConsecutivo válido",
+          reason: "missing_doc_number"
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
     }
     if (!issue_date || issue_date === '') {
-      throw new Error("Issue date (FechaEmision) not found in XML");
+      return new Response(
+        JSON.stringify({
+          success: false,
+          rejected: true,
+          message: "XML sin FechaEmision",
+          reason: "missing_issue_date"
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
     }
     if (!supplier_name) {
-      throw new Error("Supplier name (Nombre) not found in XML");
+      return new Response(
+        JSON.stringify({
+          success: false,
+          rejected: true,
+          message: "XML sin datos de Emisor",
+          reason: "missing_supplier"
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
     }
     
     // Parse amounts
