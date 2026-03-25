@@ -2420,9 +2420,9 @@ Deno.serve(async (req) => {
                 errorText.includes('tax rate') ||
                 errorText.includes('TaxCodeRef')) {
               
-              logInfo(`⚠️ ${doc.doc_number}: Error de impuesto en QBO, reintentando SIN TxnTaxDetail...`);
+              logInfo(`⚠️ ${doc.doc_number}: Error de impuesto en QBO, reintentando con TaxInclusive...`);
               
-              // Remove TxnTaxDetail and TaxCodeRef from lines
+              // Remove TxnTaxDetail but KEEP TaxCodeRef on lines so QBO reports correct tax
               const billTotalTaxToRedistribute = billPayload.TxnTaxDetail?.TotalTax || 0;
               delete billPayload.TxnTaxDetail;
               
@@ -2431,16 +2431,15 @@ Deno.serve(async (req) => {
               const billLinesTotalBeforeTax = billExpenseLines.reduce((sum: number, l: any) => sum + (l.Amount || 0), 0);
               
               for (const line of billPayload.Line) {
-                if (line.AccountBasedExpenseLineDetail?.TaxCodeRef) {
-                  delete line.AccountBasedExpenseLineDetail.TaxCodeRef;
-                }
+                // KEEP TaxCodeRef so QBO knows which tax rate applies (Tax Inclusive)
                 // Proportionally add tax to each expense line
                 if (line.DetailType === "AccountBasedExpenseLineDetail" && billTotalTaxToRedistribute > 0 && billLinesTotalBeforeTax > 0) {
                   const proportion = line.Amount / billLinesTotalBeforeTax;
                   line.Amount = parseFloat((line.Amount + billTotalTaxToRedistribute * proportion).toFixed(2));
                 }
               }
-              billPayload.GlobalTaxCalculation = "NotApplicable";
+              // Use TaxInclusive so QBO correctly reports tax from the inclusive amounts
+              billPayload.GlobalTaxCalculation = "TaxInclusive";
               logInfo(`   📊 ${doc.doc_number}: IVA redistribuido en líneas: ${billTotalTaxToRedistribute.toFixed(2)} sobre ${billExpenseLines.length} líneas`);
               
               // Retry without tax
