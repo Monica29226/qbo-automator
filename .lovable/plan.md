@@ -1,49 +1,63 @@
 
 
-## Problem Analysis
+# Plan: Fix Tax Handling - Bills Must Match XML Exactly
 
-The invoice ending in 3598 has **mixed tax rates** (1% and 13% across 6 lines), total_amount = ₡44,465 (subtotal ₡42,070.67 + tax ₡2,394.33). But QuickBooks shows Total = ₡42,070.66 — only the subtotal, with "Fuera del ámbito del impuesto" (no tax applied).
+## Problem Identified
 
-**Root cause: substring matching bug in `getTaxCodeRef`**
+Two code paths create bills with wrong amounts and "Out of Scope" tax:
 
-The function uses `name.includes(\`${rate}%\`)` to match tax codes. When `rate = 1`:
-- The string `"13%"` **contains** `"1%"` as a substring → matches incorrectly
-- Lines with 1% tax get assigned a 13% TaxCodeRef
-- QBO receives conflicting information: TxnTaxDetail says ₡2,394.33 total tax, but the TaxCodeRef on lines implies a different calculation
-- QBO either errors (triggering retry WITHOUT tax redistribution working properly) or silently drops the tax
+1. **`force-publish-document`** (CONFIRMED BUG): Uses `totalAmount = Math.abs(doc.total_amount)` (the FULL ₡1,750,000) as a single line with `GlobalTaxCalculation: "NotApplicable"`. This always creates "Out of Scope" bills regardless of whether the invoice has tax.
 
-**Secondary issue**: After bill creation, the system never verifies that QBO's `TotalAmt` matches the expected total. If QBO silently drops tax, no one catches it.
+2. **`publish-to-quickbooks` tax retry** (LIKELY BUG): When QBO rejects the TxnTaxDetail, the retry removes it entirely and keeps `TaxExcluded` mode. If QBO can't resolve the TaxCodeRef on the line, the bill ends up with no tax. The retry should instead switch to `TaxInclusive` with tax baked into line amounts.
 
-## Plan
+For invoice 000572 (Inmobiliaria Madrigal):
+- XML: subtotal=₡1,548,672.57, tax=₡201,327.43, total=₡1,750,000
+- QBO result: 1 line ₡1,750,000 "Fuera del ámbito" (Out of Scope) — WRONG
 
-### 1. Fix `getTaxCodeRef` substring matching bug
-**File**: `supabase/functions/publish-to-quickbooks/index.ts` (lines ~1519-1523)
+## Changes
 
-Change the rate matching from substring to word-boundary matching:
-```typescript
-// BEFORE (buggy):
-if (name.includes(`${rate}%`))
+### 1. Fix `force-publish-document/index.ts` — Use XML line items with proper tax
 
-// AFTER (fixed):
-const ratePattern = new RegExp(`(^|[^0-9])${rate}%`);
-if (ratePattern.test(name))
+Instead of sending a single line with the full total and `NotApplicable`:
+- Parse `xml_data.detalle` to extract `subtotal`/`baseImponible` per line (same as main publish function)
+- Set `GlobalTaxCalculation: "TaxExcluded"` 
+- Add `TxnTaxDetail` with the IVA amount and rate from XML
+- Add `TaxCodeRef` to each line based on the tax rate
+- Fallback: if no detail lines, use `total_amount - total_tax` as line amount + TxnTaxDetail for tax
+- On tax error retry: switch to `TaxInclusive` with `subtotal + tax` as line amount (so QBO backs out the tax correctly)
+
+### 2. Fix `publish-to-quickbooks/index.ts` — Improve tax retry logic
+
+Current retry (lines 2367-2403): removes `TxnTaxDetail`, keeps `TaxExcluded`.
+
+Fix the retry to:
+- Switch `GlobalTaxCalculation` to `"TaxInclusive"` 
+- Redistribute: each line amount becomes `subtotal + proportional_tax` (i.e. the `montoTotalLinea` from XML)
+- This way QBO backs out the tax from the inclusive amount, showing the correct tax rate and keeping the total identical to the XML
+- Keep `TaxCodeRef` on each line so QBO knows which rate to apply
+
+### 3. Fix `publish-to-quickbooks/index.ts` — Store montoTotalLinea per line for retry
+
+During the initial line-building loop (line 1883-1979), also store `montoTotalLinea` alongside each line so the retry can use it to switch to TaxInclusive amounts without recalculating.
+
+## Technical Detail
+
+```text
+CURRENT (broken retry):
+  Line: subtotal=1,548,672.57  TaxCodeRef=IVA13%
+  GlobalTaxCalculation: TaxExcluded
+  TxnTaxDetail: REMOVED
+  → QBO can't calculate tax → "Out of Scope" ₡1,548,672.57
+    OR if TaxCodeRef wrong → ₡1,750,000 "Out of Scope"
+
+FIXED (retry):
+  Line: amount=1,750,000.00  TaxCodeRef=IVA13%
+  GlobalTaxCalculation: TaxInclusive
+  TxnTaxDetail: REMOVED
+  → QBO backs out 13% → Subtotal ₡1,548,672.57 + IVA ₡201,327.43 = ₡1,750,000 ✓
 ```
-This ensures "1%" won't match "13%" because the `1` in `13%` is preceded by another digit.
 
-### 2. Add post-creation verification step
-After creating a Bill/VendorCredit, read the returned `TotalAmt` and compare to expected total. If there's a discrepancy > 1.0:
-- Delete the bill from QBO
-- Recreate it with `GlobalTaxCalculation: "NotApplicable"` and tax redistributed into line amounts (the proven fallback approach)
-
-This catches cases where QBO silently applies wrong tax calculations.
-
-### 3. Redeploy the edge function
-The fix will be deployed automatically.
-
-## Technical Details
-
-- **Bug location**: `getTaxCodeRef` function, STEP 1 name matching (line ~1519)
-- **Impact**: Any invoice with 1%, 2%, or 4% tax rates could be mismatched to higher rates (13%, 12%, etc.)
-- **Verification**: The post-creation check ensures no future silent mismatches slip through
-- **Files modified**: `supabase/functions/publish-to-quickbooks/index.ts`
+## Files to Edit
+- `supabase/functions/publish-to-quickbooks/index.ts` — Fix tax retry logic
+- `supabase/functions/force-publish-document/index.ts` — Rewrite to use XML detail lines with proper tax
 
