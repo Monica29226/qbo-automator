@@ -13,7 +13,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { useState, useCallback, lazy, Suspense } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useDashboardStats, useOrganizationConnections } from "@/hooks/useDashboardStats";
 import { ImportBatchDialog } from "@/components/dashboard/ImportBatchDialog";
 import { SearchInvoiceDialog } from "@/components/dashboard/SearchInvoiceDialog";
@@ -47,10 +47,34 @@ const Dashboard = () => {
   // React Query hooks for cached data
   const { data: stats = { processed: 0, review: 0, pending: 0, total: 0, errors: 0, published: 0, pendingConfig: 0 }, isLoading: statsLoading } = useDashboardStats(activeOrganization);
   const { data: connections = { gmail: false, quickbooks: false, outlook: false, hostinger: false, bluehost: false }, isLoading: connectionsLoading } = useOrganizationConnections(activeOrganization);
+  const { data: lastSyncAt } = useQuery({
+    queryKey: ["dashboard-last-sync", activeOrganization],
+    queryFn: async () => {
+      if (!activeOrganization) return null;
+      const { data } = await supabase
+        .from("sync_logs")
+        .select("started_at")
+        .eq("organization_id", activeOrganization)
+        .order("started_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      return data?.started_at ?? null;
+    },
+    enabled: !!activeOrganization,
+    staleTime: 30_000,
+    refetchInterval: 60_000,
+  });
 
   const [isFetchingEmails, setIsFetchingEmails] = useState(false);
   const [isRetryingErrors, setIsRetryingErrors] = useState(false);
   const [isErrorModalOpen, setIsErrorModalOpen] = useState(false);
+
+  const lastSyncDate = lastSyncAt ? new Date(lastSyncAt) : null;
+  const lastSyncAgeMs = lastSyncDate ? Date.now() - lastSyncDate.getTime() : Number.POSITIVE_INFINITY;
+  const isLastSyncFresh = lastSyncAgeMs <= 60 * 60 * 1000;
+  const lastSyncLabel = lastSyncDate
+    ? lastSyncDate.toLocaleString("es-CR", { dateStyle: "short", timeStyle: "short" })
+    : "Sin registros";
 
   // Helper to refresh data after actions
   const refreshData = useCallback(() => {
@@ -289,9 +313,9 @@ const Dashboard = () => {
                   <Suspense fallback={null}>
                     <IVAModeIndicator organizationId={activeOrganization} />
                   </Suspense>
-                  <Badge variant="default" className="h-fit">
+                  <Badge variant={isLastSyncFresh ? "default" : "destructive"} className="h-fit">
                     <Clock className="h-3 w-3 mr-1" />
-                    Sincronización Automática Activa (cada 30 min)
+                    Última sync: {lastSyncLabel}
                   </Badge>
                 </div>
               </div>
