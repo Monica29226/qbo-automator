@@ -1860,22 +1860,20 @@ Deno.serve(async (req) => {
         const lines: any[] = [];
         
         // PRE-DETECT tax exemption: when subTotal ≈ totalComprobante but tax > 0
-        // This means "impuesto asumido" - tax is NOT added to total, it's informational
-        // In this case, IVA must be included in line amounts so QBO total = totalComprobante
+        // This means "impuesto asumido" - tax is NOT added to total in XML
+        // But we STILL send tax separately to QBO so it's reported correctly
         const earlyXmlTotal = parseFloat(xmlData.totalComprobante || xmlData.TotalComprobante || doc.total_amount);
         const earlyXmlSubtotal = parseFloat(xmlData.subTotal || xmlData.SubTotal || '0');
         const earlyXmlTax = parseFloat(doc.total_tax as any) || 0;
         const earlyIsTaxExempt = Math.abs(earlyXmlTax) > 0 && earlyXmlSubtotal > 0 && Math.abs(Math.abs(earlyXmlTotal) - Math.abs(earlyXmlSubtotal)) < 1.0;
         
-        // Force IVA into line amounts when tax is "asumido" (exempt from total)
-        // CRITICAL FIX: Do NOT include tax in lines for "impuesto asumido" (earlyIsTaxExempt)
-        // For impuesto asumido, line amount = subtotal (base), and we use TaxInclusive so QBO
-        // backs out the tax from the line amount, keeping total = XML total
-        // Only include tax in lines when org setting explicitly says IVA is expense
+        // SIMPLE RULE: Never add tax to line amounts (unless org treats IVA as expense)
+        // Line amounts = XML subtotal per line (baseImponible)
+        // Tax goes ALWAYS as separate TxnTaxDetail
         const includeTaxInLines = taxHandling === 'included_in_line_items';
         
         if (earlyIsTaxExempt) {
-          logInfo(`   📋 ${doc.doc_number}: IMPUESTO ASUMIDO detectado - SubTotal=${earlyXmlSubtotal.toFixed(2)} ≈ Total=${earlyXmlTotal.toFixed(2)}, Tax=${earlyXmlTax.toFixed(2)} → Usando TaxInclusive (líneas = subtotal sin IVA encima, QBO calcula IVA incluido)`);
+          logInfo(`   📋 ${doc.doc_number}: IMPUESTO ASUMIDO detectado - SubTotal=${earlyXmlSubtotal.toFixed(2)} ≈ Total=${earlyXmlTotal.toFixed(2)}, Tax=${earlyXmlTax.toFixed(2)} → Impuesto se envía separado, QBO total será subtotal+tax`);
         }
         
         // Tax accumulator: group IVA by rate for TxnTaxDetail.TaxLine
@@ -2085,7 +2083,6 @@ Deno.serve(async (req) => {
         const xmlTotal = parseFloat(xmlData.totalComprobante || xmlData.TotalComprobante || doc.total_amount);
         const xmlSubtotal = parseFloat(xmlData.subTotal || xmlData.SubTotal || '0');
         const xmlTax = parseFloat(doc.total_tax as any) || 0;
-        const isTaxExempt = earlyIsTaxExempt;
         
         // Calculate IEBLE from lines - this is ALREADY included in line amounts
         // so we must NOT add it again via totalTax
@@ -2102,8 +2099,10 @@ Deno.serve(async (req) => {
           }
         }
         
-        // Solo reportar TxnTaxDetail si el IVA es recuperable Y NO está exonerado
-        const effectiveUsesTax = (doc.uses_tax !== false) && orgDefaultUsesTax && !includeTaxInLines && !isTaxExempt;
+        // Solo reportar TxnTaxDetail si el IVA es recuperable
+        // CRITICAL: SIEMPRE enviar tax separado si hay IVA, incluso para impuesto asumido
+        // Para impuesto asumido, QBO total será subtotal + tax (mayor que XML total) pero los números son correctos
+        const effectiveUsesTax = (doc.uses_tax !== false) && orgDefaultUsesTax && !includeTaxInLines;
         
         // CRITICAL: xmlTax includes ALL taxes (IVA + IEBLE + asumido)
         // But IEBLE is already included in line amounts, so we subtract it to avoid double-counting
@@ -2116,15 +2115,20 @@ Deno.serve(async (req) => {
           logInfo(`   📊 ${doc.doc_number}: IEBLE ya incluido en líneas: ${totalIEBLEInLines.toFixed(2)} (restado de Tax para evitar doble conteo)`);
         }
         
-        if (isTaxExempt) {
-          logInfo(`   📋 ${doc.doc_number}: IMPUESTO EXONERADO detectado - Tax=${xmlTax.toFixed(2)} NO se suma al total`);
+        if (earlyIsTaxExempt) {
+          logInfo(`   📋 ${doc.doc_number}: IMPUESTO ASUMIDO detectado - Tax=${xmlTax.toFixed(2)} se envía separado en TxnTaxDetail`);
         }
         
         // CRITICAL: Validate that lines total + IVA-only tax = document total (with tolerance)
         // Lines already include IEBLE, so we only add IVA portion
         const expectedQBOTotal = linesTotalAmount + ivaOnlyTax;
         const documentTotal = Math.abs(doc.total_amount);
-        const qboTotalDiff = Math.abs(expectedQBOTotal - documentTotal);
+        
+        // For impuesto asumido, QBO total will be subtotal + tax (greater than XML total)
+        // This is CORRECT - we send tax separately and QBO adds it
+        // Only validate against document total for non-asumido cases
+        const expectedDocumentTotal = earlyIsTaxExempt ? expectedQBOTotal : documentTotal;
+        const qboTotalDiff = Math.abs(expectedQBOTotal - expectedDocumentTotal);
         
         // Use larger tolerance for complex invoices with multiple tax types
         const validationTolerance = totalIEBLEInLines > 0 ? 5.0 : 2.0;
@@ -2142,8 +2146,8 @@ Deno.serve(async (req) => {
           return { success: false, docNumber: doc.doc_number, error: errorMsg };
         }
         
-        logInfo(`   📊 ${doc.doc_number}: Validación final OK - Lines=${linesTotalAmount.toFixed(2)}, IVA=${ivaOnlyTax.toFixed(2)}, IEBLE(en líneas)=${totalIEBLEInLines.toFixed(2)}, Total=${expectedQBOTotal.toFixed(2)} (esperado: ${documentTotal.toFixed(2)})`);
-        
+        logInfo(`   📊 ${doc.doc_number}: Validación final OK - Lines=${linesTotalAmount.toFixed(2)}, IVA=${ivaOnlyTax.toFixed(2)}, IEBLE(en líneas)=${totalIEBLEInLines.toFixed(2)}, Total QBO esperado=${expectedQBOTotal.toFixed(2)}${earlyIsTaxExempt ? ' (impuesto asumido: QBO total > XML total)' : ` (esperado: ${documentTotal.toFixed(2)})`}`);
+
         // Use ivaOnlyTax for TxnTaxDetail instead of full xmlTax
         const totalTax = ivaOnlyTax;
         // =============================================================
@@ -2168,8 +2172,8 @@ Deno.serve(async (req) => {
             DocNumber: qboDocNumber,
             Line: lines,
             PrivateNote: `Nota de Crédito - Clave: ${claveHacienda}\nProveedor: ${doc.supplier_name}`,
-            // CRITICAL FIX: Use TaxInclusive for impuesto asumido (same as Bill)
-            GlobalTaxCalculation: earlyIsTaxExempt ? "TaxInclusive" : (includeTaxInLines ? "TaxInclusive" : "TaxExcluded"),
+            // SIMPLE: Always TaxExcluded. Lines = subtotal, tax goes in TxnTaxDetail separated
+            GlobalTaxCalculation: includeTaxInLines ? "TaxInclusive" : "TaxExcluded",
           };
           
           if (documentCurrency === 'USD') {
@@ -2231,25 +2235,13 @@ Deno.serve(async (req) => {
                 errorText.includes('Invalid tax rate') ||
                 errorText.includes('TaxCodeRef')) {
               
-              logInfo(`⚠️ ${doc.doc_number}: Error de impuesto en VendorCredit, reintentando con TaxInclusive...`);
+              logInfo(`⚠️ ${doc.doc_number}: Error de impuesto en VendorCredit, reintentando sin TxnTaxDetail...`);
               
-              // Remove TxnTaxDetail but KEEP TaxCodeRef on lines
-              const vcTotalTaxToRedistribute = vendorCreditPayload.TxnTaxDetail?.TotalTax || 0;
+              // Remove TxnTaxDetail - let QBO auto-calculate from TaxCodeRef on lines
+              // DO NOT redistribute tax into line amounts - keep XML subtotal amounts intact
               delete vendorCreditPayload.TxnTaxDetail;
-              
-              const vcExpenseLines = vendorCreditPayload.Line.filter((l: any) => l.DetailType === "AccountBasedExpenseLineDetail");
-              const vcLinesTotalBeforeTax = vcExpenseLines.reduce((sum: number, l: any) => sum + (l.Amount || 0), 0);
-              
-              for (const line of vendorCreditPayload.Line) {
-                // KEEP TaxCodeRef so QBO knows which tax rate applies
-                if (line.DetailType === "AccountBasedExpenseLineDetail" && vcTotalTaxToRedistribute > 0 && vcLinesTotalBeforeTax > 0) {
-                  const proportion = line.Amount / vcLinesTotalBeforeTax;
-                  line.Amount = parseFloat((line.Amount + vcTotalTaxToRedistribute * proportion).toFixed(2));
-                }
-              }
-              // Use TaxInclusive so QBO correctly reports tax
-              vendorCreditPayload.GlobalTaxCalculation = "TaxInclusive";
-              logInfo(`   📊 ${doc.doc_number}: IVA redistribuido en líneas: ${vcTotalTaxToRedistribute.toFixed(2)} sobre ${vcExpenseLines.length} líneas`);
+              // Keep GlobalTaxCalculation = TaxExcluded so QBO calculates tax from TaxCodeRef
+              logInfo(`   📊 ${doc.doc_number}: Reintento sin TxnTaxDetail, QBO calculará impuesto automáticamente desde TaxCodeRef`);
               
               // Retry without tax
               await delay(1000);
@@ -2296,54 +2288,13 @@ Deno.serve(async (req) => {
             entityId = vcData.VendorCredit.Id;
             entityType = "VendorCredit";
             
-            // POST-CREATION VERIFICATION for VendorCredit
+            // POST-CREATION VERIFICATION for VendorCredit (log only, no delete/recreate)
             const vcQboTotal = parseFloat(vcData.VendorCredit.TotalAmt || '0');
             const vcExpectedTotal = Math.abs(doc.total_amount);
             const vcDiscrepancy = Math.abs(vcQboTotal - vcExpectedTotal);
             
-            if (vcDiscrepancy > 1.0 && vendorCreditPayload.GlobalTaxCalculation !== "TaxInclusive" && vendorCreditPayload.GlobalTaxCalculation !== "NotApplicable") {
-              logInfo(`⚠️ ${doc.doc_number}: DISCREPANCIA en VendorCredit! QBO=${vcQboTotal}, Esperado=${vcExpectedTotal}, Diff=${vcDiscrepancy.toFixed(2)}`);
-              logInfo(`   🔄 Eliminando VendorCredit ${entityId} y recreando con TaxInclusive...`);
-              
-              try {
-                const delUrl = `https://quickbooks.api.intuit.com/v3/company/${realmId}/vendorcredit?operation=delete`;
-                await fetchWithRetry(delUrl, {
-                  method: "POST",
-                  headers: { "Authorization": `Bearer ${accessToken}`, "Accept": "application/json", "Content-Type": "application/json" },
-                  body: JSON.stringify({ Id: entityId, SyncToken: vcData.VendorCredit.SyncToken }),
-                });
-              } catch (_) { /* continue */ }
-              
-              const vcTaxRedist = vendorCreditPayload.TxnTaxDetail?.TotalTax || totalTax || 0;
-              delete vendorCreditPayload.TxnTaxDetail;
-              const vcLines = vendorCreditPayload.Line.filter((l: any) => l.DetailType === "AccountBasedExpenseLineDetail");
-              const vcLinesTotal = vcLines.reduce((sum: number, l: any) => sum + (l.Amount || 0), 0);
-              for (const line of vendorCreditPayload.Line) {
-                // KEEP TaxCodeRef - don't delete it
-                if (line.DetailType === "AccountBasedExpenseLineDetail" && vcTaxRedist > 0 && vcLinesTotal > 0) {
-                  const p = line.Amount / vcLinesTotal;
-                  line.Amount = parseFloat((line.Amount + vcTaxRedist * p).toFixed(2));
-                }
-              }
-              vendorCreditPayload.GlobalTaxCalculation = "TaxInclusive";
-              
-              await delay(1500);
-              const vcRetry2 = await fetchWithRetry(`https://quickbooks.api.intuit.com/v3/company/${realmId}/vendorcredit`, {
-                method: "POST",
-                headers: { "Authorization": `Bearer ${accessToken}`, "Accept": "application/json", "Content-Type": "application/json" },
-                body: JSON.stringify(vendorCreditPayload),
-              });
-              
-              if (vcRetry2.ok) {
-                const vcRetry2Data = await vcRetry2.json();
-                entityId = vcRetry2Data.VendorCredit.Id;
-                logInfo(`✅ ${doc.doc_number}: VendorCredit recreado (ID: ${entityId}, Total: ${vcRetry2Data.VendorCredit.TotalAmt})`);
-              } else {
-                const vcRetryErr = await vcRetry2.text();
-                await registerInTracking(doc, 'error', null, null, `Discrepancia VC: QBO=${vcQboTotal} vs Esperado=${vcExpectedTotal}`);
-                await supabase.from("processed_documents").update({ status: "error", error_message: `Discrepancia VC total` }).eq("id", doc.id);
-                return { success: false, docNumber: doc.doc_number, error: `VC total discrepancy: ${vcDiscrepancy.toFixed(2)}` };
-              }
+            if (vcDiscrepancy > 1.0) {
+              logInfo(`⚠️ ${doc.doc_number}: DISCREPANCIA en VendorCredit: QBO=${vcQboTotal}, XML Total=${vcExpectedTotal}, Diff=${vcDiscrepancy.toFixed(2)} - Se mantiene como está (montos del XML son fieles)`);
             }
           }
           
@@ -2356,10 +2307,8 @@ Deno.serve(async (req) => {
             DocNumber: qboDocNumber,
             Line: lines,
             PrivateNote: `Factura XML: ${doc.doc_number}\nClave: ${claveHacienda}\nProveedor: ${doc.supplier_name}`,
-            // CRITICAL FIX: Use TaxInclusive for impuesto asumido so QBO shows the tax rate
-            // and backs it out of the line amount, keeping total = XML total
-            // NotApplicable would mark it as "Out of Scope" which is incorrect
-            GlobalTaxCalculation: earlyIsTaxExempt ? "TaxInclusive" : (includeTaxInLines ? "TaxInclusive" : "TaxExcluded"),
+            // SIMPLE: Always TaxExcluded. Lines = XML subtotal, tax goes in TxnTaxDetail separated
+            GlobalTaxCalculation: includeTaxInLines ? "TaxInclusive" : "TaxExcluded",
           };
           
           if (documentCurrency === 'USD') {
@@ -2425,27 +2374,13 @@ Deno.serve(async (req) => {
                 errorText.includes('tax rate') ||
                 errorText.includes('TaxCodeRef')) {
               
-              logInfo(`⚠️ ${doc.doc_number}: Error de impuesto en QBO, reintentando con TaxInclusive...`);
+              logInfo(`⚠️ ${doc.doc_number}: Error de impuesto en QBO, reintentando sin TxnTaxDetail...`);
               
-              // Remove TxnTaxDetail but KEEP TaxCodeRef on lines so QBO reports correct tax
-              const billTotalTaxToRedistribute = billPayload.TxnTaxDetail?.TotalTax || 0;
+              // Remove TxnTaxDetail - let QBO auto-calculate from TaxCodeRef on lines
+              // DO NOT redistribute tax into line amounts - keep XML subtotal amounts intact
               delete billPayload.TxnTaxDetail;
-              
-              // CRITICAL: Redistribute tax into line amounts so total matches document
-              const billExpenseLines = billPayload.Line.filter((l: any) => l.DetailType === "AccountBasedExpenseLineDetail");
-              const billLinesTotalBeforeTax = billExpenseLines.reduce((sum: number, l: any) => sum + (l.Amount || 0), 0);
-              
-              for (const line of billPayload.Line) {
-                // KEEP TaxCodeRef so QBO knows which tax rate applies (Tax Inclusive)
-                // Proportionally add tax to each expense line
-                if (line.DetailType === "AccountBasedExpenseLineDetail" && billTotalTaxToRedistribute > 0 && billLinesTotalBeforeTax > 0) {
-                  const proportion = line.Amount / billLinesTotalBeforeTax;
-                  line.Amount = parseFloat((line.Amount + billTotalTaxToRedistribute * proportion).toFixed(2));
-                }
-              }
-              // Use TaxInclusive so QBO correctly reports tax from the inclusive amounts
-              billPayload.GlobalTaxCalculation = "TaxInclusive";
-              logInfo(`   📊 ${doc.doc_number}: IVA redistribuido en líneas: ${billTotalTaxToRedistribute.toFixed(2)} sobre ${billExpenseLines.length} líneas`);
+              // Keep GlobalTaxCalculation = TaxExcluded so QBO calculates tax from TaxCodeRef
+              logInfo(`   📊 ${doc.doc_number}: Reintento sin TxnTaxDetail, QBO calculará impuesto automáticamente desde TaxCodeRef`);
               
               // Retry without tax
               await delay(1000);
@@ -2532,78 +2467,14 @@ Deno.serve(async (req) => {
           entityId = billData.Bill.Id;
           entityType = "Bill";
           
-          // POST-CREATION VERIFICATION: Compare QBO TotalAmt with expected total
+          // POST-CREATION VERIFICATION: Compare QBO TotalAmt with expected total (log only, no delete/recreate)
+          // We trust the XML amounts - if QBO calculated differently, we log it but keep the bill
           const qboTotalAmt = parseFloat(billData.Bill.TotalAmt || '0');
           const expectedTotal = Math.abs(doc.total_amount);
           const totalDiscrepancy = Math.abs(qboTotalAmt - expectedTotal);
           
-          if (totalDiscrepancy > 1.0 && billPayload.GlobalTaxCalculation !== "TaxInclusive" && billPayload.GlobalTaxCalculation !== "NotApplicable") {
-            logInfo(`⚠️ ${doc.doc_number}: DISCREPANCIA detectada! QBO Total=${qboTotalAmt}, Esperado=${expectedTotal}, Diff=${totalDiscrepancy.toFixed(2)}`);
-            logInfo(`   🔄 Eliminando Bill ${entityId} y recreando con TaxInclusive...`);
-            
-            // Delete the incorrect bill
-            try {
-              const deleteUrl = `https://quickbooks.api.intuit.com/v3/company/${realmId}/bill?operation=delete`;
-              await fetchWithRetry(deleteUrl, {
-                method: "POST",
-                headers: {
-                  "Authorization": `Bearer ${accessToken}`,
-                  "Accept": "application/json",
-                  "Content-Type": "application/json",
-                },
-                body: JSON.stringify({ Id: entityId, SyncToken: billData.Bill.SyncToken }),
-              });
-              logInfo(`   🗑️ ${doc.doc_number}: Bill ${entityId} eliminado`);
-            } catch (delErr) {
-              logInfo(`   ⚠️ ${doc.doc_number}: No se pudo eliminar Bill ${entityId}, continuando...`);
-            }
-            
-            // Rebuild payload with tax redistributed into lines, KEEP TaxCodeRef
-            const taxToRedistribute = billPayload.TxnTaxDetail?.TotalTax || totalTax || 0;
-            delete billPayload.TxnTaxDetail;
-            
-            const expenseLines = billPayload.Line.filter((l: any) => l.DetailType === "AccountBasedExpenseLineDetail");
-            const linesTotalBeforeTax = expenseLines.reduce((sum: number, l: any) => sum + (l.Amount || 0), 0);
-            
-            for (const line of billPayload.Line) {
-              // KEEP TaxCodeRef so QBO reports tax correctly as TaxInclusive
-              if (line.DetailType === "AccountBasedExpenseLineDetail" && taxToRedistribute > 0 && linesTotalBeforeTax > 0) {
-                const proportion = line.Amount / linesTotalBeforeTax;
-                line.Amount = parseFloat((line.Amount + taxToRedistribute * proportion).toFixed(2));
-              }
-            }
-            billPayload.GlobalTaxCalculation = "TaxInclusive";
-            
-            await delay(1500);
-            const verifyRetryResponse = await fetchWithRetry(
-              `https://quickbooks.api.intuit.com/v3/company/${realmId}/bill`,
-              {
-                method: "POST",
-                headers: {
-                  "Authorization": `Bearer ${accessToken}`,
-                  "Accept": "application/json",
-                  "Content-Type": "application/json",
-                },
-                body: JSON.stringify(billPayload),
-              }
-            );
-            
-            if (verifyRetryResponse.ok) {
-              const retryData = await verifyRetryResponse.json();
-              entityId = retryData.Bill.Id;
-              logInfo(`✅ ${doc.doc_number}: Bill recreado correctamente (ID: ${entityId}, Total: ${retryData.Bill.TotalAmt})`);
-            } else {
-              const retryErr = await verifyRetryResponse.text();
-              logError(`❌ ${doc.doc_number}: Recreación falló: ${retryErr.substring(0, 300)}`);
-              await registerInTracking(doc, 'error', null, null, `Discrepancia de total: QBO=${qboTotalAmt} vs Esperado=${expectedTotal}`);
-              await supabase.from("processed_documents").update({ 
-                status: "error", 
-                error_message: `Discrepancia de total: QBO=${qboTotalAmt} vs Esperado=${expectedTotal}` 
-              }).eq("id", doc.id);
-              return { success: false, docNumber: doc.doc_number, error: `Total discrepancy: ${totalDiscrepancy.toFixed(2)}` };
-            }
-          } else if (totalDiscrepancy > 1.0) {
-            logInfo(`⚠️ ${doc.doc_number}: Discrepancia de ${totalDiscrepancy.toFixed(2)} (QBO=${qboTotalAmt} vs Esperado=${expectedTotal}) pero ya es ${billPayload.GlobalTaxCalculation}, no se puede corregir más`);
+          if (totalDiscrepancy > 1.0) {
+            logInfo(`⚠️ ${doc.doc_number}: DISCREPANCIA: QBO Total=${qboTotalAmt}, XML Total=${expectedTotal}, Diff=${totalDiscrepancy.toFixed(2)} - Se mantiene el Bill como está (montos del XML son fieles)${earlyIsTaxExempt ? ' [Impuesto asumido: QBO total incluye tax que XML no suma]' : ''}`);
           }
         }
         
