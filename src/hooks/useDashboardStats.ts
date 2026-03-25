@@ -124,6 +124,7 @@ export const useOrganizationConnections = (organizationId: string | null) => {
         quickbooks: accounts.some(a => a.service_type === "quickbooks"),
         outlook: accounts.some(a => a.service_type === "outlook"),
         hostinger: accounts.some(a => a.service_type === "hostinger"),
+        bluehost: accounts.some(a => a.service_type === "bluehost"),
       };
     },
     enabled: !!organizationId,
