@@ -579,21 +579,8 @@ const Dashboard = () => {
           <Card className="p-6 space-y-4">
             <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
               <Database className="h-5 w-5 text-primary" />
-              Acciones Rápidas
+              Conexiones
             </h3>
-            
-            {(stats.errors > 0 || stats.review > 0) && (
-              <div className="space-y-3">
-                <Suspense fallback={<div className="h-9 bg-muted animate-pulse rounded" />}>
-                  <ProcessAllNowButton />
-                </Suspense>
-                <p className="text-xs text-muted-foreground text-center">
-                  Procesa automáticamente {stats.review} en revisión y {stats.errors} con error
-                </p>
-              </div>
-            )}
-            
-            <h3 className="text-sm font-semibold mt-6 mb-3">Conexiones</h3>
             <div className="space-y-4">
               <ConnectionStatus 
                 service="Gmail" 
@@ -606,8 +593,8 @@ const Dashboard = () => {
                 onClick={() => navigate("/integrations")}
               />
               <ConnectionStatus 
-                service="SharePoint" 
-                status="disconnected"
+                service="Bluehost" 
+                status={connections.bluehost ? "connected" : "disconnected"}
                 onClick={() => navigate("/integrations")}
               />
             </div>
