@@ -279,10 +279,6 @@ const Dashboard = () => {
           </header>
 
           <main className="p-6">
-            <Suspense fallback={<LazyFallback />}>
-              <AICreditsMonitor organizationId={activeOrganization} />
-            </Suspense>
-        
             <div className="mb-6">
               <div className="flex items-center justify-between mb-4">
                 <div>
@@ -301,15 +297,9 @@ const Dashboard = () => {
               </div>
             </div>
 
-            <Suspense fallback={null}>
-              <MissingTaxIdAlert organizationId={activeOrganization} />
-            </Suspense>
-            <GmailTokenAlert />
-            <QuickBooksTokenAlert />
-
-            {/* Quick Actions Section - Redesigned */}
+            {/* Quick Actions Section - FIRST, most visible */}
             <Card className="mb-6">
-              <CardHeader>
+              <CardHeader className="pb-3">
                 <CardTitle className="text-lg">Acciones Rápidas</CardTitle>
                 <CardDescription>Gestión y sincronización de facturas</CardDescription>
               </CardHeader>
@@ -351,6 +341,16 @@ const Dashboard = () => {
                 </div>
               </CardContent>
             </Card>
+
+            {/* Alerts after quick actions */}
+            <Suspense fallback={<LazyFallback />}>
+              <AICreditsMonitor organizationId={activeOrganization} />
+            </Suspense>
+            <Suspense fallback={null}>
+              <MissingTaxIdAlert organizationId={activeOrganization} />
+            </Suspense>
+            <GmailTokenAlert />
+            <QuickBooksTokenAlert />
         
             <div className="mb-6">
               <Suspense fallback={<LazyFallback />}>
