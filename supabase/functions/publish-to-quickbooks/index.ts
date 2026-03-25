@@ -2239,13 +2239,20 @@ Deno.serve(async (req) => {
                 errorText.includes('Invalid tax rate') ||
                 errorText.includes('TaxCodeRef')) {
               
-              logInfo(`⚠️ ${doc.doc_number}: Error de impuesto en VendorCredit, reintentando sin TxnTaxDetail...`);
+              logInfo(`⚠️ ${doc.doc_number}: Error de impuesto en VendorCredit, reintentando con TaxInclusive...`);
               
-              // Remove TxnTaxDetail - let QBO auto-calculate from TaxCodeRef on lines
-              // DO NOT redistribute tax into line amounts - keep XML subtotal amounts intact
+              // FIXED: Switch to TaxInclusive and use montoTotalLinea as line amounts
               delete vendorCreditPayload.TxnTaxDetail;
-              // Keep GlobalTaxCalculation = TaxExcluded so QBO calculates tax from TaxCodeRef
-              logInfo(`   📊 ${doc.doc_number}: Reintento sin TxnTaxDetail, QBO calculará impuesto automáticamente desde TaxCodeRef`);
+              vendorCreditPayload.GlobalTaxCalculation = "TaxInclusive";
+              
+              // Redistribute: each line amount becomes montoTotalLinea
+              for (const line of vendorCreditPayload.Line) {
+                if (line._montoTotalLinea && line._montoTotalLinea > line.Amount) {
+                  logInfo(`   📊 ${doc.doc_number}: VC Line ${line.Amount} → ${line._montoTotalLinea} (TaxInclusive)`);
+                  line.Amount = parseFloat(line._montoTotalLinea.toFixed(2));
+                }
+              }
+              logInfo(`   📊 ${doc.doc_number}: Reintento VendorCredit TaxInclusive`);
               
               // Retry without tax
               await delay(1000);
