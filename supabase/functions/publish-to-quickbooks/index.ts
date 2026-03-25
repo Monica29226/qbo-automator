@@ -1964,6 +1964,10 @@ Deno.serve(async (req) => {
                 lineDetail.AccountBasedExpenseLineDetail.TaxCodeRef = { value: taxCodeId };
               }
               
+              // Store montoTotalLinea for TaxInclusive retry fallback
+              const montoTotalLinea = parseFloat(item.montoTotalLinea) || (Math.abs(subtotal) + Math.abs(montoImpuestoIVA) + Math.abs(montoImpuestoIEBLE));
+              lineDetail._montoTotalLinea = montoTotalLinea;
+              
               lines.push(lineDetail);
               
               // Accumulate IVA by rate for TxnTaxDetail.TaxLine
