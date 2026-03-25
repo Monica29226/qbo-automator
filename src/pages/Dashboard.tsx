@@ -79,9 +79,10 @@ const Dashboard = () => {
     quickbooks: connections.quickbooks,
     outlook: connections.outlook,
     hostinger: connections.hostinger,
-    email: connections.gmail || connections.outlook || connections.hostinger,
-    both: (connections.gmail || connections.outlook || connections.hostinger) && connections.quickbooks
-  }), [connections.gmail, connections.quickbooks, connections.outlook, connections.hostinger]);
+    bluehost: connections.bluehost,
+    email: connections.gmail || connections.outlook || connections.hostinger || connections.bluehost,
+    both: (connections.gmail || connections.outlook || connections.hostinger || connections.bluehost) && connections.quickbooks
+  }), [connections.gmail, connections.quickbooks, connections.outlook, connections.hostinger, connections.bluehost]);
   
   // Helper to refresh data after actions
   const refreshData = useCallback(() => {
