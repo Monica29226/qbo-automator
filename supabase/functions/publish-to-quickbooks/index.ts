@@ -1868,7 +1868,11 @@ Deno.serve(async (req) => {
         const earlyIsTaxExempt = Math.abs(earlyXmlTax) > 0 && earlyXmlSubtotal > 0 && Math.abs(Math.abs(earlyXmlTotal) - Math.abs(earlyXmlSubtotal)) < 1.0;
         
         // Force IVA into line amounts when tax is "asumido" (exempt from total)
-        const includeTaxInLines = taxHandling === 'included_in_line_items' || earlyIsTaxExempt;
+        // CRITICAL FIX: Do NOT include tax in lines for "impuesto asumido" (earlyIsTaxExempt)
+        // For impuesto asumido, line amount = subtotal (base), and we use TaxInclusive so QBO
+        // backs out the tax from the line amount, keeping total = XML total
+        // Only include tax in lines when org setting explicitly says IVA is expense
+        const includeTaxInLines = taxHandling === 'included_in_line_items';
         
         if (earlyIsTaxExempt) {
           logInfo(`   📋 ${doc.doc_number}: IMPUESTO ASUMIDO detectado temprano - SubTotal=${earlyXmlSubtotal.toFixed(2)} ≈ Total=${earlyXmlTotal.toFixed(2)}, Tax=${earlyXmlTax.toFixed(2)} → IVA incluido en líneas`);
