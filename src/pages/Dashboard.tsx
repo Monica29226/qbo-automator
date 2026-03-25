@@ -17,6 +17,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useDashboardStats, useOrganizationConnections } from "@/hooks/useDashboardStats";
 import { ImportBatchDialog } from "@/components/dashboard/ImportBatchDialog";
 import { SearchInvoiceDialog } from "@/components/dashboard/SearchInvoiceDialog";
+import { ReconcileXmlQboButton } from "@/components/dashboard/ReconcileXmlQboButton";
 
 // Lazy load componentes pesados
 const RecentDocuments = lazy(() => import("@/components/dashboard/RecentDocuments").then(m => ({ default: m.RecentDocuments })));
