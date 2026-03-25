@@ -2529,9 +2529,9 @@ Deno.serve(async (req) => {
           const expectedTotal = Math.abs(doc.total_amount);
           const totalDiscrepancy = Math.abs(qboTotalAmt - expectedTotal);
           
-          if (totalDiscrepancy > 1.0 && billPayload.GlobalTaxCalculation !== "NotApplicable") {
+          if (totalDiscrepancy > 1.0 && billPayload.GlobalTaxCalculation !== "TaxInclusive" && billPayload.GlobalTaxCalculation !== "NotApplicable") {
             logInfo(`⚠️ ${doc.doc_number}: DISCREPANCIA detectada! QBO Total=${qboTotalAmt}, Esperado=${expectedTotal}, Diff=${totalDiscrepancy.toFixed(2)}`);
-            logInfo(`   🔄 Eliminando Bill ${entityId} y recreando con impuesto redistribuido...`);
+            logInfo(`   🔄 Eliminando Bill ${entityId} y recreando con TaxInclusive...`);
             
             // Delete the incorrect bill
             try {
@@ -2550,7 +2550,7 @@ Deno.serve(async (req) => {
               logInfo(`   ⚠️ ${doc.doc_number}: No se pudo eliminar Bill ${entityId}, continuando...`);
             }
             
-            // Rebuild payload with tax redistributed into lines
+            // Rebuild payload with tax redistributed into lines, KEEP TaxCodeRef
             const taxToRedistribute = billPayload.TxnTaxDetail?.TotalTax || totalTax || 0;
             delete billPayload.TxnTaxDetail;
             
@@ -2558,15 +2558,13 @@ Deno.serve(async (req) => {
             const linesTotalBeforeTax = expenseLines.reduce((sum: number, l: any) => sum + (l.Amount || 0), 0);
             
             for (const line of billPayload.Line) {
-              if (line.AccountBasedExpenseLineDetail?.TaxCodeRef) {
-                delete line.AccountBasedExpenseLineDetail.TaxCodeRef;
-              }
+              // KEEP TaxCodeRef so QBO reports tax correctly as TaxInclusive
               if (line.DetailType === "AccountBasedExpenseLineDetail" && taxToRedistribute > 0 && linesTotalBeforeTax > 0) {
                 const proportion = line.Amount / linesTotalBeforeTax;
                 line.Amount = parseFloat((line.Amount + taxToRedistribute * proportion).toFixed(2));
               }
             }
-            billPayload.GlobalTaxCalculation = "NotApplicable";
+            billPayload.GlobalTaxCalculation = "TaxInclusive";
             
             await delay(1500);
             const verifyRetryResponse = await fetchWithRetry(
