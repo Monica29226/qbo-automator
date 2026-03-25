@@ -1,13 +1,9 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { FileText, CheckCircle, AlertCircle, Clock, Upload, Mail, RefreshCw, Send, FileCheck, Building2, Database } from "lucide-react";
+import { FileText, CheckCircle, AlertCircle, Clock, RefreshCw, Send, Building2, Database } from "lucide-react";
 import { StatsCard } from "@/components/dashboard/StatsCard";
 import { OrganizationSwitcher } from "@/components/OrganizationSwitcher";
-import { GmailFetchDialog } from "@/components/GmailFetchDialog";
-import { OutlookFetchDialog } from "@/components/OutlookFetchDialog";
-import { HostingerFetchDialog } from "@/components/HostingerFetchDialog";
-import { BluehostFetchDialog } from "@/components/BluehostFetchDialog";
 import { GmailTokenAlert } from "@/components/dashboard/GmailTokenAlert";
 import { QuickBooksTokenAlert } from "@/components/dashboard/QuickBooksTokenAlert";
 import { DashboardSidebar } from "@/components/DashboardSidebar";
@@ -19,34 +15,23 @@ import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
 import { useDashboardStats, useOrganizationConnections } from "@/hooks/useDashboardStats";
+import { ImportBatchDialog } from "@/components/dashboard/ImportBatchDialog";
+import { SearchInvoiceDialog } from "@/components/dashboard/SearchInvoiceDialog";
 
-// Lazy load componentes pesados para mejorar tiempo de carga inicial
+// Lazy load componentes pesados
 const RecentDocuments = lazy(() => import("@/components/dashboard/RecentDocuments").then(m => ({ default: m.RecentDocuments })));
 const CronMonitor = lazy(() => import("@/components/dashboard/CronMonitor").then(m => ({ default: m.CronMonitor })));
 const AICreditsMonitor = lazy(() => import("@/components/dashboard/AICreditsMonitor").then(m => ({ default: m.AICreditsMonitor })));
-const QBOAccountsDiagnostic = lazy(() => import("@/components/dashboard/QBOAccountsDiagnostic").then(m => ({ default: m.QBOAccountsDiagnostic })));
 const ErrorLogsViewer = lazy(() => import("@/components/dashboard/ErrorLogsViewer").then(m => ({ default: m.ErrorLogsViewer })));
 const ErrorDocumentsModal = lazy(() => import("@/components/dashboard/ErrorDocumentsModal").then(m => ({ default: m.ErrorDocumentsModal })));
 const TotalsValidationTest = lazy(() => import("@/components/dashboard/TotalsValidationTest").then(m => ({ default: m.TotalsValidationTest })));
 const TodayProcessingReport = lazy(() => import("@/components/dashboard/TodayProcessingReport").then(m => ({ default: m.TodayProcessingReport })));
 const PendingVendorConfiguration = lazy(() => import("@/components/dashboard/PendingVendorConfiguration").then(m => ({ default: m.PendingVendorConfiguration })));
 const AutoPublishConfiguredInvoices = lazy(() => import("@/components/dashboard/AutoPublishConfiguredInvoices").then(m => ({ default: m.AutoPublishConfiguredInvoices })));
-const VerifyBillButton = lazy(() => import("@/components/dashboard/VerifyBillButton").then(m => ({ default: m.VerifyBillButton })));
-const SyncFromExcelDialog = lazy(() => import("@/components/SyncFromExcelDialog").then(m => ({ default: m.SyncFromExcelDialog })));
-const TestAutoSyncFlow = lazy(() => import("@/components/dashboard/TestAutoSyncFlow").then(m => ({ default: m.TestAutoSyncFlow })));
 const PendingDocumentsLog = lazy(() => import("@/components/dashboard/PendingDocumentsLog").then(m => ({ default: m.PendingDocumentsLog })));
-const BatchUploadToDriveButton = lazy(() => import("@/components/dashboard/BatchUploadToDriveButton").then(m => ({ default: m.BatchUploadToDriveButton })));
-const CleanIrrecoverableErrorsButton = lazy(() => import("@/components/dashboard/CleanIrrecoverableErrorsButton").then(m => ({ default: m.CleanIrrecoverableErrorsButton })));
-const ProcessAllNowButton = lazy(() => import("@/components/dashboard/ProcessAllNowButton").then(m => ({ default: m.ProcessAllNowButton })));
 const VendorsWithoutRules = lazy(() => import("@/components/dashboard/VendorsWithoutRules").then(m => ({ default: m.VendorsWithoutRules })));
-const ErrorDiagnostic = lazy(() => import("@/components/dashboard/ErrorDiagnostic").then(m => ({ default: m.ErrorDiagnostic })));
-const SearchImportInvoice = lazy(() => import("@/components/dashboard/SearchImportInvoice").then(m => ({ default: m.SearchImportInvoice })));
-const BatchImportInvoices = lazy(() => import("@/components/dashboard/BatchImportInvoices").then(m => ({ default: m.BatchImportInvoices })));
-const PublishOrphanedInvoices = lazy(() => import("@/components/dashboard/PublishOrphanedInvoices").then(m => ({ default: m.PublishOrphanedInvoices })));
 const IVAModeIndicator = lazy(() => import("@/components/dashboard/IVAModeIndicator").then(m => ({ default: m.IVAModeIndicator })));
-const BatchDownloadMissingPdfs = lazy(() => import("@/components/dashboard/BatchDownloadMissingPdfs").then(m => ({ default: m.BatchDownloadMissingPdfs })));
 const QBOConnectionDiagnostic = lazy(() => import("@/components/dashboard/QBOConnectionDiagnostic").then(m => ({ default: m.QBOConnectionDiagnostic })));
-const AuditQBOBills = lazy(() => import("@/components/dashboard/AuditQBOBills").then(m => ({ default: m.AuditQBOBills })));
 const MissingTaxIdAlert = lazy(() => import("@/components/dashboard/MissingTaxIdAlert").then(m => ({ default: m.MissingTaxIdAlert })));
 
 // Componente de loading para lazy components
