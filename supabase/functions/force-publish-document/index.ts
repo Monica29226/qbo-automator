@@ -182,7 +182,6 @@ Deno.serve(async (req) => {
       throw new Error("Failed to search vendors in QuickBooks");
     }
 
-    // Build bill with simple single line using document total
     const isCreditNote = doc.doc_type?.toLowerCase().includes("nota") || 
                          doc.doc_type?.toLowerCase().includes("credit") ||
                          doc.doc_type === "NC" ||
@@ -192,27 +191,122 @@ Deno.serve(async (req) => {
       ? doc.doc_number.substring(doc.doc_number.length - 21)
       : doc.doc_number;
 
-    // Use document total directly, ignoring any tax complications
-    const totalAmount = Math.abs(doc.total_amount);
+    // Parse XML detail lines for proper tax handling
+    const xmlData = doc.xml_data as any;
+    const detalleLines = xmlData?.detalle || [];
+    const totalTax = Math.abs(doc.total_tax || 0);
+    const hasTax = totalTax > 0.001;
     
+    const billLines: any[] = [];
+    const taxByRate: Record<number, { taxAmount: number; netAmount: number }> = {};
+    
+    if (detalleLines.length > 0) {
+      for (const item of detalleLines) {
+        const cantidad = parseFloat(item.cantidad) || 1;
+        let subtotal = parseFloat(item.subtotal) || (cantidad * (parseFloat(item.precioUnitario) || 0));
+        if (isCreditNote) subtotal = -Math.abs(subtotal);
+        
+        let montoImpuestoIVA = 0;
+        let tasaImpuesto = 0;
+        let montoImpuestoIEBLE = 0;
+        
+        if (item.impuestos && Array.isArray(item.impuestos)) {
+          for (const imp of item.impuestos) {
+            const codigo = imp.codigo || '';
+            const monto = parseFloat(imp.monto) || 0;
+            if (codigo === '01') {
+              tasaImpuesto = parseFloat(imp.tarifa) || 0;
+              montoImpuestoIVA = monto;
+            } else if (codigo === '07') {
+              montoImpuestoIEBLE = monto;
+            }
+          }
+          if (isCreditNote) {
+            montoImpuestoIVA = -Math.abs(montoImpuestoIVA);
+            montoImpuestoIEBLE = -Math.abs(montoImpuestoIEBLE);
+          }
+        } else {
+          tasaImpuesto = parseFloat(item.tarifa) || 0;
+          montoImpuestoIVA = parseFloat(item.montoImpuesto) || 0;
+          if (isCreditNote) montoImpuestoIVA = -Math.abs(montoImpuestoIVA);
+        }
+        
+        // Line amount = subtotal (base) + IEBLE (always expense)
+        let lineAmount = subtotal;
+        if (Math.abs(montoImpuestoIEBLE) > 0) lineAmount += Math.abs(montoImpuestoIEBLE);
+        
+        const montoTotalLinea = parseFloat(item.montoTotalLinea) || (Math.abs(subtotal) + Math.abs(montoImpuestoIVA) + Math.abs(montoImpuestoIEBLE));
+        
+        if (Math.abs(lineAmount) > 0.001) {
+          const descripcion = item.descripcion || item.detalle || 'Línea de factura';
+          billLines.push({
+            DetailType: "AccountBasedExpenseLineDetail",
+            Amount: Math.abs(lineAmount),
+            Description: `${isCreditNote ? 'NC' : 'Factura'} ${doc.doc_number} - ${descripcion}`.substring(0, 4000),
+            AccountBasedExpenseLineDetail: {
+              AccountRef: { value: accountRef },
+            },
+            _montoTotalLinea: montoTotalLinea,
+          });
+          
+          // Accumulate IVA by rate
+          if (tasaImpuesto > 0 && Math.abs(montoImpuestoIVA) > 0.001) {
+            const rateKey = Math.round(tasaImpuesto);
+            if (!taxByRate[rateKey]) taxByRate[rateKey] = { taxAmount: 0, netAmount: 0 };
+            taxByRate[rateKey].taxAmount += Math.abs(montoImpuestoIVA);
+            taxByRate[rateKey].netAmount += Math.abs(subtotal);
+          }
+        }
+      }
+    }
+    
+    // Fallback: single line if no detail lines parsed
+    if (billLines.length === 0) {
+      const lineAmount = hasTax ? Math.abs(doc.total_amount - totalTax) : Math.abs(doc.total_amount);
+      billLines.push({
+        DetailType: "AccountBasedExpenseLineDetail",
+        Amount: lineAmount,
+        Description: `${isCreditNote ? 'NC' : 'Factura'} ${doc.doc_number} - ${doc.supplier_name} (Publicación forzada)`,
+        AccountBasedExpenseLineDetail: {
+          AccountRef: { value: accountRef },
+        },
+        _montoTotalLinea: Math.abs(doc.total_amount),
+      });
+    }
+
     const billPayload: any = {
       VendorRef: { value: vendorId },
       TxnDate: doc.issue_date,
       DueDate: doc.issue_date,
       DocNumber: docNumber,
-      Line: [
-        {
-          DetailType: "AccountBasedExpenseLineDetail",
-          Amount: totalAmount,
-          Description: `${isCreditNote ? 'NC' : 'Factura'} ${doc.doc_number} - ${doc.supplier_name} (Publicación forzada)`,
-          AccountBasedExpenseLineDetail: {
-            AccountRef: { value: accountRef },
-          },
-        }
-      ],
+      Line: billLines,
       PrivateNote: `Publicación Forzada - Clave: ${doc.doc_key}\nMonto original: ${doc.total_amount} ${doc.currency}`,
-      GlobalTaxCalculation: "NotApplicable", // No tax calculation - total amount already includes everything
+      GlobalTaxCalculation: hasTax ? "TaxExcluded" : "NotApplicable",
     };
+    
+    // Add TxnTaxDetail if there's tax
+    if (hasTax) {
+      const taxLines: any[] = [];
+      for (const [rateStr, { taxAmount, netAmount }] of Object.entries(taxByRate)) {
+        const rate = Number(rateStr);
+        if (taxAmount > 0.001) {
+          taxLines.push({
+            Amount: parseFloat(taxAmount.toFixed(2)),
+            DetailType: "TaxLineDetail",
+            TaxLineDetail: {
+              PercentBased: true,
+              TaxPercent: rate,
+              NetAmountTaxable: parseFloat(netAmount.toFixed(2)),
+            },
+          });
+        }
+      }
+      if (taxLines.length > 0) {
+        billPayload.TxnTaxDetail = { TotalTax: parseFloat(totalTax.toFixed(2)), TaxLine: taxLines };
+      } else {
+        billPayload.TxnTaxDetail = { TotalTax: parseFloat(totalTax.toFixed(2)) };
+      }
+    }
 
     if (doc.currency === 'USD') {
       billPayload.CurrencyRef = { value: "USD" };
@@ -220,58 +314,65 @@ Deno.serve(async (req) => {
       if (exchangeRate > 1) billPayload.ExchangeRate = parseFloat(String(exchangeRate));
     }
 
-    console.log(`📤 Creating ${isCreditNote ? 'VendorCredit' : 'Bill'} with amount: ${totalAmount}`);
+    const lineTotal = billLines.reduce((sum: number, l: any) => sum + l.Amount, 0);
+    console.log(`📤 Creating ${isCreditNote ? 'VendorCredit' : 'Bill'} - Lines: ${lineTotal.toFixed(2)}, Tax: ${hasTax ? totalTax.toFixed(2) : '0'}`);
 
     await delay(500);
 
     let entityId: string;
     let entityType: string;
+    const endpoint = isCreditNote ? 'vendorcredit' : 'bill';
 
-    if (isCreditNote) {
-      const vcResponse = await fetch(
-        `https://quickbooks.api.intuit.com/v3/company/${realmId}/vendorcredit`,
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-            Accept: "application/json",
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(billPayload),
-        }
-      );
-
-      if (!vcResponse.ok) {
-        const errorText = await vcResponse.text();
-        throw new Error(`QuickBooks VendorCredit Error: ${errorText}`);
+    let response = await fetch(
+      `https://quickbooks.api.intuit.com/v3/company/${realmId}/${endpoint}`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          Accept: "application/json",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(billPayload),
       }
+    );
 
-      const vcData = await vcResponse.json();
-      entityId = vcData.VendorCredit.Id;
-      entityType = "VendorCredit";
-    } else {
-      const billResponse = await fetch(
-        `https://quickbooks.api.intuit.com/v3/company/${realmId}/bill`,
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-            Accept: "application/json",
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(billPayload),
+    // Tax error retry: switch to TaxInclusive
+    if (!response.ok && hasTax) {
+      const errorText = await response.text();
+      if (errorText.includes('impuesto') || errorText.includes('tax') || errorText.includes('TaxCodeRef') || errorText.includes('impositiva')) {
+        console.log(`⚠️ Tax error, retrying with TaxInclusive...`);
+        delete billPayload.TxnTaxDetail;
+        billPayload.GlobalTaxCalculation = "TaxInclusive";
+        for (const line of billPayload.Line) {
+          if (line._montoTotalLinea && line._montoTotalLinea > line.Amount) {
+            line.Amount = parseFloat(line._montoTotalLinea.toFixed(2));
+          }
         }
-      );
-
-      if (!billResponse.ok) {
-        const errorText = await billResponse.text();
-        throw new Error(`QuickBooks Bill Error: ${errorText}`);
+        await delay(500);
+        response = await fetch(
+          `https://quickbooks.api.intuit.com/v3/company/${realmId}/${endpoint}`,
+          {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+              Accept: "application/json",
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(billPayload),
+          }
+        );
       }
-
-      const billData = await billResponse.json();
-      entityId = billData.Bill.Id;
-      entityType = "Bill";
     }
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`QuickBooks ${isCreditNote ? 'VendorCredit' : 'Bill'} Error: ${errorText}`);
+    }
+
+    const responseData = await response.json();
+    const entityKey = isCreditNote ? 'VendorCredit' : 'Bill';
+    entityId = responseData[entityKey].Id;
+    entityType = entityKey;
 
     console.log(`✅ ${entityType} created: ${entityId}`);
 
