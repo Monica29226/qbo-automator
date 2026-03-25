@@ -1955,7 +1955,9 @@ Deno.serve(async (req) => {
                 },
               };
               
-              const taxCodeId = await getTaxCodeRef(includeTaxInLines ? 0 : tasaImpuesto);
+              // ALWAYS use the actual tax rate so QBO knows which tax applies
+              // Even when tax is included in lines, we need the correct TaxCodeRef
+              const taxCodeId = await getTaxCodeRef(tasaImpuesto);
               if (taxCodeId) {
                 lineDetail.AccountBasedExpenseLineDetail.TaxCodeRef = { value: taxCodeId };
               }
@@ -2224,27 +2226,24 @@ Deno.serve(async (req) => {
                 errorText.includes('Invalid tax rate') ||
                 errorText.includes('TaxCodeRef')) {
               
-              logInfo(`⚠️ ${doc.doc_number}: Error de impuesto en VendorCredit, reintentando SIN TxnTaxDetail...`);
+              logInfo(`⚠️ ${doc.doc_number}: Error de impuesto en VendorCredit, reintentando con TaxInclusive...`);
               
-              // Remove TxnTaxDetail and TaxCodeRef from lines
+              // Remove TxnTaxDetail but KEEP TaxCodeRef on lines
               const vcTotalTaxToRedistribute = vendorCreditPayload.TxnTaxDetail?.TotalTax || 0;
               delete vendorCreditPayload.TxnTaxDetail;
               
-              // CRITICAL: Redistribute tax into line amounts so total matches document
               const vcExpenseLines = vendorCreditPayload.Line.filter((l: any) => l.DetailType === "AccountBasedExpenseLineDetail");
               const vcLinesTotalBeforeTax = vcExpenseLines.reduce((sum: number, l: any) => sum + (l.Amount || 0), 0);
               
               for (const line of vendorCreditPayload.Line) {
-                if (line.AccountBasedExpenseLineDetail?.TaxCodeRef) {
-                  delete line.AccountBasedExpenseLineDetail.TaxCodeRef;
-                }
-                // Proportionally add tax to each expense line
+                // KEEP TaxCodeRef so QBO knows which tax rate applies
                 if (line.DetailType === "AccountBasedExpenseLineDetail" && vcTotalTaxToRedistribute > 0 && vcLinesTotalBeforeTax > 0) {
                   const proportion = line.Amount / vcLinesTotalBeforeTax;
                   line.Amount = parseFloat((line.Amount + vcTotalTaxToRedistribute * proportion).toFixed(2));
                 }
               }
-              vendorCreditPayload.GlobalTaxCalculation = "NotApplicable";
+              // Use TaxInclusive so QBO correctly reports tax
+              vendorCreditPayload.GlobalTaxCalculation = "TaxInclusive";
               logInfo(`   📊 ${doc.doc_number}: IVA redistribuido en líneas: ${vcTotalTaxToRedistribute.toFixed(2)} sobre ${vcExpenseLines.length} líneas`);
               
               // Retry without tax
@@ -2297,9 +2296,9 @@ Deno.serve(async (req) => {
             const vcExpectedTotal = Math.abs(doc.total_amount);
             const vcDiscrepancy = Math.abs(vcQboTotal - vcExpectedTotal);
             
-            if (vcDiscrepancy > 1.0 && vendorCreditPayload.GlobalTaxCalculation !== "NotApplicable") {
+            if (vcDiscrepancy > 1.0 && vendorCreditPayload.GlobalTaxCalculation !== "TaxInclusive" && vendorCreditPayload.GlobalTaxCalculation !== "NotApplicable") {
               logInfo(`⚠️ ${doc.doc_number}: DISCREPANCIA en VendorCredit! QBO=${vcQboTotal}, Esperado=${vcExpectedTotal}, Diff=${vcDiscrepancy.toFixed(2)}`);
-              logInfo(`   🔄 Eliminando VendorCredit ${entityId} y recreando...`);
+              logInfo(`   🔄 Eliminando VendorCredit ${entityId} y recreando con TaxInclusive...`);
               
               try {
                 const delUrl = `https://quickbooks.api.intuit.com/v3/company/${realmId}/vendorcredit?operation=delete`;
@@ -2315,13 +2314,13 @@ Deno.serve(async (req) => {
               const vcLines = vendorCreditPayload.Line.filter((l: any) => l.DetailType === "AccountBasedExpenseLineDetail");
               const vcLinesTotal = vcLines.reduce((sum: number, l: any) => sum + (l.Amount || 0), 0);
               for (const line of vendorCreditPayload.Line) {
-                if (line.AccountBasedExpenseLineDetail?.TaxCodeRef) delete line.AccountBasedExpenseLineDetail.TaxCodeRef;
+                // KEEP TaxCodeRef - don't delete it
                 if (line.DetailType === "AccountBasedExpenseLineDetail" && vcTaxRedist > 0 && vcLinesTotal > 0) {
                   const p = line.Amount / vcLinesTotal;
                   line.Amount = parseFloat((line.Amount + vcTaxRedist * p).toFixed(2));
                 }
               }
-              vendorCreditPayload.GlobalTaxCalculation = "NotApplicable";
+              vendorCreditPayload.GlobalTaxCalculation = "TaxInclusive";
               
               await delay(1500);
               const vcRetry2 = await fetchWithRetry(`https://quickbooks.api.intuit.com/v3/company/${realmId}/vendorcredit`, {
@@ -2418,9 +2417,9 @@ Deno.serve(async (req) => {
                 errorText.includes('tax rate') ||
                 errorText.includes('TaxCodeRef')) {
               
-              logInfo(`⚠️ ${doc.doc_number}: Error de impuesto en QBO, reintentando SIN TxnTaxDetail...`);
+              logInfo(`⚠️ ${doc.doc_number}: Error de impuesto en QBO, reintentando con TaxInclusive...`);
               
-              // Remove TxnTaxDetail and TaxCodeRef from lines
+              // Remove TxnTaxDetail but KEEP TaxCodeRef on lines so QBO reports correct tax
               const billTotalTaxToRedistribute = billPayload.TxnTaxDetail?.TotalTax || 0;
               delete billPayload.TxnTaxDetail;
               
@@ -2429,16 +2428,15 @@ Deno.serve(async (req) => {
               const billLinesTotalBeforeTax = billExpenseLines.reduce((sum: number, l: any) => sum + (l.Amount || 0), 0);
               
               for (const line of billPayload.Line) {
-                if (line.AccountBasedExpenseLineDetail?.TaxCodeRef) {
-                  delete line.AccountBasedExpenseLineDetail.TaxCodeRef;
-                }
+                // KEEP TaxCodeRef so QBO knows which tax rate applies (Tax Inclusive)
                 // Proportionally add tax to each expense line
                 if (line.DetailType === "AccountBasedExpenseLineDetail" && billTotalTaxToRedistribute > 0 && billLinesTotalBeforeTax > 0) {
                   const proportion = line.Amount / billLinesTotalBeforeTax;
                   line.Amount = parseFloat((line.Amount + billTotalTaxToRedistribute * proportion).toFixed(2));
                 }
               }
-              billPayload.GlobalTaxCalculation = "NotApplicable";
+              // Use TaxInclusive so QBO correctly reports tax from the inclusive amounts
+              billPayload.GlobalTaxCalculation = "TaxInclusive";
               logInfo(`   📊 ${doc.doc_number}: IVA redistribuido en líneas: ${billTotalTaxToRedistribute.toFixed(2)} sobre ${billExpenseLines.length} líneas`);
               
               // Retry without tax
@@ -2531,9 +2529,9 @@ Deno.serve(async (req) => {
           const expectedTotal = Math.abs(doc.total_amount);
           const totalDiscrepancy = Math.abs(qboTotalAmt - expectedTotal);
           
-          if (totalDiscrepancy > 1.0 && billPayload.GlobalTaxCalculation !== "NotApplicable") {
+          if (totalDiscrepancy > 1.0 && billPayload.GlobalTaxCalculation !== "TaxInclusive" && billPayload.GlobalTaxCalculation !== "NotApplicable") {
             logInfo(`⚠️ ${doc.doc_number}: DISCREPANCIA detectada! QBO Total=${qboTotalAmt}, Esperado=${expectedTotal}, Diff=${totalDiscrepancy.toFixed(2)}`);
-            logInfo(`   🔄 Eliminando Bill ${entityId} y recreando con impuesto redistribuido...`);
+            logInfo(`   🔄 Eliminando Bill ${entityId} y recreando con TaxInclusive...`);
             
             // Delete the incorrect bill
             try {
@@ -2552,7 +2550,7 @@ Deno.serve(async (req) => {
               logInfo(`   ⚠️ ${doc.doc_number}: No se pudo eliminar Bill ${entityId}, continuando...`);
             }
             
-            // Rebuild payload with tax redistributed into lines
+            // Rebuild payload with tax redistributed into lines, KEEP TaxCodeRef
             const taxToRedistribute = billPayload.TxnTaxDetail?.TotalTax || totalTax || 0;
             delete billPayload.TxnTaxDetail;
             
@@ -2560,15 +2558,13 @@ Deno.serve(async (req) => {
             const linesTotalBeforeTax = expenseLines.reduce((sum: number, l: any) => sum + (l.Amount || 0), 0);
             
             for (const line of billPayload.Line) {
-              if (line.AccountBasedExpenseLineDetail?.TaxCodeRef) {
-                delete line.AccountBasedExpenseLineDetail.TaxCodeRef;
-              }
+              // KEEP TaxCodeRef so QBO reports tax correctly as TaxInclusive
               if (line.DetailType === "AccountBasedExpenseLineDetail" && taxToRedistribute > 0 && linesTotalBeforeTax > 0) {
                 const proportion = line.Amount / linesTotalBeforeTax;
                 line.Amount = parseFloat((line.Amount + taxToRedistribute * proportion).toFixed(2));
               }
             }
-            billPayload.GlobalTaxCalculation = "NotApplicable";
+            billPayload.GlobalTaxCalculation = "TaxInclusive";
             
             await delay(1500);
             const verifyRetryResponse = await fetchWithRetry(
@@ -2599,7 +2595,7 @@ Deno.serve(async (req) => {
               return { success: false, docNumber: doc.doc_number, error: `Total discrepancy: ${totalDiscrepancy.toFixed(2)}` };
             }
           } else if (totalDiscrepancy > 1.0) {
-            logInfo(`⚠️ ${doc.doc_number}: Discrepancia de ${totalDiscrepancy.toFixed(2)} (QBO=${qboTotalAmt} vs Esperado=${expectedTotal}) pero ya es NotApplicable, no se puede corregir`);
+            logInfo(`⚠️ ${doc.doc_number}: Discrepancia de ${totalDiscrepancy.toFixed(2)} (QBO=${qboTotalAmt} vs Esperado=${expectedTotal}) pero ya es ${billPayload.GlobalTaxCalculation}, no se puede corregir más`);
           }
         }
         
