@@ -2296,9 +2296,9 @@ Deno.serve(async (req) => {
             const vcExpectedTotal = Math.abs(doc.total_amount);
             const vcDiscrepancy = Math.abs(vcQboTotal - vcExpectedTotal);
             
-            if (vcDiscrepancy > 1.0 && vendorCreditPayload.GlobalTaxCalculation !== "NotApplicable") {
+            if (vcDiscrepancy > 1.0 && vendorCreditPayload.GlobalTaxCalculation !== "TaxInclusive" && vendorCreditPayload.GlobalTaxCalculation !== "NotApplicable") {
               logInfo(`⚠️ ${doc.doc_number}: DISCREPANCIA en VendorCredit! QBO=${vcQboTotal}, Esperado=${vcExpectedTotal}, Diff=${vcDiscrepancy.toFixed(2)}`);
-              logInfo(`   🔄 Eliminando VendorCredit ${entityId} y recreando...`);
+              logInfo(`   🔄 Eliminando VendorCredit ${entityId} y recreando con TaxInclusive...`);
               
               try {
                 const delUrl = `https://quickbooks.api.intuit.com/v3/company/${realmId}/vendorcredit?operation=delete`;
@@ -2314,13 +2314,13 @@ Deno.serve(async (req) => {
               const vcLines = vendorCreditPayload.Line.filter((l: any) => l.DetailType === "AccountBasedExpenseLineDetail");
               const vcLinesTotal = vcLines.reduce((sum: number, l: any) => sum + (l.Amount || 0), 0);
               for (const line of vendorCreditPayload.Line) {
-                if (line.AccountBasedExpenseLineDetail?.TaxCodeRef) delete line.AccountBasedExpenseLineDetail.TaxCodeRef;
+                // KEEP TaxCodeRef - don't delete it
                 if (line.DetailType === "AccountBasedExpenseLineDetail" && vcTaxRedist > 0 && vcLinesTotal > 0) {
                   const p = line.Amount / vcLinesTotal;
                   line.Amount = parseFloat((line.Amount + vcTaxRedist * p).toFixed(2));
                 }
               }
-              vendorCreditPayload.GlobalTaxCalculation = "NotApplicable";
+              vendorCreditPayload.GlobalTaxCalculation = "TaxInclusive";
               
               await delay(1500);
               const vcRetry2 = await fetchWithRetry(`https://quickbooks.api.intuit.com/v3/company/${realmId}/vendorcredit`, {
