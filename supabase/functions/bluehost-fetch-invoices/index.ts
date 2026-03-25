@@ -622,13 +622,25 @@ const imapHost = credentials.imap_host || "mail.cemsacr.com";
         const pdfMatches = matchPdfToXml(xmlAttachments, pdfAttachments);
 
         for (const xmlAttachment of xmlAttachments) {
-          const claveMatch = xmlAttachment.content.match(/<Clave>(\d{50})<\/Clave>/);
-          if (!claveMatch) {
-            console.log(`[Bluehost] Skipping XML without valid Clave: ${xmlAttachment.filename}`);
+          const xmlContent = xmlAttachment.content || "";
+
+          if (!isProcessableInvoiceXml(xmlContent)) {
+            skippedInvoices.push({
+              filename: xmlAttachment.filename,
+              reason: "XML no procesable (MensajeHacienda/MensajeReceptor)"
+            });
             continue;
           }
 
-          const docKey = claveMatch[1];
+          const docKey = extractDocKey(xmlContent);
+          if (!docKey) {
+            console.log(`[Bluehost] Skipping invoice XML without valid Clave: ${xmlAttachment.filename}`);
+            skippedInvoices.push({
+              filename: xmlAttachment.filename,
+              reason: "XML facturable sin Clave válida"
+            });
+            continue;
+          }
 
           const { data: existing } = await supabase
             .from("processed_documents")
@@ -699,7 +711,7 @@ const imapHost = credentials.imap_host || "mail.cemsacr.com";
             {
               body: {
                 organization_id,
-                xml_content: xmlAttachment.content,
+                xml_content: xmlContent,
                 pdf_attachment_url: pdfUrl,
                 file_path: pdfPath,
                 source: "bluehost",
