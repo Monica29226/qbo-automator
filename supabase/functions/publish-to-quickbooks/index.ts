@@ -2100,8 +2100,10 @@ Deno.serve(async (req) => {
           }
         }
         
-        // Solo reportar TxnTaxDetail si el IVA es recuperable Y NO está exonerado
-        const effectiveUsesTax = (doc.uses_tax !== false) && orgDefaultUsesTax && !includeTaxInLines && !isTaxExempt;
+        // Solo reportar TxnTaxDetail si el IVA es recuperable
+        // CRITICAL: SIEMPRE enviar tax separado si hay IVA, incluso para impuesto asumido
+        // Para impuesto asumido, QBO total será subtotal + tax (mayor que XML total) pero los números son correctos
+        const effectiveUsesTax = (doc.uses_tax !== false) && orgDefaultUsesTax && !includeTaxInLines;
         
         // CRITICAL: xmlTax includes ALL taxes (IVA + IEBLE + asumido)
         // But IEBLE is already included in line amounts, so we subtract it to avoid double-counting
