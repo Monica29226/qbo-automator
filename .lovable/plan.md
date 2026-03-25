@@ -1,49 +1,30 @@
 
+# Plan: Fix Tax Handling - COMPLETED
 
-## Problem Analysis
+## Changes Made
 
-The invoice ending in 3598 has **mixed tax rates** (1% and 13% across 6 lines), total_amount = ₡44,465 (subtotal ₡42,070.67 + tax ₡2,394.33). But QuickBooks shows Total = ₡42,070.66 — only the subtotal, with "Fuera del ámbito del impuesto" (no tax applied).
+### 1. `publish-to-quickbooks/index.ts` — Fixed tax retry logic
+- **Stored `_montoTotalLinea`** on each line detail (line 1967-1969) so retry can use it
+- **Bill retry** (line 2388-2402): Changed from removing TxnTaxDetail + keeping TaxExcluded → now switches to `TaxInclusive` and uses `montoTotalLinea` as line amounts. QBO backs out the tax correctly.
+- **VendorCredit retry** (line 2242-2255): Same fix applied.
 
-**Root cause: substring matching bug in `getTaxCodeRef`**
+### 2. `force-publish-document/index.ts` — Rewrote tax handling
+- **Before**: Single line with `total_amount` and `GlobalTaxCalculation: "NotApplicable"` → always "Out of Scope"
+- **After**: Parses XML `detalle` lines, extracts subtotal per line, builds `TxnTaxDetail` with rate-specific tax lines, uses `GlobalTaxCalculation: "TaxExcluded"`
+- **Tax retry**: If QBO rejects tax, switches to `TaxInclusive` with `montoTotalLinea` amounts
+- **Fallback**: If no XML detail lines, uses `total_amount - total_tax` as line amount
 
-The function uses `name.includes(\`${rate}%\`)` to match tax codes. When `rate = 1`:
-- The string `"13%"` **contains** `"1%"` as a substring → matches incorrectly
-- Lines with 1% tax get assigned a 13% TaxCodeRef
-- QBO receives conflicting information: TxnTaxDetail says ₡2,394.33 total tax, but the TaxCodeRef on lines implies a different calculation
-- QBO either errors (triggering retry WITHOUT tax redistribution working properly) or silently drops the tax
+## How it works now
 
-**Secondary issue**: After bill creation, the system never verifies that QBO's `TotalAmt` matches the expected total. If QBO silently drops tax, no one catches it.
-
-## Plan
-
-### 1. Fix `getTaxCodeRef` substring matching bug
-**File**: `supabase/functions/publish-to-quickbooks/index.ts` (lines ~1519-1523)
-
-Change the rate matching from substring to word-boundary matching:
-```typescript
-// BEFORE (buggy):
-if (name.includes(`${rate}%`))
-
-// AFTER (fixed):
-const ratePattern = new RegExp(`(^|[^0-9])${rate}%`);
-if (ratePattern.test(name))
 ```
-This ensures "1%" won't match "13%" because the `1` in `13%` is preceded by another digit.
+STANDARD FLOW (TaxExcluded):
+  Line: subtotal=1,548,672.57
+  TxnTaxDetail: IVA 13% = 201,327.43
+  GlobalTaxCalculation: TaxExcluded
+  → QBO: Subtotal ₡1,548,672.57 + IVA ₡201,327.43 = ₡1,750,000 ✓
 
-### 2. Add post-creation verification step
-After creating a Bill/VendorCredit, read the returned `TotalAmt` and compare to expected total. If there's a discrepancy > 1.0:
-- Delete the bill from QBO
-- Recreate it with `GlobalTaxCalculation: "NotApplicable"` and tax redistributed into line amounts (the proven fallback approach)
-
-This catches cases where QBO silently applies wrong tax calculations.
-
-### 3. Redeploy the edge function
-The fix will be deployed automatically.
-
-## Technical Details
-
-- **Bug location**: `getTaxCodeRef` function, STEP 1 name matching (line ~1519)
-- **Impact**: Any invoice with 1%, 2%, or 4% tax rates could be mismatched to higher rates (13%, 12%, etc.)
-- **Verification**: The post-creation check ensures no future silent mismatches slip through
-- **Files modified**: `supabase/functions/publish-to-quickbooks/index.ts`
-
+RETRY FALLBACK (TaxInclusive):
+  Line: amount=1,750,000.00  TaxCodeRef=IVA13%
+  GlobalTaxCalculation: TaxInclusive
+  → QBO backs out 13% → Subtotal ₡1,548,672.57 + IVA ₡201,327.43 = ₡1,750,000 ✓
+```
