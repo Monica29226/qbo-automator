@@ -17,6 +17,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useDashboardStats, useOrganizationConnections } from "@/hooks/useDashboardStats";
 import { ImportBatchDialog } from "@/components/dashboard/ImportBatchDialog";
 import { SearchInvoiceDialog } from "@/components/dashboard/SearchInvoiceDialog";
+import { ReconcileXmlQboButton } from "@/components/dashboard/ReconcileXmlQboButton";
 
 // Lazy load componentes pesados
 const RecentDocuments = lazy(() => import("@/components/dashboard/RecentDocuments").then(m => ({ default: m.RecentDocuments })));
@@ -418,8 +419,8 @@ const Dashboard = () => {
                   <SearchInvoiceDialog />
                 </div>
 
-                {/* Row 2: Publish + Diagnostic + Error Log */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                {/* Row 2: Publish + Diagnostic + Reconcile + Error Log */}
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
                   <Button
                     variant="default"
                     className="w-full h-10"
@@ -442,6 +443,8 @@ const Dashboard = () => {
                   <Suspense fallback={<div className="h-10 bg-muted animate-pulse rounded" />}>
                     <QBOConnectionDiagnostic />
                   </Suspense>
+
+                  <ReconcileXmlQboButton />
 
                   <Suspense fallback={<div className="h-10 bg-muted animate-pulse rounded" />}>
                     <ErrorLogsViewer />
