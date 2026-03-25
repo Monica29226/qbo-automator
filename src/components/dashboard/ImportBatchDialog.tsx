@@ -24,11 +24,14 @@ import { Download, Loader2, CheckCircle2, AlertCircle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 
 interface ImportResult {
-  xmlFound: number;
-  withPdf: number;
-  imported: number;
+  emailsFound: number;
+  emailsWithXml: number;
+  emailsWithPdf: number;
+  importedNew: number;
+  existingSkipped: number;
+  missingPdf: number;
   failed: number;
-  skipped: number;
+  errorsDetail: string[];
 }
 
 interface ImportBatchDialogProps {
@@ -61,6 +64,7 @@ export function ImportBatchDialog({ onSuccess }: ImportBatchDialogProps) {
   const [isProcessing, setIsProcessing] = useState(false);
   const [progress, setProgress] = useState(0);
   const [result, setResult] = useState<ImportResult | null>(null);
+  const [liveStats, setLiveStats] = useState<ImportResult | null>(null);
   const [statusMessage, setStatusMessage] = useState("");
 
   const handleOpen = (val: boolean) => {
@@ -68,6 +72,7 @@ export function ImportBatchDialog({ onSuccess }: ImportBatchDialogProps) {
     if (val) {
       setSelectedOrg(activeOrganization || "");
       setResult(null);
+      setLiveStats(null);
       setProgress(0);
       setStatusMessage("");
     }
@@ -102,6 +107,16 @@ export function ImportBatchDialog({ onSuccess }: ImportBatchDialogProps) {
 
     setIsProcessing(true);
     setResult(null);
+    setLiveStats({
+      emailsFound: 0,
+      emailsWithXml: 0,
+      emailsWithPdf: 0,
+      importedNew: 0,
+      existingSkipped: 0,
+      missingPdf: 0,
+      failed: 0,
+      errorsDetail: [],
+    });
     setProgress(10);
     setStatusMessage("Detectando integración de correo...");
 
@@ -126,7 +141,12 @@ export function ImportBatchDialog({ onSuccess }: ImportBatchDialogProps) {
 
       let totalProcessed = 0;
       let totalFailed = 0;
-      let totalSkipped = 0;
+      let totalEmails = 0;
+      let totalEmailsWithXml = 0;
+      let totalEmailsWithPdf = 0;
+      let totalExistingSkipped = 0;
+      let totalMissingPdf = 0;
+      const allErrors: string[] = [];
       let continueProcessing = true;
       let skipCount = 0;
       let iteration = 0;
@@ -160,8 +180,35 @@ export function ImportBatchDialog({ onSuccess }: ImportBatchDialogProps) {
         const failed = data.invoices_failed || 0;
         totalProcessed += processed;
         totalFailed += failed;
+        totalEmails = Math.max(totalEmails, Number(data.total_messages_in_range || data.messages_found || 0));
+        totalEmailsWithXml += Number(data.emails_with_xml || 0);
+        totalEmailsWithPdf += Number(data.emails_with_pdf || 0);
+        totalExistingSkipped += Number(data.invoices_existing_skipped || 0);
+        totalMissingPdf += Number(data.invoices_missing_pdf || 0);
 
-        if (data.partial && data.next_skip_count) {
+        if (Array.isArray(data.errors)) {
+          for (const err of data.errors) {
+            const detail = typeof err?.error === "string" ? err.error : JSON.stringify(err);
+            allErrors.push(detail);
+          }
+        }
+
+        const updatedStats: ImportResult = {
+          emailsFound: totalEmails,
+          emailsWithXml: totalEmailsWithXml,
+          emailsWithPdf: totalEmailsWithPdf,
+          importedNew: totalProcessed,
+          existingSkipped: totalExistingSkipped,
+          missingPdf: totalMissingPdf,
+          failed: totalFailed,
+          errorsDetail: allErrors,
+        };
+        setLiveStats(updatedStats);
+        setStatusMessage(
+          `Lote ${iteration}: ${totalProcessed} importadas, ${totalExistingSkipped} omitidas, ${totalFailed} con error`
+        );
+
+        if (data.partial && typeof data.next_skip_count === "number" && data.next_skip_count > skipCount) {
           skipCount = data.next_skip_count;
         } else {
           continueProcessing = false;
@@ -172,11 +219,14 @@ export function ImportBatchDialog({ onSuccess }: ImportBatchDialogProps) {
       setStatusMessage("¡Importación completada!");
 
       const importResult: ImportResult = {
-        xmlFound: totalProcessed + totalFailed + totalSkipped,
-        withPdf: totalProcessed,
-        imported: totalProcessed,
+        emailsFound: totalEmails,
+        emailsWithXml: totalEmailsWithXml,
+        emailsWithPdf: totalEmailsWithPdf,
+        importedNew: totalProcessed,
+        existingSkipped: totalExistingSkipped,
+        missingPdf: totalMissingPdf,
         failed: totalFailed,
-        skipped: totalSkipped,
+        errorsDetail: allErrors,
       };
       setResult(importResult);
 
@@ -200,7 +250,7 @@ export function ImportBatchDialog({ onSuccess }: ImportBatchDialogProps) {
   return (
     <Dialog open={open} onOpenChange={handleOpen}>
       <DialogTrigger asChild>
-        <Button className="w-full h-14 text-base font-semibold bg-[hsl(222,47%,20%)] hover:bg-[hsl(222,47%,28%)] text-white shadow-md">
+        <Button className="w-full h-14 text-base font-semibold shadow-md">
           <Download className="h-5 w-5 mr-2" />
           Importar Lote
         </Button>
@@ -269,6 +319,17 @@ export function ImportBatchDialog({ onSuccess }: ImportBatchDialogProps) {
                 <Loader2 className="h-3 w-3 animate-spin" />
                 {statusMessage}
               </p>
+              {liveStats && (
+                <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground rounded-md border p-2">
+                  <span>Correos encontrados:</span><span className="text-right font-medium">{liveStats.emailsFound}</span>
+                  <span>Correos con XML:</span><span className="text-right font-medium">{liveStats.emailsWithXml}</span>
+                  <span>Correos con PDF:</span><span className="text-right font-medium">{liveStats.emailsWithPdf}</span>
+                  <span>Facturas nuevas:</span><span className="text-right font-medium">{liveStats.importedNew}</span>
+                  <span>Ya existentes:</span><span className="text-right font-medium">{liveStats.existingSkipped}</span>
+                  <span>Sin PDF:</span><span className="text-right font-medium">{liveStats.missingPdf}</span>
+                  <span>Con error:</span><span className="text-right font-medium">{liveStats.failed}</span>
+                </div>
+              )}
             </div>
           )}
 
@@ -279,10 +340,18 @@ export function ImportBatchDialog({ onSuccess }: ImportBatchDialogProps) {
                 <span className="font-semibold text-sm">Resultado de Importación</span>
               </div>
               <div className="grid grid-cols-2 gap-2 text-sm">
-                <span className="text-muted-foreground">Importadas:</span>
-                <Badge variant="default">{result.imported}</Badge>
-                <span className="text-muted-foreground">Con PDF:</span>
-                <Badge variant="secondary">{result.withPdf}</Badge>
+                <span className="text-muted-foreground">Correos encontrados:</span>
+                <Badge variant="outline">{result.emailsFound}</Badge>
+                <span className="text-muted-foreground">Correos con XML:</span>
+                <Badge variant="outline">{result.emailsWithXml}</Badge>
+                <span className="text-muted-foreground">Correos con PDF:</span>
+                <Badge variant="outline">{result.emailsWithPdf}</Badge>
+                <span className="text-muted-foreground">Facturas nuevas:</span>
+                <Badge variant="default">{result.importedNew}</Badge>
+                <span className="text-muted-foreground">Ya existentes (omitidas):</span>
+                <Badge variant="secondary">{result.existingSkipped}</Badge>
+                <span className="text-muted-foreground">Importadas sin PDF:</span>
+                <Badge variant="secondary">{result.missingPdf}</Badge>
                 {result.failed > 0 && (
                   <>
                     <span className="text-muted-foreground">Fallidas:</span>
@@ -290,6 +359,19 @@ export function ImportBatchDialog({ onSuccess }: ImportBatchDialogProps) {
                   </>
                 )}
               </div>
+              {result.errorsDetail.length > 0 && (
+                <div className="rounded-md border border-destructive/30 bg-destructive/5 p-2 text-xs">
+                  <div className="mb-1 flex items-center gap-1 font-medium text-destructive">
+                    <AlertCircle className="h-3 w-3" />
+                    Detalle de errores
+                  </div>
+                  <ul className="space-y-1 text-muted-foreground">
+                    {result.errorsDetail.slice(0, 5).map((error, idx) => (
+                      <li key={`${error}-${idx}`}>• {error}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -301,7 +383,6 @@ export function ImportBatchDialog({ onSuccess }: ImportBatchDialogProps) {
           <Button
             onClick={handleImport}
             disabled={isProcessing || !selectedMonth || !selectedYear || !selectedOrg}
-            className="bg-[hsl(222,47%,20%)] hover:bg-[hsl(222,47%,28%)] text-white"
           >
             {isProcessing ? (
               <>
