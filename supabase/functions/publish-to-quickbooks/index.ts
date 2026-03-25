@@ -1955,7 +1955,9 @@ Deno.serve(async (req) => {
                 },
               };
               
-              const taxCodeId = await getTaxCodeRef(includeTaxInLines ? 0 : tasaImpuesto);
+              // ALWAYS use the actual tax rate so QBO knows which tax applies
+              // Even when tax is included in lines, we need the correct TaxCodeRef
+              const taxCodeId = await getTaxCodeRef(tasaImpuesto);
               if (taxCodeId) {
                 lineDetail.AccountBasedExpenseLineDetail.TaxCodeRef = { value: taxCodeId };
               }
