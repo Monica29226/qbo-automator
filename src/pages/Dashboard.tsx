@@ -419,8 +419,8 @@ const Dashboard = () => {
                   <SearchInvoiceDialog />
                 </div>
 
-                {/* Row 2: Publish + Diagnostic + Error Log */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                {/* Row 2: Publish + Diagnostic + Reconcile + Error Log */}
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
                   <Button
                     variant="default"
                     className="w-full h-10"
@@ -443,6 +443,8 @@ const Dashboard = () => {
                   <Suspense fallback={<div className="h-10 bg-muted animate-pulse rounded" />}>
                     <QBOConnectionDiagnostic />
                   </Suspense>
+
+                  <ReconcileXmlQboButton />
 
                   <Suspense fallback={<div className="h-10 bg-muted animate-pulse rounded" />}>
                     <ErrorLogsViewer />
