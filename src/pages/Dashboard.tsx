@@ -60,7 +60,7 @@ const Dashboard = () => {
   
   // React Query hooks for cached data
   const { data: stats = { processed: 0, review: 0, pending: 0, total: 0, errors: 0, published: 0, pendingConfig: 0 }, isLoading: statsLoading } = useDashboardStats(activeOrganization);
-  const { data: connections = { gmail: false, quickbooks: false, outlook: false, hostinger: false }, isLoading: connectionsLoading } = useOrganizationConnections(activeOrganization);
+  const { data: connections = { gmail: false, quickbooks: false, outlook: false, hostinger: false, bluehost: false }, isLoading: connectionsLoading } = useOrganizationConnections(activeOrganization);
   
   const [isFetchingEmails, setIsFetchingEmails] = useState(false);
   const [isAutoSyncing, setIsAutoSyncing] = useState(false);
