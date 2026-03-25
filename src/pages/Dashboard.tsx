@@ -425,6 +425,13 @@ const Dashboard = () => {
                     }}
                   />
                 )}
+                {hasRequiredConnections.bluehost && (
+                  <BluehostFetchDialog 
+                    onSuccess={() => {
+                      refreshData();
+                    }}
+                  />
+                )}
                 <Button 
                   variant="default" 
                   size="sm" 
