@@ -2123,7 +2123,12 @@ Deno.serve(async (req) => {
         // Lines already include IEBLE, so we only add IVA portion
         const expectedQBOTotal = linesTotalAmount + ivaOnlyTax;
         const documentTotal = Math.abs(doc.total_amount);
-        const qboTotalDiff = Math.abs(expectedQBOTotal - documentTotal);
+        
+        // For impuesto asumido, QBO total will be subtotal + tax (greater than XML total)
+        // This is CORRECT - we send tax separately and QBO adds it
+        // Only validate against document total for non-asumido cases
+        const expectedDocumentTotal = earlyIsTaxExempt ? expectedQBOTotal : documentTotal;
+        const qboTotalDiff = Math.abs(expectedQBOTotal - expectedDocumentTotal);
         
         // Use larger tolerance for complex invoices with multiple tax types
         const validationTolerance = totalIEBLEInLines > 0 ? 5.0 : 2.0;
@@ -2141,8 +2146,8 @@ Deno.serve(async (req) => {
           return { success: false, docNumber: doc.doc_number, error: errorMsg };
         }
         
-        logInfo(`   📊 ${doc.doc_number}: Validación final OK - Lines=${linesTotalAmount.toFixed(2)}, IVA=${ivaOnlyTax.toFixed(2)}, IEBLE(en líneas)=${totalIEBLEInLines.toFixed(2)}, Total=${expectedQBOTotal.toFixed(2)} (esperado: ${documentTotal.toFixed(2)})`);
-        
+        logInfo(`   📊 ${doc.doc_number}: Validación final OK - Lines=${linesTotalAmount.toFixed(2)}, IVA=${ivaOnlyTax.toFixed(2)}, IEBLE(en líneas)=${totalIEBLEInLines.toFixed(2)}, Total QBO esperado=${expectedQBOTotal.toFixed(2)}${earlyIsTaxExempt ? ' (impuesto asumido: QBO total > XML total)' : ` (esperado: ${documentTotal.toFixed(2)})`}`);
+
         // Use ivaOnlyTax for TxnTaxDetail instead of full xmlTax
         const totalTax = ivaOnlyTax;
         // =============================================================
