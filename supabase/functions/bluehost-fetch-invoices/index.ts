@@ -462,6 +462,15 @@ function matchPdfToXml(
   return matches;
 }
 
+function isProcessableInvoiceXml(xmlContent: string): boolean {
+  return /<(?:[\w]+:)?(?:FacturaElectronica|NotaCreditoElectronica|NotaDebitoElectronica|TiqueteElectronico)\b/i.test(xmlContent);
+}
+
+function extractDocKey(xmlContent: string): string | null {
+  const match = xmlContent.match(/<(?:[\w]+:)?Clave[^>]*>(\d{50})<\/(?:[\w]+:)?Clave>/i);
+  return match?.[1] ?? null;
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
