@@ -56,19 +56,53 @@ const Settings = () => {
     if (!activeOrganization) return;
 
     setIsLoading(true);
-    const { data, error } = await supabase
-      .from("system_settings")
-      .select("*")
-      .eq("organization_id", activeOrganization);
+    
+    // Fetch settings and org connection status in parallel
+    const [settingsResult, orgResult] = await Promise.all([
+      supabase
+        .from("system_settings")
+        .select("*")
+        .eq("organization_id", activeOrganization),
+      supabase
+        .from("organizations")
+        .select("gmail_connected, outlook_connected")
+        .eq("id", activeOrganization)
+        .maybeSingle(),
+    ]);
 
-    if (error) {
+    if (settingsResult.error) {
       toast.error("Error al cargar configuración");
-      console.error(error);
-    } else if (data) {
-      const settingsMap = data.reduce((acc, item) => {
+      console.error(settingsResult.error);
+    } else if (settingsResult.data) {
+      const settingsMap = settingsResult.data.reduce((acc, item) => {
         acc[item.key] = item.value;
         return acc;
       }, {} as Settings);
+      
+      // Auto-detect mail provider from connection status
+      const org = orgResult.data;
+      if (org) {
+        const currentMailProvider = settingsMap.mail_provider;
+        let detectedProvider = currentMailProvider;
+        
+        if (org.outlook_connected && !org.gmail_connected) {
+          detectedProvider = "outlook";
+        } else if (org.gmail_connected && !org.outlook_connected) {
+          detectedProvider = "gmail";
+        }
+        
+        // If detected differs from stored, auto-update
+        if (detectedProvider && detectedProvider !== currentMailProvider) {
+          settingsMap.mail_provider = detectedProvider;
+          // Save auto-detected provider
+          await supabase
+            .from("system_settings")
+            .update({ value: detectedProvider })
+            .eq("key", "mail_provider")
+            .eq("organization_id", activeOrganization);
+        }
+      }
+      
       setSettings(settingsMap);
     }
     setIsLoading(false);
@@ -152,14 +186,10 @@ const Settings = () => {
                   <Input
                     id="qbo_company_id"
                     value={settings.qbo_company_id}
-                    onChange={(e) =>
-                      setSettings({ ...settings, qbo_company_id: e.target.value })
-                    }
+                    onChange={(e) => setSettings({ ...settings, qbo_company_id: e.target.value })}
                     placeholder="1234567890"
                   />
-                  <p className="text-xs text-muted-foreground">
-                    ID de la compañía en QuickBooks Online
-                  </p>
+                  <p className="text-xs text-muted-foreground">ID de la compañía en QuickBooks Online</p>
                 </div>
               </div>
             </div>
@@ -171,18 +201,19 @@ const Settings = () => {
                   <Label htmlFor="mail_provider">Proveedor de Correo</Label>
                   <Select
                     value={settings.mail_provider}
-                    onValueChange={(value) =>
-                      setSettings({ ...settings, mail_provider: value })
-                    }
+                    onValueChange={(value) => setSettings({ ...settings, mail_provider: value })}
                   >
                     <SelectTrigger>
-                      <SelectValue />
+                      <SelectValue placeholder="Seleccione un proveedor" />
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="gmail">Gmail</SelectItem>
                       <SelectItem value="outlook">Outlook</SelectItem>
                     </SelectContent>
                   </Select>
+                  <p className="text-xs text-muted-foreground">
+                    Se auto-detecta según la conexión activa. Cambia manualmente si tienes ambos conectados.
+                  </p>
                 </div>
 
                 <div className="space-y-2">
@@ -193,9 +224,7 @@ const Settings = () => {
                     onChange={(e) => setSettings({ ...settings, mail_query: e.target.value })}
                     placeholder="has:attachment filename:xml"
                   />
-                  <p className="text-xs text-muted-foreground">
-                    Query de búsqueda para filtrar correos con facturas
-                  </p>
+                  <p className="text-xs text-muted-foreground">Query de búsqueda para filtrar correos con facturas</p>
                 </div>
 
                 <div className="space-y-2">
@@ -219,15 +248,11 @@ const Settings = () => {
                 <div className="flex items-center justify-between">
                   <div className="space-y-0.5">
                     <Label>Procesar Notas de Crédito</Label>
-                    <p className="text-xs text-muted-foreground">
-                      Habilitar procesamiento automático de notas de crédito
-                    </p>
+                    <p className="text-xs text-muted-foreground">Habilitar procesamiento automático de notas de crédito</p>
                   </div>
                   <Switch
                     checked={settings.process_credit_notes === "true"}
-                    onCheckedChange={(checked) =>
-                      setSettings({ ...settings, process_credit_notes: checked ? "true" : "false" })
-                    }
+                    onCheckedChange={(checked) => setSettings({ ...settings, process_credit_notes: checked ? "true" : "false" })}
                   />
                 </div>
 
@@ -235,13 +260,9 @@ const Settings = () => {
                   <Label htmlFor="currency_fallback">Moneda por Defecto</Label>
                   <Select
                     value={settings.currency_fallback}
-                    onValueChange={(value) =>
-                      setSettings({ ...settings, currency_fallback: value })
-                    }
+                    onValueChange={(value) => setSettings({ ...settings, currency_fallback: value })}
                   >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="CRC">CRC - Colones</SelectItem>
                       <SelectItem value="USD">USD - Dólares</SelectItem>
@@ -255,27 +276,19 @@ const Settings = () => {
                     id="duplicate_window_days"
                     type="number"
                     value={settings.duplicate_window_days}
-                    onChange={(e) =>
-                      setSettings({ ...settings, duplicate_window_days: e.target.value })
-                    }
+                    onChange={(e) => setSettings({ ...settings, duplicate_window_days: e.target.value })}
                   />
-                  <p className="text-xs text-muted-foreground">
-                    Días hacia atrás para verificar documentos duplicados
-                  </p>
+                  <p className="text-xs text-muted-foreground">Días hacia atrás para verificar documentos duplicados</p>
                 </div>
 
                 <div className="flex items-center justify-between">
                   <div className="space-y-0.5">
                     <Label>Modo Prueba (Dry Run)</Label>
-                    <p className="text-xs text-muted-foreground">
-                      No publicar en QuickBooks, solo simular
-                    </p>
+                    <p className="text-xs text-muted-foreground">No publicar en QuickBooks, solo simular</p>
                   </div>
                   <Switch
                     checked={settings.dry_run === "true"}
-                    onCheckedChange={(checked) =>
-                      setSettings({ ...settings, dry_run: checked ? "true" : "false" })
-                    }
+                    onCheckedChange={(checked) => setSettings({ ...settings, dry_run: checked ? "true" : "false" })}
                   />
                 </div>
               </div>
@@ -289,43 +302,31 @@ const Settings = () => {
                     <Label>IVA Recuperable</Label>
                     <p className="text-xs text-muted-foreground">
                       Si está activo, el IVA se registra como crédito fiscal recuperable.
-                      Si está desactivado, el IVA se incluye como parte del gasto.
                     </p>
                   </div>
                   <Switch
                     checked={settings.default_uses_tax === "true"}
-                    onCheckedChange={(checked) =>
-                      setSettings({ ...settings, default_uses_tax: checked ? "true" : "false" })
-                    }
+                    onCheckedChange={(checked) => setSettings({ ...settings, default_uses_tax: checked ? "true" : "false" })}
                   />
                 </div>
                 <div className="p-3 rounded-lg bg-muted/50">
                   <p className="text-sm text-muted-foreground">
-                    <strong>IVA Recuperable (activo):</strong> El impuesto se separa y registra como crédito fiscal en QuickBooks.
+                    <strong>IVA Recuperable (activo):</strong> El impuesto se separa y registra como crédito fiscal.
                   </p>
                   <p className="text-sm text-muted-foreground mt-1">
-                    <strong>IVA como Gasto (desactivado):</strong> El impuesto se incluye en el monto total del gasto, 
-                    útil para organizaciones que no pueden recuperar el IVA.
+                    <strong>IVA como Gasto (desactivado):</strong> El impuesto se incluye en el monto total del gasto.
                   </p>
                 </div>
               </div>
             </div>
 
             <div className="border-t pt-6 flex justify-end gap-3">
-              <Button variant="outline" onClick={fetchSettings}>
-                Cancelar
-              </Button>
+              <Button variant="outline" onClick={fetchSettings}>Cancelar</Button>
               <Button onClick={handleSave} disabled={isSaving}>
                 {isSaving ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Guardando...
-                  </>
+                  <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Guardando...</>
                 ) : (
-                  <>
-                    <Save className="mr-2 h-4 w-4" />
-                    Guardar Cambios
-                  </>
+                  <><Save className="mr-2 h-4 w-4" />Guardar Cambios</>
                 )}
               </Button>
             </div>

@@ -8,6 +8,10 @@ interface UserProfile {
   role: string;
   created_at: string;
   organizations: { name: string }[];
+  tipo_persona?: string;
+  numero_cedula?: string | null;
+  nombre_comercial?: string | null;
+  activo?: boolean;
 }
 
 interface PendingInvitation {

@@ -11,7 +11,8 @@ import {
   Receipt, 
   Clock,
   Activity,
-  Loader2
+  Loader2,
+  RotateCcw
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
@@ -32,6 +33,9 @@ interface SyncInfo {
   gmailFetched: number;
   qboPublished: number;
   errors: number;
+  errorMessage: string | null;
+  errorDetail: string | null;
+  errorCode: string | null;
 }
 
 const SystemStatusPanel = () => {
@@ -40,6 +44,7 @@ const SystemStatusPanel = () => {
   const [syncInfo, setSyncInfo] = useState<SyncInfo | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isRunningDiagnostic, setIsRunningDiagnostic] = useState(false);
+  const [isReconnecting, setIsReconnecting] = useState(false);
 
   useEffect(() => {
     if (activeOrganization) {
@@ -52,7 +57,6 @@ const SystemStatusPanel = () => {
     setIsLoading(true);
 
     try {
-      // Fetch organization connection status
       const { data: org, error: orgError } = await supabase
         .from("organizations")
         .select("gmail_connected, gmail_email, outlook_connected, outlook_email, quickbooks_connected, qbo_realm_id, google_drive_connected, google_drive_folder_id")
@@ -70,7 +74,6 @@ const SystemStatusPanel = () => {
         });
       }
 
-      // Fetch last sync info
       const { data: syncLogs, error: syncError } = await supabase
         .from("sync_logs")
         .select("*")
@@ -81,13 +84,16 @@ const SystemStatusPanel = () => {
       if (syncError) throw syncError;
 
       if (syncLogs && syncLogs.length > 0) {
-        const lastLog = syncLogs[0];
+        const lastLog = syncLogs[0] as any;
         setSyncInfo({
           lastSync: lastLog.completed_at || lastLog.started_at,
           status: lastLog.status,
           gmailFetched: lastLog.gmail_fetched || 0,
           qboPublished: lastLog.qbo_published || 0,
-          errors: (lastLog.gmail_failed || 0) + (lastLog.qbo_failed || 0)
+          errors: (lastLog.gmail_failed || 0) + (lastLog.qbo_failed || 0),
+          errorMessage: lastLog.error_message || null,
+          errorDetail: lastLog.error_detail || null,
+          errorCode: lastLog.error_code || null,
         });
       } else {
         setSyncInfo(null);
@@ -100,6 +106,28 @@ const SystemStatusPanel = () => {
     }
   };
 
+  const handleReconnectOutlook = async () => {
+    if (!activeOrganization) return;
+    setIsReconnecting(true);
+    
+    try {
+      const { data, error } = await supabase.functions.invoke("outlook-oauth-init", {
+        body: { organization_id: activeOrganization },
+      });
+
+      if (error || data?.error) throw new Error(data?.error || error?.message);
+
+      if (data?.url) {
+        window.open(data.url, "_blank", "width=600,height=700");
+        toast.info("Se abrió la ventana de reconexión de Outlook. Completa el proceso y luego actualiza.");
+      }
+    } catch (error: any) {
+      toast.error(`Error al reconectar Outlook: ${error.message}`);
+    } finally {
+      setIsReconnecting(false);
+    }
+  };
+
   const runDiagnostic = async () => {
     if (!activeOrganization) return;
     setIsRunningDiagnostic(true);
@@ -107,7 +135,6 @@ const SystemStatusPanel = () => {
     try {
       const results: string[] = [];
 
-      // Check organization settings
       const { data: org } = await supabase
         .from("organizations")
         .select("*")
@@ -134,7 +161,6 @@ const SystemStatusPanel = () => {
         }
       }
 
-      // Check integration accounts
       const { data: integrations } = await supabase
         .from("integration_accounts")
         .select("service_type, is_active, credentials")
@@ -155,7 +181,6 @@ const SystemStatusPanel = () => {
         }
       }
 
-      // Check system settings
       const { data: settings } = await supabase
         .from("system_settings")
         .select("key, value")
@@ -172,8 +197,7 @@ const SystemStatusPanel = () => {
         }
       }
 
-      // Check recent errors
-      const { data: errorDocs, count } = await supabase
+      const { count } = await supabase
         .from("processed_documents")
         .select("id", { count: "exact" })
         .eq("organization_id", activeOrganization)
@@ -186,7 +210,6 @@ const SystemStatusPanel = () => {
         results.push("✅ Sin documentos con error");
       }
 
-      // Show results
       toast.success(
         <div className="space-y-1">
           <p className="font-semibold">Diagnóstico completado</p>
@@ -225,6 +248,7 @@ const SystemStatusPanel = () => {
     if (!status) return null;
     
     switch (status) {
+      case "success":
       case "completed":
         return (
           <Badge variant="default" className="bg-green-500/20 text-green-700 border-green-500/30">
@@ -232,11 +256,12 @@ const SystemStatusPanel = () => {
             Completado
           </Badge>
         );
+      case "error":
       case "failed":
         return (
           <Badge variant="destructive">
             <XCircle className="h-3 w-3 mr-1" />
-            Fallido
+            Error
           </Badge>
         );
       case "running":
@@ -244,6 +269,13 @@ const SystemStatusPanel = () => {
           <Badge variant="secondary" className="bg-blue-500/20 text-blue-700 border-blue-500/30">
             <Loader2 className="h-3 w-3 mr-1 animate-spin" />
             En proceso
+          </Badge>
+        );
+      case "partial":
+        return (
+          <Badge variant="secondary" className="bg-yellow-500/20 text-yellow-700 border-yellow-500/30">
+            <AlertCircle className="h-3 w-3 mr-1" />
+            Parcial
           </Badge>
         );
       default:
@@ -256,6 +288,21 @@ const SystemStatusPanel = () => {
     }
   };
 
+  const getErrorDescription = (): string | null => {
+    if (!syncInfo) return null;
+    if (syncInfo.status !== "error") return null;
+    
+    if (syncInfo.errorCode === "token_expired") {
+      return "Token expirado — reconectar el proveedor de correo";
+    }
+    if (syncInfo.errorCode === "permissions_error") {
+      return "Permisos insuficientes — verificar configuración en Azure/Google";
+    }
+    if (syncInfo.errorDetail) return syncInfo.errorDetail;
+    if (syncInfo.errorMessage) return syncInfo.errorMessage;
+    return "Error desconocido durante la sincronización";
+  };
+
   if (isLoading) {
     return (
       <Card className="p-6">
@@ -265,6 +312,9 @@ const SystemStatusPanel = () => {
       </Card>
     );
   }
+
+  const errorDescription = getErrorDescription();
+  const showReconnectButton = syncInfo?.errorCode === "token_expired" && connections?.outlook.connected === false;
 
   return (
     <Card className="p-6">
@@ -284,15 +334,9 @@ const SystemStatusPanel = () => {
             disabled={isRunningDiagnostic}
           >
             {isRunningDiagnostic ? (
-              <>
-                <Loader2 className="h-4 w-4 mr-1 animate-spin" />
-                Ejecutando...
-              </>
+              <><Loader2 className="h-4 w-4 mr-1 animate-spin" />Ejecutando...</>
             ) : (
-              <>
-                <Activity className="h-4 w-4 mr-1" />
-                Diagnóstico
-              </>
+              <><Activity className="h-4 w-4 mr-1" />Diagnóstico</>
             )}
           </Button>
         </div>
@@ -324,7 +368,24 @@ const SystemStatusPanel = () => {
                   <p className="text-xs text-muted-foreground">{connections.outlook.email}</p>
                 )}
               </div>
-              {getStatusBadge(connections?.outlook.connected || false)}
+              <div className="flex items-center gap-2">
+                {getStatusBadge(connections?.outlook.connected || false)}
+                {showReconnectButton && (
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    onClick={handleReconnectOutlook}
+                    disabled={isReconnecting}
+                    className="text-xs border-orange-500/50 text-orange-700 hover:bg-orange-500/10"
+                  >
+                    {isReconnecting ? (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    ) : (
+                      <><RotateCcw className="h-3 w-3 mr-1" />Reconectar</>
+                    )}
+                  </Button>
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -380,6 +441,17 @@ const SystemStatusPanel = () => {
             <p className="text-xs text-muted-foreground mb-2">
               {syncInfo.lastSync && formatDistanceToNow(new Date(syncInfo.lastSync), { locale: es, addSuffix: true })}
             </p>
+            
+            {/* Error detail */}
+            {errorDescription && (
+              <div className="mb-3 p-2 rounded bg-destructive/10 border border-destructive/20">
+                <p className="text-xs text-destructive font-medium">{errorDescription}</p>
+                {syncInfo.errorCode && (
+                  <p className="text-xs text-destructive/70 mt-0.5">Código: {syncInfo.errorCode}</p>
+                )}
+              </div>
+            )}
+
             <div className="flex gap-4 text-xs">
               <span className="text-muted-foreground">
                 📧 Correos: <span className="font-medium text-foreground">{syncInfo.gmailFetched}</span>
