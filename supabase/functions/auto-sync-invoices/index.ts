@@ -26,6 +26,8 @@ serve(async (req) => {
       .update({
         status: "error",
         error_message: "Auto-cleanup: sync stuck in running for >30min",
+        error_detail: "El proceso de sincronización quedó atascado y fue limpiado automáticamente",
+        error_code: "stuck_timeout",
         completed_at: new Date().toISOString(),
       })
       .eq("status", "running")
@@ -37,7 +39,7 @@ serve(async (req) => {
     }
 
     // ============================================================
-    // MODE 1: Single org processing (called by dispatcher below)
+    // MODE 1: Single org processing
     // ============================================================
     if (singleOrgId) {
       console.log(`🔄 Processing single organization: ${singleOrgId}`);
@@ -64,7 +66,7 @@ serve(async (req) => {
     }
 
     // ============================================================
-    // MODE 2: Dispatcher - fan out to individual org processing
+    // MODE 2: Dispatcher
     // ============================================================
     if (trigger === "cron") {
       const { data: cronSettings } = await supabase
@@ -82,7 +84,6 @@ serve(async (req) => {
       }
     }
 
-    // Get all active organizations (no QuickBooks filter - invoices must be imported regardless)
     const { data: orgs } = await supabase
       .from("organizations")
       .select("id, name, gmail_connected, outlook_connected, bluehost_connected, hostinger_connected, quickbooks_connected")
@@ -93,7 +94,6 @@ serve(async (req) => {
     ) || [];
 
     if (validOrgs.length === 0) {
-      console.log("No active organizations with email connected");
       return new Response(
         JSON.stringify({ message: "No organizations to sync" }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -102,7 +102,6 @@ serve(async (req) => {
 
     console.log(`🚀 Dispatching sync for ${validOrgs.length} organizations in parallel`);
 
-    // Fire off individual sync calls for each org with retry + error logging
     const dispatches = validOrgs.map(async (org) => {
       console.log(`📤 Dispatching sync for ${org.name} (${org.id})`);
       
@@ -114,10 +113,7 @@ serve(async (req) => {
               "Authorization": `Bearer ${supabaseKey}`,
               "Content-Type": "application/json",
             },
-            body: JSON.stringify({ 
-              organization_id: org.id, 
-              trigger 
-            }),
+            body: JSON.stringify({ organization_id: org.id, trigger }),
           });
           if (resp.ok || resp.status < 500) return resp;
           console.warn(`⚠️ Dispatch attempt ${attempt + 1} failed for ${org.name}: ${resp.status}`);
@@ -127,19 +123,19 @@ serve(async (req) => {
         if (attempt === 0) await new Promise(r => setTimeout(r, 1000));
       }
       
-      // Both attempts failed - log to sync_logs
       console.error(`❌ Dispatch failed for ${org.name} after 2 attempts`);
       await supabase.from("sync_logs").insert({
         organization_id: org.id,
         trigger_type: trigger,
         status: "error",
         error_message: "Dispatch failed after 2 attempts",
+        error_detail: "No se pudo contactar la función de sincronización después de 2 intentos",
+        error_code: "dispatch_failed",
         completed_at: new Date().toISOString(),
       });
       return null;
     });
 
-    // Wait for all dispatches to be sent (not for completion)
     await Promise.allSettled(dispatches);
 
     return new Response(
@@ -160,7 +156,7 @@ serve(async (req) => {
   }
 });
 
-// Process a single organization: fetch emails + publish to QB
+// Process a single organization
 async function processOrganization(
   supabase: any,
   supabaseUrl: string,
@@ -168,7 +164,6 @@ async function processOrganization(
   org: any,
   trigger: string
 ) {
-  // Create sync log
   const { data: syncLog } = await supabase
     .from("sync_logs")
     .insert({
@@ -182,7 +177,6 @@ async function processOrganization(
   const syncStartTime = Date.now();
 
   try {
-    // Determine mail provider
     let mailProvider: string;
     let fetchFunctionName: string;
     
@@ -239,21 +233,66 @@ async function processOrganization(
       if (!emailResponse.ok) {
         const errorText = await emailResponse.text().catch(() => "Unknown error");
         let errorDetail = errorText;
+        let errorCategory = "";
+        let errorCode = String(emailResponse.status);
+        
         try {
           const parsed = JSON.parse(errorText);
-          if (parsed.error_category && parsed.error) {
-            errorDetail = `[${parsed.error_category}] ${parsed.error}`;
-          } else if (parsed.error) {
-            errorDetail = parsed.error;
-          }
+          errorCategory = parsed.error_category || "";
+          errorCode = parsed.error_code || String(emailResponse.status);
+          errorDetail = parsed.error || errorText;
         } catch { }
+
+        // If token expired, log specifically and don't treat as generic error
+        if (errorCategory === "token_expired") {
+          console.error(`🔒 Token expired for ${org.name} (${mailProvider})`);
+          
+          if (syncLog) {
+            await supabase.from("sync_logs").update({
+              status: "error",
+              error_message: `Token de ${mailProvider} expirado - reconectar`,
+              error_detail: errorDetail,
+              error_code: "token_expired",
+              completed_at: new Date().toISOString(),
+              execution_time_ms: Date.now() - syncStartTime,
+            }).eq("id", syncLog.id);
+          }
+
+          return {
+            organization_id: org.id,
+            organization_name: org.name,
+            status: "error",
+            error: `Token de ${mailProvider} expirado`,
+            error_code: "token_expired",
+          };
+        }
+
+        if (errorCategory === "permissions_error") {
+          if (syncLog) {
+            await supabase.from("sync_logs").update({
+              status: "error",
+              error_message: `Permisos insuficientes en ${mailProvider}`,
+              error_detail: errorDetail,
+              error_code: "permissions_error",
+              completed_at: new Date().toISOString(),
+              execution_time_ms: Date.now() - syncStartTime,
+            }).eq("id", syncLog.id);
+          }
+
+          return {
+            organization_id: org.id,
+            organization_name: org.name,
+            status: "error",
+            error: `Permisos insuficientes en ${mailProvider}`,
+            error_code: "permissions_error",
+          };
+        }
+
         throw new Error(`${mailProvider} fetch failed (${emailResponse.status}): ${errorDetail}`);
       }
 
       const chunk = await emailResponse.json();
-      if (!chunk) {
-        throw new Error(`${mailProvider} fetch returned no data`);
-      }
+      if (!chunk) throw new Error(`${mailProvider} fetch returned no data`);
 
       aggregatedEmailData.messages_found = Math.max(
         aggregatedEmailData.messages_found,
@@ -268,14 +307,12 @@ async function processOrganization(
       aggregatedEmailData.invoices_failed += Number(chunk.invoices_failed || 0);
 
       const nextSkip = Number(chunk.next_skip_count);
-      const hasNextChunk =
-        chunk.partial === true && Number.isFinite(nextSkip) && nextSkip > skipCount;
+      const hasNextChunk = chunk.partial === true && Number.isFinite(nextSkip) && nextSkip > skipCount;
 
       if (hasNextChunk) {
         skipCount = nextSkip;
         aggregatedEmailData.status = "partial";
         aggregatedEmailData.time_limit_reached = true;
-        console.log(`📦 ${mailProvider.toUpperCase()} chunk ${iteration}: processed=${chunk.invoices_processed || 0}, next_skip_count=${skipCount}`);
         await new Promise((resolve) => setTimeout(resolve, 300));
       } else {
         aggregatedEmailData.status = chunk.status || (chunk.partial ? "partial" : "complete");
@@ -287,23 +324,18 @@ async function processOrganization(
     if (continueFetching && iteration >= maxIterations) {
       aggregatedEmailData.status = "partial";
       aggregatedEmailData.time_limit_reached = true;
-      console.warn(`⚠️ ${mailProvider.toUpperCase()} reached max chunk iterations (${maxIterations}) for ${org.name}`);
     }
 
     const emailData = aggregatedEmailData;
-
     const invoicesSkipped = emailData.invoices_skipped || 0;
     const realFailures = emailData.invoices_failed || 0;
     const wasPartial = emailData.status === "partial" || emailData.time_limit_reached;
-    
-    console.log(`📧 ${mailProvider.toUpperCase()} sync for ${org.name}: ${emailData.invoices_processed} processed, ${invoicesSkipped} skipped, ${realFailures} failed${wasPartial ? ' (PARTIAL)' : ''}`);
 
-    // Publish to QuickBooks: only if the organization has QuickBooks connected
+    // Publish to QuickBooks
     let qboPublished = 0;
     let qboFailed = 0;
 
     if (org.quickbooks_connected) {
-      // Check if there are any pending/processed documents waiting to be published
       const { count: pendingCount } = await supabase
         .from("processed_documents")
         .select("id", { count: "exact", head: true })
@@ -315,7 +347,6 @@ async function processOrganization(
       const hasNewInvoices = emailData.invoices_processed > 0;
 
       if (hasNewInvoices || hasPendingDocs) {
-        console.log(`Publishing to QuickBooks for ${org.name}... (new: ${hasNewInvoices}, pending orphans: ${hasPendingDocs ? pendingCount : 0})`);
         if (hasNewInvoices) {
           await new Promise(resolve => setTimeout(resolve, 2000));
         }
@@ -333,17 +364,12 @@ async function processOrganization(
           const qboData = await qboResponse.json();
           qboPublished = qboData?.published || 0;
           qboFailed = qboData?.failed || 0;
-          console.log(`✅ QuickBooks sync for ${org.name}: ${qboPublished} published, ${qboFailed} failed`);
         } else {
           const qboError = await qboResponse.text().catch(() => "Unknown");
           console.error(`QuickBooks publish failed for ${org.name}: ${qboError}`);
           qboFailed = 1;
         }
-      } else {
-        console.log(`⏭️ No pending documents for ${org.name}, skipping QB publish`);
       }
-    } else {
-      console.log(`⏭️ QuickBooks not connected for ${org.name}, skipping QB publish`);
     }
 
     // Update sync log
@@ -363,6 +389,8 @@ async function processOrganization(
           execution_time_ms: Date.now() - syncStartTime,
           error_message: wasPartial ? "Sincronización parcial por límite de tiempo" : 
                         (realFailures > 0 ? `${realFailures} facturas con errores reales` : null),
+          error_detail: null,
+          error_code: null,
         })
         .eq("id", syncLog.id);
     }
@@ -381,13 +409,16 @@ async function processOrganization(
     };
   } catch (error) {
     console.error(`Error processing organization ${org.name}:`, error);
+    const errorMsg = error instanceof Error ? error.message : "Unknown error";
     
     if (syncLog) {
       await supabase
         .from("sync_logs")
         .update({
           status: "error",
-          error_message: error instanceof Error ? error.message : "Unknown error",
+          error_message: errorMsg.substring(0, 255),
+          error_detail: errorMsg,
+          error_code: (error as any)?.error_code || "unknown",
           completed_at: new Date().toISOString(),
           execution_time_ms: Date.now() - syncStartTime,
         })
@@ -398,7 +429,7 @@ async function processOrganization(
       organization_id: org.id,
       organization_name: org.name,
       status: "error",
-      error: error instanceof Error ? error.message : "Unknown error",
+      error: errorMsg,
     };
   }
 }

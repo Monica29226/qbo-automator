@@ -66,7 +66,9 @@ serve(async (req) => {
 
       if (!credentials.refresh_token) {
         await markAccountAsDisconnected("No refresh token available");
-        throw new Error("No refresh token - please reconnect Outlook");
+        const err = new Error("No refresh token - please reconnect Outlook");
+        (err as any).error_category = "token_expired";
+        throw err;
       }
 
       try {
@@ -87,7 +89,9 @@ serve(async (req) => {
           
           if (refreshResponse.status === 400 || refreshResponse.status === 401) {
             await markAccountAsDisconnected("Token inválido o revocado");
-            throw new Error("Outlook token revoked - please reconnect");
+            const err = new Error("Outlook token revoked - please reconnect");
+            (err as any).error_category = "token_expired";
+            throw err;
           }
           
           throw new Error(`Token refresh failed: ${refreshResponse.status}`);
@@ -182,50 +186,90 @@ serve(async (req) => {
     const executionStartTime = Date.now();
     let wasTimeLimitReached = false;
 
-    // Buscar mensajes con adjuntos en Outlook usando Microsoft Graph
-    const searchUrl = `https://graph.microsoft.com/v1.0/me/messages?$filter=hasAttachments eq true${dateFilter}&$select=id,subject,receivedDateTime,from&$top=50&$orderby=receivedDateTime desc`;
-    
-    console.log(`📡 Searching Outlook: ${searchUrl}`);
-    
-    let searchResponse = await fetch(searchUrl, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
+    // Helper: fetch messages from a folder with error handling
+    const fetchMessagesFromFolder = async (folderPath: string): Promise<any[]> => {
+      const searchUrl = `https://graph.microsoft.com/v1.0/me/${folderPath}?$filter=hasAttachments eq true${dateFilter}&$select=id,subject,receivedDateTime,from&$top=50&$orderby=receivedDateTime desc`;
+      console.log(`📡 Searching Outlook ${folderPath}: ${searchUrl}`);
 
-    // Si falla con 401, intentar renovar y reintentar
-    if (!searchResponse.ok && searchResponse.status === 401) {
-      console.log("⚠️ Outlook API returned 401, attempting token refresh...");
-      accessToken = await refreshOutlookToken();
-      searchResponse = await fetch(searchUrl, {
+      let response = await fetch(searchUrl, {
         headers: { Authorization: `Bearer ${accessToken}` },
       });
+
+      // 401 → refresh and retry
+      if (!response.ok && response.status === 401) {
+        console.log("⚠️ Outlook API returned 401, attempting token refresh...");
+        accessToken = await refreshOutlookToken();
+        response = await fetch(searchUrl, {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
+      }
+
+      // 403 → permisos insuficientes
+      if (!response.ok && response.status === 403) {
+        const body = await response.text();
+        console.error(`❌ 403 Forbidden for ${folderPath}:`, body);
+        const err = new Error(`Permisos insuficientes en Azure App - 403 Forbidden`);
+        (err as any).error_category = "permissions_error";
+        (err as any).error_code = "403";
+        throw err;
+      }
+
+      // 429 → rate limit, wait and retry once
+      if (!response.ok && response.status === 429) {
+        const retryAfter = parseInt(response.headers.get("Retry-After") || "5", 10);
+        console.log(`⏳ Rate limited (429), waiting ${retryAfter}s...`);
+        await new Promise(r => setTimeout(r, retryAfter * 1000));
+        response = await fetch(searchUrl, {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
+      }
+
+      if (!response.ok) {
+        const errorBody = await response.text();
+        console.error(`❌ Outlook API error for ${folderPath}:`, response.status, errorBody);
+        // Non-critical for JunkEmail - just skip
+        if (folderPath.includes("JunkEmail")) {
+          console.log(`⚠️ Skipping ${folderPath} due to error`);
+          return [];
+        }
+        throw new Error(`Outlook API error: ${response.status} - ${errorBody.substring(0, 200)}`);
+      }
+
+      const data = await response.json();
+      return data.value || [];
+    };
+
+    // Fetch from Inbox + JunkEmail
+    let messages: any[] = [];
+    try {
+      const inboxMessages = await fetchMessagesFromFolder("messages");
+      messages = [...inboxMessages];
+      console.log(`📥 Inbox: ${inboxMessages.length} messages`);
+    } catch (inboxError) {
+      throw inboxError;
     }
 
-    if (!searchResponse.ok) {
-      const errorBody = await searchResponse.text();
-      console.error("❌ Outlook API error:", searchResponse.status, errorBody);
-      throw new Error(`Outlook API error: ${searchResponse.status}`);
+    try {
+      const junkMessages = await fetchMessagesFromFolder("mailFolders/JunkEmail/messages");
+      if (junkMessages.length > 0) {
+        console.log(`📥 JunkEmail: ${junkMessages.length} messages`);
+        // Deduplicate by message id
+        const existingIds = new Set(messages.map((m: any) => m.id));
+        for (const msg of junkMessages) {
+          if (!existingIds.has(msg.id)) {
+            messages.push(msg);
+          }
+        }
+      }
+    } catch (junkError) {
+      console.log("⚠️ Could not fetch JunkEmail folder:", junkError);
     }
 
-    const searchData = await searchResponse.json();
-    const messages = searchData.value || [];
-    
-    console.log(`Found ${messages.length} messages with attachments`);
+    console.log(`Found ${messages.length} total messages with attachments`);
 
     const processedInvoices: any[] = [];
     const skippedInvoices: any[] = [];
     const errors: any[] = [];
-
-    // Helper para validar fechas
-    const parseIssueDate = (dateString: string): string | null => {
-      if (!dateString || dateString.trim() === "") return null;
-      try {
-        const date = new Date(dateString);
-        if (isNaN(date.getTime())) return null;
-        return date.toISOString().split("T")[0];
-      } catch {
-        return null;
-      }
-    };
 
     // Procesar cada mensaje
     for (const message of messages) {
@@ -237,7 +281,6 @@ serve(async (req) => {
       }
 
       try {
-        // Obtener adjuntos del mensaje
         const attachmentsUrl = `https://graph.microsoft.com/v1.0/me/messages/${message.id}/attachments`;
         const attachmentsResponse = await fetch(attachmentsUrl, {
           headers: { Authorization: `Bearer ${accessToken}` },
@@ -248,14 +291,12 @@ serve(async (req) => {
         const attachmentsData = await attachmentsResponse.json();
         const attachments = attachmentsData.value || [];
 
-        // Filtrar XMLs de factura (excluir respuestas de Hacienda)
         const xmlAttachments = attachments.filter((att: any) => {
           const filename = att.name?.toUpperCase() || '';
           if (!filename.endsWith('.XML')) return false;
           if (filename.startsWith('AHC-') || filename.startsWith('RMH-') || 
               filename.startsWith('MH-') || filename.includes('RESPUESTA') || 
               filename.includes('HACIENDA')) {
-            console.log(`⏭️ Ignorando respuesta de Hacienda: ${att.name}`);
             return false;
           }
           return true;
@@ -265,24 +306,17 @@ serve(async (req) => {
           att.name?.toLowerCase().endsWith('.pdf')
         );
 
-        if (xmlAttachments.length === 0) {
-          console.log(`📭 No invoice XMLs in message ${message.id}`);
-          continue;
-        }
+        if (xmlAttachments.length === 0) continue;
 
-        // Procesar cada XML de factura
         for (const xmlAtt of xmlAttachments) {
           try {
-            // Microsoft Graph devuelve contentBytes en base64, decodificar a UTF-8 para tildes
             const binaryString = atob(xmlAtt.contentBytes);
             const bytes = new Uint8Array(binaryString.length);
             for (let i = 0; i < binaryString.length; i++) {
               bytes[i] = binaryString.charCodeAt(i);
             }
             const xmlContent = new TextDecoder('utf-8').decode(bytes);
-            console.log(`Processing invoice: ${xmlAtt.name}`);
 
-            // Descargar y guardar PDF si existe
             let pdfUrl = null;
             if (pdfAttachment?.contentBytes) {
               try {
@@ -305,16 +339,13 @@ serve(async (req) => {
                   });
 
                 if (!uploadError) {
-                  // Store relative path instead of public URL for private bucket access
                   pdfUrl = pdfPath;
-                  console.log(`✓ PDF saved: ${pdfPath}`);
                 }
               } catch (pdfError) {
                 console.error(`Error saving PDF:`, pdfError);
               }
             }
 
-            // Procesar documento con process-document-xml
             const processResponse = await fetch(
               `${supabaseUrl}/functions/v1/process-document-xml`,
               {
@@ -334,7 +365,6 @@ serve(async (req) => {
 
             if (!processResponse.ok) {
               const errorText = await processResponse.text();
-              console.error(`XML processing failed for ${xmlAtt.name}:`, errorText);
               errors.push({ filename: xmlAtt.name, error: "XML processing failed" });
               continue;
             }
@@ -346,16 +376,13 @@ serve(async (req) => {
               const isDuplicate = errorMsg?.includes("duplicado") || errorMsg?.includes("ya existe");
               
               if (isDuplicate) {
-                console.log(`⏭️ Skipped ${xmlAtt.name}: ${errorMsg}`);
                 skippedInvoices.push({ filename: xmlAtt.name, reason: errorMsg });
               } else {
-                console.error(`❌ Processing error for ${xmlAtt.name}:`, errorMsg);
                 errors.push({ filename: xmlAtt.name, error: errorMsg });
               }
               continue;
             }
 
-            console.log(`✅ Successfully processed: ${xmlAtt.name}`);
             processedInvoices.push({
               filename: xmlAtt.name,
               doc_id: processResult.doc_id,
@@ -363,7 +390,6 @@ serve(async (req) => {
               account_code: processResult.account_code,
             });
 
-            // Upload to Google Drive if connected
             try {
               await fetch(`${supabaseUrl}/functions/v1/upload-to-google-drive`, {
                 method: "POST",
@@ -377,10 +403,9 @@ serve(async (req) => {
                 }),
               });
             } catch (driveError) {
-              console.log(`Google Drive upload skipped: ${driveError}`);
+              // ignore
             }
           } catch (xmlError) {
-            console.error(`Error processing XML ${xmlAtt.name}:`, xmlError);
             errors.push({ 
               filename: xmlAtt.name, 
               error: xmlError instanceof Error ? xmlError.message : "Unknown error" 
@@ -419,8 +444,15 @@ serve(async (req) => {
   } catch (error) {
     console.error("Error in outlook-fetch-invoices:", error);
     const errorMessage = error instanceof Error ? error.message : "Unknown error";
+    const errorCategory = (error as any)?.error_category || null;
+    const errorCode = (error as any)?.error_code || null;
+    
     return new Response(
-      JSON.stringify({ error: errorMessage }),
+      JSON.stringify({ 
+        error: errorMessage,
+        error_category: errorCategory,
+        error_code: errorCode,
+      }),
       {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
         status: 500,

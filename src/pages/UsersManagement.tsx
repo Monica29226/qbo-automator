@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Table,
   TableBody,
@@ -31,8 +32,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, Users, Loader2, Plus, Trash2, Mail, Building2, CheckSquare, Square, AlertCircle, Pencil, X, Send } from "lucide-react";
+import { ArrowLeft, Users, Loader2, Plus, Trash2, Mail, Building2, CheckSquare, Square, AlertCircle, Pencil, X, Send, Power, PowerOff } from "lucide-react";
 import { toast } from "sonner";
 import {
   AlertDialog,
@@ -52,6 +54,10 @@ interface UserProfile {
   role: string;
   created_at: string;
   organizations: { name: string; id?: string }[];
+  tipo_persona?: string;
+  numero_cedula?: string | null;
+  nombre_comercial?: string | null;
+  activo?: boolean;
 }
 
 interface PendingInvitation {
@@ -67,6 +73,31 @@ interface Organization {
   id: string;
   name: string;
 }
+
+// ====== Cédula formatting helpers ======
+const formatCedulaFisica = (value: string): string => {
+  const digits = value.replace(/\D/g, "").slice(0, 9);
+  if (digits.length <= 1) return digits;
+  if (digits.length <= 5) return `${digits[0]}-${digits.slice(1)}`;
+  return `${digits[0]}-${digits.slice(1, 5)}-${digits.slice(5)}`;
+};
+
+const formatCedulaJuridica = (value: string): string => {
+  const digits = value.replace(/\D/g, "").slice(0, 10);
+  if (digits.length <= 1) return digits;
+  if (digits.length <= 4) return `${digits[0]}-${digits.slice(1)}`;
+  return `${digits[0]}-${digits.slice(1, 4)}-${digits.slice(4)}`;
+};
+
+const validateCedulaFisica = (cedula: string): boolean => {
+  const digits = cedula.replace(/\D/g, "");
+  return digits.length === 9;
+};
+
+const validateCedulaJuridica = (cedula: string): boolean => {
+  const digits = cedula.replace(/\D/g, "");
+  return digits.length >= 9 && digits.length <= 10 && digits.startsWith("3");
+};
 
 const UsersManagement = () => {
   const navigate = useNavigate();
@@ -86,11 +117,20 @@ const UsersManagement = () => {
   const [isSendingBulk, setIsSendingBulk] = useState(false);
   const [userToDelete, setUserToDelete] = useState<UserProfile | null>(null);
   const [selectedOrganizations, setSelectedOrganizations] = useState<string[]>([]);
+  const [isTogglingActive, setIsTogglingActive] = useState<string | null>(null);
+  
   const [formData, setFormData] = useState({
     email: "",
     password: "",
     full_name: "",
     role: "member",
+    tipo_persona: "fisica" as "fisica" | "juridica",
+    numero_cedula: "",
+    nombre_comercial: "",
+    nombre_representante: "",
+    cedula_representante: "",
+    telefono: "",
+    direccion: "",
   });
 
   useEffect(() => {
@@ -109,6 +149,17 @@ const UsersManagement = () => {
     }
   }, [isAdmin, activeOrganization, authLoading, navigate]);
 
+  const handleCedulaChange = (value: string) => {
+    const formatted = formData.tipo_persona === "fisica"
+      ? formatCedulaFisica(value)
+      : formatCedulaJuridica(value);
+    setFormData(prev => ({ ...prev, numero_cedula: formatted }));
+  };
+
+  const handleCedulaRepresentanteChange = (value: string) => {
+    setFormData(prev => ({ ...prev, cedula_representante: formatCedulaFisica(value) }));
+  };
+
   const handleCreateUser = async () => {
     if (!formData.email) {
       toast.error("Ingrese el correo del usuario");
@@ -126,9 +177,40 @@ const UsersManagement = () => {
       return;
     }
 
+    if (formData.numero_cedula) {
+      if (formData.tipo_persona === "fisica" && !validateCedulaFisica(formData.numero_cedula)) {
+        toast.error("La cédula física debe tener exactamente 9 dígitos (formato X-XXXX-XXXX)");
+        return;
+      }
+      if (formData.tipo_persona === "juridica" && !validateCedulaJuridica(formData.numero_cedula)) {
+        toast.error("La cédula jurídica debe iniciar con 3 y tener 9-10 dígitos (formato 3-XXX-XXXXXX)");
+        return;
+      }
+    }
+
+    if (formData.tipo_persona === "juridica" && !formData.full_name) {
+      toast.error("La razón social es requerida para persona jurídica");
+      return;
+    }
+
     if (selectedOrganizations.length === 0) {
       toast.error("Seleccione al menos una empresa");
       return;
+    }
+
+    // Check duplicate cédula
+    if (formData.numero_cedula) {
+      const rawCedula = formData.numero_cedula.replace(/\D/g, "");
+      const { data: existing } = await supabase
+        .from("profiles")
+        .select("id")
+        .eq("numero_cedula", rawCedula)
+        .maybeSingle();
+      
+      if (existing) {
+        toast.error("Ya existe un usuario con esta cédula en el sistema");
+        return;
+      }
     }
 
     setIsSending(true);
@@ -138,7 +220,6 @@ const UsersManagement = () => {
       
       let successCount = 0;
       let errorCount = 0;
-      let userId: string | null = null;
 
       for (let i = 0; i < orgsToAdd.length; i++) {
         const org = orgsToAdd[i];
@@ -148,9 +229,16 @@ const UsersManagement = () => {
             body: {
               email: formData.email,
               password: formData.password,
-              full_name: formData.full_name,
+              full_name: formData.tipo_persona === "juridica" ? formData.full_name : formData.full_name,
               role: formData.role,
               organization_id: org.id,
+              tipo_persona: formData.tipo_persona,
+              numero_cedula: formData.numero_cedula ? formData.numero_cedula.replace(/\D/g, "") : null,
+              nombre_comercial: formData.tipo_persona === "juridica" ? formData.nombre_comercial : null,
+              nombre_representante: formData.tipo_persona === "juridica" ? formData.nombre_representante : null,
+              cedula_representante: formData.tipo_persona === "juridica" ? formData.cedula_representante.replace(/\D/g, "") : null,
+              telefono: formData.telefono || null,
+              direccion: formData.direccion || null,
             },
           });
 
@@ -159,7 +247,6 @@ const UsersManagement = () => {
             console.error(`Error adding to ${org.name}:`, result.error || result.data?.error);
           } else {
             successCount++;
-            userId = result.data?.userId;
           }
 
           if (i < orgsToAdd.length - 1) {
@@ -176,8 +263,7 @@ const UsersManagement = () => {
           `Usuario creado y agregado a ${successCount} empresa${successCount > 1 ? 's' : ''}. Se envió correo con credenciales.`
         );
         setIsInviteDialogOpen(false);
-        setFormData({ email: "", password: "", full_name: "", role: "member" });
-        setSelectedOrganizations([]);
+        resetFormData();
         invalidate();
       } else if (successCount > 0) {
         toast.warning(
@@ -192,6 +278,15 @@ const UsersManagement = () => {
     } finally {
       setIsSending(false);
     }
+  };
+
+  const resetFormData = () => {
+    setFormData({
+      email: "", password: "", full_name: "", role: "member",
+      tipo_persona: "fisica", numero_cedula: "", nombre_comercial: "",
+      nombre_representante: "", cedula_representante: "", telefono: "", direccion: "",
+    });
+    setSelectedOrganizations([]);
   };
 
   const toggleOrganization = (orgId: string) => {
@@ -239,30 +334,21 @@ const UsersManagement = () => {
     setIsSavingOrgs(true);
     
     try {
-      // Get current org IDs for user
       const currentOrgIds = editingUser.organizations.map(org => org.id).filter(Boolean);
       const newOrgIds = editingUserOrgs;
       
-      // Find orgs to add and remove
       const orgsToAdd = newOrgIds.filter(id => !currentOrgIds.includes(id));
       const orgsToRemove = currentOrgIds.filter(id => !newOrgIds.includes(id));
       
-      // Remove user from organizations
       for (const orgId of orgsToRemove) {
-        const { error } = await supabase
+        await supabase
           .from("organization_members")
           .update({ is_active: false })
           .eq("user_id", editingUser.id)
           .eq("organization_id", orgId);
-          
-        if (error) {
-          console.error("Error removing org:", error);
-        }
       }
       
-      // Add user to new organizations  
       for (const orgId of orgsToAdd) {
-        // Check if membership exists but is inactive
         const { data: existing } = await supabase
           .from("organization_members")
           .select("id, is_active")
@@ -271,13 +357,11 @@ const UsersManagement = () => {
           .maybeSingle();
           
         if (existing) {
-          // Reactivate existing membership
           await supabase
             .from("organization_members")
             .update({ is_active: true })
             .eq("id", existing.id);
         } else {
-          // Create new membership
           await supabase
             .from("organization_members")
             .insert({
@@ -332,29 +416,41 @@ const UsersManagement = () => {
     }
   };
 
+  const handleToggleActive = async (user: UserProfile) => {
+    setIsTogglingActive(user.id);
+    try {
+      const newStatus = !(user.activo ?? true);
+      const { error } = await supabase
+        .from("profiles")
+        .update({ activo: newStatus })
+        .eq("id", user.id);
+
+      if (error) throw error;
+
+      toast.success(`Usuario ${newStatus ? "activado" : "desactivado"} correctamente`);
+      invalidate();
+    } catch (error: any) {
+      toast.error(`Error: ${error.message}`);
+    } finally {
+      setIsTogglingActive(null);
+    }
+  };
+
   const handleSendBulkWelcome = async () => {
     const confirm = window.confirm(
       `¿Enviar email de bienvenida a todos los ${users.length} usuarios activos?`
     );
-    
     if (!confirm) return;
     
     setIsSendingBulk(true);
-    
     try {
       const { data, error } = await supabase.functions.invoke("send-bulk-welcome", {
         body: { userIds: users.map(u => u.id) },
       });
-
       if (error || data?.error) {
         throw new Error(data?.error || error?.message || "Error al enviar emails");
       }
-
       toast.success(data.message || "Emails enviados correctamente");
-      
-      if (data.errors && data.errors.length > 0) {
-        console.warn("Algunos emails fallaron:", data.errors);
-      }
     } catch (err: any) {
       toast.error(err.message || "Error al enviar emails masivos");
     } finally {
@@ -372,15 +468,12 @@ const UsersManagement = () => {
     if (!editingUser) return;
     
     setIsSavingName(true);
-    
     try {
       const { error } = await supabase
         .from("profiles")
         .update({ full_name: editingUserName.trim() })
         .eq("id", editingUser.id);
-
       if (error) throw error;
-
       toast.success("Nombre actualizado correctamente");
       setIsEditNameDialogOpen(false);
       setEditingUser(null);
@@ -392,7 +485,6 @@ const UsersManagement = () => {
       setIsSavingName(false);
     }
   };
-
 
   const roleLabels: Record<string, string> = {
     admin: "Administrador Global",
@@ -417,7 +509,18 @@ const UsersManagement = () => {
     });
   };
 
-  // Mostrar loader si auth está cargando
+  const formatCedulaDisplay = (cedula: string | null | undefined): string => {
+    if (!cedula) return "—";
+    if (cedula.includes("-")) return cedula;
+    if (cedula.length === 9 && !cedula.startsWith("3")) {
+      return `${cedula[0]}-${cedula.slice(1, 5)}-${cedula.slice(5)}`;
+    }
+    if (cedula.startsWith("3")) {
+      return `${cedula[0]}-${cedula.slice(1, 4)}-${cedula.slice(4)}`;
+    }
+    return cedula;
+  };
+
   if (authLoading) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-primary/5 via-background to-accent/5 flex items-center justify-center">
@@ -481,23 +584,14 @@ const UsersManagement = () => {
           </div>
         ) : (
           <div className="space-y-6">
-            {/* Email Configuration Alert */}
             <Alert>
               <AlertCircle className="h-4 w-4" />
               <AlertDescription>
                 <p className="font-medium mb-1">Configuración de correos requerida</p>
                 <p className="text-sm">
                   Para enviar invitaciones a otros usuarios, necesitas verificar un dominio en{" "}
-                  <a 
-                    href="https://resend.com/domains" 
-                    target="_blank" 
-                    rel="noopener noreferrer"
-                    className="underline hover:text-primary"
-                  >
-                    Resend
-                  </a>
+                  <a href="https://resend.com/domains" target="_blank" rel="noopener noreferrer" className="underline hover:text-primary">Resend</a>
                   {" "}y actualizar el campo "from" en el código a un email usando ese dominio verificado.
-                  Actualmente solo puedes enviar emails de prueba a: monicalderon.2910@gmail.com
                 </p>
               </AlertDescription>
             </Alert>
@@ -510,23 +604,16 @@ const UsersManagement = () => {
                     <Mail className="h-5 w-5" />
                     Invitaciones Pendientes ({pendingInvitations.length})
                   </CardTitle>
-                  <CardDescription>
-                    Invitaciones enviadas que aún no han sido aceptadas
-                  </CardDescription>
+                  <CardDescription>Invitaciones enviadas que aún no han sido aceptadas</CardDescription>
                 </CardHeader>
                 <CardContent>
                   <div className="space-y-2">
                     {pendingInvitations.map((invitation: any) => (
-                      <div
-                        key={invitation.email}
-                        className="flex items-center justify-between p-4 border rounded-lg bg-muted/30"
-                      >
+                      <div key={invitation.email} className="flex items-center justify-between p-4 border rounded-lg bg-muted/30">
                         <div className="flex-1">
                           <p className="font-medium">{invitation.email}</p>
                           <div className="flex items-center gap-2 mt-2">
-                            <span className="text-sm text-muted-foreground">
-                              {roleLabels[invitation.role]}
-                            </span>
+                            <span className="text-sm text-muted-foreground">{roleLabels[invitation.role]}</span>
                             <span className="text-sm text-muted-foreground">•</span>
                             <span className="text-sm font-medium text-primary">
                               Acceso a {invitation.organizations.length === organizations.length 
@@ -537,9 +624,7 @@ const UsersManagement = () => {
                           {invitation.organizations.length <= 5 && (
                             <div className="flex flex-wrap gap-1 mt-2">
                               {invitation.organizations.map((orgName: string, idx: number) => (
-                                <Badge key={idx} variant="outline" className="text-xs">
-                                  {orgName}
-                                </Badge>
+                                <Badge key={idx} variant="outline" className="text-xs">{orgName}</Badge>
                               ))}
                             </div>
                           )}
@@ -547,11 +632,7 @@ const UsersManagement = () => {
                             Expira: {formatDate(invitation.expires_at)}
                           </p>
                         </div>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => handleDeleteInvitation(invitation.invitation_ids)}
-                        >
+                        <Button variant="ghost" size="sm" onClick={() => handleDeleteInvitation(invitation.invitation_ids)}>
                           <Trash2 className="h-4 w-4 text-destructive" />
                         </Button>
                       </div>
@@ -566,36 +647,54 @@ const UsersManagement = () => {
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
                   <Users className="h-5 w-5" />
-                  Usuarios Activos ({users.length})
+                  Usuarios ({users.length})
                 </CardTitle>
-                <CardDescription>
-                  Usuarios registrados en el sistema y sus empresas asignadas
-                </CardDescription>
+                <CardDescription>Usuarios registrados en el sistema y sus empresas asignadas</CardDescription>
               </CardHeader>
               <CardContent>
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Nombre</TableHead>
+                      <TableHead>Nombre / Razón Social</TableHead>
+                      <TableHead>Tipo</TableHead>
+                      <TableHead>Cédula</TableHead>
                       <TableHead>Correo</TableHead>
-                      <TableHead>Rol Global</TableHead>
-                      <TableHead>Empresas con Acceso</TableHead>
-                      <TableHead>Fecha de Registro</TableHead>
-                      <TableHead className="w-[120px]">Acciones</TableHead>
+                      <TableHead>Rol</TableHead>
+                      <TableHead>Estado</TableHead>
+                      <TableHead>Empresas</TableHead>
+                      <TableHead className="w-[140px]">Acciones</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {users.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
+                        <TableCell colSpan={8} className="text-center text-muted-foreground py-8">
                           No hay usuarios registrados
                         </TableCell>
                       </TableRow>
                     ) : (
                       users.map((user) => (
-                        <TableRow key={user.id}>
+                        <TableRow key={user.id} className={(user.activo === false) ? "opacity-60" : ""}>
                           <TableCell className="font-medium">
-                            {user.full_name || "Sin nombre"}
+                            <div>
+                              {user.full_name || "Sin nombre"}
+                              {user.nombre_comercial && (
+                                <p className="text-xs text-muted-foreground">{user.nombre_comercial}</p>
+                              )}
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <Badge 
+                              variant="outline" 
+                              className={user.tipo_persona === "juridica" 
+                                ? "border-purple-500/50 text-purple-700 bg-purple-500/10" 
+                                : "border-blue-500/50 text-blue-700 bg-blue-500/10"}
+                            >
+                              {user.tipo_persona === "juridica" ? "Jurídica" : "Física"}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-sm font-mono">
+                            {formatCedulaDisplay(user.numero_cedula)}
                           </TableCell>
                           <TableCell>{user.email}</TableCell>
                           <TableCell>
@@ -604,44 +703,50 @@ const UsersManagement = () => {
                             </Badge>
                           </TableCell>
                           <TableCell>
+                            <Badge 
+                              variant="outline"
+                              className={(user.activo ?? true)
+                                ? "border-green-500/50 text-green-700 bg-green-500/10"
+                                : "border-red-500/50 text-red-700 bg-red-500/10"}
+                            >
+                              {(user.activo ?? true) ? "Activo" : "Inactivo"}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>
                             <div className="flex flex-wrap gap-1">
-                              {user.organizations.slice(0, 3).map((org, idx) => (
-                                <Badge key={idx} variant="outline" className="text-xs">
-                                  {org.name}
-                                </Badge>
+                              {user.organizations.slice(0, 2).map((org, idx) => (
+                                <Badge key={idx} variant="outline" className="text-xs">{org.name}</Badge>
                               ))}
-                              {user.organizations.length > 3 && (
-                                <Badge variant="outline" className="text-xs">
-                                  +{user.organizations.length - 3} más
-                                </Badge>
+                              {user.organizations.length > 2 && (
+                                <Badge variant="outline" className="text-xs">+{user.organizations.length - 2} más</Badge>
                               )}
                               {user.organizations.length === 0 && (
-                                <Badge variant="secondary" className="text-xs">
-                                  Sin empresas
-                                </Badge>
+                                <Badge variant="secondary" className="text-xs">Sin empresas</Badge>
                               )}
                             </div>
                           </TableCell>
-                          <TableCell className="text-sm text-muted-foreground">
-                            {formatDate(user.created_at)}
-                          </TableCell>
                           <TableCell>
                             <div className="flex items-center gap-1">
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => handleEditUserName(user)}
-                                title="Editar nombre"
-                              >
+                              <Button variant="ghost" size="sm" onClick={() => handleEditUserName(user)} title="Editar nombre">
                                 <Pencil className="h-4 w-4" />
                               </Button>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => handleEditUserOrgs(user)}
-                                title="Editar empresas"
-                              >
+                              <Button variant="ghost" size="sm" onClick={() => handleEditUserOrgs(user)} title="Editar empresas">
                                 <Building2 className="h-4 w-4" />
+                              </Button>
+                              <Button 
+                                variant="ghost" 
+                                size="sm" 
+                                onClick={() => handleToggleActive(user)} 
+                                title={(user.activo ?? true) ? "Desactivar" : "Activar"}
+                                disabled={isTogglingActive === user.id}
+                              >
+                                {isTogglingActive === user.id ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (user.activo ?? true) ? (
+                                  <PowerOff className="h-4 w-4 text-orange-500" />
+                                ) : (
+                                  <Power className="h-4 w-4 text-green-500" />
+                                )}
                               </Button>
                               <Button
                                 variant="ghost"
@@ -667,101 +772,188 @@ const UsersManagement = () => {
 
       {/* Create User Dialog */}
       <Dialog open={isInviteDialogOpen} onOpenChange={setIsInviteDialogOpen}>
-        <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
+        <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Crear Usuario</DialogTitle>
             <DialogDescription>
               Crea un nuevo usuario con acceso a las empresas seleccionadas.
-              Recibirá un correo con sus credenciales de acceso.
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4">
-            <div>
-              <Label htmlFor="full_name">Nombre Completo</Label>
-              <Input
-                id="full_name"
-                type="text"
-                placeholder="Juan Pérez"
-                value={formData.full_name}
-                onChange={(e) =>
-                  setFormData((prev) => ({ ...prev, full_name: e.target.value }))
-                }
-              />
-            </div>
-
-            <div>
-              <Label htmlFor="email">Correo Electrónico *</Label>
-              <Input
-                id="email"
-                type="email"
-                placeholder="usuario@ejemplo.com"
-                value={formData.email}
-                onChange={(e) =>
-                  setFormData((prev) => ({ ...prev, email: e.target.value }))
-                }
-              />
-            </div>
-
-            <div>
-              <Label htmlFor="password">Contraseña *</Label>
-              <Input
-                id="password"
-                type="password"
-                placeholder="Mínimo 8 caracteres"
-                value={formData.password}
-                onChange={(e) =>
-                  setFormData((prev) => ({ ...prev, password: e.target.value }))
-                }
-              />
-              <p className="text-xs text-muted-foreground mt-1">
-                La contraseña se enviará al usuario por correo electrónico
-              </p>
-            </div>
-
-            <div>
-              <Label htmlFor="role">Rol en las Empresas *</Label>
-              <Select
-                value={formData.role}
-                onValueChange={(value) =>
-                  setFormData((prev) => ({ ...prev, role: value }))
-                }
+            {/* Tipo de Persona */}
+            <div className="space-y-2">
+              <Label className="text-sm font-semibold">Tipo de Persona</Label>
+              <RadioGroup
+                value={formData.tipo_persona}
+                onValueChange={(value) => setFormData(prev => ({ 
+                  ...prev, 
+                  tipo_persona: value as "fisica" | "juridica",
+                  numero_cedula: "",
+                }))}
+                className="flex gap-4"
               >
-                <SelectTrigger>
-                  <SelectValue placeholder="Seleccione un rol" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="admin">Administrador</SelectItem>
-                  <SelectItem value="member">Miembro</SelectItem>
-                  <SelectItem value="viewer">Observador</SelectItem>
-                </SelectContent>
-              </Select>
-              <p className="text-xs text-muted-foreground mt-1">
-                {roleDescriptions[formData.role]}
-              </p>
+                <div className="flex items-center space-x-2">
+                  <RadioGroupItem value="fisica" id="fisica" />
+                  <Label htmlFor="fisica" className="cursor-pointer">Persona Física</Label>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <RadioGroupItem value="juridica" id="juridica" />
+                  <Label htmlFor="juridica" className="cursor-pointer">Persona Jurídica</Label>
+                </div>
+              </RadioGroup>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Name / Razón Social */}
+              <div>
+                <Label htmlFor="full_name">
+                  {formData.tipo_persona === "fisica" ? "Nombre Completo *" : "Razón Social *"}
+                </Label>
+                <Input
+                  id="full_name"
+                  placeholder={formData.tipo_persona === "fisica" ? "Juan Pérez" : "Empresa S.A."}
+                  value={formData.full_name}
+                  onChange={(e) => setFormData(prev => ({ ...prev, full_name: e.target.value }))}
+                />
+              </div>
+
+              {/* Cédula */}
+              <div>
+                <Label htmlFor="numero_cedula">
+                  {formData.tipo_persona === "fisica" ? "Cédula de Identidad" : "Cédula Jurídica"} *
+                </Label>
+                <Input
+                  id="numero_cedula"
+                  placeholder={formData.tipo_persona === "fisica" ? "1-1234-5678" : "3-123-456789"}
+                  value={formData.numero_cedula}
+                  onChange={(e) => handleCedulaChange(e.target.value)}
+                />
+                <p className="text-xs text-muted-foreground mt-1">
+                  {formData.tipo_persona === "fisica" 
+                    ? "Formato: X-XXXX-XXXX (9 dígitos)" 
+                    : "Formato: 3-XXX-XXXXXX (inicia con 3)"}
+                </p>
+              </div>
+            </div>
+
+            {/* Nombre Comercial (solo jurídica) */}
+            {formData.tipo_persona === "juridica" && (
+              <div>
+                <Label htmlFor="nombre_comercial">Nombre Comercial</Label>
+                <Input
+                  id="nombre_comercial"
+                  placeholder="Nombre comercial de la empresa"
+                  value={formData.nombre_comercial}
+                  onChange={(e) => setFormData(prev => ({ ...prev, nombre_comercial: e.target.value }))}
+                />
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <Label htmlFor="email">Correo Electrónico *</Label>
+                <Input
+                  id="email"
+                  type="email"
+                  placeholder="usuario@ejemplo.com"
+                  value={formData.email}
+                  onChange={(e) => setFormData(prev => ({ ...prev, email: e.target.value }))}
+                />
+              </div>
+
+              <div>
+                <Label htmlFor="telefono">Teléfono</Label>
+                <Input
+                  id="telefono"
+                  placeholder="8888-8888"
+                  value={formData.telefono}
+                  onChange={(e) => setFormData(prev => ({ ...prev, telefono: e.target.value }))}
+                />
+              </div>
+            </div>
+
+            {/* Dirección */}
+            <div>
+              <Label htmlFor="direccion">Dirección</Label>
+              <Textarea
+                id="direccion"
+                placeholder="Dirección completa"
+                value={formData.direccion}
+                onChange={(e) => setFormData(prev => ({ ...prev, direccion: e.target.value }))}
+                rows={2}
+              />
+            </div>
+
+            {/* Representante Legal (solo jurídica) */}
+            {formData.tipo_persona === "juridica" && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 border-t pt-4">
+                <div>
+                  <Label htmlFor="nombre_representante">Nombre del Representante Legal *</Label>
+                  <Input
+                    id="nombre_representante"
+                    placeholder="Nombre completo del representante"
+                    value={formData.nombre_representante}
+                    onChange={(e) => setFormData(prev => ({ ...prev, nombre_representante: e.target.value }))}
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="cedula_representante">Cédula del Representante *</Label>
+                  <Input
+                    id="cedula_representante"
+                    placeholder="1-1234-5678"
+                    value={formData.cedula_representante}
+                    onChange={(e) => handleCedulaRepresentanteChange(e.target.value)}
+                  />
+                </div>
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 border-t pt-4">
+              <div>
+                <Label htmlFor="password">Contraseña *</Label>
+                <Input
+                  id="password"
+                  type="password"
+                  placeholder="Mínimo 8 caracteres"
+                  value={formData.password}
+                  onChange={(e) => setFormData(prev => ({ ...prev, password: e.target.value }))}
+                />
+                <p className="text-xs text-muted-foreground mt-1">
+                  Se enviará al usuario por correo electrónico
+                </p>
+              </div>
+
+              <div>
+                <Label htmlFor="role">Rol *</Label>
+                <Select
+                  value={formData.role}
+                  onValueChange={(value) => setFormData(prev => ({ ...prev, role: value }))}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Seleccione un rol" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="admin">Administrador</SelectItem>
+                    <SelectItem value="member">Miembro</SelectItem>
+                    <SelectItem value="viewer">Observador</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground mt-1">
+                  {roleDescriptions[formData.role]}
+                </p>
+              </div>
             </div>
 
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <Label>Empresas con acceso *</Label>
                 <div className="flex gap-2">
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={selectAllOrganizations}
-                    className="text-xs h-7"
-                  >
+                  <Button type="button" variant="ghost" size="sm" onClick={selectAllOrganizations} className="text-xs h-7">
                     <CheckSquare className="h-3 w-3 mr-1" />
                     Todas
                   </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={clearAllOrganizations}
-                    className="text-xs h-7"
-                  >
+                  <Button type="button" variant="ghost" size="sm" onClick={clearAllOrganizations} className="text-xs h-7">
                     <Square className="h-3 w-3 mr-1" />
                     Ninguna
                   </Button>
@@ -770,16 +962,11 @@ const UsersManagement = () => {
               
               <div className="border rounded-lg max-h-48 overflow-y-auto">
                 {organizations.length === 0 ? (
-                  <p className="p-3 text-sm text-muted-foreground text-center">
-                    No hay empresas disponibles
-                  </p>
+                  <p className="p-3 text-sm text-muted-foreground text-center">No hay empresas disponibles</p>
                 ) : (
                   <div className="divide-y">
                     {organizations.map((org) => (
-                      <label
-                        key={org.id}
-                        className="flex items-center gap-3 p-3 cursor-pointer hover:bg-muted/50 transition-colors"
-                      >
+                      <label key={org.id} className="flex items-center gap-3 p-3 cursor-pointer hover:bg-muted/50 transition-colors">
                         <input
                           type="checkbox"
                           checked={selectedOrganizations.includes(org.id)}
@@ -805,14 +992,7 @@ const UsersManagement = () => {
           </div>
 
           <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => {
-                setIsInviteDialogOpen(false);
-                setFormData({ email: "", password: "", full_name: "", role: "member" });
-                setSelectedOrganizations([]);
-              }}
-            >
+            <Button variant="outline" onClick={() => { setIsInviteDialogOpen(false); resetFormData(); }}>
               Cancelar
             </Button>
             <Button 
@@ -834,10 +1014,7 @@ const UsersManagement = () => {
 
       {/* Edit User Organizations Dialog */}
       <Dialog open={isEditOrgsDialogOpen} onOpenChange={(open) => {
-        if (!open) {
-          setEditingUser(null);
-          setEditingUserOrgs([]);
-        }
+        if (!open) { setEditingUser(null); setEditingUserOrgs([]); }
         setIsEditOrgsDialogOpen(open);
       }}>
         <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
@@ -852,23 +1029,11 @@ const UsersManagement = () => {
             <div className="flex items-center justify-between">
               <Label>Empresas con acceso</Label>
               <div className="flex gap-2">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setEditingUserOrgs(organizations.map(org => org.id))}
-                  className="text-xs h-7"
-                >
+                <Button type="button" variant="ghost" size="sm" onClick={() => setEditingUserOrgs(organizations.map(org => org.id))} className="text-xs h-7">
                   <CheckSquare className="h-3 w-3 mr-1" />
                   Todas
                 </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setEditingUserOrgs([])}
-                  className="text-xs h-7"
-                >
+                <Button type="button" variant="ghost" size="sm" onClick={() => setEditingUserOrgs([])} className="text-xs h-7">
                   <Square className="h-3 w-3 mr-1" />
                   Ninguna
                 </Button>
@@ -877,16 +1042,11 @@ const UsersManagement = () => {
             
             <div className="border rounded-lg max-h-64 overflow-y-auto">
               {organizations.length === 0 ? (
-                <p className="p-3 text-sm text-muted-foreground text-center">
-                  No hay empresas disponibles
-                </p>
+                <p className="p-3 text-sm text-muted-foreground text-center">No hay empresas disponibles</p>
               ) : (
                 <div className="divide-y">
                   {organizations.map((org) => (
-                    <label
-                      key={org.id}
-                      className="flex items-center gap-3 p-3 cursor-pointer hover:bg-muted/50 transition-colors"
-                    >
+                    <label key={org.id} className="flex items-center gap-3 p-3 cursor-pointer hover:bg-muted/50 transition-colors">
                       <input
                         type="checkbox"
                         checked={editingUserOrgs.includes(org.id)}
@@ -911,28 +1071,11 @@ const UsersManagement = () => {
           </div>
 
           <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => {
-                setIsEditOrgsDialogOpen(false);
-                setEditingUser(null);
-                setEditingUserOrgs([]);
-              }}
-            >
+            <Button variant="outline" onClick={() => { setIsEditOrgsDialogOpen(false); setEditingUser(null); setEditingUserOrgs([]); }}>
               Cancelar
             </Button>
-            <Button 
-              onClick={handleSaveUserOrgs} 
-              disabled={isSavingOrgs}
-            >
-              {isSavingOrgs ? (
-                <>
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  Guardando...
-                </>
-              ) : (
-                "Guardar Cambios"
-              )}
+            <Button onClick={handleSaveUserOrgs} disabled={isSavingOrgs}>
+              {isSavingOrgs ? (<><Loader2 className="h-4 w-4 mr-2 animate-spin" />Guardando...</>) : "Guardar Cambios"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -947,13 +1090,11 @@ const UsersManagement = () => {
               Actualiza el nombre del usuario <strong>{editingUser?.email}</strong>
             </DialogDescription>
           </DialogHeader>
-
           <div className="space-y-4">
             <div>
               <Label htmlFor="edit_full_name">Nombre Completo</Label>
               <Input
                 id="edit_full_name"
-                type="text"
                 placeholder="Juan Pérez"
                 value={editingUserName}
                 onChange={(e) => setEditingUserName(e.target.value)}
@@ -961,36 +1102,18 @@ const UsersManagement = () => {
               />
             </div>
           </div>
-
           <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => {
-                setIsEditNameDialogOpen(false);
-                setEditingUser(null);
-                setEditingUserName("");
-              }}
-            >
+            <Button variant="outline" onClick={() => { setIsEditNameDialogOpen(false); setEditingUser(null); setEditingUserName(""); }}>
               Cancelar
             </Button>
-            <Button 
-              onClick={handleSaveUserName} 
-              disabled={isSavingName || !editingUserName.trim()}
-            >
-              {isSavingName ? (
-                <>
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  Guardando...
-                </>
-              ) : (
-                "Guardar"
-              )}
+            <Button onClick={handleSaveUserName} disabled={isSavingName || !editingUserName.trim()}>
+              {isSavingName ? (<><Loader2 className="h-4 w-4 mr-2 animate-spin" />Guardando...</>) : "Guardar"}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* Delete User Confirmation Dialog */}
+      {/* Delete User Confirmation */}
       <AlertDialog open={!!userToDelete} onOpenChange={(open) => !open && setUserToDelete(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -1007,17 +1130,7 @@ const UsersManagement = () => {
               disabled={isDeleting}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
-              {isDeleting ? (
-                <>
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  Eliminando...
-                </>
-              ) : (
-                <>
-                  <Trash2 className="h-4 w-4 mr-2" />
-                  Eliminar Usuario
-                </>
-              )}
+              {isDeleting ? (<><Loader2 className="h-4 w-4 mr-2 animate-spin" />Eliminando...</>) : (<><Trash2 className="h-4 w-4 mr-2" />Eliminar Usuario</>)}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

@@ -8,6 +8,10 @@ interface UserProfile {
   role: string;
   created_at: string;
   organizations: { name: string }[];
+  tipo_persona?: string;
+  numero_cedula?: string | null;
+  nombre_comercial?: string | null;
+  activo?: boolean;
 }
 
 interface PendingInvitation {
@@ -42,7 +46,7 @@ export const useUserManagementData = (activeOrganization: string | null) => {
       ] = await Promise.all([
         supabase
           .from("profiles")
-          .select("id, email, full_name, created_at")
+          .select("id, email, full_name, created_at, tipo_persona, numero_cedula, nombre_comercial, activo")
           .order("created_at", { ascending: false }),
         supabase.from("user_roles").select("user_id, role"),
         supabase
@@ -84,6 +88,10 @@ export const useUserManagementData = (activeOrganization: string | null) => {
         role: rolesMap.get(user.id) || "user",
         created_at: user.created_at,
         organizations: membersMap.get(user.id) || [],
+        tipo_persona: user.tipo_persona || "fisica",
+        numero_cedula: user.numero_cedula,
+        nombre_comercial: user.nombre_comercial,
+        activo: user.activo ?? true,
       }));
 
       // Procesar organizaciones
