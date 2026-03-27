@@ -84,6 +84,10 @@ export const useUserManagementData = (activeOrganization: string | null) => {
         role: rolesMap.get(user.id) || "user",
         created_at: user.created_at,
         organizations: membersMap.get(user.id) || [],
+        tipo_persona: user.tipo_persona || "fisica",
+        numero_cedula: user.numero_cedula,
+        nombre_comercial: user.nombre_comercial,
+        activo: user.activo ?? true,
       }));
 
       // Procesar organizaciones
