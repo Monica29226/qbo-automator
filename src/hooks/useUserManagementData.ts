@@ -42,7 +42,7 @@ export const useUserManagementData = (activeOrganization: string | null) => {
       ] = await Promise.all([
         supabase
           .from("profiles")
-          .select("id, email, full_name, created_at")
+          .select("id, email, full_name, created_at, tipo_persona, numero_cedula, nombre_comercial, activo")
           .order("created_at", { ascending: false }),
         supabase.from("user_roles").select("user_id, role"),
         supabase
