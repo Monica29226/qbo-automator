@@ -750,27 +750,51 @@ export type Database = {
       }
       profiles: {
         Row: {
+          activo: boolean
           avatar_url: string | null
+          cedula_representante: string | null
           created_at: string
+          direccion: string | null
           email: string
           full_name: string | null
           id: string
+          nombre_comercial: string | null
+          nombre_representante: string | null
+          numero_cedula: string | null
+          telefono: string | null
+          tipo_persona: string
           updated_at: string
         }
         Insert: {
+          activo?: boolean
           avatar_url?: string | null
+          cedula_representante?: string | null
           created_at?: string
+          direccion?: string | null
           email: string
           full_name?: string | null
           id: string
+          nombre_comercial?: string | null
+          nombre_representante?: string | null
+          numero_cedula?: string | null
+          telefono?: string | null
+          tipo_persona?: string
           updated_at?: string
         }
         Update: {
+          activo?: boolean
           avatar_url?: string | null
+          cedula_representante?: string | null
           created_at?: string
+          direccion?: string | null
           email?: string
           full_name?: string | null
           id?: string
+          nombre_comercial?: string | null
+          nombre_representante?: string | null
+          numero_cedula?: string | null
+          telefono?: string | null
+          tipo_persona?: string
           updated_at?: string
         }
         Relationships: []
@@ -994,6 +1018,8 @@ export type Database = {
         Row: {
           completed_at: string | null
           created_at: string
+          error_code: string | null
+          error_detail: string | null
           error_message: string | null
           execution_time_ms: number | null
           gmail_failed: number | null
@@ -1010,6 +1036,8 @@ export type Database = {
         Insert: {
           completed_at?: string | null
           created_at?: string
+          error_code?: string | null
+          error_detail?: string | null
           error_message?: string | null
           execution_time_ms?: number | null
           gmail_failed?: number | null
@@ -1026,6 +1054,8 @@ export type Database = {
         Update: {
           completed_at?: string | null
           created_at?: string
+          error_code?: string | null
+          error_detail?: string | null
           error_message?: string | null
           execution_time_ms?: number | null
           gmail_failed?: number | null
