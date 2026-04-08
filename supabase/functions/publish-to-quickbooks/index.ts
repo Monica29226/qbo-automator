@@ -2215,10 +2215,9 @@ Deno.serve(async (req) => {
             DocNumber: qboDocNumber,
             Line: lines,
             PrivateNote: `Nota de Crédito - Clave: ${claveHacienda}\nProveedor: ${doc.supplier_name}`,
-            // CRITICAL: Always use TaxInclusive when IVA is recoverable
-            // Lines include subtotal+IVA, QBO backs out the tax via TaxCodeRef
-            // This prevents double-tax display issues in QBO UI
-            GlobalTaxCalculation: "TaxInclusive",
+            // CRITICAL: Use TaxExcluded - lines contain subtotal only, tax is passed manually
+            // TxnTaxDetail.TotalTax = TotalImpuesto from XML (exact, never recalculated)
+            GlobalTaxCalculation: "TaxExcluded",
           };
           
           if (documentCurrency === 'USD') {
@@ -2227,7 +2226,8 @@ Deno.serve(async (req) => {
             if (exchangeRate > 1) vendorCreditPayload.ExchangeRate = exchangeRate;
           }
           
-          if (false && effectiveUsesTax && totalTax > 0) {
+          // ALWAYS set TxnTaxDetail with exact XML value when IVA is recoverable
+          if (effectiveUsesTax && totalTax > 0) {
             const taxLines: any[] = [];
             const rateKeys = Object.keys(taxByRate).map(Number);
             for (const rate of rateKeys) {
@@ -2379,9 +2379,9 @@ Deno.serve(async (req) => {
             DocNumber: qboDocNumber,
             Line: lines,
             PrivateNote: `Factura XML: ${doc.doc_number}\nClave: ${claveHacienda}\nProveedor: ${doc.supplier_name}`,
-            // CRITICAL: Always use TaxInclusive
-            // Lines include subtotal+IVA, QBO backs out the tax via TaxCodeRef
-            GlobalTaxCalculation: "TaxInclusive",
+            // CRITICAL: Use TaxExcluded - lines contain subtotal only, tax is passed manually
+            // TxnTaxDetail.TotalTax = TotalImpuesto from XML (exact, never recalculated)
+            GlobalTaxCalculation: "TaxExcluded",
           };
           
           if (documentCurrency === 'USD') {
@@ -2390,8 +2390,8 @@ Deno.serve(async (req) => {
             if (exchangeRate > 1) billPayload.ExchangeRate = exchangeRate;
           }
           
-          if (false && effectiveUsesTax && totalTax > 0) {
-            // DISABLED: With TaxInclusive, QBO calculates tax from TaxCodeRef on lines
+          // ALWAYS set TxnTaxDetail with exact XML value when IVA is recoverable
+          if (effectiveUsesTax && totalTax > 0) {
             const taxLines: any[] = [];
             const rateKeys = Object.keys(taxByRate).map(Number);
             
@@ -2418,9 +2418,9 @@ Deno.serve(async (req) => {
             if (taxLines.length > 0) {
               billPayload.TxnTaxDetail = { TotalTax: parseFloat(totalTax.toFixed(2)), TaxLine: taxLines };
             } else {
-              // Fallback: just TotalTax if we couldn't resolve TaxRate IDs
+              // Fallback: just TotalTax from XML if we couldn't resolve TaxRate IDs
               billPayload.TxnTaxDetail = { TotalTax: parseFloat(totalTax.toFixed(2)) };
-              logInfo(`   ⚠️ ${doc.doc_number}: No TaxRate IDs found, using TotalTax only`);
+              logInfo(`   ⚠️ ${doc.doc_number}: No TaxRate IDs found, using TotalTax only: ${totalTax.toFixed(2)}`);
             }
           }
           
