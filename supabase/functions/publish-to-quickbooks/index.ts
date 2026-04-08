@@ -1964,19 +1964,13 @@ Deno.serve(async (req) => {
             }
             
             // Calculate line amount
-            // CRITICAL: baseImponible already has discount applied
-            // We need to add IEBLE as it's a specific tax that goes into the expense
+            // CRITICAL RULE: Line Amount = subtotal (baseImponible) ONLY
+            // IVA goes ALWAYS as separate TxnTaxDetail - NEVER in line amounts
+            // The XML is the absolute source of truth - we NEVER recalculate
             let lineAmount = subtotal;
             
             // If tax should be included in lines (IVA como gasto), add IVA to line
             if (includeTaxInLines && Math.abs(montoImpuestoIVA) > 0) {
-              lineAmount = subtotal + montoImpuestoIVA;
-            }
-
-            // CRITICAL FIX: When IVA is recoverable (not included in lines),
-            // use montoTotalLinea (subtotal + IVA) as Amount with TaxInclusive mode
-            // This prevents QBO from double-counting tax when users toggle display mode
-            if (!includeTaxInLines && Math.abs(montoImpuestoIVA) > 0) {
               lineAmount = subtotal + montoImpuestoIVA;
             }
             
@@ -2122,18 +2116,32 @@ Deno.serve(async (req) => {
         await registerInTracking(doc, 'pending');
         
         // =============================================================
-        // STEP 10: FINAL AMOUNT VALIDATION & TAX EXEMPTION DETECTION
+        // STEP 10: FINAL AMOUNT VALIDATION - XML IS ABSOLUTE SOURCE OF TRUTH
+        // Read TotalVentaNeta, TotalImpuesto, TotalComprobante directly from XML
+        // NEVER recalculate these values
         // =============================================================
         const linesTotalAmount = lines.reduce((sum, line) => sum + (parseFloat(line.Amount) || 0), 0);
         const documentCurrency = doc.currency || xmlData.moneda || 'CRC';
         
-        // Use early-detected tax exemption from STEP 7 pre-detection
-        const xmlTotal = parseFloat(xmlData.totalComprobante || xmlData.TotalComprobante || doc.total_amount);
-        const xmlSubtotal = parseFloat(xmlData.subTotal || xmlData.SubTotal || '0');
-        const xmlTax = parseFloat(doc.total_tax as any) || 0;
+        // READ DIRECTLY FROM XML RESUMEN - these are the ABSOLUTE source of truth
+        const resumenFactura = xmlData.resumen_factura || xmlData.ResumenFactura || xmlData;
+        const xmlTotalVentaNeta = Math.abs(parseFloat(
+          resumenFactura.TotalVentaNeta || resumenFactura.totalVentaNeta || resumenFactura.total_venta_neta ||
+          xmlData.totalVentaNeta || xmlData.TotalVentaNeta || '0'
+        ));
+        const xmlTotalImpuesto = Math.abs(parseFloat(
+          resumenFactura.TotalImpuesto || resumenFactura.totalImpuesto || resumenFactura.total_impuesto ||
+          xmlData.totalImpuesto || xmlData.TotalImpuesto || doc.total_tax || '0'
+        ));
+        const xmlTotalComprobante = Math.abs(parseFloat(
+          resumenFactura.TotalComprobante || resumenFactura.totalComprobante || resumenFactura.total_comprobante ||
+          xmlData.totalComprobante || xmlData.TotalComprobante || doc.total_amount
+        ));
         
-        // Calculate IEBLE from lines - this is ALREADY included in line amounts
-        // so we must NOT add it again via totalTax
+        logInfo(`   📊 ${doc.doc_number}: XML Fuente de verdad → TotalVentaNeta=${xmlTotalVentaNeta.toFixed(2)}, TotalImpuesto=${xmlTotalImpuesto.toFixed(2)}, TotalComprobante=${xmlTotalComprobante.toFixed(2)}`);
+        
+        // Calculate IEBLE from lines - IEBLE is included in line amounts AND in TotalImpuesto
+        // We must subtract IEBLE from TotalImpuesto to get IVA-only tax for TxnTaxDetail
         let totalIEBLEInLines = 0;
         const detalleForIeble = xmlData.detalle || xmlData.detalles || xmlData.DetalleServicio || [];
         const detalleArrayIeble = Array.isArray(detalleForIeble) ? detalleForIeble : [detalleForIeble];
@@ -2142,49 +2150,33 @@ Deno.serve(async (req) => {
           const impuestos = Array.isArray(item.impuestos) ? item.impuestos : [item.impuestos];
           for (const imp of impuestos) {
             if (imp?.codigo === '05') {
-              // Code 05 = IEBLE (Impuesto Específico Bebidas Envasadas sin alcohol)
               totalIEBLEInLines += Math.abs(parseFloat(imp.monto) || 0);
             }
           }
         }
         
-        // Solo reportar TxnTaxDetail si el IVA es recuperable
-        // CRITICAL: SIEMPRE enviar tax separado si hay IVA, incluso para impuesto asumido
-        // Para impuesto asumido, QBO total será subtotal + tax (mayor que XML total) pero los números son correctos
+        // Determine if IVA should be reported as separate tax or included in expense
         const effectiveUsesTax = (doc.uses_tax !== false) && orgDefaultUsesTax && !includeTaxInLines;
         
-        // CRITICAL: xmlTax includes ALL taxes (IVA + IEBLE + asumido)
-        // But IEBLE is already included in line amounts, so we subtract it to avoid double-counting
-        // Also, impuesto asumido (código 05) should NOT be added to total at all
-        const ivaOnlyTax = effectiveUsesTax 
-          ? Math.max(0, Math.abs(xmlTax) - totalIEBLEInLines)
+        // CRITICAL VALIDATION: (sum of line amounts + TotalImpuesto from XML) must equal TotalComprobante
+        // For IVA recuperable: lines = subtotal, so lines + TotalImpuesto = TotalComprobante
+        // For IVA como gasto: lines = subtotal + IVA, so lines = TotalComprobante (no separate tax)
+        // OtrosCargos are already added as separate lines, so they're included in linesTotalAmount
+        
+        // The IVA that goes to TxnTaxDetail (separate from lines)
+        // IEBLE is already in line amounts, so subtract from TotalImpuesto
+        const ivaForTxnTaxDetail = effectiveUsesTax 
+          ? Math.max(0, xmlTotalImpuesto - totalIEBLEInLines)
           : 0;
         
-        if (totalIEBLEInLines > 0) {
-          logInfo(`   📊 ${doc.doc_number}: IEBLE ya incluido en líneas: ${totalIEBLEInLines.toFixed(2)} (restado de Tax para evitar doble conteo)`);
-        }
+        const expectedQBOTotal = linesTotalAmount + ivaForTxnTaxDetail;
+        const validationDiff = Math.abs(expectedQBOTotal - xmlTotalComprobante);
         
-        if (earlyIsTaxExempt) {
-          logInfo(`   📋 ${doc.doc_number}: IMPUESTO ASUMIDO detectado - Tax=${xmlTax.toFixed(2)} se envía separado en TxnTaxDetail`);
-        }
+        // Tolerance: ±1 colón as mandated
+        const validationTolerance = 1.0;
         
-        // CRITICAL: With TaxInclusive, lines already include IVA
-        // QBO will back out tax from line amounts via TaxCodeRef
-        // So lines total = document total (IVA is inside the lines, not added separately)
-        const expectedQBOTotal = linesTotalAmount;
-        const documentTotal = Math.abs(doc.total_amount);
-        
-        // For impuesto asumido, QBO total will be subtotal + tax (greater than XML total)
-        // This is CORRECT - we send tax separately and QBO adds it
-        // Only validate against document total for non-asumido cases
-        const expectedDocumentTotal = earlyIsTaxExempt ? expectedQBOTotal : documentTotal;
-        const qboTotalDiff = Math.abs(expectedQBOTotal - expectedDocumentTotal);
-        
-        // Use larger tolerance for complex invoices with multiple tax types
-        const validationTolerance = totalIEBLEInLines > 0 ? 5.0 : 2.0;
-        
-        if (qboTotalDiff > validationTolerance) {
-          const errorMsg = `MONTO INCORRECTO: Lines=${linesTotalAmount.toFixed(2)} + IVA=${ivaOnlyTax.toFixed(2)} (IEBLE ya en líneas: ${totalIEBLEInLines.toFixed(2)}) = ${expectedQBOTotal.toFixed(2)}, pero documento=${documentTotal.toFixed(2)}. Diferencia: ${qboTotalDiff.toFixed(2)}`;
+        if (validationDiff > validationTolerance) {
+          const errorMsg = `VALIDACIÓN PRE-PUBLICACIÓN FALLÓ: SumaLíneas(${linesTotalAmount.toFixed(2)}) + IVA_XML(${ivaForTxnTaxDetail.toFixed(2)}) = ${expectedQBOTotal.toFixed(2)} ≠ TotalComprobante_XML(${xmlTotalComprobante.toFixed(2)}). Diff: ${validationDiff.toFixed(2)}. IEBLE en líneas: ${totalIEBLEInLines.toFixed(2)}`;
           logError(`❌ ${doc.doc_number}: ${errorMsg}`);
           
           await registerInTracking(doc, 'error_amount_mismatch', null, null, errorMsg);
@@ -2196,10 +2188,11 @@ Deno.serve(async (req) => {
           return { success: false, docNumber: doc.doc_number, error: errorMsg };
         }
         
-        logInfo(`   📊 ${doc.doc_number}: Validación final OK - Lines=${linesTotalAmount.toFixed(2)}, IVA=${ivaOnlyTax.toFixed(2)}, IEBLE(en líneas)=${totalIEBLEInLines.toFixed(2)}, Total QBO esperado=${expectedQBOTotal.toFixed(2)}${earlyIsTaxExempt ? ' (impuesto asumido: QBO total > XML total)' : ` (esperado: ${documentTotal.toFixed(2)})`}`);
-
-        // With TaxInclusive, we don't send TxnTaxDetail - QBO calculates tax from TaxCodeRef
-        const totalTax = 0;
+        logInfo(`   ✅ ${doc.doc_number}: Validación pre-publicación OK → Líneas=${linesTotalAmount.toFixed(2)} + IVA=${ivaForTxnTaxDetail.toFixed(2)} = ${expectedQBOTotal.toFixed(2)} ≈ TotalComprobante=${xmlTotalComprobante.toFixed(2)} (diff: ${validationDiff.toFixed(2)})`);
+        
+        // totalTax = TotalImpuesto from XML minus IEBLE (already in lines)
+        // This is the EXACT value from the XML - never recalculated
+        const totalTax = ivaForTxnTaxDetail;
         // =============================================================
         // STEP 11: CREATE BILL OR VENDORCREDIT IN QBO
         // =============================================================
