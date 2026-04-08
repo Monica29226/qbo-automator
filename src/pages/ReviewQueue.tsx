@@ -537,16 +537,22 @@ const ReviewQueue = () => {
                                   <div className="border rounded overflow-hidden w-56 shrink-0 self-start">
                                     <table className="w-full text-sm">
                                       <tbody>
-                                        <tr className="bg-muted/20">
-                                          <td className="px-3 py-1 text-muted-foreground">Subtotal</td>
-                                          <td className="px-3 py-1 text-right font-medium">{formatCurrency((doc.total_amount - (doc.total_tax || 0) + (doc.total_discount || 0)), doc.currency)}</td>
-                                        </tr>
+                                        {(doc.total_discount || 0) > 0 && (
+                                          <tr className="bg-muted/20">
+                                            <td className="px-3 py-1 text-muted-foreground">Venta bruta</td>
+                                            <td className="px-3 py-1 text-right font-medium">{formatCurrency((doc.total_amount - (doc.total_tax || 0) + (doc.total_discount || 0)), doc.currency)}</td>
+                                          </tr>
+                                        )}
                                         {(doc.total_discount || 0) > 0 && (
                                           <tr className="bg-muted/20">
                                             <td className="px-3 py-1 text-muted-foreground">Descuento</td>
                                             <td className="px-3 py-1 text-right font-medium text-destructive">-{formatCurrency(doc.total_discount || 0, doc.currency)}</td>
                                           </tr>
                                         )}
+                                        <tr className="bg-muted/20">
+                                          <td className="px-3 py-1 text-muted-foreground">Subtotal</td>
+                                          <td className="px-3 py-1 text-right font-medium">{formatCurrency((doc.total_amount - (doc.total_tax || 0)), doc.currency)}</td>
+                                        </tr>
                                         <tr className="bg-muted/20">
                                           <td className="px-3 py-1 text-muted-foreground">Impuestos</td>
                                           <td className="px-3 py-1 text-right font-medium">{formatCurrency(doc.total_tax || 0, doc.currency)}</td>
