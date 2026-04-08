@@ -322,7 +322,9 @@ function parseSubtotal(xmlData: any): number {
 // montoTotalLinea includes subtotal + taxes for each line
 // 
 // CRITICAL HANDLING FOR:
-// - IEBLE (código 07): Impuesto específico sobre bebidas - tarifa=0 but has montoImpuesto
+// - IEBLE (código 05): Impuesto Específico sobre Bebidas Envasadas sin alcohol
+// - IVA (códigos 01, 07, 08): Impuesto al Valor Agregado
+// - ImpuestoAsumidoEmisor: Tax absorbed by issuer, NOT charged to buyer
 // - Credit Notes: May have negative montoTotalLinea values
 // - Discounts: Some XMLs have montoDescuento NOT reflected in baseImponible
 // =============================================================
@@ -378,11 +380,15 @@ function calculateTotalFromLines(xmlData: any): {
     // Get line-level discount (NOT already applied to baseImponible in some XMLs)
     const lineDiscount = parseFloat(item.montoDescuento || item.MontoDescuento || '0');
     
-    // Tax for this line - check ALL types of taxes including IEBLE (código 07)
+    // Tax for this line - classify by código:
+    // 01, 07, 08 = IVA; 05 = IEBLE (Impuesto Específico Bebidas)
     let lineTax = 0;
     let lineIeble = 0;
     
-    // First check direct impuestoNeto (most reliable)
+    // Check if this line has impuestoAsumidoEmisor (tax absorbed by issuer, NOT charged to buyer)
+    const impuestoAsumido = parseFloat(item.impuestoAsumidoEmisor || item.ImpuestoAsumidoEmisor || '0');
+    
+    // First check direct impuestoNeto (most reliable for IVA)
     const directTax = parseFloat(item.impuestoNeto || item.ImpuestoNeto || '0');
     
     // Also check impuestos array for detailed breakdown
@@ -394,13 +400,15 @@ function calculateTotalFromLines(xmlData: any): {
       const codigo = imp.codigo || imp.Codigo || '';
       const monto = parseFloat(imp.monto || imp.Monto || '0');
       
-      if (codigo === '07') {
-        // IEBLE - Impuesto Específico sobre Bebidas Envasadas
-        // This is a SPECIFIC tax added to the total, NOT a percentage of subtotal
+      if (codigo === '05') {
+        // IEBLE - Impuesto Específico sobre Bebidas Envasadas sin alcohol
         lineIeble += Math.abs(monto);
-        logInfo(`📊 IEBLE detectado en línea ${item.numeroLinea || processedLines}: ${monto.toFixed(2)}`);
-      } else if (monto > 0) {
-        // Regular tax (IVA, etc.)
+        logInfo(`📊 IEBLE (código 05) detectado en línea ${item.numeroLinea || processedLines}: ${monto.toFixed(2)}, asumidoEmisor=${impuestoAsumido.toFixed(2)}`);
+      } else if (codigo === '01' || codigo === '07' || codigo === '08') {
+        // IVA: 01=IVA normal, 07=IVA Cálculo Especial, 08=IVA Bienes Usados
+        lineTax += Math.abs(monto);
+      } else if (Math.abs(monto) > 0) {
+        // Other taxes (02, 03, 04, 06, 12, 99, etc.)
         lineTax += Math.abs(monto);
       }
     }
