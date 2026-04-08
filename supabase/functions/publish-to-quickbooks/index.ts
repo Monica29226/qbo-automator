@@ -1972,6 +1972,13 @@ Deno.serve(async (req) => {
             if (includeTaxInLines && Math.abs(montoImpuestoIVA) > 0) {
               lineAmount = subtotal + montoImpuestoIVA;
             }
+
+            // CRITICAL FIX: When IVA is recoverable (not included in lines),
+            // use montoTotalLinea (subtotal + IVA) as Amount with TaxInclusive mode
+            // This prevents QBO from double-counting tax when users toggle display mode
+            if (!includeTaxInLines && Math.abs(montoImpuestoIVA) > 0) {
+              lineAmount = subtotal + montoImpuestoIVA;
+            }
             
             // ALWAYS add IEBLE to the line amount - it's always an expense, never recoverable
             if (Math.abs(montoImpuestoIEBLE) > 0) {
@@ -2002,8 +2009,8 @@ Deno.serve(async (req) => {
               }
               
               // Store montoTotalLinea for TaxInclusive retry fallback
-              const montoTotalLinea = parseFloat(item.montoTotalLinea) || (Math.abs(subtotal) + Math.abs(montoImpuestoIVA) + Math.abs(montoImpuestoIEBLE));
-              lineDetail._montoTotalLinea = montoTotalLinea;
+            const montoTotalLinea = parseFloat(item.montoTotalLinea) || (Math.abs(subtotal) + Math.abs(montoImpuestoIVA) + Math.abs(montoImpuestoIEBLE));
+            lineDetail._montoTotalLinea = montoTotalLinea;
               
               lines.push(lineDetail);
               
@@ -2214,8 +2221,10 @@ Deno.serve(async (req) => {
             DocNumber: qboDocNumber,
             Line: lines,
             PrivateNote: `Nota de Crédito - Clave: ${claveHacienda}\nProveedor: ${doc.supplier_name}`,
-            // SIMPLE: Always TaxExcluded. Lines = subtotal, tax goes in TxnTaxDetail separated
-            GlobalTaxCalculation: includeTaxInLines ? "TaxInclusive" : "TaxExcluded",
+            // CRITICAL: Always use TaxInclusive when IVA is recoverable
+            // Lines include subtotal+IVA, QBO backs out the tax via TaxCodeRef
+            // This prevents double-tax display issues in QBO UI
+            GlobalTaxCalculation: "TaxInclusive",
           };
           
           if (documentCurrency === 'USD') {
@@ -2376,8 +2385,9 @@ Deno.serve(async (req) => {
             DocNumber: qboDocNumber,
             Line: lines,
             PrivateNote: `Factura XML: ${doc.doc_number}\nClave: ${claveHacienda}\nProveedor: ${doc.supplier_name}`,
-            // SIMPLE: Always TaxExcluded. Lines = XML subtotal, tax goes in TxnTaxDetail separated
-            GlobalTaxCalculation: includeTaxInLines ? "TaxInclusive" : "TaxExcluded",
+            // CRITICAL: Always use TaxInclusive
+            // Lines include subtotal+IVA, QBO backs out the tax via TaxCodeRef
+            GlobalTaxCalculation: "TaxInclusive",
           };
           
           if (documentCurrency === 'USD') {
