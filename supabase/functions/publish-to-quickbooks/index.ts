@@ -1899,15 +1899,16 @@ Deno.serve(async (req) => {
                 const codigo = imp.codigo || '';
                 const monto = parseFloat(imp.monto) || 0;
                 
-                if (codigo === '01') {
-                  // IVA
+                if (codigo === '01' || codigo === '07' || codigo === '08') {
+                  // IVA: 01=IVA normal, 07=IVA Cálculo Especial, 08=IVA Bienes Usados
                   tasaImpuesto = parseFloat(imp.tarifa) || 0;
-                  montoImpuestoIVA = monto;
-                } else if (codigo === '07') {
-                  // IEBLE - Impuesto Específico sobre Bebidas Envasadas
+                  montoImpuestoIVA += monto;
+                } else if (codigo === '05') {
+                  // IEBLE - Impuesto Específico sobre Bebidas Envasadas sin alcohol
                   montoImpuestoIEBLE = monto;
-                  logInfo(`   📊 IEBLE detectado: ${monto.toFixed(2)}`);
+                  logInfo(`   📊 IEBLE (código 05) detectado: ${monto.toFixed(2)}`);
                 }
+                // Códigos 02,03,04,06,12,99 = otros impuestos específicos, se ignoran
               }
               if (isCreditNote) {
                 montoImpuestoIVA = -Math.abs(montoImpuestoIVA);
