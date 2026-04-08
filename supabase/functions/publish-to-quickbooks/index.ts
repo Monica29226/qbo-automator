@@ -1982,9 +1982,16 @@ Deno.serve(async (req) => {
               lineAmount = subtotal + montoImpuestoIVA;
             }
             
-            // ALWAYS add IEBLE to the line amount - it's always an expense, never recoverable
-            if (Math.abs(montoImpuestoIEBLE) > 0) {
+            // Add IEBLE to line amount ONLY if it's NOT impuestoAsumidoEmisor
+            // impuestoAsumidoEmisor = tax absorbed by issuer, NOT charged to buyer, NOT in totalComprobante
+            const impuestoAsumido = parseFloat(item.impuestoAsumidoEmisor || item.ImpuestoAsumidoEmisor || '0');
+            const isIebleAsumido = Math.abs(impuestoAsumido) > 0 && Math.abs(impuestoAsumido - Math.abs(montoImpuestoIEBLE)) < 0.01;
+            
+            if (Math.abs(montoImpuestoIEBLE) > 0 && !isIebleAsumido) {
               lineAmount += Math.abs(montoImpuestoIEBLE);
+              logInfo(`   📊 Línea ${item.numeroLinea || '?'}: IEBLE ${Math.abs(montoImpuestoIEBLE).toFixed(2)} agregado a línea (NO es asumido por emisor)`);
+            } else if (Math.abs(montoImpuestoIEBLE) > 0 && isIebleAsumido) {
+              logInfo(`   📊 Línea ${item.numeroLinea || '?'}: IEBLE ${Math.abs(montoImpuestoIEBLE).toFixed(2)} OMITIDO (impuestoAsumidoEmisor - no se cobra al comprador)`);
             }
             
             if (Math.abs(lineAmount) > 0.001) {
