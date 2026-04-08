@@ -493,114 +493,127 @@ const ReviewQueue = () => {
                     {isExpanded && (
                       <TableRow>
                         <TableCell colSpan={7} className="bg-muted/30 p-0">
-                          <div className="px-6 py-4 space-y-3">
-                            <div className="flex gap-6">
-                              {/* Left: document info */}
-                              <div className="flex-1 grid grid-cols-3 gap-x-6 gap-y-2 text-sm">
-                                <div>
-                                  <span className="text-muted-foreground block text-xs">Tipo documento</span>
-                                  <span className="font-medium">{doc.doc_type || "-"}</span>
-                                </div>
-                                <div>
-                                  <span className="text-muted-foreground block text-xs">Moneda</span>
-                                  <span className="font-medium">{doc.currency}{doc.exchange_rate ? ` (TC: ${doc.exchange_rate})` : ""}</span>
-                                </div>
-                                <div>
-                                  <span className="text-muted-foreground block text-xs">Email proveedor</span>
-                                  <span className="font-medium text-xs">{doc.supplier_email || "-"}</span>
-                                </div>
-                                <div>
-                                  <span className="text-muted-foreground block text-xs">Vendor QBO</span>
-                                  <span className="font-medium">{vendor?.vendor_name || "-"}</span>
-                                </div>
-                                <div>
-                                  <span className="text-muted-foreground block text-xs">Cuenta asignada</span>
-                                  {doc.status !== "published" ? (
-                                    <EditableAccountField
-                                      doc={doc}
-                                      accounts={accounts}
-                                      activeOrganization={activeOrganization}
-                                      onUpdated={fetchData}
-                                    />
-                                  ) : (
-                                    <span className="font-medium">{doc.default_account_ref || "-"}</span>
-                                  )}
-                                </div>
-                                <div>
-                                  <span className="text-muted-foreground block text-xs">QBO ID</span>
-                                  <span className="font-medium">{doc.qbo_entity_id || "-"}</span>
-                                </div>
-                              </div>
+                          <div className="px-6 py-4">
+                            <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
+                              {/* Left: document info + lines (3/5) */}
+                              <div className="lg:col-span-3 space-y-3">
+                                <div className="flex gap-6">
+                                  <div className="flex-1 grid grid-cols-3 gap-x-6 gap-y-2 text-sm">
+                                    <div>
+                                      <span className="text-muted-foreground block text-xs">Tipo documento</span>
+                                      <span className="font-medium">{doc.doc_type || "-"}</span>
+                                    </div>
+                                    <div>
+                                      <span className="text-muted-foreground block text-xs">Moneda</span>
+                                      <span className="font-medium">{doc.currency}{doc.exchange_rate ? ` (TC: ${doc.exchange_rate})` : ""}</span>
+                                    </div>
+                                    <div>
+                                      <span className="text-muted-foreground block text-xs">Email proveedor</span>
+                                      <span className="font-medium text-xs">{doc.supplier_email || "-"}</span>
+                                    </div>
+                                    <div>
+                                      <span className="text-muted-foreground block text-xs">Vendor QBO</span>
+                                      <span className="font-medium">{vendor?.vendor_name || "-"}</span>
+                                    </div>
+                                    <div>
+                                      <span className="text-muted-foreground block text-xs">Cuenta asignada</span>
+                                      {doc.status !== "published" ? (
+                                        <EditableAccountField
+                                          doc={doc}
+                                          accounts={accounts}
+                                          activeOrganization={activeOrganization}
+                                          onUpdated={fetchData}
+                                        />
+                                      ) : (
+                                        <span className="font-medium">{doc.default_account_ref || "-"}</span>
+                                      )}
+                                    </div>
+                                    <div>
+                                      <span className="text-muted-foreground block text-xs">QBO ID</span>
+                                      <span className="font-medium">{doc.qbo_entity_id || "-"}</span>
+                                    </div>
+                                  </div>
 
-                              {/* Right: totals */}
-                              <div className="border rounded overflow-hidden w-56 shrink-0 self-start">
-                                <table className="w-full text-sm">
-                                  <tbody>
-                                    <tr className="bg-muted/20">
-                                      <td className="px-3 py-1 text-muted-foreground">Subtotal</td>
-                                      <td className="px-3 py-1 text-right font-medium">{formatCurrency((doc.total_amount - (doc.total_tax || 0) + (doc.total_discount || 0)), doc.currency)}</td>
-                                    </tr>
-                                    {(doc.total_discount || 0) > 0 && (
-                                      <tr className="bg-muted/20">
-                                        <td className="px-3 py-1 text-muted-foreground">Descuento</td>
-                                        <td className="px-3 py-1 text-right font-medium text-destructive">-{formatCurrency(doc.total_discount || 0, doc.currency)}</td>
-                                      </tr>
-                                    )}
-                                    <tr className="bg-muted/20">
-                                      <td className="px-3 py-1 text-muted-foreground">Impuestos</td>
-                                      <td className="px-3 py-1 text-right font-medium">{formatCurrency(doc.total_tax || 0, doc.currency)}</td>
-                                    </tr>
-                                    <tr className="bg-muted/30 border-t">
-                                      <td className="px-3 py-1.5 font-semibold">Total</td>
-                                      <td className="px-3 py-1.5 text-right font-semibold">{formatCurrency(doc.total_amount, doc.currency)}</td>
-                                    </tr>
-                                  </tbody>
-                                </table>
-                              </div>
-                            </div>
-
-                            {/* Error message */}
-                            {doc.error_message && (
-                              <div className="text-sm p-2 rounded bg-red-50 text-red-700 border border-red-200">
-                                <span className="font-medium">Error: </span>{doc.error_message}
-                              </div>
-                            )}
-
-                            {/* Líneas del documento */}
-                            {lines.length > 0 && (
-                              <div>
-                                <h4 className="text-xs font-semibold text-muted-foreground mb-2 uppercase">Detalle de líneas</h4>
-                                <div className="border rounded overflow-hidden">
-                                  <table className="w-full text-sm">
-                                    <thead className="bg-muted/50">
-                                      <tr>
-                                        <th className="text-left px-3 py-1.5 font-medium">Descripción</th>
-                                        <th className="text-right px-3 py-1.5 font-medium">Cant</th>
-                                        <th className="text-right px-3 py-1.5 font-medium">Precio</th>
-                                        <th className="text-right px-3 py-1.5 font-medium">IVA</th>
-                                        <th className="text-right px-3 py-1.5 font-medium">Subtotal</th>
-                                      </tr>
-                                    </thead>
-                                    <tbody>
-                                      {lines.map((line: any, idx: number) => (
-                                        <tr key={idx} className="border-t">
-                                          <td className="px-3 py-1.5">{line.descripcion || line.description || "-"}</td>
-                                          <td className="px-3 py-1.5 text-right">{line.cantidad || line.quantity || 1}</td>
-                                          <td className="px-3 py-1.5 text-right">{formatCurrency(line.precioUnitario || line.unitPrice || 0, doc.currency)}</td>
-                                          <td className="px-3 py-1.5 text-right">{line.montoImpuesto || line.taxAmount || 0}</td>
-                                          <td className="px-3 py-1.5 text-right">{formatCurrency(line.montoTotalLinea || line.lineTotal || 0, doc.currency)}</td>
+                                  <div className="border rounded overflow-hidden w-56 shrink-0 self-start">
+                                    <table className="w-full text-sm">
+                                      <tbody>
+                                        <tr className="bg-muted/20">
+                                          <td className="px-3 py-1 text-muted-foreground">Subtotal</td>
+                                          <td className="px-3 py-1 text-right font-medium">{formatCurrency((doc.total_amount - (doc.total_tax || 0) + (doc.total_discount || 0)), doc.currency)}</td>
                                         </tr>
-                                      ))}
-                                    </tbody>
-                                  </table>
+                                        {(doc.total_discount || 0) > 0 && (
+                                          <tr className="bg-muted/20">
+                                            <td className="px-3 py-1 text-muted-foreground">Descuento</td>
+                                            <td className="px-3 py-1 text-right font-medium text-destructive">-{formatCurrency(doc.total_discount || 0, doc.currency)}</td>
+                                          </tr>
+                                        )}
+                                        <tr className="bg-muted/20">
+                                          <td className="px-3 py-1 text-muted-foreground">Impuestos</td>
+                                          <td className="px-3 py-1 text-right font-medium">{formatCurrency(doc.total_tax || 0, doc.currency)}</td>
+                                        </tr>
+                                        <tr className="bg-muted/30 border-t">
+                                          <td className="px-3 py-1.5 font-semibold">Total</td>
+                                          <td className="px-3 py-1.5 text-right font-semibold">{formatCurrency(doc.total_amount, doc.currency)}</td>
+                                        </tr>
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                </div>
+
+                                {doc.error_message && (
+                                  <div className="text-sm p-2 rounded bg-red-50 text-red-700 border border-red-200">
+                                    <span className="font-medium">Error: </span>{doc.error_message}
+                                  </div>
+                                )}
+
+                                {lines.length > 0 && (
+                                  <div>
+                                    <h4 className="text-xs font-semibold text-muted-foreground mb-2 uppercase">Detalle de líneas</h4>
+                                    <div className="border rounded overflow-hidden">
+                                      <table className="w-full text-sm">
+                                        <thead className="bg-muted/50">
+                                          <tr>
+                                            <th className="text-left px-3 py-1.5 font-medium">Descripción</th>
+                                            <th className="text-right px-3 py-1.5 font-medium">Cant</th>
+                                            <th className="text-right px-3 py-1.5 font-medium">Precio</th>
+                                            <th className="text-right px-3 py-1.5 font-medium">IVA</th>
+                                            <th className="text-right px-3 py-1.5 font-medium">Subtotal</th>
+                                          </tr>
+                                        </thead>
+                                        <tbody>
+                                          {lines.map((line: any, idx: number) => (
+                                            <tr key={idx} className="border-t">
+                                              <td className="px-3 py-1.5">{line.descripcion || line.description || "-"}</td>
+                                              <td className="px-3 py-1.5 text-right">{line.cantidad || line.quantity || 1}</td>
+                                              <td className="px-3 py-1.5 text-right">{formatCurrency(line.precioUnitario || line.unitPrice || 0, doc.currency)}</td>
+                                              <td className="px-3 py-1.5 text-right">{line.montoImpuesto || line.taxAmount || 0}</td>
+                                              <td className="px-3 py-1.5 text-right">{formatCurrency(line.montoTotalLinea || line.lineTotal || 0, doc.currency)}</td>
+                                            </tr>
+                                          ))}
+                                        </tbody>
+                                      </table>
+                                    </div>
+                                  </div>
+                                )}
+
+                                <div className="text-xs text-muted-foreground">
+                                  <span className="font-medium">Clave: </span>
+                                  <span className="font-mono">{doc.doc_key}</span>
                                 </div>
                               </div>
-                            )}
 
-                            {/* Clave electrónica */}
-                            <div className="text-xs text-muted-foreground">
-                              <span className="font-medium">Clave: </span>
-                              <span className="font-mono">{doc.doc_key}</span>
+                              {/* Right: inline PDF viewer (2/5) */}
+                              <div className="lg:col-span-2 border rounded-lg overflow-hidden" style={{ height: '500px' }}>
+                                <PdfViewer
+                                  url={doc.pdf_attachment_url || undefined}
+                                  storagePath={doc.file_path || undefined}
+                                  fileName={doc.doc_number}
+                                  organizationId={activeOrganization || undefined}
+                                  docNumber={doc.doc_number}
+                                  documentId={doc.id}
+                                  onPdfDownloaded={() => fetchData()}
+                                />
+                              </div>
                             </div>
                           </div>
                         </TableCell>
