@@ -2216,6 +2216,14 @@ Deno.serve(async (req) => {
             }
           }
           
+          // Strip internal properties before sending to QBO
+          if (vendorCreditPayload.Line && Array.isArray(vendorCreditPayload.Line)) {
+            vendorCreditPayload.Line = vendorCreditPayload.Line.map((line: any) => {
+              const { _montoTotalLinea, ...cleanLine } = line;
+              return cleanLine;
+            });
+          }
+          
           const vcResponse = await fetchWithRetry(
             `https://quickbooks.api.intuit.com/v3/company/${realmId}/vendorcredit`,
             {
