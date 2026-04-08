@@ -1899,15 +1899,16 @@ Deno.serve(async (req) => {
                 const codigo = imp.codigo || '';
                 const monto = parseFloat(imp.monto) || 0;
                 
-                if (codigo === '01') {
-                  // IVA
+                if (codigo === '01' || codigo === '07' || codigo === '08') {
+                  // IVA: 01=IVA normal, 07=IVA Cálculo Especial, 08=IVA Bienes Usados
                   tasaImpuesto = parseFloat(imp.tarifa) || 0;
-                  montoImpuestoIVA = monto;
-                } else if (codigo === '07') {
-                  // IEBLE - Impuesto Específico sobre Bebidas Envasadas
+                  montoImpuestoIVA += monto;
+                } else if (codigo === '05') {
+                  // IEBLE - Impuesto Específico sobre Bebidas Envasadas sin alcohol
                   montoImpuestoIEBLE = monto;
-                  logInfo(`   📊 IEBLE detectado: ${monto.toFixed(2)}`);
+                  logInfo(`   📊 IEBLE (código 05) detectado: ${monto.toFixed(2)}`);
                 }
+                // Códigos 02,03,04,06,12,99 = otros impuestos específicos, se ignoran
               }
               if (isCreditNote) {
                 montoImpuestoIVA = -Math.abs(montoImpuestoIVA);
@@ -2097,7 +2098,8 @@ Deno.serve(async (req) => {
           if (!item?.impuestos) continue;
           const impuestos = Array.isArray(item.impuestos) ? item.impuestos : [item.impuestos];
           for (const imp of impuestos) {
-            if (imp?.codigo === '07') {
+            if (imp?.codigo === '05') {
+              // Code 05 = IEBLE (Impuesto Específico Bebidas Envasadas sin alcohol)
               totalIEBLEInLines += Math.abs(parseFloat(imp.monto) || 0);
             }
           }
@@ -2212,6 +2214,14 @@ Deno.serve(async (req) => {
             } else {
               vendorCreditPayload.TxnTaxDetail = { TotalTax: parseFloat(Math.abs(totalTax).toFixed(2)) };
             }
+          }
+          
+          // Strip internal properties before sending to QBO
+          if (vendorCreditPayload.Line && Array.isArray(vendorCreditPayload.Line)) {
+            vendorCreditPayload.Line = vendorCreditPayload.Line.map((line: any) => {
+              const { _montoTotalLinea, ...cleanLine } = line;
+              return cleanLine;
+            });
           }
           
           const vcResponse = await fetchWithRetry(
@@ -2361,6 +2371,18 @@ Deno.serve(async (req) => {
               logInfo(`   ⚠️ ${doc.doc_number}: No TaxRate IDs found, using TotalTax only`);
             }
           }
+          
+          // CRITICAL: Strip internal properties before sending to QBO
+          // QBO rejects unknown properties with error 2010 "failed to parse json object"
+          const cleanLines = (payload: any) => {
+            if (payload.Line && Array.isArray(payload.Line)) {
+              payload.Line = payload.Line.map((line: any) => {
+                const { _montoTotalLinea, ...cleanLine } = line;
+                return cleanLine;
+              });
+            }
+          };
+          cleanLines(billPayload);
           
           let billResponse = await fetchWithRetry(
             `https://quickbooks.api.intuit.com/v3/company/${realmId}/bill`,
