@@ -2098,7 +2098,8 @@ Deno.serve(async (req) => {
           if (!item?.impuestos) continue;
           const impuestos = Array.isArray(item.impuestos) ? item.impuestos : [item.impuestos];
           for (const imp of impuestos) {
-            if (imp?.codigo === '07') {
+            if (imp?.codigo === '05') {
+              // Code 05 = IEBLE (Impuesto Específico Bebidas Envasadas sin alcohol)
               totalIEBLEInLines += Math.abs(parseFloat(imp.monto) || 0);
             }
           }
