@@ -1,0 +1,1 @@
+UPDATE processed_documents SET status = 'pending', error_message = NULL, retry_count = 0 WHERE status = 'error' AND error_message ILIKE '%2010%';
