@@ -84,6 +84,15 @@ const Vendors = () => {
   const [newAccountRef, setNewAccountRef] = useState("");
   const [isSavingDefault, setIsSavingDefault] = useState(false);
 
+  const formatAccountRef = (accountIdOrRef: string) => {
+    const account = qboAccounts.find((acc) => acc.id === accountIdOrRef);
+    if (!account) return accountIdOrRef;
+
+    return account.accountNumber
+      ? `${account.accountNumber} - ${account.name}`
+      : account.name;
+  };
+
   const handleSave = async () => {
     if (!formData.vendor_name || !formData.qbo_vendor_ref || !formData.default_account_ref) {
       toast.error("Complete los campos requeridos");
@@ -108,9 +117,14 @@ const Vendors = () => {
     if (editingVendor) {
       console.log("📝 Actualizando proveedor ID:", editingVendor.id);
       
+      const payload = {
+        ...formData,
+        default_account_ref: formatAccountRef(formData.default_account_ref),
+      };
+
       const { data, error } = await supabase
         .from("vendors")
-        .update(formData)
+        .update(payload)
         .eq("id", editingVendor.id)
         .select();
 
@@ -130,6 +144,7 @@ const Vendors = () => {
       
       const { data, error } = await supabase.from("vendors").insert([{
         ...formData,
+        default_account_ref: formatAccountRef(formData.default_account_ref),
         organization_id: activeOrganization,
       }]).select();
 
@@ -615,17 +630,26 @@ const Vendors = () => {
                   return;
                 }
                 setIsSavingDefault(true);
+                const formattedAccountRef = formatAccountRef(newAccountRef);
+
                 const { error } = await supabase
                   .from("vendor_defaults")
-                  .update({ default_account_ref: newAccountRef })
+                  .update({ default_account_ref: formattedAccountRef })
                   .eq("id", editingDefault.id);
                 
                 if (error) {
                   toast.error("Error al actualizar cuenta");
                   console.error(error);
                 } else {
+                  await supabase
+                    .from("vendors")
+                    .update({ default_account_ref: formattedAccountRef })
+                    .eq("organization_id", activeOrganization)
+                    .eq("vendor_name", editingDefault.vendor_name);
+
                   toast.success("Cuenta actualizada correctamente");
                   invalidateDefaults();
+                  invalidate();
                   setIsEditDefaultOpen(false);
                 }
                 setIsSavingDefault(false);
