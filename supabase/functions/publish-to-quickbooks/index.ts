@@ -2155,17 +2155,28 @@ Deno.serve(async (req) => {
         
         logInfo(`   📊 ${doc.doc_number}: XML Fuente de verdad → TotalVentaNeta=${xmlTotalVentaNeta.toFixed(2)}, TotalImpuesto=${xmlTotalImpuesto.toFixed(2)}, TotalComprobante=${xmlTotalComprobante.toFixed(2)}`);
         
-        // Calculate IEBLE from lines - IEBLE is included in line amounts AND in TotalImpuesto
-        // We must subtract IEBLE from TotalImpuesto to get IVA-only tax for TxnTaxDetail
+        // Calculate IEBLE from lines that are NOT impuestoAsumidoEmisor
+        // Only IEBLE that was added to line amounts needs to be subtracted from TotalImpuesto
+        // impuestoAsumidoEmisor IEBLE is NOT in totalImpuesto and NOT in line amounts, so skip it
         let totalIEBLEInLines = 0;
+        let totalIEBLEAsumido = 0;
         const detalleForIeble = xmlData.detalle || xmlData.detalles || xmlData.DetalleServicio || [];
         const detalleArrayIeble = Array.isArray(detalleForIeble) ? detalleForIeble : [detalleForIeble];
         for (const item of detalleArrayIeble) {
           if (!item?.impuestos) continue;
+          const impuestoAsumido = parseFloat(item.impuestoAsumidoEmisor || item.ImpuestoAsumidoEmisor || '0');
           const impuestos = Array.isArray(item.impuestos) ? item.impuestos : [item.impuestos];
           for (const imp of impuestos) {
             if (imp?.codigo === '05') {
-              totalIEBLEInLines += Math.abs(parseFloat(imp.monto) || 0);
+              const iebleMonto = Math.abs(parseFloat(imp.monto) || 0);
+              const isAsumido = Math.abs(impuestoAsumido) > 0 && Math.abs(impuestoAsumido - iebleMonto) < 0.01;
+              if (isAsumido) {
+                totalIEBLEAsumido += iebleMonto;
+                logInfo(`   📊 IEBLE asumido por emisor: ${iebleMonto.toFixed(2)} (NO en totalImpuesto, NO en líneas)`);
+              } else {
+                totalIEBLEInLines += iebleMonto;
+                logInfo(`   📊 IEBLE en líneas: ${iebleMonto.toFixed(2)} (incluido en líneas, debe restarse de totalImpuesto)`);
+              }
             }
           }
         }
@@ -2174,12 +2185,12 @@ Deno.serve(async (req) => {
         const effectiveUsesTax = (doc.uses_tax !== false) && orgDefaultUsesTax && !includeTaxInLines;
         
         // CRITICAL VALIDATION: (sum of line amounts + TotalImpuesto from XML) must equal TotalComprobante
-        // For IVA recuperable: lines = subtotal, so lines + TotalImpuesto = TotalComprobante
+        // For IVA recuperable: lines = subtotal (+ IEBLE no asumido), so lines + (TotalImpuesto - IEBLE en líneas) = TotalComprobante
         // For IVA como gasto: lines = subtotal + IVA, so lines = TotalComprobante (no separate tax)
-        // OtrosCargos are already added as separate lines, so they're included in linesTotalAmount
+        // IEBLE asumido por emisor: NOT in lines, NOT in TotalImpuesto, NOT in TotalComprobante → ignore completely
         
         // The IVA that goes to TxnTaxDetail (separate from lines)
-        // IEBLE is already in line amounts, so subtract from TotalImpuesto
+        // Only subtract IEBLE that was actually added to line amounts (not asumido)
         const ivaForTxnTaxDetail = effectiveUsesTax 
           ? Math.max(0, xmlTotalImpuesto - totalIEBLEInLines)
           : 0;
