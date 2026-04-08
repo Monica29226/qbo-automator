@@ -1884,7 +1884,29 @@ Deno.serve(async (req) => {
           for (const item of xmlData.detalle) {
             const cantidad = parseFloat(item.cantidad) || 1;
             let precioUnitario = parseFloat(item.precioUnitario) || 0;
-            let subtotal = parseFloat(item.subtotal) || (cantidad * precioUnitario);
+            // CRITICAL FIX: Use baseImponible (after discount) as primary source
+            // item.subtotal can be 0 for fully discounted lines, and 0 is falsy in JS
+            // which would incorrectly fall back to cantidad * precioUnitario (pre-discount)
+            const rawSubtotal = item.subtotal !== undefined && item.subtotal !== null 
+              ? parseFloat(item.subtotal) 
+              : NaN;
+            const rawBaseImponible = item.baseImponible !== undefined && item.baseImponible !== null
+              ? parseFloat(item.baseImponible)
+              : NaN;
+            // Prefer subtotal (post-discount) if available; fallback to baseImponible, then manual calc
+            let subtotal = !isNaN(rawSubtotal) ? rawSubtotal : (!isNaN(rawBaseImponible) ? rawBaseImponible : (cantidad * precioUnitario));
+            
+            // If there's a discount and subtotal doesn't reflect it, apply it
+            const montoDescuento = parseFloat(item.montoDescuento || item.MontoDescuento || '0');
+            if (montoDescuento > 0 && subtotal > 0) {
+              // Check if subtotal already has discount applied by comparing with precioUnitario * cantidad
+              const preDiscountTotal = cantidad * precioUnitario;
+              if (Math.abs(subtotal - preDiscountTotal) < 0.01 && montoDescuento > 0) {
+                // subtotal equals pre-discount amount, need to subtract discount
+                subtotal = subtotal - montoDescuento;
+                logInfo(`   📊 Línea ${item.numeroLinea || '?'}: Descuento ${montoDescuento.toFixed(2)} aplicado a subtotal: ${(subtotal + montoDescuento).toFixed(2)} → ${subtotal.toFixed(2)}`);
+              }
+            }
             
             if (isCreditNote) {
               subtotal = -Math.abs(subtotal);
