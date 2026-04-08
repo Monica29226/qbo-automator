@@ -1919,16 +1919,26 @@ Deno.serve(async (req) => {
             if (item.impuestos && Array.isArray(item.impuestos)) {
               for (const imp of item.impuestos) {
                 const codigo = imp.codigo || '';
-                const monto = parseFloat(imp.monto) || 0;
+                const montoBruto = parseFloat(imp.monto) || 0;
                 
                 if (codigo === '01' || codigo === '07' || codigo === '08') {
                   // IVA: 01=IVA normal, 07=IVA Cálculo Especial, 08=IVA Bienes Usados
                   tasaImpuesto = parseFloat(imp.tarifa) || 0;
-                  montoImpuestoIVA += monto;
+                  // CRITICAL FIX: Use impuestoNeto (after exoneration) if available
+                  // imp.monto is the GROSS tax; item.impuestoNeto is the NET tax after exoneration
+                  // When there's an exoneration, monto >> impuestoNeto
+                  const lineImpuestoNeto = parseFloat(item.impuestoNeto ?? '');
+                  if (!isNaN(lineImpuestoNeto) && Math.abs(montoBruto - lineImpuestoNeto) > 0.01) {
+                    // There's an exoneration - use impuestoNeto instead of monto
+                    montoImpuestoIVA += lineImpuestoNeto;
+                    logInfo(`   📊 Línea ${item.numeroLinea || '?'}: Exoneración detectada - IVA bruto=${montoBruto.toFixed(2)}, IVA neto=${lineImpuestoNeto.toFixed(2)}`);
+                  } else {
+                    montoImpuestoIVA += montoBruto;
+                  }
                 } else if (codigo === '05') {
                   // IEBLE - Impuesto Específico sobre Bebidas Envasadas sin alcohol
-                  montoImpuestoIEBLE = monto;
-                  logInfo(`   📊 IEBLE (código 05) detectado: ${monto.toFixed(2)}`);
+                  montoImpuestoIEBLE = montoBruto;
+                  logInfo(`   📊 IEBLE (código 05) detectado: ${montoBruto.toFixed(2)}`);
                 }
                 // Códigos 02,03,04,06,12,99 = otros impuestos específicos, se ignoran
               }
@@ -1938,10 +1948,14 @@ Deno.serve(async (req) => {
               }
             } else {
               tasaImpuesto = parseFloat(item.tarifa) || 0;
-              montoImpuestoIVA = parseFloat(item.montoImpuesto) || 0;
+              // Use impuestoNeto if available (after exoneration), fallback to montoImpuesto
+              const lineImpuestoNeto = parseFloat(item.impuestoNeto ?? '');
+              const lineMontoImpuesto = parseFloat(item.montoImpuesto ?? '');
+              montoImpuestoIVA = !isNaN(lineImpuestoNeto) ? lineImpuestoNeto : (!isNaN(lineMontoImpuesto) ? lineMontoImpuesto : 0);
               // Check for IEBLE in impuestoNeto when tarifa=0 but there's tax
-              if (tasaImpuesto === 0 && parseFloat(item.impuestoNeto || '0') > 0) {
-                montoImpuestoIEBLE = parseFloat(item.impuestoNeto) || 0;
+              if (tasaImpuesto === 0 && montoImpuestoIVA > 0) {
+                montoImpuestoIEBLE = montoImpuestoIVA;
+                montoImpuestoIVA = 0;
               }
               if (isCreditNote) {
                 montoImpuestoIVA = -Math.abs(montoImpuestoIVA);
