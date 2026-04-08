@@ -2202,7 +2202,7 @@ Deno.serve(async (req) => {
         const validationTolerance = 1.0;
         
         if (validationDiff > validationTolerance) {
-          const errorMsg = `VALIDACIÓN PRE-PUBLICACIÓN FALLÓ: SumaLíneas(${linesTotalAmount.toFixed(2)}) + IVA_XML(${ivaForTxnTaxDetail.toFixed(2)}) = ${expectedQBOTotal.toFixed(2)} ≠ TotalComprobante_XML(${xmlTotalComprobante.toFixed(2)}). Diff: ${validationDiff.toFixed(2)}. IEBLE en líneas: ${totalIEBLEInLines.toFixed(2)}`;
+          const errorMsg = `VALIDACIÓN PRE-PUBLICACIÓN FALLÓ: SumaLíneas(${linesTotalAmount.toFixed(2)}) + IVA_XML(${ivaForTxnTaxDetail.toFixed(2)}) = ${expectedQBOTotal.toFixed(2)} ≠ TotalComprobante_XML(${xmlTotalComprobante.toFixed(2)}). Diff: ${validationDiff.toFixed(2)}. IEBLE en líneas: ${totalIEBLEInLines.toFixed(2)}, IEBLE asumido: ${totalIEBLEAsumido.toFixed(2)}`;
           logError(`❌ ${doc.doc_number}: ${errorMsg}`);
           
           await registerInTracking(doc, 'error_amount_mismatch', null, null, errorMsg);
