@@ -1972,6 +1972,13 @@ Deno.serve(async (req) => {
             if (includeTaxInLines && Math.abs(montoImpuestoIVA) > 0) {
               lineAmount = subtotal + montoImpuestoIVA;
             }
+
+            // CRITICAL FIX: When IVA is recoverable (not included in lines),
+            // use montoTotalLinea (subtotal + IVA) as Amount with TaxInclusive mode
+            // This prevents QBO from double-counting tax when users toggle display mode
+            if (!includeTaxInLines && Math.abs(montoImpuestoIVA) > 0) {
+              lineAmount = subtotal + montoImpuestoIVA;
+            }
             
             // ALWAYS add IEBLE to the line amount - it's always an expense, never recoverable
             if (Math.abs(montoImpuestoIEBLE) > 0) {
@@ -2002,8 +2009,8 @@ Deno.serve(async (req) => {
               }
               
               // Store montoTotalLinea for TaxInclusive retry fallback
-              const montoTotalLinea = parseFloat(item.montoTotalLinea) || (Math.abs(subtotal) + Math.abs(montoImpuestoIVA) + Math.abs(montoImpuestoIEBLE));
-              lineDetail._montoTotalLinea = montoTotalLinea;
+            const montoTotalLinea = parseFloat(item.montoTotalLinea) || (Math.abs(subtotal) + Math.abs(montoImpuestoIVA) + Math.abs(montoImpuestoIEBLE));
+            lineDetail._montoTotalLinea = montoTotalLinea;
               
               lines.push(lineDetail);
               
@@ -2161,9 +2168,10 @@ Deno.serve(async (req) => {
           logInfo(`   📋 ${doc.doc_number}: IMPUESTO ASUMIDO detectado - Tax=${xmlTax.toFixed(2)} se envía separado en TxnTaxDetail`);
         }
         
-        // CRITICAL: Validate that lines total + IVA-only tax = document total (with tolerance)
-        // Lines already include IEBLE, so we only add IVA portion
-        const expectedQBOTotal = linesTotalAmount + ivaOnlyTax;
+        // CRITICAL: With TaxInclusive, lines already include IVA
+        // QBO will back out tax from line amounts via TaxCodeRef
+        // So lines total = document total (IVA is inside the lines, not added separately)
+        const expectedQBOTotal = linesTotalAmount;
         const documentTotal = Math.abs(doc.total_amount);
         
         // For impuesto asumido, QBO total will be subtotal + tax (greater than XML total)
@@ -2190,8 +2198,8 @@ Deno.serve(async (req) => {
         
         logInfo(`   📊 ${doc.doc_number}: Validación final OK - Lines=${linesTotalAmount.toFixed(2)}, IVA=${ivaOnlyTax.toFixed(2)}, IEBLE(en líneas)=${totalIEBLEInLines.toFixed(2)}, Total QBO esperado=${expectedQBOTotal.toFixed(2)}${earlyIsTaxExempt ? ' (impuesto asumido: QBO total > XML total)' : ` (esperado: ${documentTotal.toFixed(2)})`}`);
 
-        // Use ivaOnlyTax for TxnTaxDetail instead of full xmlTax
-        const totalTax = ivaOnlyTax;
+        // With TaxInclusive, we don't send TxnTaxDetail - QBO calculates tax from TaxCodeRef
+        const totalTax = 0;
         // =============================================================
         // STEP 11: CREATE BILL OR VENDORCREDIT IN QBO
         // =============================================================
@@ -2214,8 +2222,10 @@ Deno.serve(async (req) => {
             DocNumber: qboDocNumber,
             Line: lines,
             PrivateNote: `Nota de Crédito - Clave: ${claveHacienda}\nProveedor: ${doc.supplier_name}`,
-            // SIMPLE: Always TaxExcluded. Lines = subtotal, tax goes in TxnTaxDetail separated
-            GlobalTaxCalculation: includeTaxInLines ? "TaxInclusive" : "TaxExcluded",
+            // CRITICAL: Always use TaxInclusive when IVA is recoverable
+            // Lines include subtotal+IVA, QBO backs out the tax via TaxCodeRef
+            // This prevents double-tax display issues in QBO UI
+            GlobalTaxCalculation: "TaxInclusive",
           };
           
           if (documentCurrency === 'USD') {
@@ -2224,7 +2234,7 @@ Deno.serve(async (req) => {
             if (exchangeRate > 1) vendorCreditPayload.ExchangeRate = exchangeRate;
           }
           
-          if (effectiveUsesTax && totalTax > 0) {
+          if (false && effectiveUsesTax && totalTax > 0) {
             const taxLines: any[] = [];
             const rateKeys = Object.keys(taxByRate).map(Number);
             for (const rate of rateKeys) {
@@ -2376,8 +2386,9 @@ Deno.serve(async (req) => {
             DocNumber: qboDocNumber,
             Line: lines,
             PrivateNote: `Factura XML: ${doc.doc_number}\nClave: ${claveHacienda}\nProveedor: ${doc.supplier_name}`,
-            // SIMPLE: Always TaxExcluded. Lines = XML subtotal, tax goes in TxnTaxDetail separated
-            GlobalTaxCalculation: includeTaxInLines ? "TaxInclusive" : "TaxExcluded",
+            // CRITICAL: Always use TaxInclusive
+            // Lines include subtotal+IVA, QBO backs out the tax via TaxCodeRef
+            GlobalTaxCalculation: "TaxInclusive",
           };
           
           if (documentCurrency === 'USD') {
@@ -2386,8 +2397,8 @@ Deno.serve(async (req) => {
             if (exchangeRate > 1) billPayload.ExchangeRate = exchangeRate;
           }
           
-          if (effectiveUsesTax && totalTax > 0) {
-            // Build detailed TaxLine entries so QBO knows exact rates
+          if (false && effectiveUsesTax && totalTax > 0) {
+            // DISABLED: With TaxInclusive, QBO calculates tax from TaxCodeRef on lines
             const taxLines: any[] = [];
             const rateKeys = Object.keys(taxByRate).map(Number);
             
