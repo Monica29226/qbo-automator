@@ -2168,9 +2168,10 @@ Deno.serve(async (req) => {
           logInfo(`   📋 ${doc.doc_number}: IMPUESTO ASUMIDO detectado - Tax=${xmlTax.toFixed(2)} se envía separado en TxnTaxDetail`);
         }
         
-        // CRITICAL: Validate that lines total + IVA-only tax = document total (with tolerance)
-        // Lines already include IEBLE, so we only add IVA portion
-        const expectedQBOTotal = linesTotalAmount + ivaOnlyTax;
+        // CRITICAL: With TaxInclusive, lines already include IVA
+        // QBO will back out tax from line amounts via TaxCodeRef
+        // So lines total = document total (IVA is inside the lines, not added separately)
+        const expectedQBOTotal = linesTotalAmount;
         const documentTotal = Math.abs(doc.total_amount);
         
         // For impuesto asumido, QBO total will be subtotal + tax (greater than XML total)
@@ -2197,8 +2198,8 @@ Deno.serve(async (req) => {
         
         logInfo(`   📊 ${doc.doc_number}: Validación final OK - Lines=${linesTotalAmount.toFixed(2)}, IVA=${ivaOnlyTax.toFixed(2)}, IEBLE(en líneas)=${totalIEBLEInLines.toFixed(2)}, Total QBO esperado=${expectedQBOTotal.toFixed(2)}${earlyIsTaxExempt ? ' (impuesto asumido: QBO total > XML total)' : ` (esperado: ${documentTotal.toFixed(2)})`}`);
 
-        // Use ivaOnlyTax for TxnTaxDetail instead of full xmlTax
-        const totalTax = ivaOnlyTax;
+        // With TaxInclusive, we don't send TxnTaxDetail - QBO calculates tax from TaxCodeRef
+        const totalTax = 0;
         // =============================================================
         // STEP 11: CREATE BILL OR VENDORCREDIT IN QBO
         // =============================================================
@@ -2233,7 +2234,7 @@ Deno.serve(async (req) => {
             if (exchangeRate > 1) vendorCreditPayload.ExchangeRate = exchangeRate;
           }
           
-          if (effectiveUsesTax && totalTax > 0) {
+          if (false && effectiveUsesTax && totalTax > 0) {
             const taxLines: any[] = [];
             const rateKeys = Object.keys(taxByRate).map(Number);
             for (const rate of rateKeys) {
@@ -2396,8 +2397,8 @@ Deno.serve(async (req) => {
             if (exchangeRate > 1) billPayload.ExchangeRate = exchangeRate;
           }
           
-          if (effectiveUsesTax && totalTax > 0) {
-            // Build detailed TaxLine entries so QBO knows exact rates
+          if (false && effectiveUsesTax && totalTax > 0) {
+            // DISABLED: With TaxInclusive, QBO calculates tax from TaxCodeRef on lines
             const taxLines: any[] = [];
             const rateKeys = Object.keys(taxByRate).map(Number);
             
