@@ -72,6 +72,99 @@ interface Account {
   accountNumber?: string | null;
 }
 
+const EditableAccountField = ({ doc, accounts, activeOrganization, onUpdated }: {
+  doc: Document;
+  accounts: Account[];
+  activeOrganization: string | null;
+  onUpdated: () => void;
+}) => {
+  const [isEditing, setIsEditing] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+
+  const handleAccountChange = async (accountId: string) => {
+    if (!activeOrganization) return;
+    setIsSaving(true);
+
+    const selectedAcc = accounts.find(a => a.id === accountId);
+    const accountRef = selectedAcc?.accountNumber
+      ? `${selectedAcc.accountNumber} ${selectedAcc.name}`
+      : selectedAcc?.name || accountId;
+
+    try {
+      // Update document
+      await supabase
+        .from("processed_documents")
+        .update({
+          default_account_ref: accountRef,
+          status: "pending",
+          error_message: null,
+        })
+        .eq("id", doc.id);
+
+      // Also update vendor_defaults for future invoices
+      await supabase
+        .from("vendor_defaults")
+        .upsert({
+          vendor_name: doc.supplier_name,
+          default_account_ref: accountRef,
+          organization_id: activeOrganization,
+        }, { onConflict: "organization_id,vendor_name" });
+
+      // Update all other error/pending docs from same supplier
+      await supabase
+        .from("processed_documents")
+        .update({
+          default_account_ref: accountRef,
+          status: "pending",
+          error_message: null,
+        })
+        .eq("organization_id", activeOrganization)
+        .eq("supplier_name", doc.supplier_name)
+        .in("status", ["error", "pending_config", "review"]);
+
+      toast.success(`Cuenta actualizada a ${accountRef} para ${doc.supplier_name}`);
+      setIsEditing(false);
+      onUpdated();
+    } catch (err) {
+      console.error(err);
+      toast.error("Error al actualizar cuenta");
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  if (isEditing) {
+    return (
+      <div className="flex items-center gap-1 mt-0.5">
+        <AccountCombobox
+          accounts={accounts.map(a => ({
+            id: a.id,
+            name: a.name,
+            accountNumber: a.accountNumber || undefined,
+          }))}
+          value=""
+          onValueChange={handleAccountChange}
+          placeholder="Buscar cuenta..."
+          disabled={isSaving}
+        />
+        <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={() => setIsEditing(false)}>
+          <X className="h-3 w-3" />
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <button
+      onClick={(e) => { e.stopPropagation(); setIsEditing(true); }}
+      className="font-medium text-left hover:text-primary hover:underline cursor-pointer transition-colors"
+      title="Clic para cambiar cuenta"
+    >
+      {doc.default_account_ref || "Sin asignar ✏️"}
+    </button>
+  );
+};
+
 const ReviewQueue = () => {
   const { activeOrganization, organizations } = useAuth();
   const currentOrg = organizations.find((org) => org.id === activeOrganization);
@@ -422,7 +515,16 @@ const ReviewQueue = () => {
                                 </div>
                                 <div>
                                   <span className="text-muted-foreground block text-xs">Cuenta asignada</span>
-                                  <span className="font-medium">{doc.default_account_ref || "-"}</span>
+                                  {doc.status !== "published" ? (
+                                    <EditableAccountField
+                                      doc={doc}
+                                      accounts={accounts}
+                                      activeOrganization={activeOrganization}
+                                      onUpdated={fetchData}
+                                    />
+                                  ) : (
+                                    <span className="font-medium">{doc.default_account_ref || "-"}</span>
+                                  )}
                                 </div>
                                 <div>
                                   <span className="text-muted-foreground block text-xs">QBO ID</span>
