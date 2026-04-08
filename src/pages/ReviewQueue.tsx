@@ -422,7 +422,16 @@ const ReviewQueue = () => {
                                 </div>
                                 <div>
                                   <span className="text-muted-foreground block text-xs">Cuenta asignada</span>
-                                  <span className="font-medium">{doc.default_account_ref || "-"}</span>
+                                  {doc.status !== "published" ? (
+                                    <EditableAccountField
+                                      doc={doc}
+                                      accounts={accounts}
+                                      activeOrganization={activeOrganization}
+                                      onUpdated={fetchData}
+                                    />
+                                  ) : (
+                                    <span className="font-medium">{doc.default_account_ref || "-"}</span>
+                                  )}
                                 </div>
                                 <div>
                                   <span className="text-muted-foreground block text-xs">QBO ID</span>
