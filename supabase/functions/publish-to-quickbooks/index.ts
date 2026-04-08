@@ -1126,9 +1126,10 @@ Deno.serve(async (req) => {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 10000);
       
-      const qboDocNumber = docNumber.length > 21 
-        ? docNumber.substring(docNumber.length - 21)
-        : docNumber;
+      // Extract real consecutive number: last 10 digits without leading zeros
+      const qboDocNumber = docNumber.length === 20
+        ? docNumber.substring(10).replace(/^0+/, '') || '0'
+        : (docNumber.length > 21 ? docNumber.substring(docNumber.length - 21) : docNumber);
       
       const entityName = isCreditNote ? 'VendorCredit' : 'Bill';
       
@@ -1209,9 +1210,10 @@ Deno.serve(async (req) => {
       const emisorId = doc.supplier_tax_id || doc.xml_data?.emisor?.identificacion?.numero || '';
       const receptorId = companyTaxId || doc.xml_data?.receptor?.identificacion?.numero || '';
       
-      const qboDocNumber = doc.doc_number.length > 21 
-        ? doc.doc_number.substring(doc.doc_number.length - 21)
-        : doc.doc_number;
+      // Extract real consecutive number: last 10 digits without leading zeros
+      const qboDocNumber = doc.doc_number.length === 20
+        ? doc.doc_number.substring(10).replace(/^0+/, '') || '0'
+        : (doc.doc_number.length > 21 ? doc.doc_number.substring(doc.doc_number.length - 21) : doc.doc_number);
       
       try {
         await supabase
@@ -2222,9 +2224,10 @@ Deno.serve(async (req) => {
         // =============================================================
         // STEP 11: CREATE BILL OR VENDORCREDIT IN QBO
         // =============================================================
-        const qboDocNumber = doc.doc_number.length > 21 
-          ? doc.doc_number.substring(doc.doc_number.length - 21)
-          : doc.doc_number;
+        // Extract real consecutive number: last 10 digits without leading zeros
+        const qboDocNumber = doc.doc_number.length === 20
+          ? doc.doc_number.substring(10).replace(/^0+/, '') || '0'
+          : (doc.doc_number.length > 21 ? doc.doc_number.substring(doc.doc_number.length - 21) : doc.doc_number);
         
         logInfo(`   📊 ${doc.doc_number}: effectiveUsesTax=${effectiveUsesTax}, totalTax para QBO=${totalTax.toFixed(2)}`);
         
