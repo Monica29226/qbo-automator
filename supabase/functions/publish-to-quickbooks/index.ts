@@ -2216,13 +2216,24 @@ Deno.serve(async (req) => {
             }
           }
           
-          // Strip internal properties before sending to QBO
+          // Save _montoTotalLinea values BEFORE stripping for TaxInclusive retry
+          const vcMontoTotalMap = new Map<number, number>();
           if (vendorCreditPayload.Line && Array.isArray(vendorCreditPayload.Line)) {
+            vendorCreditPayload.Line.forEach((line: any, idx: number) => {
+              if (line._montoTotalLinea) vcMontoTotalMap.set(idx, line._montoTotalLinea);
+            });
             vendorCreditPayload.Line = vendorCreditPayload.Line.map((line: any) => {
-              const { _montoTotalLinea, ...cleanLine } = line;
-              return cleanLine;
+              const cleaned: any = {};
+              for (const [key, val] of Object.entries(line)) {
+                if (!key.startsWith('_') && val !== undefined && val !== null && !Number.isNaN(val)) {
+                  cleaned[key] = val;
+                }
+              }
+              return cleaned;
             });
           }
+          
+          logInfo(`📤 ${doc.doc_number}: VendorCredit payload keys: ${Object.keys(vendorCreditPayload).join(',')}, Lines: ${vendorCreditPayload.Line?.length}, Line[0] keys: ${vendorCreditPayload.Line?.[0] ? Object.keys(vendorCreditPayload.Line[0]).join(',') : 'none'}`);
           
           const vcResponse = await fetchWithRetry(
             `https://quickbooks.api.intuit.com/v3/company/${realmId}/vendorcredit`,
@@ -2251,17 +2262,18 @@ Deno.serve(async (req) => {
               
               logInfo(`⚠️ ${doc.doc_number}: Error de impuesto en VendorCredit, reintentando con TaxInclusive...`);
               
-              // FIXED: Switch to TaxInclusive and use montoTotalLinea as line amounts
+              // FIXED: Switch to TaxInclusive and use saved montoTotalLinea as line amounts
               delete vendorCreditPayload.TxnTaxDetail;
               vendorCreditPayload.GlobalTaxCalculation = "TaxInclusive";
               
-              // Redistribute: each line amount becomes montoTotalLinea
-              for (const line of vendorCreditPayload.Line) {
-                if (line._montoTotalLinea && line._montoTotalLinea > line.Amount) {
-                  logInfo(`   📊 ${doc.doc_number}: VC Line ${line.Amount} → ${line._montoTotalLinea} (TaxInclusive)`);
-                  line.Amount = parseFloat(line._montoTotalLinea.toFixed(2));
+              // Redistribute: each line amount becomes montoTotalLinea from saved map
+              vendorCreditPayload.Line.forEach((line: any, idx: number) => {
+                const savedMonto = vcMontoTotalMap.get(idx);
+                if (savedMonto && savedMonto > line.Amount) {
+                  logInfo(`   📊 ${doc.doc_number}: VC Line ${line.Amount} → ${savedMonto} (TaxInclusive)`);
+                  line.Amount = parseFloat(savedMonto.toFixed(2));
                 }
-              }
+              });
               logInfo(`   📊 ${doc.doc_number}: Reintento VendorCredit TaxInclusive`);
               
               // Retry without tax
@@ -2372,17 +2384,25 @@ Deno.serve(async (req) => {
             }
           }
           
-          // CRITICAL: Strip internal properties before sending to QBO
-          // QBO rejects unknown properties with error 2010 "failed to parse json object"
-          const cleanLines = (payload: any) => {
-            if (payload.Line && Array.isArray(payload.Line)) {
-              payload.Line = payload.Line.map((line: any) => {
-                const { _montoTotalLinea, ...cleanLine } = line;
-                return cleanLine;
-              });
-            }
-          };
-          cleanLines(billPayload);
+          // CRITICAL: Save _montoTotalLinea values BEFORE stripping for TaxInclusive retry
+          const billMontoTotalMap = new Map<number, number>();
+          if (billPayload.Line && Array.isArray(billPayload.Line)) {
+            billPayload.Line.forEach((line: any, idx: number) => {
+              if (line._montoTotalLinea) billMontoTotalMap.set(idx, line._montoTotalLinea);
+            });
+            // Deep-clean: strip ALL underscore-prefixed properties and sanitize values
+            billPayload.Line = billPayload.Line.map((line: any) => {
+              const cleaned: any = {};
+              for (const [key, val] of Object.entries(line)) {
+                if (!key.startsWith('_') && val !== undefined && val !== null && !Number.isNaN(val)) {
+                  cleaned[key] = val;
+                }
+              }
+              return cleaned;
+            });
+          }
+          
+          logInfo(`📤 ${doc.doc_number}: Bill payload keys: ${Object.keys(billPayload).join(',')}, Lines: ${billPayload.Line?.length}, Line[0] keys: ${billPayload.Line?.[0] ? Object.keys(billPayload.Line[0]).join(',') : 'none'}`);
           
           let billResponse = await fetchWithRetry(
             `https://quickbooks.api.intuit.com/v3/company/${realmId}/bill`,
@@ -2409,18 +2429,18 @@ Deno.serve(async (req) => {
               
               logInfo(`⚠️ ${doc.doc_number}: Error de impuesto en QBO, reintentando con TaxInclusive...`);
               
-              // FIXED: Switch to TaxInclusive and use montoTotalLinea (subtotal+tax) as line amounts
-              // QBO will back out the tax from the inclusive amount, preserving the correct total
+              // FIXED: Switch to TaxInclusive and use saved montoTotalLinea as line amounts
               delete billPayload.TxnTaxDetail;
               billPayload.GlobalTaxCalculation = "TaxInclusive";
               
-              // Redistribute: each line amount becomes montoTotalLinea (full amount including tax)
-              for (const line of billPayload.Line) {
-                if (line._montoTotalLinea && line._montoTotalLinea > line.Amount) {
-                  logInfo(`   📊 ${doc.doc_number}: Line ${line.Amount} → ${line._montoTotalLinea} (TaxInclusive)`);
-                  line.Amount = parseFloat(line._montoTotalLinea.toFixed(2));
+              // Redistribute: each line amount becomes montoTotalLinea from saved map
+              billPayload.Line.forEach((line: any, idx: number) => {
+                const savedMonto = billMontoTotalMap.get(idx);
+                if (savedMonto && savedMonto > line.Amount) {
+                  logInfo(`   📊 ${doc.doc_number}: Line ${line.Amount} → ${savedMonto} (TaxInclusive)`);
+                  line.Amount = parseFloat(savedMonto.toFixed(2));
                 }
-              }
+              });
               logInfo(`   📊 ${doc.doc_number}: Reintento TaxInclusive - QBO descontará impuesto del monto total de cada línea`);
               
               // Retry without tax
