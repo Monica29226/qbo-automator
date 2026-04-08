@@ -2364,6 +2364,18 @@ Deno.serve(async (req) => {
             }
           }
           
+          // CRITICAL: Strip internal properties before sending to QBO
+          // QBO rejects unknown properties with error 2010 "failed to parse json object"
+          const cleanLines = (payload: any) => {
+            if (payload.Line && Array.isArray(payload.Line)) {
+              payload.Line = payload.Line.map((line: any) => {
+                const { _montoTotalLinea, ...cleanLine } = line;
+                return cleanLine;
+              });
+            }
+          };
+          cleanLines(billPayload);
+          
           let billResponse = await fetchWithRetry(
             `https://quickbooks.api.intuit.com/v3/company/${realmId}/bill`,
             {
