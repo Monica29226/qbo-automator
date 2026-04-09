@@ -206,7 +206,9 @@ async function checkDuplicateInQBO(
 ): Promise<{ isDuplicate: boolean; entityId: string | null; entityType: string | null }> {
   try {
     // Preparar DocNumber para búsqueda (mismo formato que se usa al crear)
-    const qboDocNumber = docNumber.length > 21 ? docNumber.substring(docNumber.length - 21) : docNumber;
+    const qboDocNumber = docNumber.length === 20
+      ? docNumber.substring(10).replace(/^0+/, '') || '0'
+      : (docNumber.length > 21 ? docNumber.substring(docNumber.length - 21) : docNumber);
     
     // Buscar según tipo de documento
     const entityName = isCreditNote ? 'VendorCredit' : 'Bill';
@@ -545,7 +547,9 @@ async function processSingleDocument(
     }
     
     // 9. Create Bill or VendorCredit in QuickBooks (with timeout protection)
-    const qboDocNumber = docNumber.length > 21 ? docNumber.substring(docNumber.length - 21) : docNumber;
+    const qboDocNumber = docNumber.length === 20
+      ? docNumber.substring(10).replace(/^0+/, '') || '0'
+      : (docNumber.length > 21 ? docNumber.substring(docNumber.length - 21) : docNumber);
     
     let entityId: string;
     let entityType: string;

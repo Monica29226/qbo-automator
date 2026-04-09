@@ -187,9 +187,9 @@ Deno.serve(async (req) => {
                          doc.doc_type === "NC" ||
                          doc.doc_type === "03";
     
-    const docNumber = doc.doc_number.length > 21 
-      ? doc.doc_number.substring(doc.doc_number.length - 21)
-      : doc.doc_number;
+    const docNumber = doc.doc_number.length === 20
+      ? doc.doc_number.substring(10).replace(/^0+/, '') || '0'
+      : (doc.doc_number.length > 21 ? doc.doc_number.substring(doc.doc_number.length - 21) : doc.doc_number);
 
     // Parse XML detail lines for proper tax handling
     const xmlData = doc.xml_data as any;

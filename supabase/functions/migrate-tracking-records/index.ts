@@ -92,9 +92,9 @@ Deno.serve(async (req) => {
             receptor_identificacion: '',
             qbo_entity_id: doc.qbo_entity_id,
             qbo_entity_type: doc.qbo_entity_type,
-            qbo_doc_number: doc.doc_number.length > 21 
-              ? doc.doc_number.substring(doc.doc_number.length - 21) 
-              : doc.doc_number,
+            qbo_doc_number: doc.doc_number.length === 20
+              ? doc.doc_number.substring(10).replace(/^0+/, '') || '0'
+              : (doc.doc_number.length > 21 ? doc.doc_number.substring(doc.doc_number.length - 21) : doc.doc_number),
             total_amount: doc.total_amount,
             currency: doc.currency || 'CRC',
             supplier_name: doc.supplier_name,
