@@ -688,8 +688,16 @@ function validateTotalsStrict(xmlData: any, docTotalAmount: number, isCreditNote
   // Check for tax exemption/assumption cases
   const taxesExemptFromTotal = totalImpuestos > 0 && Math.abs(xmlTotal - subtotal) < tolerance;
   
+  // Check if discounts are already embedded in subtotal (baseImponible already has discount applied)
+  // This happens when subtotal = TotalComprobante and totalDescuentos > 0
+  const discountsAlreadyEmbedded = taxesExemptFromTotal && secondaryDescuentos > 0;
+  
   let calculatedTotal: number;
-  if (taxesExemptFromTotal) {
+  if (taxesExemptFromTotal && discountsAlreadyEmbedded) {
+    // Discounts already in subtotal, tax not in total - just use subtotal directly
+    calculatedTotal = subtotal + totalOtrosCargos;
+    log(`📋 Impuesto exonerado + descuentos embebidos: Total=${xmlTotal}, Subtotal=${subtotal}, Impuesto=${totalImpuestos}, Descuentos=${secondaryDescuentos} (ya incluidos)`);
+  } else if (taxesExemptFromTotal) {
     calculatedTotal = subtotal - secondaryDescuentos + totalOtrosCargos;
     log(`📋 Impuesto exonerado/asumido detectado: Total=${xmlTotal}, Subtotal=${subtotal}, Impuesto=${totalImpuestos} (NO suma al total)`);
   } else {
