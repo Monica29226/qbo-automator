@@ -278,27 +278,47 @@ async function fetchEmailsViaIMAP(
         totalMessagesInRange += allMsgIds.length;
         console.log(`[IMAP] Folder ${folder}: ${allMsgIds.length} messages in range`);
 
-        // STEP 1: Pre-filter using BODYSTRUCTURE - limit to latest 300 per folder
-        const msgIdsToScan = allMsgIds.slice(-300);
+        // STEP 1: Pre-filter using BODYSTRUCTURE - batch fetch by range (not individual)
+        const msgIdsToScan = allMsgIds.slice(-80);
         const candidateIds: number[] = [];
         
-        for (const msgId of msgIdsToScan) {
-          if (Date.now() > deadline - 15_000) {
-            timeLimitReached = true;
-            break;
-          }
+        if (msgIdsToScan.length > 0) {
           try {
-            const structResp = await cmd(`FETCH ${msgId} BODYSTRUCTURE`);
-            const structLower = structResp.toLowerCase();
-            const hasAttachment = structLower.includes('.xml') || structLower.includes('.pdf') ||
-              structLower.includes('application/xml') || structLower.includes('text/xml') ||
-              structLower.includes('application/pdf') || structLower.includes('message/rfc822') ||
-              structLower.includes('attachment') || structLower.includes('multipart/mixed');
-            if (hasAttachment) {
-              candidateIds.push(msgId);
+            // Use range-based FETCH to get all BODYSTRUCTURE in a single round-trip
+            const rangeStr = msgIdsToScan.length === 1
+              ? `${msgIdsToScan[0]}`
+              : `${msgIdsToScan[0]}:${msgIdsToScan[msgIdsToScan.length - 1]}`;
+            
+            console.log(`[IMAP] Batch FETCH BODYSTRUCTURE for range ${rangeStr} (${msgIdsToScan.length} msgs)`);
+            const batchResp = await cmd(`FETCH ${rangeStr} BODYSTRUCTURE`, true);
+            
+            // Parse batch response: each message starts with "* N FETCH"
+            const msgIdsSet = new Set(msgIdsToScan);
+            const fetchBlocks = batchResp.split(/^\* (\d+) FETCH /gm);
+            
+            // fetchBlocks alternates: [prefix, msgId1, body1, msgId2, body2, ...]
+            for (let i = 1; i + 1 < fetchBlocks.length; i += 2) {
+              const msgId = parseInt(fetchBlocks[i]);
+              if (!msgIdsSet.has(msgId)) continue;
+              
+              const blockLower = fetchBlocks[i + 1].toLowerCase();
+              const hasAttachment = blockLower.includes('.xml') || blockLower.includes('.pdf') ||
+                blockLower.includes('application/xml') || blockLower.includes('text/xml') ||
+                blockLower.includes('application/pdf') || blockLower.includes('message/rfc822') ||
+                blockLower.includes('attachment') || blockLower.includes('multipart/mixed');
+              if (hasAttachment) {
+                candidateIds.push(msgId);
+              }
             }
-          } catch {
-            candidateIds.push(msgId);
+            
+            // Fallback: if parser found nothing but we had messages, include all (safe default)
+            if (candidateIds.length === 0 && msgIdsToScan.length > 0 && batchResp.length > 100) {
+              console.log(`[IMAP] Batch parser found 0 candidates, falling back to include all ${msgIdsToScan.length} msgs`);
+              candidateIds.push(...msgIdsToScan);
+            }
+          } catch (batchErr) {
+            console.warn(`[IMAP] Batch BODYSTRUCTURE failed, falling back to include all:`, batchErr);
+            candidateIds.push(...msgIdsToScan);
           }
         }
 
