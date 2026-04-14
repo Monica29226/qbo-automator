@@ -579,6 +579,31 @@ function validateTotalsStrict(xmlData: any, docTotalAmount: number, isCreditNote
         };
       }
       
+      // FORMULA 3B: LAB SAN JOSE case - Tax NOT included in TotalComprobante
+      // TotalComprobante = sum(baseImponible) when discounts are embedded and tax is exempt from total
+      // So: baseImponible + OtrosCargos = Total (no tax, no discount subtraction)
+      const calculatedTaxExempt = lineCalc.subtotal + totalOtrosCargos;
+      const taxExemptDiff = Math.abs(calculatedTaxExempt - xmlTotal);
+      
+      logInfo(`📊 [F3B] baseImponible + OtrosCargos (sin impuesto): ${calculatedTaxExempt.toFixed(2)} vs XML ${xmlTotal.toFixed(2)} (diff: ${taxExemptDiff.toFixed(2)})`);
+      
+      if (taxExemptDiff <= tolerance) {
+        return {
+          valid: true,
+          xmlTotal,
+          calculatedTotal: calculatedTaxExempt,
+          difference: taxExemptDiff,
+          breakdown: {
+            subtotal: lineCalc.subtotal,
+            totalImpuestos: totalTaxes,
+            totalDescuentos,
+            totalOtrosCargos,
+            totalExoneraciones: 0
+          },
+          errors: []
+        };
+      }
+      
       // FORMULA 4: AQUI MAS FRESCO case - IEBLE is separate and NOT in montoTotalLinea
       // Some XMLs have tarifa:0 but impuestoNeto contains IEBLE that needs to be added
       // montoTotalLinea might NOT include the IEBLE
