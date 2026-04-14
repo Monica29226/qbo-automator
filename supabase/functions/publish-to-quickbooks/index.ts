@@ -1314,7 +1314,63 @@ Deno.serve(async (req) => {
         if (searchResponse.ok) {
           const searchData = await searchResponse.json();
           if (searchData.QueryResponse?.Vendor?.length > 0) {
-            return searchData.QueryResponse.Vendor[0].Id;
+            const foundVendor = searchData.QueryResponse.Vendor[0];
+            const vendorCurrency = foundVendor.CurrencyRef?.value || 'CRC';
+            const invoiceCurrency = currency || 'CRC';
+            
+            // Check currency mismatch: vendor exists but with different currency
+            if (vendorCurrency !== invoiceCurrency) {
+              logInfo(`⚠️ Currency mismatch for "${vendorDisplayName}": vendor=${vendorCurrency}, invoice=${invoiceCurrency}. Creating currency-specific vendor...`);
+              // Create a currency-suffixed vendor instead
+              const currencySuffixedName = `${baseNormalizedName} ${invoiceCurrency}`.substring(0, 100).trim();
+              
+              // First search for the suffixed vendor
+              const suffixSearchUrl = `https://quickbooks.api.intuit.com/v3/company/${realmId}/query?query=${encodeURIComponent(`SELECT * FROM Vendor WHERE DisplayName = '${currencySuffixedName.replace(/'/g, "\\'")}'`)}`;
+              const suffixSearchResp = await fetch(suffixSearchUrl, {
+                headers: { "Authorization": `Bearer ${accessToken}`, "Accept": "application/json" }
+              });
+              if (suffixSearchResp.ok) {
+                const suffixData = await suffixSearchResp.json();
+                if (suffixData.QueryResponse?.Vendor?.length > 0) {
+                  logInfo(`✅ Found currency-specific vendor: ${currencySuffixedName} (ID: ${suffixData.QueryResponse.Vendor[0].Id})`);
+                  return suffixData.QueryResponse.Vendor[0].Id;
+                }
+              }
+              
+              // Create the currency-specific vendor
+              logInfo(`➕ Creating currency-specific vendor: ${currencySuffixedName}`);
+              const currencyVendorPayload: any = { DisplayName: currencySuffixedName };
+              if (invoiceCurrency !== 'CRC') {
+                currencyVendorPayload.CurrencyRef = { value: invoiceCurrency, name: invoiceCurrency };
+              }
+              const createCurrResp = await fetch(
+                `https://quickbooks.api.intuit.com/v3/company/${realmId}/vendor`,
+                {
+                  method: "POST",
+                  headers: {
+                    "Authorization": `Bearer ${accessToken}`,
+                    "Accept": "application/json",
+                    "Content-Type": "application/json",
+                  },
+                  body: JSON.stringify(currencyVendorPayload),
+                }
+              );
+              if (createCurrResp.ok) {
+                const newVendor = await createCurrResp.json();
+                logInfo(`✅ Currency-specific vendor created: ${currencySuffixedName} (ID: ${newVendor.Vendor.Id})`);
+                return newVendor.Vendor.Id;
+              }
+              // If creation failed (maybe already exists with different casing), try extracting ID from error
+              const errText = await createCurrResp.text();
+              try {
+                const errJson = JSON.parse(errText);
+                const idMatch = errJson?.Fault?.Error?.[0]?.Detail?.match(/Id=(\d+)/);
+                if (idMatch) return idMatch[1];
+              } catch {}
+              throw new Error(`No se pudo crear proveedor con divisa ${invoiceCurrency}: ${errText.substring(0, 200)}`);
+            }
+            
+            return foundVendor.Id;
           }
         }
       } catch (e) {
