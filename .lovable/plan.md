@@ -1,33 +1,58 @@
 
 
-# Plan: Alinear formato de DocNumber en todas las funciones
+# Diagnóstico: Por qué Bluehost IMAP se cuelga para Centro Médico San Antonio
 
-## Problema
-Tres funciones aún usan la lógica vieja de truncar a 21 caracteres, mientras que `publish-to-quickbooks` y `publish-sales-to-quickbooks` ya usan la lógica nueva (extraer últimos 10 dígitos). Esta inconsistencia puede causar que el sistema no detecte duplicados correctamente.
+## Causa raíz identificada
 
-## Cambios
+El problema es el **escaneo individual de BODYSTRUCTURE** en el paso de pre-filtrado. Los logs muestran:
 
-### 1. `supabase/functions/batch-publish-all/index.ts`
-- **Línea 209** (función `checkDuplicateInQBO`): Cambiar de `docNumber.length > 21 ? docNumber.substring(docNumber.length - 21) : docNumber` a la lógica nueva
-- **Línea 548** (creación del Bill): Mismo cambio
-
-Lógica nueva en ambos puntos:
-```typescript
-const qboDocNumber = docNumber.length === 20
-  ? docNumber.substring(10).replace(/^0+/, '') || '0'
-  : (docNumber.length > 21 ? docNumber.substring(docNumber.length - 21) : docNumber);
+```text
+INBOX: 361 messages in range → 287 candidates → solo puede procesar 6-9 antes del timeout
+Tiempo total: 91-101 segundos → Edge Function timeout (150s)
 ```
 
-### 2. `supabase/functions/migrate-tracking-records/index.ts`
-- **Líneas 95-97**: Cambiar la asignación de `qbo_doc_number` a la misma lógica nueva
+**Flujo actual (líneas 281-303):**
+1. IMAP SEARCH devuelve ~361 mensajes (SINCE 01-Jan-2026)
+2. El sistema hace `FETCH {msgId} BODYSTRUCTURE` **uno por uno** para hasta 300 mensajes
+3. Cada round-trip IMAP toma ~200-500ms → 300 × 300ms = **~90 segundos solo en pre-filtrado**
+4. Luego intenta `FETCH BODY[]` para cada candidato → se queda sin tiempo
+5. El cron detecta el proceso "stuck" después de 30 min y lo marca como `stuck_timeout`
 
-### 3. `supabase/functions/force-publish-document/index.ts`
-- **Líneas 190-192**: Cambiar la asignación de `docNumber` a la misma lógica nueva
+**¿Por qué Café Luna funciona?** Usa Gmail (API REST, rápida), no IMAP sobre un servidor Bluehost lento.
 
-### 4. Redesplegar las 3 funciones
+## Solución propuesta (3 mejoras)
 
-## Impacto
-- Todas las funciones usarán el mismo formato de DocNumber (ej: `67534` en vez de `00100008010000067534`)
-- La detección de duplicados funcionará correctamente entre funciones
-- Facturas ya publicadas con formato largo no se ven afectadas (el check primario de duplicados usa `clave_hacienda` en la tabla de tracking, no el DocNumber)
+### 1. Usar FETCH por rangos en vez de individual (mayor impacto)
+En lugar de hacer 300 llamadas individuales `FETCH {id} BODYSTRUCTURE`, usar un solo comando batch:
+```typescript
+// ANTES (300 round-trips):
+for (const msgId of msgIdsToScan) {
+  const structResp = await cmd(`FETCH ${msgId} BODYSTRUCTURE`);
+}
+
+// DESPUÉS (1 round-trip):
+const range = `${msgIdsToScan[0]}:${msgIdsToScan[msgIdsToScan.length-1]}`;
+const batchResp = await cmd(`FETCH ${range} BODYSTRUCTURE`, true);
+// Parse all responses from single batch
+```
+Esto reduce ~90 segundos a ~3-5 segundos.
+
+### 2. Limitar el rango de búsqueda desde la última importación
+El sistema ya tiene lógica para esto (líneas 546-559), pero el cron no pasa `month`/`year`, y si hay un `start_date` setting configurado en enero, busca desde enero. Cambiar para que el rango sea dinámico: solo buscar desde 7 días antes de la última factura importada.
+
+### 3. Limitar mensajes pre-filtrados a 50 (no 300)
+Reducir `msgIdsToScan` de `allMsgIds.slice(-300)` a `allMsgIds.slice(-50)` y compensar con la paginación ya existente.
+
+## Archivos a modificar
+
+**`supabase/functions/bluehost-fetch-invoices/index.ts`:**
+- Líneas 281-303: Reemplazar escaneo individual de BODYSTRUCTURE con fetch batch por rango
+- Línea 282: Reducir límite de 300 a 80 mensajes por ronda
+- Agregar parser para respuestas batch de BODYSTRUCTURE
+
+## Impacto esperado
+- Tiempo de IMAP: de ~90-100s → ~10-15s por ronda
+- El cron dejará de quedarse "stuck"
+- Las facturas pendientes (marzo 24 → abril 14) se importarán automáticamente
+- No afecta la lógica de procesamiento de documentos ni QuickBooks
 
