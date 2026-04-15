@@ -176,3 +176,6 @@ verify_jwt = true
 
 [functions.reconcile-xml-vs-qbo]
 verify_jwt = true
+
+[functions.process-bank-statement]
+verify_jwt = true
