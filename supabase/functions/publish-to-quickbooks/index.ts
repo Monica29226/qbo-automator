@@ -2600,9 +2600,12 @@ Deno.serve(async (req) => {
             const errorText = await billResponse.clone().text();
             
             // Check if it's a tax calculation error
-            if (errorText.includes('error al calcular el impuesto') || 
+            if (errorText.includes('impositiva no válida') ||
+                errorText.includes('error al calcular el impuesto') || 
                 errorText.includes('calculating the tax') ||
                 errorText.includes('tax rate') ||
+                errorText.includes('Invalid tax rate') ||
+                errorText.includes('tasa impositiva') ||
                 errorText.includes('TaxCodeRef')) {
               
               logInfo(`⚠️ ${doc.doc_number}: Error de impuesto en QBO, reintentando con NotApplicable (sin impuesto)...`);
