@@ -544,10 +544,8 @@ async function processSingleDocument(
       });
     }
     
-    // 9. Create Bill or VendorCredit in QuickBooks (with timeout protection)
-    const qboDocNumber = docNumber.length === 20
-      ? docNumber.substring(10).replace(/^0+/, '') || '0'
-      : (docNumber.length > 21 ? docNumber.substring(docNumber.length - 21) : docNumber);
+    // Use full document number as-is from XML
+    const qboDocNumber = docNumber;
     
     let entityId: string;
     let entityType: string;
