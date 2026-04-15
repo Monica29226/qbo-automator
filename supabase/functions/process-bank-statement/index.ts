@@ -38,6 +38,8 @@ Deno.serve(async (req) => {
         return await processJob(supabaseAdmin, params);
       case "process_csv_content":
         return await processCsvContent(supabaseAdmin, params);
+      case "process_xlsx_content":
+        return await processXlsxContent(supabaseAdmin, params);
       case "generate_qbo_csv":
         return await generateQboCsv(supabaseAdmin, params);
       case "reprocess_job":
