@@ -135,9 +135,7 @@ serve(async (req) => {
           },
           Line: qbInvoiceLines,
           TxnDate: invoice.issue_date,
-          DocNumber: invoice.doc_number.length === 20
-            ? invoice.doc_number.substring(10).replace(/^0+/, '') || '0'
-            : invoice.doc_number.substring(0, 21),
+          DocNumber: invoice.doc_number,
           PrivateNote: `Imported from GTI - Clave: ${invoice.doc_key}`,
           CurrencyRef: invoice.currency !== "CRC" ? {
             value: invoice.currency,
