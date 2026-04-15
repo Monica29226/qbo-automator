@@ -1,0 +1,89 @@
+# Project Memory
+
+## Core
+- All features apply globally to all tenants (shared DB, strict `organization_id` isolation).
+- UI must update <100ms optimistically; perform heavy DB/QBO tasks asynchronously in background.
+- XML is the absolute source of truth for amounts, taxes, and vendor info. No OCR.
+- Zero duplicates: Use `doc_key` (clave electrónica) + `organization_id` as unique composite key.
+- Process ONLY 'Facturas Electrónicas' (FE) dated Jan 1, 2026 onwards. Reject 'Tiquetes Electrónicos' (TE/04).
+- Secure by default: All Edge Functions need JWT verification and enforce RLS org membership.
+- Private storage standard: `{org_id}/{filename}.pdf` via signed URLs.
+
+## Memories
+- [Auto Token Renewal](mem://quickbooks/auto-token-renewal) — QB token auto-renews within 72h or reconnects on expiration
+- [Pre-upload Validation](mem://quickbooks/pre-upload-validation-and-creation) — Sets pending_config for missing accounts, validates XML structure
+- [Single Tenant Architecture](mem://multi-tenancy/shared-single-tenant-architecture) — Shared Supabase tenant, isolated by organization_id
+- [Global Features](mem://multi-tenancy/all-changes-apply-globally) — Features apply to all organizations globally
+- [Data Isolation](mem://multi-tenancy/strict-data-isolation-no-mixing) — Strict isolation by organization_id, never mix data
+- [Account Selection Priority](mem://quickbooks/account-selection-priority-hierarchy) — 1) vendor_defaults, 2) vendors.default, 3) doc.default, 4) auto_unclassified
+- [XML Tax Detection](mem://features/automatic-tax-detection-from-xml) — Detect taxes directly from XML, treat as source of truth
+- [Vendor Default Rules](mem://features/vendor-default-rules-persistence-requirement) — Save and persist account assignment rules for vendors
+- [Admin Access](mem://features/admin-cross-organization-access) — Admins can view all organizations
+- [Workflow Separation](mem://architecture/invoice-workflow-separation) — 3 views: Received (all), Pending Config (no rule), Published (QBO success)
+- [Auto Publish Configured Vendors](mem://features/pending-publication-invoices-configured-vendors-auto-publish) — Auto-publish invoices from vendors with configured rules
+- [Bulk Vendor Consistency](mem://features/vendor-classification-bulk-consistency) — Account assignment propagates to all pending invoices for that vendor
+- [Pending Invoices Filter](mem://features/pending-invoices-needsconfig-filter-logic) — Log includes pending, pending_config, review statuses
+- [Background Queue](mem://architecture/background-publishing-queue) — QBO publishing decoupled from UI, processed in background
+- [Webhook Signature](mem://security/gti-webhook-signature-verification) — Verify HMAC signatures on incoming GTI invoice payloads
+- [Mandatory Security Constraints](mem://security/mandatory-system-constraints-from-audit) — JWT verification, strict RLS, encrypted credentials
+- [Dashboard Stats](mem://features/dashboard-realtime-statistics-updates) — Realtime Supabase subscriptions for dashboard stats
+- [Optimistic UI](mem://performance/optimistic-ui-background-publishing) — <100ms UI response, background QB publishing
+- [Gmail Sync Strategy](mem://features/gmail-sync-timeout-recovery-strategy) — Max 50 messages, 25s timeout limit, mark partial success
+- [Auto Vendor Lookup](mem://workflow/automatic-vendor-default-lookup-during-processing) — Lookup by normalized name during processing, bypass review if configured
+- [Authoritative Key](mem://quickbooks/electronic-key-clave-as-authoritative-identifier) — doc_key (clave electrónica) is primary duplicate detection mechanism
+- [Vendor Normalization](mem://features/vendor-name-normalization-critical-for-matching) — Aggressive normalization (lowercase, no accents/symbols) for consistent matching
+- [Batch Publish Specs](mem://quickbooks/batch-publish-all-function-specifications) — 15 concurrent, 25s timeout, validate totals, attach PDF
+- [Orphaned Invoices Limbo](mem://architecture/orphaned-invoices-processed-limbo-critical) — Detect and recover processed invoices missing qbo_entity_id
+- [Success Feedback](mem://batch-import/success-feedback-must-indicate-actual-quickbooks-publication) — Only show success if QBO entity ID is confirmed
+- [Strict Deduplication](mem://quickbooks/strict-deduplication-tracking-table) — Tracking table enforces org_id + doc_key uniqueness
+- [Otros Cargos Support](mem://features/xml-otros-cargos-support) — Extract and add OtrosCargos as separate line items
+- [Error Doc Workflow](mem://features/error-document-management-workflow) — Diagnostics panel for fixable/permanent errors and recovery actions
+- [Destiny Proyect Mode](mem://features/auto-unclassified-account-mode-destiny-proyect) — Destiny Proyect forces unclassified expenses account
+- [Tax ID Length](mem://constraints/tax-id-length-validation) — CR Tax IDs: Fisica 9, Juridica 10, Dimex 11-12 digits
+- [Tax Handling Config](mem://features/tax-handling-configuration) — Per-org setting to treat IVA as expense or separate tax
+- [Forced Publication Bypass](mem://features/forced-publication-bypass) — Bypass strict validations to force publish blocked invoices
+- [Recipient Validation](mem://email-sync/recipient-validation-filter) — Reject invoices addressed to third-party tax IDs
+- [Provider Nesting](mem://architecture/provider-nesting-hierarchy) — Sonner and TooltipProvider nested in BrowserRouter
+- [PDF Attachment](mem://quickbooks/pdf-attachment-mechanism) — Download from private storage, attach via Attachable API, await completion
+- [PDF Viewer Path Resolution](mem://features/pdf-viewer-path-resolution) — Relative paths use signed URLs with local PDF.js worker
+- [Date Cutoff](mem://constraints/invoice-processing-date-cutoff) — Strict cutoff: process invoices from Jan 1, 2026 onwards only
+- [Private Storage Path](mem://architecture/private-storage-path-convention) — Use {org_id}/{filename}.pdf instead of public URLs
+- [Hacienda Acceptance](mem://quickbooks/hacienda-acceptance-validation) — Block invoices unless EstadoMensaje == 1 (Accepted)
+- [Automated Sync Logic](mem://email-sync/automated-sync-logic) — Parallel org fetch, 2 retries, Bluehost/Hostinger start from prev month
+- [User Invitation System](mem://auth/user-invitation-system-requirements) — Admin provisioning, HTML emails, temporary passwords
+- [Exclusive Electronic Invoices](mem://requirements/exclusive-electronic-invoice-processing) — Only Facturas Electrónicas, block Tiquetes Electrónicos (04)
+- [UTF8 Decoding](mem://quickbooks/utf8-decoding-special-characters) — Use TextDecoder('utf-8') on base64 XML to preserve special characters
+- [Vendor Conflict Resolution](mem://quickbooks/vendor-name-conflict-resolution) — Append '(Proveedor)' on Error 6000 DisplayName conflicts
+- [Audit Report Classification](mem://features/audit-report-classification-workflow) — Inline vendor classification with batch propagation
+- [Multi-Provider Import](mem://integrations/multi-provider-search-import-strategy) — Search IMAP by TEXT, fallback to 30-day attachment scan
+- [Publish All Logic](mem://features/pending-invoices-publish-all-logic) — Mass publish only processes invoices with assigned accounts
+- [Vendor Credit Handling](mem://quickbooks/vendor-credit-handling-rules) — Process credit notes (04) as VendorCredit with negative amounts
+- [Account Lookup](mem://quickbooks/account-lookup-mechanism) — Extract account codes by splitting string at first space
+- [XML Authoritative Source](mem://architecture/xml-authoritative-source-vs-ocr) — Extract structured data from XML using Gemini 2.5 Flash, no PDF OCR
+- [Hostinger IMAP Config](mem://integrations/hostinger/configuracion-y-optimizacion) — Auto-batching, UTF-8 decode, tag-specific auth checking
+- [IMAP Auth Logic](mem://integrations/imap-authentication-logic) — Tag-specific matching to prevent false negative IMAP login errors
+- [Branding Assets](mem://style/branding-assets) — Use ACL logo for emails and favicon
+- [Invoice Search Tool](mem://features/invoice-search-tool) — Query by clave, number, vendor across all statuses
+- [Dashboard Sync Badge](mem://features/dashboard-sync-status-badge) — Color-coded badge showing last sync timestamp
+- [Reconciliation Control Cards](mem://features/reconciliation-control-cards) — Track consecutive gaps against official Hacienda records
+- [Dashboard Layout](mem://ui/dashboard-layout-and-actions) — 5 quick actions: Import, Search, Publish, Diagnostics, Error Log
+- [Send Invoice Email](mem://features/send-invoice-by-email) — Send HTML invoice via Resend, auto-send on QB success
+- [Siku Reconciliation](mem://features/reconciliation/external-siku-reports) — Cross-reference Siku Excel exports to find missing invoices
+- [Mass Delete Pending](mem://features/eliminacion-masiva-facturas-pendientes) — Mass delete selected invoices directly from processed_documents
+- [MIME Recursion Limit](mem://integrations/limite-recursividad-mime-email) — Limit depth to 10 to prevent stack overflows
+- [Outlook Extended Search](mem://integrations/outlook/logica-busqueda-extendida) — Search INBOX and JunkEmail, handle 403 and 429
+- [QBO Payload Sanitization](mem://quickbooks/sanitizacion-payload-json) — Remove internal props, NaN, null before QBO API
+- [Tax Mapping Verification](mem://quickbooks/logica-mapeo-impuestos-verificacion) — Regex exact match for rates, auto-correct if total varies >1.0
+- [Sync Error Diagnostics](mem://monitoring/diagnostico-errores-sincronizacion) — Track specific error codes in sync_logs, provide reconnect button
+- [Bluehost Config](mem://integrations/bluehost/configuracion-host-predeterminado) — mail.cemsacr.com:993 TLS, tag-specific match
+- [Legacy Account Restrictions](mem://quickbooks/restriccion-codigos-cuenta-legado) — Block legacy 1150040XXX codes, require valid QB sub-accounts
+- [Internal Audit Tool](mem://features/reconciliacion/auditoria-interna-xml-vs-qbo) — Field-by-field reconcile of XML vs QBO records
+- [Batch Import Pagination](mem://features/importacion-lote-paginacion-y-stats) — Up to 20 manual pagination loops, track found vs missing PDFs
+- [Review Queue Specs](mem://ui/review-queue-specifications) — Sort Error > Pending > Processed > Published, inline PDF viewer
+- [Doc Number Standardization](mem://quickbooks/doc-number-standardization) — Extract last 10 digits and strip leading zeros for QBO DocNumber
+- [CR Entity Management](mem://users/gestion-entidades-costa-rica-detallada) — Validations for CR Tax IDs, auto-format dashes, legal reps
+- [Multi-Currency Vendors](mem://quickbooks/multi-currency-vendor-separation-strategy) — Suffix vendor names with currency, include ExchangeRate
+- [IMAP Reliability](mem://integrations/imap/reliability-and-performance) — FETCH BODYSTRUCTURE pre-filtering, 80-120 chunking
+- [XML Totals Validation](mem://quickbooks/validacion-totales-xml) — TotalVentaNeta + TotalImpuesto = TotalComprobante, formulas
+- [Tax Validation Strategy](mem://quickbooks/tax-mapping-and-validation-strategy) — TaxExcluded mode, NetAmountTaxable formula, fallback TaxInclusive
+- [Bank Statement Import](mem://features/bank-statement-import-module) — Import bank CSVs, normalize, generate QBO Banking-compatible CSV

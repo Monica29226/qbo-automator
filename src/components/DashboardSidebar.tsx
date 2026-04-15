@@ -7,6 +7,7 @@ import {
   FileSpreadsheet,
   FileText,
   Clock,
+  Landmark,
   LogOut,
   Plug,
   Settings,
@@ -84,6 +85,12 @@ export function DashboardSidebar({ isAdmin, reviewCount, onSignOut }: DashboardS
       title: "Reporte por Tasa IVA",
       icon: FileSpreadsheet,
       path: "/tax-rate-report",
+      show: true,
+    },
+    {
+      title: "Estados de Cuenta",
+      icon: Landmark,
+      path: "/bank-statements",
       show: true,
     },
   ], [reviewCount]);
