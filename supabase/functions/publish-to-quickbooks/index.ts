@@ -2275,18 +2275,36 @@ Deno.serve(async (req) => {
         // For IVA recuperable: lines = subtotal (+ IEBLE no asumido), so lines + (TotalImpuesto - IEBLE en líneas) = TotalComprobante
         // For IVA como gasto: lines = subtotal + IVA, so lines = TotalComprobante (no separate tax)
         // IEBLE asumido por emisor: NOT in lines, NOT in TotalImpuesto, NOT in TotalComprobante → ignore completely
+        // SPECIAL CASE: Some invoices have totalComprobante = subTotal (IVA not included in total)
+        //   This happens with exonerated services or when IVA is informational only
+        //   In this case, IVA should NOT be added as separate tax in QBO
         
         // The IVA that goes to TxnTaxDetail (separate from lines)
         // Only subtract IEBLE that was actually added to line amounts (not asumido)
-        const ivaForTxnTaxDetail = effectiveUsesTax 
+        let ivaForTxnTaxDetail = effectiveUsesTax 
           ? Math.max(0, xmlTotalImpuesto - totalIEBLEInLines)
           : 0;
         
-        const expectedQBOTotal = linesTotalAmount + ivaForTxnTaxDetail;
-        const validationDiff = Math.abs(expectedQBOTotal - xmlTotalComprobante);
+        let expectedQBOTotal = linesTotalAmount + ivaForTxnTaxDetail;
+        let validationDiff = Math.abs(expectedQBOTotal - xmlTotalComprobante);
         
         // Tolerance: ±1 colón as mandated
         const validationTolerance = 1.0;
+        
+        // SPECIAL CASE: If validation fails AND totalComprobante ≈ linesTotalAmount (without IVA),
+        // it means the IVA is NOT included in the invoice total (exonerated, informational, or absorbed)
+        // In this case, publish WITHOUT separate tax — total = totalComprobante = lines only
+        let ivaExcludedFromTotal = false;
+        if (validationDiff > validationTolerance && effectiveUsesTax && ivaForTxnTaxDetail > 0) {
+          const diffWithoutIva = Math.abs(linesTotalAmount - xmlTotalComprobante);
+          if (diffWithoutIva <= validationTolerance) {
+            logInfo(`   ⚠️ ${doc.doc_number}: IVA NO incluido en totalComprobante (${xmlTotalComprobante.toFixed(2)} = líneas ${linesTotalAmount.toFixed(2)}). IVA ${xmlTotalImpuesto.toFixed(2)} es informativo. Publicando SIN impuesto separado.`);
+            ivaForTxnTaxDetail = 0;
+            ivaExcludedFromTotal = true;
+            expectedQBOTotal = linesTotalAmount;
+            validationDiff = Math.abs(expectedQBOTotal - xmlTotalComprobante);
+          }
+        }
         
         if (validationDiff > validationTolerance) {
           const errorMsg = `VALIDACIÓN PRE-PUBLICACIÓN FALLÓ: SumaLíneas(${linesTotalAmount.toFixed(2)}) + IVA_XML(${ivaForTxnTaxDetail.toFixed(2)}) = ${expectedQBOTotal.toFixed(2)} ≠ TotalComprobante_XML(${xmlTotalComprobante.toFixed(2)}). Diff: ${validationDiff.toFixed(2)}. IEBLE en líneas: ${totalIEBLEInLines.toFixed(2)}, IEBLE asumido: ${totalIEBLEAsumido.toFixed(2)}`;
@@ -2301,10 +2319,11 @@ Deno.serve(async (req) => {
           return { success: false, docNumber: doc.doc_number, error: errorMsg };
         }
         
-        logInfo(`   ✅ ${doc.doc_number}: Validación pre-publicación OK → Líneas=${linesTotalAmount.toFixed(2)} + IVA=${ivaForTxnTaxDetail.toFixed(2)} = ${expectedQBOTotal.toFixed(2)} ≈ TotalComprobante=${xmlTotalComprobante.toFixed(2)} (diff: ${validationDiff.toFixed(2)})`);
+        logInfo(`   ✅ ${doc.doc_number}: Validación pre-publicación OK → Líneas=${linesTotalAmount.toFixed(2)} + IVA=${ivaForTxnTaxDetail.toFixed(2)} = ${expectedQBOTotal.toFixed(2)} ≈ TotalComprobante=${xmlTotalComprobante.toFixed(2)} (diff: ${validationDiff.toFixed(2)})${ivaExcludedFromTotal ? ' [IVA excluido del total]' : ''}`);
         
         // totalTax = TotalImpuesto from XML minus IEBLE (already in lines)
         // This is the EXACT value from the XML - never recalculated
+        // If IVA was excluded from totalComprobante, totalTax = 0 (no separate tax)
         const totalTax = ivaForTxnTaxDetail;
         // =============================================================
         // STEP 11: CREATE BILL OR VENDORCREDIT IN QBO
