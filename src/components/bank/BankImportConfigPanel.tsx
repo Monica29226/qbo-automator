@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useBankImports } from "@/hooks/useBankImports";
+import { useAuth } from "@/hooks/useAuth";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -20,7 +21,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { Plus, Trash2, Edit2 } from "lucide-react";
+import { Plus, Trash2, Cloud, CloudOff, RefreshCw, FolderSync } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -29,11 +30,17 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
+import { supabase } from "@/integrations/supabase/client";
 
 export function BankImportConfigPanel() {
   const { configs, createConfig, deleteConfig, sources, createSource } = useBankImports();
+  const { activeOrganization } = useAuth();
   const [showAddConfig, setShowAddConfig] = useState(false);
   const [showAddSource, setShowAddSource] = useState(false);
+  const [connectingOneDrive, setConnectingOneDrive] = useState(false);
+  const [syncingFolder, setSyncingFolder] = useState(false);
+  const [oneDriveStatus, setOneDriveStatus] = useState<any>(null);
+
   const [newConfig, setNewConfig] = useState({
     bank_name: "",
     currency: "CRC",
@@ -87,8 +94,108 @@ export function BankImportConfigPanel() {
     }
   };
 
+  const handleConnectOneDrive = async () => {
+    if (!activeOrganization) return;
+    setConnectingOneDrive(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("onedrive-oauth-init", {
+        body: { state: activeOrganization },
+      });
+      if (error) throw error;
+      if (data?.authUrl) {
+        window.open(data.authUrl, "onedrive-oauth", "width=600,height=700");
+      }
+    } catch (err: any) {
+      toast.error(err.message || "Error conectando OneDrive");
+    } finally {
+      setConnectingOneDrive(false);
+    }
+  };
+
+  const handleSyncNow = async () => {
+    if (!activeOrganization) return;
+    setSyncingFolder(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("onedrive-bank-sync", {
+        body: { action: "sync_folder", organization_id: activeOrganization },
+      });
+      if (error) throw error;
+      toast.success(
+        `Sincronización completada: ${data.new_jobs_created} archivos nuevos, ${data.duplicates_skipped} duplicados omitidos`
+      );
+    } catch (err: any) {
+      toast.error(err.message || "Error sincronizando");
+    } finally {
+      setSyncingFolder(false);
+    }
+  };
+
+  const handleCreateSubscription = async () => {
+    if (!activeOrganization) return;
+    try {
+      const { data, error } = await supabase.functions.invoke("onedrive-bank-sync", {
+        body: { action: "create_subscription", organization_id: activeOrganization },
+      });
+      if (error) throw error;
+      toast.success(`Webhook creado. Expira: ${new Date(data.expires).toLocaleString("es-CR")}`);
+    } catch (err: any) {
+      toast.error(err.message || "Error creando suscripción");
+    }
+  };
+
   return (
     <div className="space-y-6">
+      {/* OneDrive Integration */}
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between">
+          <CardTitle className="flex items-center gap-2">
+            <Cloud className="h-5 w-5" />
+            Integración OneDrive
+          </CardTitle>
+          <div className="flex gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={handleConnectOneDrive}
+              disabled={connectingOneDrive}
+            >
+              {connectingOneDrive ? (
+                <RefreshCw className="h-4 w-4 mr-1 animate-spin" />
+              ) : (
+                <Cloud className="h-4 w-4 mr-1" />
+              )}
+              Conectar OneDrive
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={handleSyncNow}
+              disabled={syncingFolder}
+            >
+              {syncingFolder ? (
+                <RefreshCw className="h-4 w-4 mr-1 animate-spin" />
+              ) : (
+                <FolderSync className="h-4 w-4 mr-1" />
+              )}
+              Sincronizar Ahora
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={handleCreateSubscription}
+            >
+              Activar Webhook
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <p className="text-sm text-muted-foreground">
+            Conecta OneDrive para detectar automáticamente archivos nuevos en las carpetas configuradas.
+            Configura las rutas de carpetas (Incoming, Processed, Error) en cada banco.
+          </p>
+        </CardContent>
+      </Card>
+
       {/* Bank Configs */}
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
@@ -110,6 +217,7 @@ export function BankImportConfigPanel() {
                   <TableHead>Moneda</TableHead>
                   <TableHead>Formato Fecha</TableHead>
                   <TableHead>Layout</TableHead>
+                  <TableHead>Carpeta OneDrive</TableHead>
                   <TableHead>Estado</TableHead>
                   <TableHead>Acciones</TableHead>
                 </TableRow>
@@ -121,6 +229,9 @@ export function BankImportConfigPanel() {
                     <TableCell>{c.currency}</TableCell>
                     <TableCell className="text-sm">{c.date_format}</TableCell>
                     <TableCell className="text-sm">{c.amount_layout}</TableCell>
+                    <TableCell className="text-xs text-muted-foreground max-w-[150px] truncate">
+                      {c.onedrive_folder_incoming || "No configurada"}
+                    </TableCell>
                     <TableCell>
                       <Badge variant={c.is_active ? "default" : "secondary"}>
                         {c.is_active ? "Activo" : "Inactivo"}
@@ -186,7 +297,7 @@ export function BankImportConfigPanel() {
 
       {/* Add Config Dialog */}
       <Dialog open={showAddConfig} onOpenChange={setShowAddConfig}>
-        <DialogContent>
+        <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>Agregar Banco</DialogTitle>
           </DialogHeader>
@@ -232,13 +343,38 @@ export function BankImportConfigPanel() {
                 </SelectContent>
               </Select>
             </div>
-            <div>
-              <Label>Carpeta OneDrive (Incoming)</Label>
-              <Input
-                value={newConfig.onedrive_folder_incoming}
-                onChange={(e) => setNewConfig({ ...newConfig, onedrive_folder_incoming: e.target.value })}
-                placeholder="Ruta o ID de carpeta (opcional)"
-              />
+            
+            <div className="border-t pt-3">
+              <p className="text-sm font-medium mb-2">Carpetas OneDrive (opcional)</p>
+              <div className="space-y-2">
+                <div>
+                  <Label className="text-xs">Carpeta Incoming</Label>
+                  <Input
+                    value={newConfig.onedrive_folder_incoming}
+                    onChange={(e) => setNewConfig({ ...newConfig, onedrive_folder_incoming: e.target.value })}
+                    placeholder="/Estados de Cuenta/BAC/Incoming"
+                    className="text-sm"
+                  />
+                </div>
+                <div>
+                  <Label className="text-xs">Carpeta Processed</Label>
+                  <Input
+                    value={newConfig.onedrive_folder_processed}
+                    onChange={(e) => setNewConfig({ ...newConfig, onedrive_folder_processed: e.target.value })}
+                    placeholder="/Estados de Cuenta/BAC/Processed"
+                    className="text-sm"
+                  />
+                </div>
+                <div>
+                  <Label className="text-xs">Carpeta Error</Label>
+                  <Input
+                    value={newConfig.onedrive_folder_error}
+                    onChange={(e) => setNewConfig({ ...newConfig, onedrive_folder_error: e.target.value })}
+                    placeholder="/Estados de Cuenta/BAC/Error"
+                    className="text-sm"
+                  />
+                </div>
+              </div>
             </div>
           </div>
           <DialogFooter>

@@ -11,6 +11,13 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Download, RefreshCw, Eye, FileSpreadsheet } from "lucide-react";
 import { BankJobDetailDialog } from "./BankJobDetailDialog";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -34,6 +41,17 @@ const statusLabels: Record<string, string> = {
 export function BankStatementsList() {
   const { jobs, isLoading, generateCsv, reprocessJob, downloadCsv } = useBankImports();
   const [detailJobId, setDetailJobId] = useState<string | null>(null);
+  const [statusFilter, setStatusFilter] = useState<string>("ALL");
+
+  const filteredJobs = statusFilter === "ALL"
+    ? jobs
+    : jobs.filter((j: any) => j.status === statusFilter);
+
+  // Stats
+  const statusCounts = jobs.reduce((acc: Record<string, number>, j: any) => {
+    acc[j.status] = (acc[j.status] || 0) + 1;
+    return acc;
+  }, {});
 
   if (isLoading) {
     return (
@@ -66,7 +84,37 @@ export function BankStatementsList() {
     <>
       <Card>
         <CardHeader>
-          <CardTitle>Importaciones ({jobs.length})</CardTitle>
+          <div className="flex items-center justify-between">
+            <CardTitle>Importaciones ({filteredJobs.length})</CardTitle>
+            <div className="flex items-center gap-2">
+              {/* Status summary badges */}
+              <div className="flex gap-1 mr-3">
+                {Object.entries(statusCounts).map(([status, count]) => (
+                  <Badge
+                    key={status}
+                    variant="outline"
+                    className={`${statusColors[status] || ""} cursor-pointer text-xs`}
+                    onClick={() => setStatusFilter(statusFilter === status ? "ALL" : status)}
+                  >
+                    {statusLabels[status] || status}: {count}
+                  </Badge>
+                ))}
+              </div>
+              <Select value={statusFilter} onValueChange={setStatusFilter}>
+                <SelectTrigger className="w-[160px]">
+                  <SelectValue placeholder="Filtrar estado" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="ALL">Todos</SelectItem>
+                  <SelectItem value="PENDING">Pendiente</SelectItem>
+                  <SelectItem value="PROCESSING">Procesando</SelectItem>
+                  <SelectItem value="PROCESSED">Procesado</SelectItem>
+                  <SelectItem value="ERROR">Error</SelectItem>
+                  <SelectItem value="DUPLICATE">Duplicado</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
         </CardHeader>
         <CardContent>
           <Table>
@@ -82,7 +130,7 @@ export function BankStatementsList() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {jobs.map((job: any) => (
+              {filteredJobs.map((job: any) => (
                 <TableRow key={job.id}>
                   <TableCell className="font-medium">
                     {(job as any).bank_import_configs?.bank_name || "—"}

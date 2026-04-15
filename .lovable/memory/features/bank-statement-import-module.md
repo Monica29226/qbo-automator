@@ -13,17 +13,25 @@ type: feature
 ## Parsers
 - DEBIT_CREDIT_COLUMNS: Layout Fecha, Documento, Debe, Haber, Descripción
 - SINGLE_SIGNED_AMOUNT: Layout Date, Description, Amount (positive=in, negative=out)
+- XLSX: Native XLSX parsing via ZIP decompression + XML extraction (no external library)
 
 ## QBO CSV Output
 3-column format: Date (MM/DD/YYYY), Description, Amount (positive=deposit, negative=withdrawal)
 Stored in company-documents bucket at `bank-csv/{org_id}/{job_id}_qbo.csv`
 
-## Edge Function
-`process-bank-statement` with actions: process_csv_content, generate_qbo_csv, reprocess_job
-
-## UI
-Route: /bank-statements with tabs for Jobs list and Configuration
-Components in src/components/bank/
+## Edge Functions
+- `process-bank-statement`: actions: process_csv_content, process_xlsx_content, generate_qbo_csv, reprocess_job
+- `onedrive-bank-sync`: actions: create_subscription, sync_folder, list_folders, download_and_process + webhook handler
+- `onedrive-oauth-init`: Microsoft OAuth flow for Files.Read scope
+- `onedrive-oauth-callback`: Token exchange and credential storage
 
 ## OneDrive Integration
-Requires Microsoft OneDrive connector (not yet linked). Currently supports manual CSV upload.
+- OAuth via MICROSOFT_CLIENT_ID/SECRET (same creds as Outlook)
+- Stores tokens in integration_accounts (service_type=onedrive)
+- Delta queries for incremental file detection
+- Webhook subscriptions for automatic detection
+- File movement: Incoming → Processed/Error folders after processing
+
+## UI
+Route: /bank-statements with tabs for Jobs list (with status filter) and Configuration (with OneDrive controls)
+Components in src/components/bank/

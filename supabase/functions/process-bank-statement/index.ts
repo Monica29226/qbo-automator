@@ -38,6 +38,8 @@ Deno.serve(async (req) => {
         return await processJob(supabaseAdmin, params);
       case "process_csv_content":
         return await processCsvContent(supabaseAdmin, params);
+      case "process_xlsx_content":
+        return await processXlsxContent(supabaseAdmin, params);
       case "generate_qbo_csv":
         return await generateQboCsv(supabaseAdmin, params);
       case "reprocess_job":
@@ -659,4 +661,413 @@ async function reprocessJob(supabase: any, params: any) {
     JSON.stringify({ success: true, message: "Job reset to PENDING" }),
     { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
   );
+}
+
+// ===== XLSX Parser =====
+
+function parseXlsxBase64(base64: string): string[][] {
+  // Decode base64 to binary
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+
+  // Minimal XLSX parser - XLSX files are ZIP archives containing XML sheets
+  // We'll extract the shared strings and sheet data
+  try {
+    const zip = parseZip(bytes);
+    
+    // Get shared strings
+    const sharedStringsXml = zip["xl/sharedStrings.xml"] || "";
+    const sharedStrings = extractSharedStrings(sharedStringsXml);
+    
+    // Get first sheet
+    const sheetXml = zip["xl/worksheets/sheet1.xml"] || "";
+    return extractSheetRows(sheetXml, sharedStrings);
+  } catch (err) {
+    console.error("XLSX parse error:", err);
+    throw new Error("No se pudo leer el archivo XLSX. Verifique que sea un archivo válido.");
+  }
+}
+
+function parseZip(data: Uint8Array): Record<string, string> {
+  const files: Record<string, string> = {};
+  const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  let offset = 0;
+
+  while (offset < data.length - 4) {
+    const sig = view.getUint32(offset, true);
+    if (sig !== 0x04034b50) break; // Not a local file header
+
+    const compMethod = view.getUint16(offset + 8, true);
+    const compSize = view.getUint32(offset + 18, true);
+    const uncompSize = view.getUint32(offset + 22, true);
+    const nameLen = view.getUint16(offset + 26, true);
+    const extraLen = view.getUint16(offset + 28, true);
+
+    const nameBytes = data.slice(offset + 30, offset + 30 + nameLen);
+    const fileName = new TextDecoder().decode(nameBytes);
+    const dataStart = offset + 30 + nameLen + extraLen;
+
+    if (compMethod === 0) {
+      // Stored (no compression)
+      const fileData = data.slice(dataStart, dataStart + uncompSize);
+      files[fileName] = new TextDecoder().decode(fileData);
+    } else if (compMethod === 8) {
+      // Deflate - use DecompressionStream
+      try {
+        const compressed = data.slice(dataStart, dataStart + compSize);
+        // For Deno, use raw inflate
+        const decompressed = inflateRaw(compressed);
+        files[fileName] = new TextDecoder().decode(decompressed);
+      } catch {
+        // Skip files we can't decompress
+      }
+    }
+
+    offset = dataStart + compSize;
+  }
+
+  return files;
+}
+
+function inflateRaw(data: Uint8Array): Uint8Array {
+  // Simple inflate implementation for Deno
+  // Use the built-in DecompressionStream
+  const ds = new DecompressionStream("raw");
+  const writer = ds.writable.getWriter();
+  const reader = ds.readable.getReader();
+  
+  const chunks: Uint8Array[] = [];
+  
+  // This is sync-like using a workaround
+  let done = false;
+  
+  writer.write(data).then(() => writer.close());
+  
+  const readAll = async () => {
+    while (true) {
+      const { value, done: d } = await reader.read();
+      if (d) break;
+      if (value) chunks.push(value);
+    }
+  };
+  
+  // We need to handle this synchronously in the context
+  // Fall back to treating compressed data as-is if decompression fails
+  throw new Error("Use async xlsx parsing");
+}
+
+function extractSharedStrings(xml: string): string[] {
+  const strings: string[] = [];
+  const regex = /<si>[\s\S]*?<t[^>]*>([\s\S]*?)<\/t>[\s\S]*?<\/si>/g;
+  let match;
+  while ((match = regex.exec(xml)) !== null) {
+    strings.push(decodeXmlEntities(match[1]));
+  }
+  
+  // Also try multi-run strings <si><r><t>...</t></r>...</si>
+  if (strings.length === 0) {
+    const siRegex = /<si>([\s\S]*?)<\/si>/g;
+    while ((match = siRegex.exec(xml)) !== null) {
+      const tValues: string[] = [];
+      const tRegex = /<t[^>]*>([\s\S]*?)<\/t>/g;
+      let tMatch;
+      while ((tMatch = tRegex.exec(match[1])) !== null) {
+        tValues.push(decodeXmlEntities(tMatch[1]));
+      }
+      strings.push(tValues.join(""));
+    }
+  }
+  
+  return strings;
+}
+
+function extractSheetRows(xml: string, sharedStrings: string[]): string[][] {
+  const rows: string[][] = [];
+  const rowRegex = /<row[^>]*>([\s\S]*?)<\/row>/g;
+  let rowMatch;
+
+  while ((rowMatch = rowRegex.exec(xml)) !== null) {
+    const row: string[] = [];
+    const cellRegex = /<c\s+r="([A-Z]+)(\d+)"[^>]*(?:t="([^"]*)")?[^>]*>[\s\S]*?(?:<v>([\s\S]*?)<\/v>)?[\s\S]*?<\/c>/g;
+    let cellMatch;
+    let maxCol = 0;
+
+    const cells: Array<{ col: number; value: string }> = [];
+
+    while ((cellMatch = cellRegex.exec(rowMatch[1])) !== null) {
+      const colLetter = cellMatch[1];
+      const cellType = cellMatch[3] || "";
+      const rawValue = cellMatch[4] || "";
+
+      const colIndex = colLetterToIndex(colLetter);
+      maxCol = Math.max(maxCol, colIndex);
+
+      let value: string;
+      if (cellType === "s") {
+        // Shared string
+        const idx = parseInt(rawValue, 10);
+        value = sharedStrings[idx] || "";
+      } else if (cellType === "inlineStr") {
+        value = rawValue;
+      } else {
+        value = rawValue;
+      }
+
+      cells.push({ col: colIndex, value });
+    }
+
+    // Fill row with empty strings up to maxCol
+    for (let i = 0; i <= maxCol; i++) {
+      const cell = cells.find((c) => c.col === i);
+      row.push(cell ? cell.value : "");
+    }
+
+    if (row.length > 0) rows.push(row);
+  }
+
+  return rows;
+}
+
+function colLetterToIndex(letters: string): number {
+  let index = 0;
+  for (let i = 0; i < letters.length; i++) {
+    index = index * 26 + (letters.charCodeAt(i) - 64);
+  }
+  return index - 1;
+}
+
+function decodeXmlEntities(str: string): string {
+  return str
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'");
+}
+
+async function processXlsxContent(supabase: any, params: any) {
+  const { job_id, xlsx_base64, organization_id, config_id } = params;
+
+  if (!job_id || !xlsx_base64 || !organization_id || !config_id) {
+    return new Response(
+      JSON.stringify({ error: "Missing required params: job_id, xlsx_base64, organization_id, config_id" }),
+      { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+  }
+
+  // Update job to PROCESSING
+  await supabase
+    .from("bank_import_jobs")
+    .update({ status: "PROCESSING" })
+    .eq("id", job_id);
+
+  // Get config
+  const { data: config, error: configErr } = await supabase
+    .from("bank_import_configs")
+    .select("*")
+    .eq("id", config_id)
+    .single();
+
+  if (configErr || !config) {
+    await supabase
+      .from("bank_import_jobs")
+      .update({ status: "ERROR", error_message: "Configuración no encontrada" })
+      .eq("id", job_id);
+    return new Response(
+      JSON.stringify({ error: "Config not found" }),
+      { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+  }
+
+  // Get source
+  const { data: sources } = await supabase
+    .from("bank_import_sources")
+    .select("*")
+    .eq("bank_import_config_id", config_id)
+    .eq("is_active", true)
+    .limit(1);
+
+  const source = sources?.[0] || null;
+
+  try {
+    // Parse XLSX - for compressed XLSX we need async decompression
+    const binary = atob(xlsx_base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+
+    const allRows = await parseXlsxAsync(bytes);
+
+    if (allRows.length === 0) {
+      await supabase
+        .from("bank_import_jobs")
+        .update({ status: "ERROR", error_message: "Archivo XLSX vacío o no se pudo leer" })
+        .eq("id", job_id);
+      return new Response(
+        JSON.stringify({ error: "Empty XLSX file" }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // Skip header row if detected
+    let dataRows = allRows;
+    if (isHeaderRow(allRows[0])) {
+      dataRows = allRows.slice(1);
+    }
+
+    // Parse based on layout
+    let result: { items: any[]; errors: string[] };
+    if (config.amount_layout === "SINGLE_SIGNED_AMOUNT") {
+      result = parseSingleAmount(dataRows, config, source);
+    } else {
+      result = parseDebeHaber(dataRows, config, source);
+    }
+
+    if (result.items.length === 0) {
+      await supabase
+        .from("bank_import_jobs")
+        .update({
+          status: "ERROR",
+          error_message: "No se encontraron transacciones válidas en XLSX",
+          error_details: result.errors.join("\n"),
+        })
+        .eq("id", job_id);
+      return new Response(
+        JSON.stringify({ error: "No valid transactions in XLSX", errors: result.errors }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // Delete existing items
+    await supabase
+      .from("bank_import_job_items")
+      .delete()
+      .eq("bank_import_job_id", job_id);
+
+    // Insert items
+    const itemsToInsert = result.items.map((item) => ({
+      ...item,
+      bank_import_job_id: job_id,
+      organization_id,
+    }));
+
+    for (let i = 0; i < itemsToInsert.length; i += 100) {
+      const batch = itemsToInsert.slice(i, i + 100);
+      await supabase.from("bank_import_job_items").insert(batch);
+    }
+
+    const validCount = result.items.filter((i) => i.status === "VALID").length;
+    const invalidCount = result.items.filter((i) => i.status === "INVALID").length;
+    const finalStatus = invalidCount > 0 && validCount === 0 ? "ERROR" : "PROCESSED";
+
+    await supabase
+      .from("bank_import_jobs")
+      .update({
+        status: finalStatus,
+        total_rows: result.items.length,
+        valid_rows: validCount,
+        invalid_rows: invalidCount,
+        error_message: invalidCount > 0 ? `${invalidCount} filas con errores` : null,
+        error_details: result.errors.length > 0 ? result.errors.join("\n") : null,
+      })
+      .eq("id", job_id);
+
+    return new Response(
+      JSON.stringify({
+        success: true,
+        total: result.items.length,
+        valid: validCount,
+        invalid: invalidCount,
+        errors: result.errors,
+      }),
+      { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+  } catch (err) {
+    console.error("XLSX processing error:", err);
+    await supabase
+      .from("bank_import_jobs")
+      .update({ status: "ERROR", error_message: `Error XLSX: ${err.message}` })
+      .eq("id", job_id);
+    return new Response(
+      JSON.stringify({ error: err.message }),
+      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+  }
+}
+
+async function parseXlsxAsync(data: Uint8Array): Promise<string[][]> {
+  const files = await parseZipAsync(data);
+  const sharedStringsXml = files["xl/sharedStrings.xml"] || "";
+  const sharedStrings = extractSharedStrings(sharedStringsXml);
+  const sheetXml = files["xl/worksheets/sheet1.xml"] || "";
+  return extractSheetRows(sheetXml, sharedStrings);
+}
+
+async function parseZipAsync(data: Uint8Array): Promise<Record<string, string>> {
+  const files: Record<string, string> = {};
+  const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  let offset = 0;
+
+  while (offset < data.length - 4) {
+    const sig = view.getUint32(offset, true);
+    if (sig !== 0x04034b50) break;
+
+    const compMethod = view.getUint16(offset + 8, true);
+    const compSize = view.getUint32(offset + 18, true);
+    const uncompSize = view.getUint32(offset + 22, true);
+    const nameLen = view.getUint16(offset + 26, true);
+    const extraLen = view.getUint16(offset + 28, true);
+
+    const nameBytes = data.slice(offset + 30, offset + 30 + nameLen);
+    const fileName = new TextDecoder().decode(nameBytes);
+    const dataStart = offset + 30 + nameLen + extraLen;
+
+    // Only process XML files we need
+    if (fileName.endsWith(".xml") || fileName.endsWith(".rels")) {
+      if (compMethod === 0) {
+        const fileData = data.slice(dataStart, dataStart + uncompSize);
+        files[fileName] = new TextDecoder().decode(fileData);
+      } else if (compMethod === 8) {
+        try {
+          const compressed = data.slice(dataStart, dataStart + compSize);
+          const decompressed = await decompressDeflate(compressed);
+          files[fileName] = new TextDecoder().decode(decompressed);
+        } catch (e) {
+          console.error(`Failed to decompress ${fileName}:`, e);
+        }
+      }
+    }
+
+    offset = dataStart + compSize;
+  }
+
+  return files;
+}
+
+async function decompressDeflate(data: Uint8Array): Promise<Uint8Array> {
+  const ds = new DecompressionStream("raw");
+  const writer = ds.writable.getWriter();
+  const reader = ds.readable.getReader();
+
+  writer.write(data).then(() => writer.close());
+
+  const chunks: Uint8Array[] = [];
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    if (value) chunks.push(value);
+  }
+
+  const totalLength = chunks.reduce((acc, c) => acc + c.length, 0);
+  const result = new Uint8Array(totalLength);
+  let pos = 0;
+  for (const chunk of chunks) {
+    result.set(chunk, pos);
+    pos += chunk.length;
+  }
+  return result;
 }
