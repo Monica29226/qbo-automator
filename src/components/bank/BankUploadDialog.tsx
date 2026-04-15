@@ -41,11 +41,24 @@ export function BankUploadDialog({ open, onOpenChange }: Props) {
 
     setProcessing(true);
     try {
-      const text = await file.text();
+      // For XLSX files, read as base64 and send to server
+      const isXlsx = file.name.toLowerCase().endsWith(".xlsx") || file.name.toLowerCase().endsWith(".xls");
+      let contentPayload: any;
+
+      if (isXlsx) {
+        const buffer = await file.arrayBuffer();
+        const bytes = new Uint8Array(buffer);
+        let binary = "";
+        for (let i = 0; i < bytes.length; i++) {
+          binary += String.fromCharCode(bytes[i]);
+        }
+        contentPayload = { xlsx_base64: btoa(binary) };
+      } else {
+        contentPayload = { csv_content: await file.text() };
+      }
 
       // Compute hash
-      const encoder = new TextEncoder();
-      const data = encoder.encode(text);
+      const data = new Uint8Array(await file.arrayBuffer());
       const hashBuffer = await crypto.subtle.digest("SHA-256", data);
       const hashArray = Array.from(new Uint8Array(hashBuffer));
       const fileHash = hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
@@ -59,24 +72,34 @@ export function BankUploadDialog({ open, onOpenChange }: Props) {
       });
 
       // Process
-      await processJob.mutateAsync({
-        jobId: job.id,
-        csvContent: text,
-        configId: selectedConfig,
-      });
-
-      // Auto-generate CSV
-      toast.info("Generando CSV para QuickBooks...");
-      const { data: csvResult } = await supabase.functions.invoke("process-bank-statement", {
+      const { data: processResult, error: processError } = await supabase.functions.invoke("process-bank-statement", {
         body: {
-          action: "generate_qbo_csv",
+          action: isXlsx ? "process_xlsx_content" : "process_csv_content",
           job_id: job.id,
+          ...contentPayload,
           organization_id: activeOrganization,
+          config_id: selectedConfig,
         },
       });
 
-      if (csvResult?.success) {
-        toast.success(`CSV listo: ${csvResult.rows_exported} transacciones exportadas`);
+      if (processError) throw processError;
+
+      if (processResult?.success) {
+        toast.success(`Procesado: ${processResult.valid} válidas, ${processResult.invalid} con errores`);
+
+        // Auto-generate CSV
+        toast.info("Generando CSV para QuickBooks...");
+        const { data: csvResult } = await supabase.functions.invoke("process-bank-statement", {
+          body: {
+            action: "generate_qbo_csv",
+            job_id: job.id,
+            organization_id: activeOrganization,
+          },
+        });
+
+        if (csvResult?.success) {
+          toast.success(`CSV listo: ${csvResult.rows_exported} transacciones exportadas`);
+        }
       }
 
       await refetchJobs();
@@ -121,11 +144,11 @@ export function BankUploadDialog({ open, onOpenChange }: Props) {
           </div>
 
           <div>
-            <Label>Archivo (CSV)</Label>
+            <Label>Archivo (CSV / XLSX)</Label>
             <div className="mt-1">
               <input
                 type="file"
-                accept=".csv,.txt"
+                accept=".csv,.txt,.xlsx,.xls"
                 onChange={(e) => setFile(e.target.files?.[0] || null)}
                 className="block w-full text-sm text-muted-foreground file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-medium file:bg-primary file:text-primary-foreground hover:file:bg-primary/90"
               />
