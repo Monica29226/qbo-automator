@@ -23,11 +23,11 @@ import { BankJobDetailDialog } from "./BankJobDetailDialog";
 import { Skeleton } from "@/components/ui/skeleton";
 
 const statusColors: Record<string, string> = {
-  PENDING: "bg-yellow-100 text-yellow-800",
-  PROCESSING: "bg-blue-100 text-blue-800",
-  PROCESSED: "bg-green-100 text-green-800",
-  ERROR: "bg-red-100 text-red-800",
-  DUPLICATE: "bg-gray-100 text-gray-800",
+  PENDING: "bg-warning/20 text-warning-foreground border-warning/30",
+  PROCESSING: "bg-primary/20 text-primary border-primary/30",
+  PROCESSED: "bg-success/20 text-success border-success/30",
+  ERROR: "bg-destructive/20 text-destructive border-destructive/30",
+  DUPLICATE: "bg-muted text-muted-foreground border-muted-foreground/30",
 };
 
 const statusLabels: Record<string, string> = {
@@ -182,7 +182,7 @@ export function BankStatementsList() {
                           onClick={() => downloadCsv(job.generated_csv_url)}
                           title="Descargar CSV"
                         >
-                          <Download className="h-4 w-4 text-green-600" />
+                          <Download className="h-4 w-4 text-success" />
                         </Button>
                       )}
                       {job.status === "ERROR" && (

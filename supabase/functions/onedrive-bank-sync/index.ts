@@ -49,6 +49,17 @@ Deno.serve(async (req) => {
     const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey);
     const { action, ...params } = await req.json();
 
+    // Validate org membership for all actions
+    if (params.organization_id) {
+      const { data: isMember } = await supabaseAdmin.rpc("is_organization_member", {
+        _org_id: params.organization_id,
+        _user_id: user.id,
+      });
+      if (!isMember) {
+        return jsonResponse({ error: "Not a member of this organization" }, 403);
+      }
+    }
+
     switch (action) {
       case "create_subscription":
         return await createSubscription(supabaseAdmin, params);
