@@ -179,3 +179,12 @@ verify_jwt = true
 
 [functions.process-bank-statement]
 verify_jwt = true
+
+[functions.onedrive-bank-sync]
+verify_jwt = false
+
+[functions.onedrive-oauth-init]
+verify_jwt = true
+
+[functions.onedrive-oauth-callback]
+verify_jwt = false
