@@ -1159,10 +1159,8 @@ Deno.serve(async (req) => {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 10000);
       
-      // Extract real consecutive number: last 10 digits without leading zeros
-      const qboDocNumber = docNumber.length === 20
-        ? docNumber.substring(10).replace(/^0+/, '') || '0'
-        : (docNumber.length > 21 ? docNumber.substring(docNumber.length - 21) : docNumber);
+      // Use full document number as-is from XML
+      const qboDocNumber = docNumber;
       
       const entityName = isCreditNote ? 'VendorCredit' : 'Bill';
       
