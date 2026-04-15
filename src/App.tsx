@@ -28,6 +28,7 @@ import QuickBooksStatus from "./pages/QuickBooksStatus";
 import UsersManagement from "./pages/UsersManagement";
 import MyCompany from "./pages/MyCompany";
 import AllInvoices from "./pages/AllInvoices";
+import BankStatements from "./pages/BankStatements";
 import ResetPassword from "./pages/ResetPassword";
 import ForgotPassword from "./pages/ForgotPassword";
 import NotFound from "./pages/NotFound";
@@ -234,6 +235,14 @@ const App = () => (
                 element={
                   <ProtectedRoute requireAdmin>
                     <UsersManagement />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/bank-statements"
+                element={
+                  <ProtectedRoute>
+                    <BankStatements />
                   </ProtectedRoute>
                 }
               />
