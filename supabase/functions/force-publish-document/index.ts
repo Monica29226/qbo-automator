@@ -339,10 +339,15 @@ Deno.serve(async (req) => {
     if (!response.ok && hasTax) {
       const errorText = await response.text();
       if (errorText.includes('impuesto') || errorText.includes('tax') || errorText.includes('TaxCodeRef') || errorText.includes('impositiva')) {
-        console.log(`⚠️ Tax error, retrying with TaxInclusive...`);
+        console.log(`⚠️ Tax error, retrying with NotApplicable (no tax)...`);
         delete billPayload.TxnTaxDetail;
-        billPayload.GlobalTaxCalculation = "TaxInclusive";
+        billPayload.GlobalTaxCalculation = "NotApplicable";
         for (const line of billPayload.Line) {
+          // Remove TaxCodeRef to prevent QBO from calculating tax
+          if (line.AccountBasedExpenseLineDetail?.TaxCodeRef) {
+            delete line.AccountBasedExpenseLineDetail.TaxCodeRef;
+          }
+          // Use montoTotalLinea as full amount (includes tax as expense)
           if (line._montoTotalLinea && line._montoTotalLinea > line.Amount) {
             line.Amount = parseFloat(line._montoTotalLinea.toFixed(2));
           }

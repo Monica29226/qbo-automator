@@ -2411,21 +2411,28 @@ Deno.serve(async (req) => {
                 errorText.includes('Invalid tax rate') ||
                 errorText.includes('TaxCodeRef')) {
               
-              logInfo(`⚠️ ${doc.doc_number}: Error de impuesto en VendorCredit, reintentando con TaxInclusive...`);
+              logInfo(`⚠️ ${doc.doc_number}: Error de impuesto en VendorCredit, reintentando con NotApplicable (sin impuesto)...`);
               
-              // FIXED: Switch to TaxInclusive and use saved montoTotalLinea as line amounts
+              // FIX: Use NotApplicable instead of TaxInclusive to prevent QBO from adding tax on top
               delete vendorCreditPayload.TxnTaxDetail;
-              vendorCreditPayload.GlobalTaxCalculation = "TaxInclusive";
+              vendorCreditPayload.GlobalTaxCalculation = "NotApplicable";
               
-              // Redistribute: each line amount becomes montoTotalLinea from saved map
+              // Remove TaxCodeRef from all lines to prevent QBO from calculating tax
+              vendorCreditPayload.Line.forEach((line: any) => {
+                if (line.AccountBasedExpenseLineDetail?.TaxCodeRef) {
+                  delete line.AccountBasedExpenseLineDetail.TaxCodeRef;
+                }
+              });
+              
+              // Set line amounts to montoTotalLinea (full amount including tax, since no tax separation)
               vendorCreditPayload.Line.forEach((line: any, idx: number) => {
                 const savedMonto = vcMontoTotalMap.get(idx);
                 if (savedMonto && savedMonto > line.Amount) {
-                  logInfo(`   📊 ${doc.doc_number}: VC Line ${line.Amount} → ${savedMonto} (TaxInclusive)`);
+                  logInfo(`   📊 ${doc.doc_number}: VC Line ${line.Amount} → ${savedMonto} (NotApplicable)`);
                   line.Amount = parseFloat(savedMonto.toFixed(2));
                 }
               });
-              logInfo(`   📊 ${doc.doc_number}: Reintento VendorCredit TaxInclusive`);
+              logInfo(`   📊 ${doc.doc_number}: Reintento VendorCredit NotApplicable - Total incluye impuesto como gasto`);
               
               // Retry without tax
               await delay(1000);
@@ -2579,21 +2586,28 @@ Deno.serve(async (req) => {
                 errorText.includes('tax rate') ||
                 errorText.includes('TaxCodeRef')) {
               
-              logInfo(`⚠️ ${doc.doc_number}: Error de impuesto en QBO, reintentando con TaxInclusive...`);
+              logInfo(`⚠️ ${doc.doc_number}: Error de impuesto en QBO, reintentando con NotApplicable (sin impuesto)...`);
               
-              // FIXED: Switch to TaxInclusive and use saved montoTotalLinea as line amounts
+              // FIX: Use NotApplicable instead of TaxInclusive to prevent QBO from adding tax on top
               delete billPayload.TxnTaxDetail;
-              billPayload.GlobalTaxCalculation = "TaxInclusive";
+              billPayload.GlobalTaxCalculation = "NotApplicable";
               
-              // Redistribute: each line amount becomes montoTotalLinea from saved map
+              // Remove TaxCodeRef from all lines to prevent QBO from calculating tax
+              billPayload.Line.forEach((line: any) => {
+                if (line.AccountBasedExpenseLineDetail?.TaxCodeRef) {
+                  delete line.AccountBasedExpenseLineDetail.TaxCodeRef;
+                }
+              });
+              
+              // Set line amounts to montoTotalLinea (full amount including tax, since no tax separation)
               billPayload.Line.forEach((line: any, idx: number) => {
                 const savedMonto = billMontoTotalMap.get(idx);
                 if (savedMonto && savedMonto > line.Amount) {
-                  logInfo(`   📊 ${doc.doc_number}: Line ${line.Amount} → ${savedMonto} (TaxInclusive)`);
+                  logInfo(`   📊 ${doc.doc_number}: Line ${line.Amount} → ${savedMonto} (NotApplicable)`);
                   line.Amount = parseFloat(savedMonto.toFixed(2));
                 }
               });
-              logInfo(`   📊 ${doc.doc_number}: Reintento TaxInclusive - QBO descontará impuesto del monto total de cada línea`);
+              logInfo(`   📊 ${doc.doc_number}: Reintento NotApplicable - Total incluye impuesto como gasto, QBO NO calculará impuesto`);
               
               // Retry without tax
               await delay(1000);
