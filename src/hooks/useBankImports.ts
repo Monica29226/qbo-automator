@@ -5,7 +5,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { toast } from "sonner";
 
 export function useBankImports() {
-  const { organizationId } = useAuth();
+  const { activeOrganization: organizationId } = useAuth();
   const queryClient = useQueryClient();
 
   const configsQuery = useQuery({

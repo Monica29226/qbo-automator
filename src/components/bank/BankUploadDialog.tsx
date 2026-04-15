@@ -16,6 +16,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useBankImports } from "@/hooks/useBankImports";
+import { useAuth } from "@/hooks/useAuth";
+import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { Upload, Loader2 } from "lucide-react";
 
@@ -25,7 +27,8 @@ interface Props {
 }
 
 export function BankUploadDialog({ open, onOpenChange }: Props) {
-  const { configs, createJob, processJob } = useBankImports();
+  const { configs, createJob, processJob, refetchJobs } = useBankImports();
+  const { activeOrganization } = useAuth();
   const [selectedConfig, setSelectedConfig] = useState<string>("");
   const [file, setFile] = useState<File | null>(null);
   const [processing, setProcessing] = useState(false);
@@ -38,10 +41,9 @@ export function BankUploadDialog({ open, onOpenChange }: Props) {
 
     setProcessing(true);
     try {
-      // Read file content
       const text = await file.text();
 
-      // Compute simple hash
+      // Compute hash
       const encoder = new TextEncoder();
       const data = encoder.encode(text);
       const hashBuffer = await crypto.subtle.digest("SHA-256", data);
@@ -56,7 +58,7 @@ export function BankUploadDialog({ open, onOpenChange }: Props) {
         status: "PENDING",
       });
 
-      // Process immediately
+      // Process
       await processJob.mutateAsync({
         jobId: job.id,
         csvContent: text,
@@ -65,15 +67,11 @@ export function BankUploadDialog({ open, onOpenChange }: Props) {
 
       // Auto-generate CSV
       toast.info("Generando CSV para QuickBooks...");
-      const { generateCsv } = useBankImportsLocal();
-      // We use the hook's generateCsv but it's a mutation — call from parent
-      // Actually let's call the edge function directly here
-      const { supabase } = await import("@/integrations/supabase/client");
       const { data: csvResult } = await supabase.functions.invoke("process-bank-statement", {
         body: {
           action: "generate_qbo_csv",
           job_id: job.id,
-          organization_id: job.organization_id,
+          organization_id: activeOrganization,
         },
       });
 
@@ -81,6 +79,7 @@ export function BankUploadDialog({ open, onOpenChange }: Props) {
         toast.success(`CSV listo: ${csvResult.rows_exported} transacciones exportadas`);
       }
 
+      await refetchJobs();
       setFile(null);
       setSelectedConfig("");
       onOpenChange(false);
@@ -164,11 +163,3 @@ export function BankUploadDialog({ open, onOpenChange }: Props) {
     </Dialog>
   );
 }
-
-// This is intentionally unused — we call supabase directly in handleUpload
-function useBankImportsLocal() {
-  return useBankImports();
-}
-
-// Re-export to avoid unused import warning
-import { useBankImports as useBankImportsHook } from "@/hooks/useBankImports";
