@@ -111,6 +111,254 @@ export type Database = {
           },
         ]
       }
+      bank_import_configs: {
+        Row: {
+          amount_layout: string
+          bank_name: string
+          created_at: string
+          currency: string
+          date_format: string
+          id: string
+          input_format_type: string
+          is_active: boolean
+          onedrive_folder_error: string | null
+          onedrive_folder_incoming: string | null
+          onedrive_folder_processed: string | null
+          organization_id: string
+          updated_at: string
+        }
+        Insert: {
+          amount_layout?: string
+          bank_name: string
+          created_at?: string
+          currency?: string
+          date_format?: string
+          id?: string
+          input_format_type?: string
+          is_active?: boolean
+          onedrive_folder_error?: string | null
+          onedrive_folder_incoming?: string | null
+          onedrive_folder_processed?: string | null
+          organization_id: string
+          updated_at?: string
+        }
+        Update: {
+          amount_layout?: string
+          bank_name?: string
+          created_at?: string
+          currency?: string
+          date_format?: string
+          id?: string
+          input_format_type?: string
+          is_active?: boolean
+          onedrive_folder_error?: string | null
+          onedrive_folder_incoming?: string | null
+          onedrive_folder_processed?: string | null
+          organization_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bank_import_configs_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      bank_import_job_items: {
+        Row: {
+          bank_import_job_id: string
+          created_at: string
+          currency: string
+          description: string | null
+          id: string
+          money_in: number | null
+          money_out: number | null
+          organization_id: string
+          raw_row: Json | null
+          reference: string | null
+          source_bank: string | null
+          status: string
+          transaction_date: string
+          validation_error: string | null
+        }
+        Insert: {
+          bank_import_job_id: string
+          created_at?: string
+          currency?: string
+          description?: string | null
+          id?: string
+          money_in?: number | null
+          money_out?: number | null
+          organization_id: string
+          raw_row?: Json | null
+          reference?: string | null
+          source_bank?: string | null
+          status?: string
+          transaction_date: string
+          validation_error?: string | null
+        }
+        Update: {
+          bank_import_job_id?: string
+          created_at?: string
+          currency?: string
+          description?: string | null
+          id?: string
+          money_in?: number | null
+          money_out?: number | null
+          organization_id?: string
+          raw_row?: Json | null
+          reference?: string | null
+          source_bank?: string | null
+          status?: string
+          transaction_date?: string
+          validation_error?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bank_import_job_items_bank_import_job_id_fkey"
+            columns: ["bank_import_job_id"]
+            isOneToOne: false
+            referencedRelation: "bank_import_jobs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bank_import_job_items_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      bank_import_jobs: {
+        Row: {
+          bank_import_config_id: string
+          created_at: string
+          error_details: string | null
+          error_message: string | null
+          file_hash: string | null
+          generated_csv_url: string | null
+          id: string
+          invalid_rows: number | null
+          onedrive_file_id: string | null
+          onedrive_file_name: string | null
+          onedrive_file_path: string | null
+          organization_id: string
+          status: string
+          total_rows: number | null
+          updated_at: string
+          valid_rows: number | null
+        }
+        Insert: {
+          bank_import_config_id: string
+          created_at?: string
+          error_details?: string | null
+          error_message?: string | null
+          file_hash?: string | null
+          generated_csv_url?: string | null
+          id?: string
+          invalid_rows?: number | null
+          onedrive_file_id?: string | null
+          onedrive_file_name?: string | null
+          onedrive_file_path?: string | null
+          organization_id: string
+          status?: string
+          total_rows?: number | null
+          updated_at?: string
+          valid_rows?: number | null
+        }
+        Update: {
+          bank_import_config_id?: string
+          created_at?: string
+          error_details?: string | null
+          error_message?: string | null
+          file_hash?: string | null
+          generated_csv_url?: string | null
+          id?: string
+          invalid_rows?: number | null
+          onedrive_file_id?: string | null
+          onedrive_file_name?: string | null
+          onedrive_file_path?: string | null
+          organization_id?: string
+          status?: string
+          total_rows?: number | null
+          updated_at?: string
+          valid_rows?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bank_import_jobs_bank_import_config_id_fkey"
+            columns: ["bank_import_config_id"]
+            isOneToOne: false
+            referencedRelation: "bank_import_configs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bank_import_jobs_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      bank_import_sources: {
+        Row: {
+          bank_import_config_id: string
+          column_mapping: Json
+          created_at: string
+          file_extension: string
+          id: string
+          is_active: boolean
+          organization_id: string
+          sample_file_url: string | null
+          source_name: string
+          updated_at: string
+        }
+        Insert: {
+          bank_import_config_id: string
+          column_mapping?: Json
+          created_at?: string
+          file_extension?: string
+          id?: string
+          is_active?: boolean
+          organization_id: string
+          sample_file_url?: string | null
+          source_name: string
+          updated_at?: string
+        }
+        Update: {
+          bank_import_config_id?: string
+          column_mapping?: Json
+          created_at?: string
+          file_extension?: string
+          id?: string
+          is_active?: boolean
+          organization_id?: string
+          sample_file_url?: string | null
+          source_name?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bank_import_sources_bank_import_config_id_fkey"
+            columns: ["bank_import_config_id"]
+            isOneToOne: false
+            referencedRelation: "bank_import_configs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bank_import_sources_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       billing_sequences: {
         Row: {
           branch_code: string | null
@@ -383,6 +631,50 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "oauth_credentials_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      onedrive_subscriptions: {
+        Row: {
+          created_at: string
+          delta_link: string | null
+          expiration_datetime: string | null
+          id: string
+          organization_id: string
+          resource: string | null
+          state: string
+          subscription_id: string | null
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          delta_link?: string | null
+          expiration_datetime?: string | null
+          id?: string
+          organization_id: string
+          resource?: string | null
+          state?: string
+          subscription_id?: string | null
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          delta_link?: string | null
+          expiration_datetime?: string | null
+          id?: string
+          organization_id?: string
+          resource?: string | null
+          state?: string
+          subscription_id?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "onedrive_subscriptions_organization_id_fkey"
             columns: ["organization_id"]
             isOneToOne: false
             referencedRelation: "organizations"
