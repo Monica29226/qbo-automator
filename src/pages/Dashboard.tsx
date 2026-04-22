@@ -27,6 +27,7 @@ const ErrorLogsViewer = lazy(() => import("@/components/dashboard/ErrorLogsViewe
 const ErrorDocumentsModal = lazy(() => import("@/components/dashboard/ErrorDocumentsModal").then(m => ({ default: m.ErrorDocumentsModal })));
 const TotalsValidationTest = lazy(() => import("@/components/dashboard/TotalsValidationTest").then(m => ({ default: m.TotalsValidationTest })));
 const TodayProcessingReport = lazy(() => import("@/components/dashboard/TodayProcessingReport").then(m => ({ default: m.TodayProcessingReport })));
+const TokenRenewalMonitor = lazy(() => import("@/components/dashboard/TokenRenewalMonitor").then(m => ({ default: m.TokenRenewalMonitor })));
 const PendingVendorConfiguration = lazy(() => import("@/components/dashboard/PendingVendorConfiguration").then(m => ({ default: m.PendingVendorConfiguration })));
 const AutoPublishConfiguredInvoices = lazy(() => import("@/components/dashboard/AutoPublishConfiguredInvoices").then(m => ({ default: m.AutoPublishConfiguredInvoices })));
 const PendingDocumentsLog = lazy(() => import("@/components/dashboard/PendingDocumentsLog").then(m => ({ default: m.PendingDocumentsLog })));
