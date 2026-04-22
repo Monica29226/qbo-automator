@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/table";
 import { ArrowLeft, Search, CheckCircle2, XCircle, Clock, FileText, HardDrive, ExternalLink } from "lucide-react";
 import { toast } from "sonner";
+import { QATestSuitePanel } from "@/components/dashboard/QATestSuitePanel";
 
 interface ProcessedDocument {
   id: string;
@@ -187,7 +188,8 @@ const QuickBooksStatus = () => {
         </div>
       </header>
 
-      <main className="container mx-auto px-6 py-8">
+      <main className="container mx-auto px-6 py-8 space-y-6">
+        <QATestSuitePanel />
         <Card>
           <CardHeader>
             <div className="flex items-center justify-between">
