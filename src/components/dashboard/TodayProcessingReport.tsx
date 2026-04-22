@@ -41,10 +41,16 @@ export const TodayProcessingReport = () => {
 
       setOrganizationId(activeOrg.organization_id);
 
-      // Use timezone-aware date range for Costa Rica (UTC-6)
-      const now = new Date();
-      const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
-      const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
+      // Costa Rica timezone (UTC-6, no DST). Compute "today" in CR, then convert to UTC for the query.
+      const CR_OFFSET_MS = 6 * 60 * 60 * 1000; // CR is UTC-6
+      const nowUtc = new Date();
+      const nowCr = new Date(nowUtc.getTime() - CR_OFFSET_MS);
+      // Midnight in CR = midnight UTC of the CR-shifted date + 6h offset back to UTC
+      const crYear = nowCr.getUTCFullYear();
+      const crMonth = nowCr.getUTCMonth();
+      const crDate = nowCr.getUTCDate();
+      const todayStart = new Date(Date.UTC(crYear, crMonth, crDate, 0, 0, 0) + CR_OFFSET_MS);
+      const todayEnd = new Date(Date.UTC(crYear, crMonth, crDate, 23, 59, 59, 999) + CR_OFFSET_MS);
 
       const { data: documents } = await supabase
         .from("processed_documents")
@@ -153,12 +159,19 @@ export const TodayProcessingReport = () => {
     ? ((stats.published / resolvedDocuments) * 100).toFixed(1)
     : (stats.pending > 0 ? "—" : "100");
 
+  // Display date in CR timezone
+  const crDateLabel = (() => {
+    const CR_OFFSET_MS = 6 * 60 * 60 * 1000;
+    const nowCr = new Date(Date.now() - CR_OFFSET_MS);
+    return format(new Date(Date.UTC(nowCr.getUTCFullYear(), nowCr.getUTCMonth(), nowCr.getUTCDate())), "d 'de' MMMM", { locale: es });
+  })();
+
   return (
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <Calendar className="h-5 w-5" />
-          Procesamiento de Hoy - {format(new Date(), "d 'de' MMMM", { locale: es })}
+          Procesamiento de Hoy - {crDateLabel} (CR)
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">

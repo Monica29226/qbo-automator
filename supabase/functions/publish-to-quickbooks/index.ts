@@ -1005,40 +1005,66 @@ Deno.serve(async (req) => {
     const realmId = credentials.realm_id;
     const expiresAt = credentials.expires_at;
 
-    // Refresh token si está expirado
-    if (new Date(expiresAt) < new Date()) {
-      logInfo("🔄 Refreshing QuickBooks token");
-      const tokenResponse = await fetch("https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-          "Authorization": `Basic ${btoa(`${Deno.env.get("QBO_CLIENT_ID")}:${Deno.env.get("QBO_CLIENT_SECRET")}`)}`,
-        },
-        body: new URLSearchParams({
-          grant_type: "refresh_token",
-          refresh_token: refreshToken,
-        }),
-      });
+    // Proactive token refresh: renew if less than 30 minutes left, hard-block if expired
+    const expiryDate = new Date(expiresAt);
+    const minutesUntilExpiry = (expiryDate.getTime() - Date.now()) / (1000 * 60);
+    const PROACTIVE_REFRESH_MIN = 30; // refresh when <30 min left
+    const HARD_BLOCK_MIN = 5;          // hard block when <5 min left and refresh fails
 
-      if (!tokenResponse.ok) {
-        throw new Error("Failed to refresh QuickBooks token");
-      }
-
-      const tokens = await tokenResponse.json();
-      accessToken = tokens.access_token;
-
-      await supabase
-        .from("integration_accounts")
-        .update({
-          credentials: {
-            ...credentials,
-            access_token: tokens.access_token,
-            refresh_token: tokens.refresh_token,
-            expires_at: new Date(Date.now() + tokens.expires_in * 1000).toISOString(),
+    if (minutesUntilExpiry < PROACTIVE_REFRESH_MIN) {
+      logInfo(`🔄 Refreshing QuickBooks token (${minutesUntilExpiry.toFixed(1)} min left)`);
+      try {
+        const tokenResponse = await fetch("https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Authorization": `Basic ${btoa(`${Deno.env.get("QBO_CLIENT_ID")}:${Deno.env.get("QBO_CLIENT_SECRET")}`)}`,
           },
-        })
-        .eq("organization_id", organization_id)
-        .eq("service_type", "quickbooks");
+          body: new URLSearchParams({
+            grant_type: "refresh_token",
+            refresh_token: refreshToken,
+          }),
+        });
+
+        if (!tokenResponse.ok) {
+          const errText = await tokenResponse.text();
+          logError(`❌ Token refresh failed: ${errText}`);
+          // If invalid_grant, mark integration inactive so user reconnects
+          if (errText.includes("invalid_grant")) {
+            await supabase
+              .from("integration_accounts")
+              .update({ is_active: false })
+              .eq("organization_id", organization_id)
+              .eq("service_type", "quickbooks");
+            throw new Error("QuickBooks token revoked. Please reconnect QuickBooks integration.");
+          }
+          // If we still have >5 min left, continue with current token; otherwise block
+          if (minutesUntilExpiry < HARD_BLOCK_MIN) {
+            throw new Error(`QuickBooks token expired and refresh failed: ${errText}`);
+          }
+        } else {
+          const tokens = await tokenResponse.json();
+          accessToken = tokens.access_token;
+          await supabase
+            .from("integration_accounts")
+            .update({
+              credentials: {
+                ...credentials,
+                access_token: tokens.access_token,
+                refresh_token: tokens.refresh_token,
+                expires_at: new Date(Date.now() + tokens.expires_in * 1000).toISOString(),
+              },
+            })
+            .eq("organization_id", organization_id)
+            .eq("service_type", "quickbooks");
+          logInfo(`✅ QBO token refreshed for org ${organization_id} (new expiry in ${Math.round(tokens.expires_in / 60)} min)`);
+        }
+      } catch (refreshErr) {
+        logError("❌ Token refresh exception:", refreshErr);
+        if (minutesUntilExpiry < HARD_BLOCK_MIN) {
+          throw refreshErr;
+        }
+      }
     }
 
     // Obtener fecha mínima
