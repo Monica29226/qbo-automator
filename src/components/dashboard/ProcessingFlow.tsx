@@ -27,7 +27,9 @@ export const ProcessingFlow = () => {
     pending: 0,
   });
   const [connections, setConnections] = useState({
-    gmail: false,
+    email: false,
+    emailProvider: null as null | "gmail" | "outlook" | "bluehost" | "hostinger",
+    emailAccount: null as string | null,
     quickbooks: false,
   });
   const [rulesCount, setRulesCount] = useState(0);
@@ -103,16 +105,32 @@ export const ProcessingFlow = () => {
       });
     }
 
-    // Fetch connections
+    // Fetch connections — detect active email provider dynamically
     const { data: accounts } = await supabase
       .from("integration_accounts")
-      .select("service_type")
+      .select("service_type, account_email")
       .eq("organization_id", activeOrganization)
       .eq("is_active", true);
 
     if (accounts) {
+      // Priority order: gmail > outlook > bluehost > hostinger (matches auto-sync-invoices)
+      const providerPriority: Array<"gmail" | "outlook" | "bluehost" | "hostinger"> = [
+        "gmail", "outlook", "bluehost", "hostinger",
+      ];
+      let emailProvider: typeof providerPriority[number] | null = null;
+      let emailAccount: string | null = null;
+      for (const p of providerPriority) {
+        const acc = accounts.find(a => a.service_type === p);
+        if (acc) {
+          emailProvider = p;
+          emailAccount = acc.account_email ?? null;
+          break;
+        }
+      }
       setConnections({
-        gmail: accounts.some(a => a.service_type === "gmail"),
+        email: emailProvider !== null,
+        emailProvider,
+        emailAccount,
         quickbooks: accounts.some(a => a.service_type === "quickbooks"),
       });
     }
@@ -128,14 +146,24 @@ export const ProcessingFlow = () => {
     setIsLoading(false);
   };
 
+  const providerLabels: Record<string, string> = {
+    gmail: "Gmail",
+    outlook: "Outlook",
+    bluehost: "Email (IMAP)",
+    hostinger: "Hostinger (IMAP)",
+  };
+  const emailDescription = connections.emailProvider
+    ? `${providerLabels[connections.emailProvider]}${connections.emailAccount ? ` — ${connections.emailAccount}` : ""}`
+    : "Sin proveedor";
+
   const steps = [
     {
       icon: Mail,
       label: "Recibir Correo",
-      description: "Gmail/Outlook",
-      status: connections.gmail ? "connected" : "disconnected",
+      description: emailDescription,
+      status: connections.email ? "connected" : "disconnected",
       action: "/integrations",
-      actionLabel: connections.gmail ? "Configurado" : "Conectar",
+      actionLabel: connections.email ? "Configurado" : "Conectar",
     },
     {
       icon: FileSearch,
@@ -260,15 +288,15 @@ export const ProcessingFlow = () => {
       </div>
 
       {/* Warnings */}
-      {(!connections.gmail || !connections.quickbooks || rulesCount === 0) && (
+      {(!connections.email || !connections.quickbooks || rulesCount === 0) && (
         <div className="p-4 bg-warning/10 border border-warning/30 rounded-lg">
           <div className="flex items-start gap-3">
             <AlertCircle className="h-5 w-5 text-warning flex-shrink-0 mt-0.5" />
             <div className="flex-1">
               <p className="font-semibold text-sm text-foreground mb-2">Configuración Incompleta</p>
               <ul className="text-xs text-muted-foreground space-y-1">
-                {!connections.gmail && (
-                  <li>• <strong>Gmail no conectado</strong> - No se recibirán facturas automáticamente</li>
+                {!connections.email && (
+                  <li>• <strong>Sin proveedor de correo conectado</strong> - No se recibirán facturas automáticamente</li>
                 )}
                 {!connections.quickbooks && (
                   <li>• <strong>QuickBooks no conectado</strong> - No se publicarán facturas</li>

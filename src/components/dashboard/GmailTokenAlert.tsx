@@ -6,15 +6,29 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useNavigate } from "react-router-dom";
 
-interface TokenAlert {
-  type: "disconnected" | "expiring";
+interface ProviderAlert {
+  provider: "gmail" | "outlook" | "bluehost" | "hostinger";
+  label: string;
   message: string;
 }
 
+const PROVIDER_LABELS: Record<ProviderAlert["provider"], string> = {
+  gmail: "Gmail",
+  outlook: "Outlook",
+  bluehost: "Email IMAP (Bluehost)",
+  hostinger: "Email IMAP (Hostinger)",
+};
+
+/**
+ * Detects email-provider connectivity issues for the active organization.
+ * Only surfaces an alert when the org claims a provider is connected but
+ * the corresponding integration_account is missing/inactive/incomplete.
+ * Stays silent when no provider is configured (normal state for new orgs).
+ */
 export const GmailTokenAlert = () => {
   const { activeOrganization } = useAuth();
   const navigate = useNavigate();
-  const [alert, setAlert] = useState<TokenAlert | null>(null);
+  const [alert, setAlert] = useState<ProviderAlert | null>(null);
   const [isDismissed, setIsDismissed] = useState(false);
 
   useEffect(() => {
@@ -22,66 +36,83 @@ export const GmailTokenAlert = () => {
 
     const checkTokenStatus = async () => {
       try {
-        // Verificar si Gmail está conectado en la organización
         const { data: org } = await supabase
           .from("organizations")
-          .select("gmail_connected")
+          .select("gmail_connected, outlook_connected, bluehost_connected, hostinger_connected")
           .eq("id", activeOrganization)
           .single();
 
-        if (!org?.gmail_connected) {
-          // Gmail no está conectado - no mostrar alerta (es estado normal)
+        if (!org) {
           setAlert(null);
           return;
         }
 
-        // Obtener cuenta de Gmail activa
-        const { data: gmailAccount } = await supabase
+        // Determine which provider this org actively uses (priority matches auto-sync-invoices)
+        const providers: ProviderAlert["provider"][] = [];
+        if (org.gmail_connected) providers.push("gmail");
+        if (org.outlook_connected) providers.push("outlook");
+        if (org.bluehost_connected) providers.push("bluehost");
+        if (org.hostinger_connected) providers.push("hostinger");
+
+        if (providers.length === 0) {
+          setAlert(null);
+          return;
+        }
+
+        const activeProvider = providers[0];
+
+        const { data: account } = await supabase
           .from("integration_accounts")
-          .select("*")
+          .select("credentials, is_active")
           .eq("organization_id", activeOrganization)
-          .eq("service_type", "gmail")
+          .eq("service_type", activeProvider)
           .eq("is_active", true)
           .order("created_at", { ascending: false })
           .limit(1)
           .maybeSingle();
 
-        // Si no hay cuenta activa pero org dice conectado, hay inconsistencia
-        if (!gmailAccount) {
+        if (!account) {
           setAlert({
-            type: "disconnected",
-            message: "La conexión de Gmail necesita ser restablecida. Por favor reconecte su cuenta.",
+            provider: activeProvider,
+            label: PROVIDER_LABELS[activeProvider],
+            message: `La conexión de ${PROVIDER_LABELS[activeProvider]} necesita ser restablecida. Por favor reconéctela desde Integraciones.`,
           });
           return;
         }
 
-        const credentials = gmailAccount.credentials as any;
-        
-        // Solo verificar si hay refresh_token - Gmail se auto-renueva con refresh token
-        // El access_token expira cada hora pero se renueva automáticamente
-        if (!credentials?.refresh_token) {
-          setAlert({
-            type: "disconnected",
-            message: "Las credenciales de Gmail están incompletas. Por favor reconecte su cuenta.",
-          });
-          return;
+        const credentials = account.credentials as Record<string, unknown> | null;
+
+        // OAuth providers need a refresh_token; IMAP providers need host + password
+        if (activeProvider === "gmail" || activeProvider === "outlook") {
+          if (!credentials?.refresh_token) {
+            setAlert({
+              provider: activeProvider,
+              label: PROVIDER_LABELS[activeProvider],
+              message: `Las credenciales de ${PROVIDER_LABELS[activeProvider]} están incompletas. Por favor reconéctela.`,
+            });
+            return;
+          }
+        } else {
+          // bluehost / hostinger
+          if (!credentials?.password || !credentials?.imap_host) {
+            setAlert({
+              provider: activeProvider,
+              label: PROVIDER_LABELS[activeProvider],
+              message: `Las credenciales IMAP de ${PROVIDER_LABELS[activeProvider]} están incompletas. Por favor reconfígurelas.`,
+            });
+            return;
+          }
         }
 
-        // Gmail con refresh_token válido = conexión OK
-        // No mostrar alertas por access_token expirado, ya que se renueva automáticamente
         setAlert(null);
-        
       } catch (error) {
-        console.error("Error checking Gmail token status:", error);
+        console.error("Error checking email provider status:", error);
         setAlert(null);
       }
     };
 
     checkTokenStatus();
-    
-    // Verificar cada 10 minutos
     const interval = setInterval(checkTokenStatus, 10 * 60 * 1000);
-    
     return () => clearInterval(interval);
   }, [activeOrganization, isDismissed]);
 
@@ -97,13 +128,10 @@ export const GmailTokenAlert = () => {
   if (!alert) return null;
 
   return (
-    <Alert 
-      variant="destructive"
-      className="mb-4 relative"
-    >
+    <Alert variant="destructive" className="mb-4 relative">
       <AlertTriangle className="h-4 w-4" />
       <AlertTitle className="flex items-center justify-between">
-        Gmail Desconectado
+        {alert.label} desconectado
         <Button
           variant="ghost"
           size="icon"
@@ -115,14 +143,9 @@ export const GmailTokenAlert = () => {
       </AlertTitle>
       <AlertDescription className="mt-2">
         <p className="mb-3">{alert.message}</p>
-        <Button 
-          onClick={handleReconnect} 
-          variant="outline"
-          size="sm"
-          className="gap-2"
-        >
+        <Button onClick={handleReconnect} variant="outline" size="sm" className="gap-2">
           <RefreshCw className="h-4 w-4" />
-          Reconectar Gmail
+          Reconectar {alert.label}
         </Button>
       </AlertDescription>
     </Alert>
