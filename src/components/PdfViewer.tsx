@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
 import { Document, Page, pdfjs } from 'react-pdf';
-import pdfWorkerSrc from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import 'react-pdf/dist/esm/Page/AnnotationLayer.css';
 import 'react-pdf/dist/esm/Page/TextLayer.css';
 import { Button } from '@/components/ui/button';
@@ -8,8 +7,8 @@ import { FileText, Download, ExternalLink, Loader2, RefreshCw, CloudDownload, Ch
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 
-// Configurar el worker de PDF.js (local, evita fallos por CDN/CSP)
-pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerSrc;
+// Configurar el worker de PDF.js usando CDN (evita problemas de bundling con ?url)
+pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
 
 interface PdfViewerProps {
   url?: string;
