@@ -55,7 +55,7 @@ export const TokenRenewalMonitor = () => {
       let status: TokenStatus["status"] = "healthy";
       if (minutesUntilExpiry < 0) status = "expired";
       else if (minutesUntilExpiry < 5) status = "critical";
-      else if (minutesUntilExpiry < 30) status = "warning";
+      else if (minutesUntilExpiry < 15) status = "warning";
 
       setTokenStatus({
         expires_at: credentials.expires_at,
@@ -150,15 +150,16 @@ export const TokenRenewalMonitor = () => {
       : "";
 
   const description = (() => {
+    if (renewing) return "Renovando token automáticamente...";
     switch (tokenStatus.status) {
       case "expired":
-        return "El token de QuickBooks ha expirado. Las publicaciones están bloqueadas hasta renovar.";
+        return "El token ha expirado. La renovación automática lo restablecerá en el próximo ciclo (cada 15 min).";
       case "critical":
-        return "El token expira en menos de 5 minutos. Renueva ahora para evitar bloqueos.";
+        return "El token expira en menos de 5 minutos. La renovación automática se ejecutará en el próximo ciclo.";
       case "warning":
-        return "El token expirará pronto. La renovación automática se activará al publicar.";
+        return "Renovación automática programada (se ejecuta cada 15 min en segundo plano).";
       default:
-        return "Token activo. Renovación automática programada cada hora.";
+        return "Token activo. Renovación automática proactiva cada 15 min en segundo plano.";
     }
   })();
 
