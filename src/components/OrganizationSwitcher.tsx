@@ -38,9 +38,9 @@ export const OrganizationSwitcher = () => {
     <>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button variant="outline" size="sm" className="gap-2">
+          <Button variant="default" size="sm" className="gap-2 font-semibold shadow-sm">
             <Building2 className="h-4 w-4" />
-            <span className="hidden md:inline">{currentOrg?.name || "Seleccionar empresa"}</span>
+            <span className="max-w-[220px] truncate">{currentOrg?.name || "Seleccionar empresa"}</span>
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-56 max-h-80 overflow-y-auto">
