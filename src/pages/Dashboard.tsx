@@ -462,6 +462,9 @@ const Dashboard = () => {
             </Suspense>
             <GmailTokenAlert />
             <QuickBooksTokenAlert />
+            <Suspense fallback={null}>
+              <TokenRenewalMonitor />
+            </Suspense>
         
             <div className="mb-6">
               <Suspense fallback={<LazyFallback />}>
