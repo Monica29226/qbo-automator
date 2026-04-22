@@ -159,12 +159,12 @@ export const TodayProcessingReport = () => {
     ? ((stats.published / resolvedDocuments) * 100).toFixed(1)
     : (stats.pending > 0 ? "—" : "100");
 
-  // Display date in CR timezone
-  const crDateLabel = (() => {
-    const CR_OFFSET_MS = 6 * 60 * 60 * 1000;
-    const nowCr = new Date(Date.now() - CR_OFFSET_MS);
-    return format(new Date(Date.UTC(nowCr.getUTCFullYear(), nowCr.getUTCMonth(), nowCr.getUTCDate())), "d 'de' MMMM", { locale: es });
-  })();
+  // Display date in CR timezone using Intl (always reflects today in America/Costa_Rica)
+  const crDateLabel = new Intl.DateTimeFormat("es-CR", {
+    day: "numeric",
+    month: "long",
+    timeZone: "America/Costa_Rica",
+  }).format(new Date());
 
   return (
     <Card>
