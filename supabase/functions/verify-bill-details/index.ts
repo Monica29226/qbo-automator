@@ -163,9 +163,15 @@ Deno.serve(async (req) => {
           totalAmt: bill.TotalAmt,
           vendorRef: bill.VendorRef,
           lineCount: bill.Line?.length || 0,
+          globalTaxCalculation: bill.GlobalTaxCalculation,
+          txnTaxDetail: bill.TxnTaxDetail,
         },
         lines: lineDetails,
         accounts: accountDetails,
+        diagnostic: {
+          allTaxCodes,
+          allTaxRates,
+        },
       }),
       {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
