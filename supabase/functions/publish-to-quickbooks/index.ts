@@ -1626,7 +1626,10 @@ Deno.serve(async (req) => {
       // Also load TaxRates for accurate matching
       await loadTaxRatesMap();
       
-      const rate = Math.round(taxRate);
+      // Preserve decimal precision (CR has rates 0, 1, 2, 4, 8, 13 — all integers,
+      // but other countries / reduced rates may be decimal e.g. 0.5%, 2.5%)
+      const rate = Number(taxRate) || 0;
+      const TOL = 0.15; // tight tolerance to distinguish 1% / 2% / 4% / 8% / 13%
       
       const isExemptCode = (name: string): boolean => {
         const n = (name || '').toLowerCase();
@@ -1636,7 +1639,7 @@ Deno.serve(async (req) => {
       };
       
       // Rate 0 / exempt: pick a real exempt code
-      if (rate === 0) {
+      if (rate < TOL) {
         for (const taxCode of taxCodesCache!) {
           if (isExemptCode(taxCode.Name || '')) {
             logInfo(`   📋 TaxCode rate=0 match: ${taxCode.Name}(${taxCode.Id})`);
@@ -1647,7 +1650,9 @@ Deno.serve(async (req) => {
       }
       
       // STEP 1 (PRIORITY): Match by ACTUAL PurchaseTaxRateList rate - most reliable
+      // Works for ANY rate (1%, 2%, 4%, 8%, 13%, or custom)
       if (taxRatesCache) {
+        let bestMatch: { id: string; name: string; diff: number; actualRate: number } | null = null;
         for (const taxCode of taxCodesCache!) {
           if (isExemptCode(taxCode.Name || '')) continue;
           const purchaseRates = taxCode.PurchaseTaxRateList?.TaxRateDetail || [];
@@ -1655,17 +1660,22 @@ Deno.serve(async (req) => {
             const taxRateRef = detail.TaxRateRef?.value;
             if (taxRateRef && taxRatesCache.has(taxRateRef)) {
               const actualRate = taxRatesCache.get(taxRateRef)!;
-              if (Math.abs(actualRate - rate) < 0.5) {
-                logInfo(`   📋 TaxCode match by purchase rate: ${taxCode.Name}(${taxCode.Id}) actualRate=${actualRate}% for ${rate}%`);
-                return taxCode.Id;
+              const diff = Math.abs(actualRate - rate);
+              if (diff < TOL && (!bestMatch || diff < bestMatch.diff)) {
+                bestMatch = { id: taxCode.Id, name: taxCode.Name, diff, actualRate };
               }
             }
           }
         }
+        if (bestMatch) {
+          logInfo(`   📋 TaxCode match by purchase rate: ${bestMatch.name}(${bestMatch.id}) actualRate=${bestMatch.actualRate}% for ${rate}%`);
+          return bestMatch.id;
+        }
       }
       
-      // STEP 2: Match by name containing the rate percentage
-      const ratePattern = new RegExp(`(^|[^0-9])${rate}%`);
+      // STEP 2: Match by name containing the rate percentage (exact rate, supports decimals)
+      const rateStr = (Number.isInteger(rate) ? rate.toString() : rate.toString()).replace('.', '\\.');
+      const ratePattern = new RegExp(`(^|[^0-9.])${rateStr}\\s*%`);
       for (const taxCode of taxCodesCache!) {
         if (isExemptCode(taxCode.Name || '')) continue;
         const name = (taxCode.Name || '');
@@ -1675,14 +1685,22 @@ Deno.serve(async (req) => {
         }
       }
       
-      // STEP 3: Spanish/legacy aliases for IVA 13%
-      if (rate === 13) {
+      // STEP 3: Spanish/legacy aliases for known CR reduced rates
+      const aliasMap: Record<number, string[]> = {
+        13: ['tarifa general', 'iva general', 'iva 13', 'vat 13'],
+        8:  ['tarifa reducida 8', 'iva 8', 'reducida 8'],
+        4:  ['tarifa reducida 4', 'iva 4', 'servicios médicos', 'servicios medicos', 'educacion', 'educación'],
+        2:  ['tarifa reducida 2', 'iva 2', 'medicamentos'],
+        1:  ['tarifa reducida 1', 'iva 1', 'canasta básica', 'canasta basica'],
+      };
+      const intRate = Math.round(rate);
+      const aliases = aliasMap[intRate];
+      if (aliases) {
         for (const taxCode of taxCodesCache!) {
           if (isExemptCode(taxCode.Name || '')) continue;
           const n = (taxCode.Name || '').toLowerCase();
-          if (n.includes('tarifa general') || n.includes('iva general') ||
-              n.includes('iva 13') || n.includes('vat 13') || n === 'iva') {
-            logInfo(`   📋 TaxCode match by alias for 13%: ${taxCode.Name}(${taxCode.Id})`);
+          if (aliases.some(a => n.includes(a)) || (intRate === 13 && n === 'iva')) {
+            logInfo(`   📋 TaxCode match by alias for ${intRate}%: ${taxCode.Name}(${taxCode.Id})`);
             return taxCode.Id;
           }
         }
@@ -1709,13 +1727,15 @@ Deno.serve(async (req) => {
     const getTaxRateRefForRate = async (taxRate: number): Promise<string | null> => {
       await loadTaxRatesMap();
       if (!taxRatesCache) return null;
-      const rate = Math.round(taxRate);
+      const rate = Number(taxRate) || 0;
+      let best: { id: string; diff: number } | null = null;
       for (const [rateId, rateValue] of taxRatesCache.entries()) {
-        if (Math.abs(rateValue - rate) < 0.5) {
-          return rateId;
+        const diff = Math.abs(rateValue - rate);
+        if (diff < 0.15 && (!best || diff < best.diff)) {
+          best = { id: rateId, diff };
         }
       }
-      return null;
+      return best?.id || null;
     };
 
     const batchStartTime = Date.now();
