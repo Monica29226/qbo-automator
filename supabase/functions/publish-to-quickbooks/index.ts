@@ -1628,34 +1628,35 @@ Deno.serve(async (req) => {
       
       const rate = Math.round(taxRate);
       
-      // STEP 1: Match by name containing the rate percentage
-      for (const taxCode of taxCodesCache!) {
-        const name = (taxCode.Name || "").toLowerCase();
-        
-        if (rate === 0) {
-          if (name.includes('no vat') || name.includes('exento') || name.includes('out of scope') || name.includes('exempt')) {
-            return taxCode.Id;
-          }
-        } else {
-          // Match exact rate in name: "4%", "(4%)", "IVA 4%"
-          // CRITICAL: Use regex to prevent "1%" matching "13%" via substring
-          const ratePattern = new RegExp(`(^|[^0-9])${rate}%`);
-          if (ratePattern.test(name)) {
+      const isExemptCode = (name: string): boolean => {
+        const n = (name || '').toLowerCase();
+        return n.includes('no vat') || n.includes('exento') || n.includes('out of scope') ||
+               n.includes('exempt') || n.includes('fuera del') || n.includes('fuera de') ||
+               n === 'non' || n.startsWith('non ') || n.includes('no aplica') || n.includes('no sujet');
+      };
+      
+      // Rate 0 / exempt: pick a real exempt code
+      if (rate === 0) {
+        for (const taxCode of taxCodesCache!) {
+          if (isExemptCode(taxCode.Name || '')) {
+            logInfo(`   📋 TaxCode rate=0 match: ${taxCode.Name}(${taxCode.Id})`);
             return taxCode.Id;
           }
         }
+        return taxCodesCache![0]?.Id || null;
       }
       
-      // STEP 2: Match by actual PurchaseTaxRateList rates (more reliable)
-      if (rate > 0 && taxRatesCache) {
+      // STEP 1 (PRIORITY): Match by ACTUAL PurchaseTaxRateList rate - most reliable
+      if (taxRatesCache) {
         for (const taxCode of taxCodesCache!) {
+          if (isExemptCode(taxCode.Name || '')) continue;
           const purchaseRates = taxCode.PurchaseTaxRateList?.TaxRateDetail || [];
           for (const detail of purchaseRates) {
             const taxRateRef = detail.TaxRateRef?.value;
             if (taxRateRef && taxRatesCache.has(taxRateRef)) {
               const actualRate = taxRatesCache.get(taxRateRef)!;
               if (Math.abs(actualRate - rate) < 0.5) {
-                logInfo(`   📋 TaxCode match by rate: ${taxCode.Name} (rate=${actualRate}%) for requested ${rate}%`);
+                logInfo(`   📋 TaxCode match by purchase rate: ${taxCode.Name}(${taxCode.Id}) actualRate=${actualRate}% for ${rate}%`);
                 return taxCode.Id;
               }
             }
@@ -1663,31 +1664,42 @@ Deno.serve(async (req) => {
         }
       }
       
-      // STEP 3: For non-zero rates where we couldn't find a match, 
-      // use any tax code that has a non-zero rate (better than "No VAT")
-      if (rate > 0) {
+      // STEP 2: Match by name containing the rate percentage
+      const ratePattern = new RegExp(`(^|[^0-9])${rate}%`);
+      for (const taxCode of taxCodesCache!) {
+        if (isExemptCode(taxCode.Name || '')) continue;
+        const name = (taxCode.Name || '');
+        if (ratePattern.test(name)) {
+          logInfo(`   📋 TaxCode match by name regex ${rate}%: ${name}(${taxCode.Id})`);
+          return taxCode.Id;
+        }
+      }
+      
+      // STEP 3: Spanish/legacy aliases for IVA 13%
+      if (rate === 13) {
         for (const taxCode of taxCodesCache!) {
-          const name = (taxCode.Name || "").toLowerCase();
-          // Skip explicitly zero/exempt codes
-          if (name.includes('no vat') || name.includes('exento') || name.includes('out of scope') || name.includes('exempt') || name.includes('non')) {
-            continue;
-          }
-          // Use any tax code that looks like it has tax
-          if (name.includes('vat') || name.includes('iva') || name.includes('%')) {
-            logInfo(`   ⚠️ No exact TaxCode for ${rate}%, using closest: ${taxCode.Name}`);
+          if (isExemptCode(taxCode.Name || '')) continue;
+          const n = (taxCode.Name || '').toLowerCase();
+          if (n.includes('tarifa general') || n.includes('iva general') ||
+              n.includes('iva 13') || n.includes('vat 13') || n === 'iva') {
+            logInfo(`   📋 TaxCode match by alias for 13%: ${taxCode.Name}(${taxCode.Id})`);
             return taxCode.Id;
           }
         }
       }
       
-      // STEP 4: Return first no-tax code as final fallback
+      // STEP 4: Description match
       for (const taxCode of taxCodesCache!) {
-        const name = (taxCode.Name || "").toLowerCase();
-        if (name.includes('no vat') || name.includes('non') || name.includes('exempt')) {
+        if (isExemptCode(taxCode.Name || '')) continue;
+        const desc = (taxCode.Description || '');
+        if (ratePattern.test(desc)) {
+          logInfo(`   📋 TaxCode match by description ${rate}%: ${taxCode.Name}(${taxCode.Id})`);
           return taxCode.Id;
         }
       }
       
+      // STRICT: For non-zero rates, NEVER fall back to an exempt code.
+      logInfo(`   ⚠️ No TaxCode match for ${rate}% — will publish without TxnTaxDetail (NotApplicable retry)`);
       return null;
     };
 
