@@ -103,6 +103,32 @@ Deno.serve(async (req) => {
       };
     });
 
+    // Fetch ALL active TaxCodes for diagnostic
+    const taxCodesUrl = `https://quickbooks.api.intuit.com/v3/company/${realmId}/query?query=${encodeURIComponent("SELECT * FROM TaxCode WHERE Active = true MAXRESULTS 100")}`;
+    const taxCodesResp = await fetch(taxCodesUrl, {
+      headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" },
+    });
+    const taxCodesData = taxCodesResp.ok ? await taxCodesResp.json() : { QueryResponse: {} };
+    const allTaxCodes = (taxCodesData.QueryResponse?.TaxCode || []).map((tc: any) => ({
+      id: tc.Id,
+      name: tc.Name,
+      description: tc.Description,
+      taxable: tc.Taxable,
+      purchaseTaxRateRefs: tc.PurchaseTaxRateList?.TaxRateDetail?.map((d: any) => d.TaxRateRef?.value) || [],
+    }));
+
+    // Fetch ALL active TaxRates
+    const taxRatesUrl = `https://quickbooks.api.intuit.com/v3/company/${realmId}/query?query=${encodeURIComponent("SELECT * FROM TaxRate WHERE Active = true MAXRESULTS 100")}`;
+    const taxRatesResp = await fetch(taxRatesUrl, {
+      headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" },
+    });
+    const taxRatesData = taxRatesResp.ok ? await taxRatesResp.json() : { QueryResponse: {} };
+    const allTaxRates = (taxRatesData.QueryResponse?.TaxRate || []).map((tr: any) => ({
+      id: tr.Id,
+      name: tr.Name,
+      rate: tr.RateValue,
+    }));
+
     // Fetch account details for each line
     const accountDetails = [];
     for (const line of lineDetails || []) {
