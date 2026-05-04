@@ -1727,13 +1727,15 @@ Deno.serve(async (req) => {
     const getTaxRateRefForRate = async (taxRate: number): Promise<string | null> => {
       await loadTaxRatesMap();
       if (!taxRatesCache) return null;
-      const rate = Math.round(taxRate);
+      const rate = Number(taxRate) || 0;
+      let best: { id: string; diff: number } | null = null;
       for (const [rateId, rateValue] of taxRatesCache.entries()) {
-        if (Math.abs(rateValue - rate) < 0.5) {
-          return rateId;
+        const diff = Math.abs(rateValue - rate);
+        if (diff < 0.15 && (!best || diff < best.diff)) {
+          best = { id: rateId, diff };
         }
       }
-      return null;
+      return best?.id || null;
     };
 
     const batchStartTime = Date.now();
