@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -13,6 +13,8 @@ const ResetPassword = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const token = searchParams.get("token");
+  const recoveryHashParams = useMemo(() => new URLSearchParams(window.location.hash.replace(/^#/, "")), []);
+  const isRecoveryLink = recoveryHashParams.get("type") === "recovery" || Boolean(recoveryHashParams.get("access_token"));
   
   const [isLoading, setIsLoading] = useState(false);
   const [password, setPassword] = useState("");
@@ -21,10 +23,21 @@ const ResetPassword = () => {
   const [isInvalidToken, setIsInvalidToken] = useState(false);
 
   useEffect(() => {
-    if (!token) {
-      setIsInvalidToken(true);
-    }
-  }, [token]);
+    const validateRecoveryAccess = async () => {
+      if (token || isRecoveryLink) {
+        setIsInvalidToken(false);
+        return;
+      }
+
+      const { data, error } = await supabase.auth.getSession();
+
+      if (error || !data.session) {
+        setIsInvalidToken(true);
+      }
+    };
+
+    void validateRecoveryAccess();
+  }, [token, isRecoveryLink]);
 
   const handleResetPassword = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -47,26 +60,37 @@ const ResetPassword = () => {
     setIsLoading(true);
 
     try {
-      const { data, error } = await supabase.functions.invoke("reset-password", {
-        body: { token, newPassword: password },
-      });
+      if (token) {
+        const { data, error } = await supabase.functions.invoke("reset-password", {
+          body: { token, newPassword: password },
+        });
 
-      if (error) throw error;
+        if (error) throw error;
 
-      if (data?.error) {
-        toast.error(data.error);
-        if (data.error.includes("inválido") || data.error.includes("expirado") || data.error.includes("utilizado")) {
-          setIsInvalidToken(true);
+        if (data?.error) {
+          toast.error(data.error);
+          if (data.error.includes("inválido") || data.error.includes("expirado") || data.error.includes("utilizado")) {
+            setIsInvalidToken(true);
+          }
+          return;
         }
       } else {
-        setIsSuccess(true);
-        toast.success("Contraseña actualizada correctamente");
-        
-        // Redirect to login after 2 seconds
-        setTimeout(() => {
-          navigate("/");
-        }, 2000);
+        const { error } = await supabase.auth.updateUser({ password });
+
+        if (error) {
+          if (error.message.toLowerCase().includes("session") || error.message.toLowerCase().includes("expired")) {
+            setIsInvalidToken(true);
+          }
+          throw error;
+        }
       }
+
+      setIsSuccess(true);
+      toast.success("Contraseña actualizada correctamente");
+
+      setTimeout(() => {
+        navigate("/");
+      }, 2000);
     } catch (error: any) {
       console.error("Error resetting password:", error);
       toast.error(error.message || "Error al actualizar la contraseña");
