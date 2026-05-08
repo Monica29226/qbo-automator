@@ -95,8 +95,7 @@ const Auth = () => {
     setIsResetting(true);
 
     try {
-      // Use the production URL for password reset redirect
-      const redirectUrl = "https://facturas.aureoncr.com/reset-password";
+      const redirectUrl = `${window.location.origin}/reset-password`;
       
       const { error } = await supabase.auth.resetPasswordForEmail(resetEmail, {
         redirectTo: redirectUrl,
