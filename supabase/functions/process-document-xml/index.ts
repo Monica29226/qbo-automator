@@ -11,6 +11,8 @@ interface ProcessDocumentRequest {
   xml_attachment_url?: string;
   pdf_attachment_url?: string;
   file_path?: string;
+  clave?: string;
+  source?: string;
 }
 
 // Enhanced XML parser functions with namespace support
@@ -24,6 +26,43 @@ function parseXMLValue(xml: string, tag: string): string {
   regex = new RegExp(`<${tag}[^>]*>([^<]*)<\\/${tag}>`, 'i');
   match = xml.match(regex);
   return match ? match[1].trim() : '';
+}
+
+function parseXMLBlocks(xml: string, tag: string): string[] {
+  const regex = new RegExp(`<(?:[\\w-]+:)?${tag}\\b[^>]*>([\\s\\S]*?)<\\/(?:[\\w-]+:)?${tag}>`, 'gi');
+  const blocks: string[] = [];
+  let match;
+
+  while ((match = regex.exec(xml)) !== null) {
+    blocks.push(match[1]);
+  }
+
+  return blocks;
+}
+
+function parseFirstXMLBlock(xml: string, tag: string): string {
+  return parseXMLBlocks(xml, tag)[0] || '';
+}
+
+function parseNumber(...values: Array<string | number | null | undefined>): number {
+  for (const value of values) {
+    if (value === null || value === undefined) continue;
+    const normalized = String(value).replace(/,/g, '').trim();
+    if (!normalized) continue;
+
+    const parsed = parseFloat(normalized);
+    if (!Number.isNaN(parsed)) {
+      return parsed;
+    }
+  }
+
+  return 0;
+}
+
+function calculateSubtotalFromLines(lineItems: any[]): number {
+  return lineItems.reduce((sum, item) => {
+    return sum + parseNumber(item.baseImponible, item.subtotal, item.montoTotal);
+  }, 0);
 }
 
 function isInvoiceXml(xml: string): boolean {
@@ -76,13 +115,11 @@ function parseNumeroConsecutivo(xml: string): string {
 }
 
 function parseLineItems(xml: string): any[] {
-  const detailRegex = /<LineaDetalle>(.*?)<\/LineaDetalle>/gis;
   const lineItems: any[] = [];
-  let match;
   let lineNumber = 1;
+  const detailBlocks = parseXMLBlocks(xml, 'LineaDetalle');
   
-  while ((match = detailRegex.exec(xml)) !== null) {
-    const lineXml = match[1];
+  for (const lineXml of detailBlocks) {
     
     // Extract all relevant fields for each line item
     const descripcion = parseXMLValue(lineXml, 'Detalle') || parseXMLValue(lineXml, 'NombreComercial') || '';
@@ -102,12 +139,10 @@ function parseLineItems(xml: string): any[] {
     const impuestoAsumidoEmisor = parseFloat(parseXMLValue(lineXml, 'ImpuestoAsumidoEmisorFabrica') || '0');
     
     // Extract ALL tax information per line (puede haber múltiples impuestos)
-    const impuestosRegex = /<Impuesto>(.*?)<\/Impuesto>/gis;
     const impuestos: any[] = [];
-    let taxMatch;
-    
-    while ((taxMatch = impuestosRegex.exec(lineXml)) !== null) {
-      const taxXml = taxMatch[1];
+    const taxBlocks = parseXMLBlocks(lineXml, 'Impuesto');
+
+    for (const taxXml of taxBlocks) {
       const codigo = parseXMLValue(taxXml, 'Codigo');
       const tarifa = parseFloat(parseXMLValue(taxXml, 'Tarifa') || '0');
       const monto = parseFloat(parseXMLValue(taxXml, 'Monto') || '0');
@@ -160,12 +195,10 @@ function parseLineItems(xml: string): any[] {
 // Función para extraer datos del Receptor del XML
 function parseReceptorData(xml: string): { nombre: string; identificacion: string } {
   // Buscar la sección Receptor
-  const receptorMatch = xml.match(/<Receptor[^>]*>([\s\S]*?)<\/Receptor>/i);
-  if (!receptorMatch) {
+  const receptorXml = parseFirstXMLBlock(xml, 'Receptor');
+  if (!receptorXml) {
     return { nombre: '', identificacion: '' };
   }
-  
-  const receptorXml = receptorMatch[1];
   
   // Extraer nombre del receptor
   const nombre = parseXMLValue(receptorXml, 'Nombre');
@@ -177,9 +210,9 @@ function parseReceptorData(xml: string): { nombre: string; identificacion: strin
   }
   if (!identificacion) {
     // Buscar dentro de <Identificacion>
-    const identMatch = receptorXml.match(/<Identificacion[^>]*>([\s\S]*?)<\/Identificacion>/i);
-    if (identMatch) {
-      identificacion = parseXMLValue(identMatch[1], 'Numero');
+    const identificacionXml = parseFirstXMLBlock(receptorXml, 'Identificacion');
+    if (identificacionXml) {
+      identificacion = parseXMLValue(identificacionXml, 'Numero');
     }
   }
   
@@ -189,8 +222,8 @@ function parseReceptorData(xml: string): { nombre: string; identificacion: strin
 // Función para extraer datos del Emisor del XML
 function parseEmisorData(xml: string): { nombre: string; identificacion: string; email: string } {
   // Buscar la sección Emisor
-  const emisorMatch = xml.match(/<Emisor[^>]*>([\s\S]*?)<\/Emisor>/i);
-  if (!emisorMatch) {
+  const emisorXml = parseFirstXMLBlock(xml, 'Emisor');
+  if (!emisorXml) {
     // Fallback: buscar en todo el XML (para XMLs simples)
     return {
       nombre: parseXMLValue(xml, 'Nombre'),
@@ -199,17 +232,15 @@ function parseEmisorData(xml: string): { nombre: string; identificacion: string;
     };
   }
   
-  const emisorXml = emisorMatch[1];
-  
   const nombre = parseXMLValue(emisorXml, 'Nombre');
   let identificacion = parseXMLValue(emisorXml, 'Numero');
   if (!identificacion) {
     identificacion = parseXMLValue(emisorXml, 'NumeroIdentificacion');
   }
   if (!identificacion) {
-    const identMatch = emisorXml.match(/<Identificacion[^>]*>([\s\S]*?)<\/Identificacion>/i);
-    if (identMatch) {
-      identificacion = parseXMLValue(identMatch[1], 'Numero');
+    const identificacionXml = parseFirstXMLBlock(emisorXml, 'Identificacion');
+    if (identificacionXml) {
+      identificacion = parseXMLValue(identificacionXml, 'Numero');
     }
   }
   const email = parseXMLValue(emisorXml, 'CorreoElectronico');
