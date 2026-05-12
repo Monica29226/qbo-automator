@@ -321,16 +321,15 @@ Deno.serve(async (req) => {
       );
     }
     
-    // Normalizar cédulas para comparación (quitar guiones, espacios)
-    const normalizedOrgTaxId = organization.tax_id.replace(/[-\s]/g, '').trim();
-    const normalizedReceptorId = receptor.identificacion.replace(/[-\s]/g, '').trim();
+    // Normalizar cédulas para comparación (quitar guiones, espacios y caracteres no numéricos)
+    const normalizeTaxId = (value?: string | null) => (value || '').replace(/[^0-9]/g, '').trim();
+    const normalizedOrgTaxId = normalizeTaxId(organization.tax_id);
+    const normalizedReceptorId = normalizeTaxId(receptor.identificacion);
     
     // También verificar identification_number como cédula alternativa
-    const normalizedAltId = organization.identification_number 
-      ? organization.identification_number.replace(/[-\s]/g, '').trim() 
-      : null;
+    const normalizedAltId = normalizeTaxId(organization.identification_number);
     
-    const receptorMatches = normalizedReceptorId && (
+    const receptorMatches = !!normalizedReceptorId && (
       normalizedReceptorId === normalizedOrgTaxId || 
       (normalizedAltId && normalizedReceptorId === normalizedAltId)
     );
@@ -358,7 +357,7 @@ Deno.serve(async (req) => {
     // ============================================================
     
     // Parse XML to extract all data
-    const doc_key = parseXMLValue(xmlContent, 'Clave');
+    const doc_key = payload.clave || parseXMLValue(xmlContent, 'Clave');
     const doc_number = parseNumeroConsecutivo(xmlContent);
     
     // VALIDACIÓN CRÍTICA: Asegurar que doc_number NO sea la clave numérica
@@ -415,20 +414,45 @@ Deno.serve(async (req) => {
     }
     
     // Parse amounts
-    const subtotal = parseFloat(parseXMLValue(xmlContent, 'TotalGravado') || parseXMLValue(xmlContent, 'TotalVenta') || '0');
-    let total_tax = parseFloat(parseXMLValue(xmlContent, 'TotalImpuesto') || '0');
-    let total_discount = parseFloat(parseXMLValue(xmlContent, 'TotalDescuentos') || '0');
-    let total_amount = parseFloat(parseXMLValue(xmlContent, 'TotalComprobante'));
+    const subtotalFromResumen = parseNumber(
+      parseXMLValue(xmlContent, 'TotalVentaNeta'),
+      parseXMLValue(xmlContent, 'TotalMercanciasGravadas'),
+      parseXMLValue(xmlContent, 'TotalMercanciasExentas'),
+      parseXMLValue(xmlContent, 'TotalServiciosGravados'),
+      parseXMLValue(xmlContent, 'TotalServiciosExentos'),
+      parseXMLValue(xmlContent, 'TotalGravado'),
+      parseXMLValue(xmlContent, 'TotalVenta'),
+    );
+    let total_tax = parseNumber(parseXMLValue(xmlContent, 'TotalImpuesto'));
+    let total_discount = parseNumber(parseXMLValue(xmlContent, 'TotalDescuentos'));
+    let total_amount = parseNumber(parseXMLValue(xmlContent, 'TotalComprobante'));
     
     // Capturar impuestos asumidos por el emisor y otros cargos
-    const totalImpuestoAsumidoEmisor = parseFloat(parseXMLValue(xmlContent, 'TotalImpAsumEmisorFabrica') || '0');
-    const totalOtrosCargos = parseFloat(parseXMLValue(xmlContent, 'TotalOtrosCargos') || '0');
+    const totalImpuestoAsumidoEmisor = parseNumber(parseXMLValue(xmlContent, 'TotalImpAsumEmisorFabrica'));
+    const totalOtrosCargos = parseNumber(parseXMLValue(xmlContent, 'TotalOtrosCargos'));
     
     const currency = parseXMLValue(xmlContent, 'CodigoMoneda') || 'CRC';
-    const exchange_rate = parseFloat(parseXMLValue(xmlContent, 'TipoCambio') || '1');
+    const exchange_rate = parseNumber(parseXMLValue(xmlContent, 'TipoCambio')) || 1;
     
     // Parse line items
     const detalle = parseLineItems(xmlContent);
+    const subtotal = subtotalFromResumen || calculateSubtotalFromLines(detalle);
+
+    if (!total_amount) {
+      total_amount = parseNumber(...detalle.map((item) => item.montoTotalLinea));
+    }
+
+    if (!total_tax) {
+      total_tax = detalle.reduce((sum, item) => {
+        const taxes = Array.isArray(item.impuestos) ? item.impuestos : [];
+        const lineTax = taxes.reduce((acc: number, imp: any) => acc + parseNumber(imp?.monto), 0);
+        return sum + (lineTax || parseNumber(item.montoImpuesto, item.impuestoNeto));
+      }, 0);
+    }
+
+    if (!total_discount) {
+      total_discount = detalle.reduce((sum, item) => sum + parseNumber(item.montoDescuento), 0);
+    }
     
     // Determine document type and apply negative amounts for credit notes
     let doc_type = 'FacturaElectronica';
@@ -493,7 +517,8 @@ Deno.serve(async (req) => {
         return new Response(
           JSON.stringify({
             success: false,
-            message: `Documento duplicado (Clave): ${doc_number} de ${supplier_name} ya existe`
+          message: `Documento duplicado (Clave): ${doc_number} de ${supplier_name} ya existe`,
+          reason: 'duplicate_doc_key'
           }),
           { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
@@ -520,7 +545,8 @@ Deno.serve(async (req) => {
         return new Response(
           JSON.stringify({
             success: false,
-            message: `Documento duplicado: ${doc_number} de ${supplier_name} ya existe`
+              message: `Documento duplicado: ${doc_number} de ${supplier_name} ya existe`,
+              reason: 'duplicate_doc_vendor'
           }),
           { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
@@ -685,6 +711,7 @@ Deno.serve(async (req) => {
         status,
         default_account_ref: status === "processed" ? accountCode : null, // Guardar cuenta si está configurada
         processed_at: status === "processed" ? new Date().toISOString() : null,
+        error_message: status === "review" ? `Proveedor sin regla automática${payload.source ? ` (${payload.source})` : ''}` : null,
         xml_data: {
           emisor: {
             nombre: supplier_name,
