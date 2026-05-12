@@ -11,6 +11,8 @@ interface ProcessDocumentRequest {
   xml_attachment_url?: string;
   pdf_attachment_url?: string;
   file_path?: string;
+  clave?: string;
+  source?: string;
 }
 
 // Enhanced XML parser functions with namespace support
@@ -24,6 +26,43 @@ function parseXMLValue(xml: string, tag: string): string {
   regex = new RegExp(`<${tag}[^>]*>([^<]*)<\\/${tag}>`, 'i');
   match = xml.match(regex);
   return match ? match[1].trim() : '';
+}
+
+function parseXMLBlocks(xml: string, tag: string): string[] {
+  const regex = new RegExp(`<(?:[\\w-]+:)?${tag}\\b[^>]*>([\\s\\S]*?)<\\/(?:[\\w-]+:)?${tag}>`, 'gi');
+  const blocks: string[] = [];
+  let match;
+
+  while ((match = regex.exec(xml)) !== null) {
+    blocks.push(match[1]);
+  }
+
+  return blocks;
+}
+
+function parseFirstXMLBlock(xml: string, tag: string): string {
+  return parseXMLBlocks(xml, tag)[0] || '';
+}
+
+function parseNumber(...values: Array<string | number | null | undefined>): number {
+  for (const value of values) {
+    if (value === null || value === undefined) continue;
+    const normalized = String(value).replace(/,/g, '').trim();
+    if (!normalized) continue;
+
+    const parsed = parseFloat(normalized);
+    if (!Number.isNaN(parsed)) {
+      return parsed;
+    }
+  }
+
+  return 0;
+}
+
+function calculateSubtotalFromLines(lineItems: any[]): number {
+  return lineItems.reduce((sum, item) => {
+    return sum + parseNumber(item.baseImponible, item.subtotal, item.montoTotal);
+  }, 0);
 }
 
 function isInvoiceXml(xml: string): boolean {
@@ -76,13 +115,11 @@ function parseNumeroConsecutivo(xml: string): string {
 }
 
 function parseLineItems(xml: string): any[] {
-  const detailRegex = /<LineaDetalle>(.*?)<\/LineaDetalle>/gis;
   const lineItems: any[] = [];
-  let match;
   let lineNumber = 1;
+  const detailBlocks = parseXMLBlocks(xml, 'LineaDetalle');
   
-  while ((match = detailRegex.exec(xml)) !== null) {
-    const lineXml = match[1];
+  for (const lineXml of detailBlocks) {
     
     // Extract all relevant fields for each line item
     const descripcion = parseXMLValue(lineXml, 'Detalle') || parseXMLValue(lineXml, 'NombreComercial') || '';
@@ -102,12 +139,10 @@ function parseLineItems(xml: string): any[] {
     const impuestoAsumidoEmisor = parseFloat(parseXMLValue(lineXml, 'ImpuestoAsumidoEmisorFabrica') || '0');
     
     // Extract ALL tax information per line (puede haber múltiples impuestos)
-    const impuestosRegex = /<Impuesto>(.*?)<\/Impuesto>/gis;
     const impuestos: any[] = [];
-    let taxMatch;
-    
-    while ((taxMatch = impuestosRegex.exec(lineXml)) !== null) {
-      const taxXml = taxMatch[1];
+    const taxBlocks = parseXMLBlocks(lineXml, 'Impuesto');
+
+    for (const taxXml of taxBlocks) {
       const codigo = parseXMLValue(taxXml, 'Codigo');
       const tarifa = parseFloat(parseXMLValue(taxXml, 'Tarifa') || '0');
       const monto = parseFloat(parseXMLValue(taxXml, 'Monto') || '0');
@@ -160,12 +195,10 @@ function parseLineItems(xml: string): any[] {
 // Función para extraer datos del Receptor del XML
 function parseReceptorData(xml: string): { nombre: string; identificacion: string } {
   // Buscar la sección Receptor
-  const receptorMatch = xml.match(/<Receptor[^>]*>([\s\S]*?)<\/Receptor>/i);
-  if (!receptorMatch) {
+  const receptorXml = parseFirstXMLBlock(xml, 'Receptor');
+  if (!receptorXml) {
     return { nombre: '', identificacion: '' };
   }
-  
-  const receptorXml = receptorMatch[1];
   
   // Extraer nombre del receptor
   const nombre = parseXMLValue(receptorXml, 'Nombre');
@@ -177,9 +210,9 @@ function parseReceptorData(xml: string): { nombre: string; identificacion: strin
   }
   if (!identificacion) {
     // Buscar dentro de <Identificacion>
-    const identMatch = receptorXml.match(/<Identificacion[^>]*>([\s\S]*?)<\/Identificacion>/i);
-    if (identMatch) {
-      identificacion = parseXMLValue(identMatch[1], 'Numero');
+    const identificacionXml = parseFirstXMLBlock(receptorXml, 'Identificacion');
+    if (identificacionXml) {
+      identificacion = parseXMLValue(identificacionXml, 'Numero');
     }
   }
   
@@ -189,8 +222,8 @@ function parseReceptorData(xml: string): { nombre: string; identificacion: strin
 // Función para extraer datos del Emisor del XML
 function parseEmisorData(xml: string): { nombre: string; identificacion: string; email: string } {
   // Buscar la sección Emisor
-  const emisorMatch = xml.match(/<Emisor[^>]*>([\s\S]*?)<\/Emisor>/i);
-  if (!emisorMatch) {
+  const emisorXml = parseFirstXMLBlock(xml, 'Emisor');
+  if (!emisorXml) {
     // Fallback: buscar en todo el XML (para XMLs simples)
     return {
       nombre: parseXMLValue(xml, 'Nombre'),
@@ -199,17 +232,15 @@ function parseEmisorData(xml: string): { nombre: string; identificacion: string;
     };
   }
   
-  const emisorXml = emisorMatch[1];
-  
   const nombre = parseXMLValue(emisorXml, 'Nombre');
   let identificacion = parseXMLValue(emisorXml, 'Numero');
   if (!identificacion) {
     identificacion = parseXMLValue(emisorXml, 'NumeroIdentificacion');
   }
   if (!identificacion) {
-    const identMatch = emisorXml.match(/<Identificacion[^>]*>([\s\S]*?)<\/Identificacion>/i);
-    if (identMatch) {
-      identificacion = parseXMLValue(identMatch[1], 'Numero');
+    const identificacionXml = parseFirstXMLBlock(emisorXml, 'Identificacion');
+    if (identificacionXml) {
+      identificacion = parseXMLValue(identificacionXml, 'Numero');
     }
   }
   const email = parseXMLValue(emisorXml, 'CorreoElectronico');
@@ -290,16 +321,15 @@ Deno.serve(async (req) => {
       );
     }
     
-    // Normalizar cédulas para comparación (quitar guiones, espacios)
-    const normalizedOrgTaxId = organization.tax_id.replace(/[-\s]/g, '').trim();
-    const normalizedReceptorId = receptor.identificacion.replace(/[-\s]/g, '').trim();
+    // Normalizar cédulas para comparación (quitar guiones, espacios y caracteres no numéricos)
+    const normalizeTaxId = (value?: string | null) => (value || '').replace(/[^0-9]/g, '').trim();
+    const normalizedOrgTaxId = normalizeTaxId(organization.tax_id);
+    const normalizedReceptorId = normalizeTaxId(receptor.identificacion);
     
     // También verificar identification_number como cédula alternativa
-    const normalizedAltId = organization.identification_number 
-      ? organization.identification_number.replace(/[-\s]/g, '').trim() 
-      : null;
+    const normalizedAltId = normalizeTaxId(organization.identification_number);
     
-    const receptorMatches = normalizedReceptorId && (
+    const receptorMatches = !!normalizedReceptorId && (
       normalizedReceptorId === normalizedOrgTaxId || 
       (normalizedAltId && normalizedReceptorId === normalizedAltId)
     );
@@ -327,7 +357,7 @@ Deno.serve(async (req) => {
     // ============================================================
     
     // Parse XML to extract all data
-    const doc_key = parseXMLValue(xmlContent, 'Clave');
+    const doc_key = payload.clave || parseXMLValue(xmlContent, 'Clave');
     const doc_number = parseNumeroConsecutivo(xmlContent);
     
     // VALIDACIÓN CRÍTICA: Asegurar que doc_number NO sea la clave numérica
@@ -384,20 +414,45 @@ Deno.serve(async (req) => {
     }
     
     // Parse amounts
-    const subtotal = parseFloat(parseXMLValue(xmlContent, 'TotalGravado') || parseXMLValue(xmlContent, 'TotalVenta') || '0');
-    let total_tax = parseFloat(parseXMLValue(xmlContent, 'TotalImpuesto') || '0');
-    let total_discount = parseFloat(parseXMLValue(xmlContent, 'TotalDescuentos') || '0');
-    let total_amount = parseFloat(parseXMLValue(xmlContent, 'TotalComprobante'));
+    const subtotalFromResumen = parseNumber(
+      parseXMLValue(xmlContent, 'TotalVentaNeta'),
+      parseXMLValue(xmlContent, 'TotalMercanciasGravadas'),
+      parseXMLValue(xmlContent, 'TotalMercanciasExentas'),
+      parseXMLValue(xmlContent, 'TotalServiciosGravados'),
+      parseXMLValue(xmlContent, 'TotalServiciosExentos'),
+      parseXMLValue(xmlContent, 'TotalGravado'),
+      parseXMLValue(xmlContent, 'TotalVenta'),
+    );
+    let total_tax = parseNumber(parseXMLValue(xmlContent, 'TotalImpuesto'));
+    let total_discount = parseNumber(parseXMLValue(xmlContent, 'TotalDescuentos'));
+    let total_amount = parseNumber(parseXMLValue(xmlContent, 'TotalComprobante'));
     
     // Capturar impuestos asumidos por el emisor y otros cargos
-    const totalImpuestoAsumidoEmisor = parseFloat(parseXMLValue(xmlContent, 'TotalImpAsumEmisorFabrica') || '0');
-    const totalOtrosCargos = parseFloat(parseXMLValue(xmlContent, 'TotalOtrosCargos') || '0');
+    const totalImpuestoAsumidoEmisor = parseNumber(parseXMLValue(xmlContent, 'TotalImpAsumEmisorFabrica'));
+    const totalOtrosCargos = parseNumber(parseXMLValue(xmlContent, 'TotalOtrosCargos'));
     
     const currency = parseXMLValue(xmlContent, 'CodigoMoneda') || 'CRC';
-    const exchange_rate = parseFloat(parseXMLValue(xmlContent, 'TipoCambio') || '1');
+    const exchange_rate = parseNumber(parseXMLValue(xmlContent, 'TipoCambio')) || 1;
     
     // Parse line items
     const detalle = parseLineItems(xmlContent);
+    const subtotal = subtotalFromResumen || calculateSubtotalFromLines(detalle);
+
+    if (!total_amount) {
+      total_amount = parseNumber(...detalle.map((item) => item.montoTotalLinea));
+    }
+
+    if (!total_tax) {
+      total_tax = detalle.reduce((sum, item) => {
+        const taxes = Array.isArray(item.impuestos) ? item.impuestos : [];
+        const lineTax = taxes.reduce((acc: number, imp: any) => acc + parseNumber(imp?.monto), 0);
+        return sum + (lineTax || parseNumber(item.montoImpuesto, item.impuestoNeto));
+      }, 0);
+    }
+
+    if (!total_discount) {
+      total_discount = detalle.reduce((sum, item) => sum + parseNumber(item.montoDescuento), 0);
+    }
     
     // Determine document type and apply negative amounts for credit notes
     let doc_type = 'FacturaElectronica';
@@ -462,7 +517,8 @@ Deno.serve(async (req) => {
         return new Response(
           JSON.stringify({
             success: false,
-            message: `Documento duplicado (Clave): ${doc_number} de ${supplier_name} ya existe`
+          message: `Documento duplicado (Clave): ${doc_number} de ${supplier_name} ya existe`,
+          reason: 'duplicate_doc_key'
           }),
           { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
@@ -489,7 +545,8 @@ Deno.serve(async (req) => {
         return new Response(
           JSON.stringify({
             success: false,
-            message: `Documento duplicado: ${doc_number} de ${supplier_name} ya existe`
+              message: `Documento duplicado: ${doc_number} de ${supplier_name} ya existe`,
+              reason: 'duplicate_doc_vendor'
           }),
           { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
@@ -654,6 +711,7 @@ Deno.serve(async (req) => {
         status,
         default_account_ref: status === "processed" ? accountCode : null, // Guardar cuenta si está configurada
         processed_at: status === "processed" ? new Date().toISOString() : null,
+        error_message: status === "review" ? `Proveedor sin regla automática${payload.source ? ` (${payload.source})` : ''}` : null,
         xml_data: {
           emisor: {
             nombre: supplier_name,
