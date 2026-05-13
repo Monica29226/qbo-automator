@@ -248,6 +248,29 @@ function parseEmisorData(xml: string): { nombre: string; identificacion: string;
   return { nombre, identificacion, email };
 }
 
+function normalizeTaxId(value?: string | null): string {
+  return (value || '').replace(/[^0-9]/g, '').replace(/^0+/, '').trim();
+}
+
+function normalizeLegalName(value?: string | null): string {
+  return (value || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/sociedad anonima|sociedad de responsabilidad limitada|s\.?a\.?|s\.?r\.?l\.?/g, ' ')
+    .replace(/[^a-z0-9]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function getOrganizationIdentifiers(organization: { tax_id?: string | null; identification_number?: string | null; name?: string | null }) {
+  const ids = [organization.tax_id, organization.identification_number]
+    .map((value) => normalizeTaxId(value))
+    .filter(Boolean);
+
+  return Array.from(new Set(ids));
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -302,49 +325,67 @@ Deno.serve(async (req) => {
     // Extraer datos del Receptor del XML
     const receptor = parseReceptorData(xmlContent);
     console.log("🎯 Receptor del XML:", receptor);
-    console.log("🏢 Organización esperada:", { name: organization.name, tax_id: organization.tax_id });
+    console.log("🏢 Organización esperada:", {
+      name: organization.name,
+      tax_id: organization.tax_id,
+      identification_number: organization.identification_number,
+    });
     
+    const organizationIdentifiers = getOrganizationIdentifiers(organization);
+    const normalizedReceptorId = normalizeTaxId(receptor.identificacion);
+    const normalizedOrganizationName = normalizeLegalName(organization.name);
+    const normalizedReceptorName = normalizeLegalName(receptor.nombre);
+
     // Validar que la factura sea para esta organización
-    // IMPORTANTE: Si la organización no tiene cédula configurada, RECHAZAR para evitar cargar facturas incorrectas
-    if (!organization.tax_id) {
-      console.error(`❌ FACTURA RECHAZADA - La organización ${organization.name} no tiene cédula jurídica configurada`);
+    // IMPORTANTE: se acepta tax_id o identification_number como identificadores válidos de la organización
+    if (organizationIdentifiers.length === 0) {
+      console.error(`❌ FACTURA RECHAZADA - La organización ${organization.name} no tiene identificación configurada`);
       console.error(`   Configure la cédula en Mi Empresa antes de procesar facturas`);
       
       return new Response(
         JSON.stringify({
           success: false,
           rejected: true,
-          message: `Organización sin cédula configurada. Configure la cédula jurídica en "Mi Empresa" antes de importar facturas.`,
+          message: `Organización sin identificación configurada. Configure la cédula en "Mi Empresa" antes de importar facturas.`,
           reason: 'org_no_tax_id'
         }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
-    
-    // Normalizar cédulas para comparación (quitar guiones, espacios y caracteres no numéricos)
-    const normalizeTaxId = (value?: string | null) => (value || '').replace(/[^0-9]/g, '').trim();
-    const normalizedOrgTaxId = normalizeTaxId(organization.tax_id);
-    const normalizedReceptorId = normalizeTaxId(receptor.identificacion);
-    
-    // También verificar identification_number como cédula alternativa
-    const normalizedAltId = normalizeTaxId(organization.identification_number);
-    
-    const receptorMatches = !!normalizedReceptorId && (
-      normalizedReceptorId === normalizedOrgTaxId || 
-      (normalizedAltId && normalizedReceptorId === normalizedAltId)
+
+    const receptorMatchesById = !!normalizedReceptorId && organizationIdentifiers.includes(normalizedReceptorId);
+    const receptorMatchesByName = !normalizedReceptorId && !!normalizedReceptorName && !!normalizedOrganizationName && (
+      normalizedReceptorName.includes(normalizedOrganizationName) ||
+      normalizedOrganizationName.includes(normalizedReceptorName)
     );
-    
-    if (normalizedReceptorId && !receptorMatches) {
+
+    if (normalizedReceptorId && !receptorMatchesById) {
       console.warn(`⚠️ FACTURA RECHAZADA - Receptor no coincide con la organización`);
       console.warn(`   Receptor: ${receptor.nombre} (${receptor.identificacion})`);
-      console.warn(`   Esperado: ${organization.name} (${organization.tax_id}${normalizedAltId ? ` / ${organization.identification_number}` : ''})`);
+      console.warn(`   Esperado: ${organization.name} (${organizationIdentifiers.join(' / ')})`);
       
       return new Response(
         JSON.stringify({
           success: false,
           rejected: true,
-          message: `Factura rechazada: El receptor (${receptor.nombre} - ${receptor.identificacion}) no coincide con la organización (${organization.name} - ${organization.tax_id})`,
+          message: `Factura rechazada: El receptor (${receptor.nombre} - ${receptor.identificacion}) no coincide con la organización (${organization.name} - ${organizationIdentifiers.join(' / ')})`,
           reason: 'receptor_mismatch'
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    if (!normalizedReceptorId && receptor.nombre && !receptorMatchesByName) {
+      console.warn(`⚠️ FACTURA RECHAZADA - Receptor sin cédula y nombre no coincide con la organización`);
+      console.warn(`   Receptor: ${receptor.nombre}`);
+      console.warn(`   Esperado: ${organization.name}`);
+
+      return new Response(
+        JSON.stringify({
+          success: false,
+          rejected: true,
+          message: `Factura rechazada: El receptor (${receptor.nombre}) no coincide con la organización (${organization.name})`,
+          reason: 'receptor_name_mismatch'
         }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
