@@ -655,10 +655,24 @@ const Organizations = () => {
                         <div>
                           <h3 className="font-semibold">{org.name}</h3>
                           <p className="text-sm text-muted-foreground capitalize">{org.role}</p>
+                          <p className="text-xs text-muted-foreground font-mono mt-1">{org.id}</p>
                         </div>
-                        {org.id === activeOrganization && (
-                          <Badge>Activa</Badge>
-                        )}
+                        <div className="flex items-center gap-2">
+                          {org.id === activeOrganization && (
+                            <Badge>Activa</Badge>
+                          )}
+                          {org.role === "owner" && org.id !== activeOrganization && (
+                            <Button
+                              variant="destructive"
+                              size="sm"
+                              onClick={() => handleDeleteOrg(org.id, org.name)}
+                              disabled={isLoading}
+                            >
+                              <Trash2 className="h-4 w-4 mr-1" />
+                              Eliminar
+                            </Button>
+                          )}
+                        </div>
                       </div>
                     </Card>
                   ))}
