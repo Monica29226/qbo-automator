@@ -311,16 +311,24 @@ const Vendors = () => {
 
       <main className="container mx-auto px-6 py-8">
         <Tabs defaultValue="defaults" className="space-y-4">
-          <TabsList className="grid w-full max-w-md grid-cols-2">
-            <TabsTrigger value="defaults" className="flex items-center gap-2">
-              <Settings className="h-4 w-4" />
-              Reglas Automáticas ({vendorDefaults.length})
-            </TabsTrigger>
-            <TabsTrigger value="catalog" className="flex items-center gap-2">
-              <FileText className="h-4 w-4" />
-              Catálogo Completo ({vendors.length})
-            </TabsTrigger>
-          </TabsList>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <TabsList className="grid w-full max-w-md grid-cols-2">
+              <TabsTrigger value="defaults" className="flex items-center gap-2">
+                <Settings className="h-4 w-4" />
+                Reglas Automáticas ({filteredVendorDefaults.length})
+              </TabsTrigger>
+              <TabsTrigger value="catalog" className="flex items-center gap-2">
+                <FileText className="h-4 w-4" />
+                Catálogo Completo ({filteredVendors.length})
+              </TabsTrigger>
+            </TabsList>
+            <Input
+              placeholder="Buscar proveedor por nombre, cédula o cuenta..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="sm:max-w-sm"
+            />
+          </div>
           
           <TabsContent value="defaults">
             <Card className="p-6">
