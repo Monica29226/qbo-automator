@@ -329,6 +329,19 @@ serve(async (req) => {
       }
     }
 
+    // Diagnóstico extra: si seguimos en 0, probar consulta amplia para ver si la cuenta tiene algo
+    if (messages.length === 0) {
+      const diagQuery = `has:attachment newer_than:60d`;
+      const diagResp = await fetch(
+        `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(diagQuery)}&maxResults=10&includeSpamTrash=true`,
+        { headers: { Authorization: `Bearer ${accessToken}` } }
+      );
+      if (diagResp.ok) {
+        const diagData = await diagResp.json();
+        console.log(`🩺 Diagnóstico cuenta (${diagQuery}): ${(diagData.messages || []).length} mensajes en últimos 60 días`);
+      }
+    }
+
     // Obtener reglas de clasificación
     const { data: rules } = await supabase
       .from("vendor_classification_rules")
