@@ -329,16 +329,25 @@ serve(async (req) => {
       }
     }
 
-    // Diagnóstico extra: si seguimos en 0, probar consulta amplia para ver si la cuenta tiene algo
+    // Diagnóstico extra: si seguimos en 0, probar consultas amplias para ver si la cuenta tiene algo
     if (messages.length === 0) {
-      const diagQuery = `has:attachment newer_than:60d`;
-      const diagResp = await fetch(
-        `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(diagQuery)}&maxResults=10&includeSpamTrash=true`,
-        { headers: { Authorization: `Bearer ${accessToken}` } }
-      );
-      if (diagResp.ok) {
-        const diagData = await diagResp.json();
-        console.log(`🩺 Diagnóstico cuenta (${diagQuery}): ${(diagData.messages || []).length} mensajes en últimos 60 días`);
+      const probes = [
+        `has:attachment newer_than:60d`,
+        `newer_than:60d`,
+        `has:attachment`,
+      ];
+      for (const diagQuery of probes) {
+        const diagResp = await fetch(
+          `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(diagQuery)}&maxResults=10&includeSpamTrash=true`,
+          { headers: { Authorization: `Bearer ${accessToken}` } }
+        );
+        if (diagResp.ok) {
+          const diagData = await diagResp.json();
+          console.log(`🩺 Diagnóstico (${diagQuery}): ${(diagData.messages || []).length} mensajes`);
+        } else {
+          const t = await diagResp.text();
+          console.log(`🩺 Diagnóstico (${diagQuery}) ERROR ${diagResp.status}: ${t}`);
+        }
       }
     }
 
