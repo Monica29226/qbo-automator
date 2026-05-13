@@ -661,12 +661,13 @@ const Organizations = () => {
                           {org.id === activeOrganization && (
                             <Badge>Activa</Badge>
                           )}
-                          {org.role === "owner" && org.id !== activeOrganization && (
+                          {(org.role === "owner" || org.role === "admin" || isAdmin) && (
                             <Button
                               variant="destructive"
                               size="sm"
                               onClick={() => handleDeleteOrg(org.id, org.name)}
-                              disabled={isLoading}
+                              disabled={isLoading || org.id === activeOrganization}
+                              title={org.id === activeOrganization ? "Cambia a otra empresa primero" : "Eliminar empresa"}
                             >
                               <Trash2 className="h-4 w-4 mr-1" />
                               Eliminar
