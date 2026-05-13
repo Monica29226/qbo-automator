@@ -77,6 +77,24 @@ const Vendors = () => {
     tax_rate: 13,
   });
   const [qboNotConnected, setQboNotConnected] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+
+  const normalizedQuery = searchQuery.trim().toLowerCase();
+  const filteredVendorDefaults = useMemo(() => {
+    if (!normalizedQuery) return vendorDefaults;
+    return vendorDefaults.filter((vd) =>
+      (vd.vendor_name || "").toLowerCase().includes(normalizedQuery) ||
+      (vd.default_account_ref || "").toLowerCase().includes(normalizedQuery)
+    );
+  }, [vendorDefaults, normalizedQuery]);
+  const filteredVendors = useMemo(() => {
+    if (!normalizedQuery) return vendors;
+    return vendors.filter((v) =>
+      (v.vendor_name || "").toLowerCase().includes(normalizedQuery) ||
+      (v.vendor_tax_id || "").toLowerCase().includes(normalizedQuery) ||
+      (v.default_account_ref || "").toLowerCase().includes(normalizedQuery)
+    );
+  }, [vendors, normalizedQuery]);
   
   // Estado para editar vendor_defaults
   const [isEditDefaultOpen, setIsEditDefaultOpen] = useState(false);
@@ -293,16 +311,24 @@ const Vendors = () => {
 
       <main className="container mx-auto px-6 py-8">
         <Tabs defaultValue="defaults" className="space-y-4">
-          <TabsList className="grid w-full max-w-md grid-cols-2">
-            <TabsTrigger value="defaults" className="flex items-center gap-2">
-              <Settings className="h-4 w-4" />
-              Reglas Automáticas ({vendorDefaults.length})
-            </TabsTrigger>
-            <TabsTrigger value="catalog" className="flex items-center gap-2">
-              <FileText className="h-4 w-4" />
-              Catálogo Completo ({vendors.length})
-            </TabsTrigger>
-          </TabsList>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <TabsList className="grid w-full max-w-md grid-cols-2">
+              <TabsTrigger value="defaults" className="flex items-center gap-2">
+                <Settings className="h-4 w-4" />
+                Reglas Automáticas ({filteredVendorDefaults.length})
+              </TabsTrigger>
+              <TabsTrigger value="catalog" className="flex items-center gap-2">
+                <FileText className="h-4 w-4" />
+                Catálogo Completo ({filteredVendors.length})
+              </TabsTrigger>
+            </TabsList>
+            <Input
+              placeholder="Buscar proveedor por nombre, cédula o cuenta..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="sm:max-w-sm"
+            />
+          </div>
           
           <TabsContent value="defaults">
             <Card className="p-6">
@@ -327,14 +353,14 @@ const Vendors = () => {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {vendorDefaults.length === 0 ? (
+                    {filteredVendorDefaults.length === 0 ? (
                       <TableRow>
                         <TableCell colSpan={4} className="text-center text-muted-foreground py-8">
-                          No hay reglas de proveedor configuradas
+                          {normalizedQuery ? "Sin resultados para la búsqueda" : "No hay reglas de proveedor configuradas"}
                         </TableCell>
                       </TableRow>
                     ) : (
-                      vendorDefaults.map((vd) => (
+                      filteredVendorDefaults.map((vd) => (
                         <TableRow key={vd.id}>
                           <TableCell className="font-medium">{vd.vendor_name}</TableCell>
                           <TableCell>
@@ -405,14 +431,14 @@ const Vendors = () => {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {vendors.length === 0 ? (
+                    {filteredVendors.length === 0 ? (
                       <TableRow>
                         <TableCell colSpan={8} className="text-center text-muted-foreground py-8">
-                          No hay proveedores en el catálogo completo
+                          {normalizedQuery ? "Sin resultados para la búsqueda" : "No hay proveedores en el catálogo completo"}
                         </TableCell>
                       </TableRow>
                     ) : (
-                      vendors.map((vendor) => (
+                      filteredVendors.map((vendor) => (
                         <TableRow key={vendor.id}>
                           <TableCell className="font-medium">{vendor.vendor_name}</TableCell>
                           <TableCell>{vendor.vendor_tax_id || "-"}</TableCell>
