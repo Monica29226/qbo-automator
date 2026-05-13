@@ -353,14 +353,14 @@ const Vendors = () => {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {vendorDefaults.length === 0 ? (
+                    {filteredVendorDefaults.length === 0 ? (
                       <TableRow>
                         <TableCell colSpan={4} className="text-center text-muted-foreground py-8">
-                          No hay reglas de proveedor configuradas
+                          {normalizedQuery ? "Sin resultados para la búsqueda" : "No hay reglas de proveedor configuradas"}
                         </TableCell>
                       </TableRow>
                     ) : (
-                      vendorDefaults.map((vd) => (
+                      filteredVendorDefaults.map((vd) => (
                         <TableRow key={vd.id}>
                           <TableCell className="font-medium">{vd.vendor_name}</TableCell>
                           <TableCell>
