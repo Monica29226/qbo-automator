@@ -431,14 +431,14 @@ const Vendors = () => {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {vendors.length === 0 ? (
+                    {filteredVendors.length === 0 ? (
                       <TableRow>
                         <TableCell colSpan={8} className="text-center text-muted-foreground py-8">
-                          No hay proveedores en el catálogo completo
+                          {normalizedQuery ? "Sin resultados para la búsqueda" : "No hay proveedores en el catálogo completo"}
                         </TableCell>
                       </TableRow>
                     ) : (
-                      vendors.map((vendor) => (
+                      filteredVendors.map((vendor) => (
                         <TableRow key={vendor.id}>
                           <TableCell className="font-medium">{vendor.vendor_name}</TableCell>
                           <TableCell>{vendor.vendor_tax_id || "-"}</TableCell>
