@@ -346,7 +346,17 @@ const Vendors = () => {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Nombre del Proveedor</TableHead>
+                      <TableHead>
+                        <div className="space-y-1">
+                          <div>Nombre del Proveedor</div>
+                          <Input
+                            placeholder="Filtrar..."
+                            value={searchQuery}
+                            onChange={(e) => setSearchQuery(e.target.value)}
+                            className="h-7 text-xs font-normal"
+                          />
+                        </div>
+                      </TableHead>
                       <TableHead>Cuenta Asignada</TableHead>
                       <TableHead>Usa IVA</TableHead>
                       <TableHead className="text-right">Acciones</TableHead>
