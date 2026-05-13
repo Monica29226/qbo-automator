@@ -797,43 +797,7 @@ Deno.serve(async (req) => {
     // Save document
     const { data: document, error: insertError } = await supabase
       .from('processed_documents')
-      .insert([{
-        ...documentRecord,
-        // Spread keeps original behavior - placeholder block below replaced
-        _placeholder: undefined,
-      } as any].map((r: any) => { delete r._placeholder; return r; }))
-      .select()
-      .single();
-
-    if (false) { const _unused = {
-          emisor: {
-            nombre: supplier_name,
-            identificacion: supplier_tax_id,
-            email: supplier_email
-          },
-          receptor: {
-            nombre: receptor.nombre,
-            identificacion: receptor.identificacion
-          },
-          numeroConsecutivo: doc_number,
-          fechaEmision: issue_date,
-          detalle,
-          subTotal: subtotal,
-          totalDescuentos: total_discount,
-          totalImpuesto: total_tax,
-          totalImpuestoAsumidoEmisor, // Impuestos asumidos por emisor (ej: IEBL)
-          totalOtrosCargos, // Otros cargos adicionales
-          totalComprobante: total_amount,
-          moneda: currency,
-          tipoCambio: exchange_rate,
-          cuentaContable: accountCode,
-          esNotaCredito,
-          aceptada
-        },
-        xml_attachment_url: payload.xml_attachment_url,
-        pdf_attachment_url: payload.pdf_attachment_url,
-        file_path: payload.file_path
-      }])
+      .insert([documentRecord])
       .select()
       .single();
 
