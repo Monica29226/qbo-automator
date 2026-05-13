@@ -77,6 +77,24 @@ const Vendors = () => {
     tax_rate: 13,
   });
   const [qboNotConnected, setQboNotConnected] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+
+  const normalizedQuery = searchQuery.trim().toLowerCase();
+  const filteredVendorDefaults = useMemo(() => {
+    if (!normalizedQuery) return vendorDefaults;
+    return vendorDefaults.filter((vd) =>
+      (vd.vendor_name || "").toLowerCase().includes(normalizedQuery) ||
+      (vd.default_account_ref || "").toLowerCase().includes(normalizedQuery)
+    );
+  }, [vendorDefaults, normalizedQuery]);
+  const filteredVendors = useMemo(() => {
+    if (!normalizedQuery) return vendors;
+    return vendors.filter((v) =>
+      (v.vendor_name || "").toLowerCase().includes(normalizedQuery) ||
+      (v.vendor_tax_id || "").toLowerCase().includes(normalizedQuery) ||
+      (v.default_account_ref || "").toLowerCase().includes(normalizedQuery)
+    );
+  }, [vendors, normalizedQuery]);
   
   // Estado para editar vendor_defaults
   const [isEditDefaultOpen, setIsEditDefaultOpen] = useState(false);
