@@ -303,9 +303,31 @@ serve(async (req) => {
     }
 
     const searchData = await searchResponse.json();
-    const messages = searchData.messages || [];
+    let messages = searchData.messages || [];
     
-    console.log(`Found ${messages.length} messages matching query`);
+    console.log(`Found ${messages.length} messages matching query: ${mailQuery}`);
+
+    // Fallback: si hay rango de fechas y 0 resultados, reintentar con timestamps unix
+    // e incluyendo Spam/Trash. Gmail a veces no matchea YYYY/MM/DD por TZ.
+    if (messages.length === 0 && month && year) {
+      const startTs = Math.floor(new Date(year, month - 1, 1).getTime() / 1000);
+      const endTs = Math.floor(new Date(year, month, 1).getTime() / 1000);
+      const fallbackQuery = `has:attachment after:${startTs} before:${endTs}`;
+      console.log(`🔁 Fallback con timestamps unix + spam/trash: ${fallbackQuery}`);
+      const fbResp = await fetch(
+        `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(fallbackQuery)}&maxResults=${maxResults}&includeSpamTrash=true`,
+        { headers: { Authorization: `Bearer ${accessToken}` } }
+      );
+      if (fbResp.ok) {
+        const fbData = await fbResp.json();
+        messages = fbData.messages || [];
+        console.log(`🔁 Fallback encontró ${messages.length} mensajes`);
+        if (messages.length > 0) mailQuery = fallbackQuery;
+      } else {
+        const errBody = await fbResp.text();
+        console.log(`🔁 Fallback falló: ${fbResp.status} ${errBody}`);
+      }
+    }
 
     // Obtener reglas de clasificación
     const { data: rules } = await supabase
