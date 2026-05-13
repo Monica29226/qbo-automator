@@ -233,10 +233,9 @@ serve(async (req) => {
       };
       
       // Importante: 'after:' es INCLUSIVO del día, 'before:' es EXCLUSIVO del día
-      // 'in:anywhere' incluye Spam/Trash/All Mail (muchas facturas llegan a Spam)
-      // Sin filtro 'filename:' porque algunos correos traen el XML como filename
-      // raro o sin extensión .xml visible; igual filtramos por extensión más abajo.
-      mailQuery = `in:anywhere has:attachment after:${formatDate(startDate)} before:${formatDate(afterEndDate)}`;
+      // Sin filtro 'filename:' porque a veces el XML viene con filename raro o sin extensión visible.
+      // Filtramos por extensión más abajo. Sin 'in:anywhere' porque combina mal con date-range en algunas cuentas.
+      mailQuery = `has:attachment after:${formatDate(startDate)} before:${formatDate(afterEndDate)}`;
       console.log(`📅 Using date range query for ${year}-${String(month).padStart(2, '0')}: ${mailQuery}`);
       console.log(`   Start date: ${formatDate(startDate)} (inclusive)`);
       console.log(`   End date: ${formatDate(afterEndDate)} (exclusive, so includes ${year}-${String(month).padStart(2, '0')}-${new Date(year, month, 0).getDate()})`);
