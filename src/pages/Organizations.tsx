@@ -65,7 +65,7 @@ interface PendingInvitation {
 }
 
 const Organizations = () => {
-  const { activeOrganization, organizations: userOrgs } = useAuth();
+  const { activeOrganization, organizations: userOrgs, isAdmin } = useAuth();
   const [orgDetails, setOrgDetails] = useState<Organization | null>(null);
   const [members, setMembers] = useState<Member[]>([]);
   const [pendingInvitations, setPendingInvitations] = useState<PendingInvitation[]>([]);
