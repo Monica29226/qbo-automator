@@ -233,8 +233,9 @@ serve(async (req) => {
       };
       
       // Importante: 'after:' es INCLUSIVO del día, 'before:' es EXCLUSIVO del día
-      // Para diciembre 2025: after:2025/12/01 before:2026/01/01
-      mailQuery = `has:attachment (filename:xml OR filename:pdf) after:${formatDate(startDate)} before:${formatDate(afterEndDate)}`;
+      // Sin filtro 'filename:' porque a veces el XML viene con filename raro o sin extensión visible.
+      // Filtramos por extensión más abajo. Sin 'in:anywhere' porque combina mal con date-range en algunas cuentas.
+      mailQuery = `has:attachment after:${formatDate(startDate)} before:${formatDate(afterEndDate)}`;
       console.log(`📅 Using date range query for ${year}-${String(month).padStart(2, '0')}: ${mailQuery}`);
       console.log(`   Start date: ${formatDate(startDate)} (inclusive)`);
       console.log(`   End date: ${formatDate(afterEndDate)} (exclusive, so includes ${year}-${String(month).padStart(2, '0')}-${new Date(year, month, 0).getDate()})`);
@@ -302,9 +303,53 @@ serve(async (req) => {
     }
 
     const searchData = await searchResponse.json();
-    const messages = searchData.messages || [];
+    let messages = searchData.messages || [];
     
-    console.log(`Found ${messages.length} messages matching query`);
+    console.log(`Found ${messages.length} messages matching query: ${mailQuery}`);
+
+    // Fallback: si hay rango de fechas y 0 resultados, reintentar con timestamps unix
+    // e incluyendo Spam/Trash. Gmail a veces no matchea YYYY/MM/DD por TZ.
+    if (messages.length === 0 && month && year) {
+      const startTs = Math.floor(new Date(year, month - 1, 1).getTime() / 1000);
+      const endTs = Math.floor(new Date(year, month, 1).getTime() / 1000);
+      const fallbackQuery = `has:attachment after:${startTs} before:${endTs}`;
+      console.log(`🔁 Fallback con timestamps unix + spam/trash: ${fallbackQuery}`);
+      const fbResp = await fetch(
+        `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(fallbackQuery)}&maxResults=${maxResults}&includeSpamTrash=true`,
+        { headers: { Authorization: `Bearer ${accessToken}` } }
+      );
+      if (fbResp.ok) {
+        const fbData = await fbResp.json();
+        messages = fbData.messages || [];
+        console.log(`🔁 Fallback encontró ${messages.length} mensajes`);
+        if (messages.length > 0) mailQuery = fallbackQuery;
+      } else {
+        const errBody = await fbResp.text();
+        console.log(`🔁 Fallback falló: ${fbResp.status} ${errBody}`);
+      }
+    }
+
+    // Diagnóstico extra: si seguimos en 0, probar consultas amplias para ver si la cuenta tiene algo
+    if (messages.length === 0) {
+      const probes = [
+        `has:attachment newer_than:60d`,
+        `newer_than:60d`,
+        `has:attachment`,
+      ];
+      for (const diagQuery of probes) {
+        const diagResp = await fetch(
+          `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(diagQuery)}&maxResults=10&includeSpamTrash=true`,
+          { headers: { Authorization: `Bearer ${accessToken}` } }
+        );
+        if (diagResp.ok) {
+          const diagData = await diagResp.json();
+          console.log(`🩺 Diagnóstico (${diagQuery}): ${(diagData.messages || []).length} mensajes`);
+        } else {
+          const t = await diagResp.text();
+          console.log(`🩺 Diagnóstico (${diagQuery}) ERROR ${diagResp.status}: ${t}`);
+        }
+      }
+    }
 
     // Obtener reglas de clasificación
     const { data: rules } = await supabase
