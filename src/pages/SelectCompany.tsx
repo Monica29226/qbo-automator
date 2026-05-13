@@ -11,10 +11,11 @@ import { CreateOrganizationDialog } from "@/components/CreateOrganizationDialog"
 
 const SelectCompany = () => {
   const navigate = useNavigate();
-  const { user, organizations, isLoading: authLoading, setActiveOrganizationLocal } = useAuth();
+  const { user, organizations, isLoading: authLoading, setActiveOrganizationLocal, isAdmin } = useAuth();
   const [isSelecting, setIsSelecting] = useState(false);
   const [selectedOrg, setSelectedOrg] = useState<string | null>(null);
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
+  const [deletingOrgId, setDeletingOrgId] = useState<string | null>(null);
   
   // Ordenar organizaciones alfabéticamente
   const sortedOrganizations = [...organizations].sort((a, b) => 
