@@ -731,29 +731,81 @@ Deno.serve(async (req) => {
       }
     }
 
+    const documentRecord = {
+      organization_id: payload.organization_id,
+      doc_key,
+      doc_number,
+      doc_type,
+      issue_date,
+      supplier_name,
+      supplier_tax_id,
+      supplier_email,
+      total_amount,
+      total_tax,
+      total_discount,
+      currency,
+      exchange_rate,
+      vendor_id: vendorId,
+      status,
+      default_account_ref: status === "processed" ? accountCode : null,
+      processed_at: status === "processed" ? new Date().toISOString() : null,
+      error_message: status === "review" ? `Proveedor sin regla automática${payload.source ? ` (${payload.source})` : ''}` : null,
+      xml_data: {
+        emisor: {
+          nombre: supplier_name,
+          identificacion: supplier_tax_id,
+          email: supplier_email
+        },
+        receptor: {
+          nombre: receptor.nombre,
+          identificacion: receptor.identificacion
+        },
+        numeroConsecutivo: doc_number,
+        fechaEmision: issue_date,
+        detalle,
+        subTotal: subtotal,
+        totalDescuentos: total_discount,
+        totalImpuesto: total_tax,
+        totalImpuestoAsumidoEmisor,
+        totalOtrosCargos,
+        totalComprobante: total_amount,
+        moneda: currency,
+        tipoCambio: exchange_rate,
+        cuentaContable: accountCode,
+        esNotaCredito,
+        aceptada
+      },
+      xml_attachment_url: payload.xml_attachment_url,
+      pdf_attachment_url: payload.pdf_attachment_url,
+      file_path: payload.file_path
+    };
+
+    // Dry run: return the would-be record without writing to DB (used by /xml-debug compare)
+    if ((payload as any).dry_run === true) {
+      return new Response(
+        JSON.stringify({
+          success: true,
+          dry_run: true,
+          status,
+          account_code: accountCode,
+          document: documentRecord
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
     // Save document
     const { data: document, error: insertError } = await supabase
       .from('processed_documents')
       .insert([{
-        organization_id: payload.organization_id,
-        doc_key,
-        doc_number,
-        doc_type,
-        issue_date,
-        supplier_name,
-        supplier_tax_id,
-        supplier_email,
-        total_amount,
-        total_tax,
-        total_discount,
-        currency,
-        exchange_rate,
-        vendor_id: vendorId,
-        status,
-        default_account_ref: status === "processed" ? accountCode : null, // Guardar cuenta si está configurada
-        processed_at: status === "processed" ? new Date().toISOString() : null,
-        error_message: status === "review" ? `Proveedor sin regla automática${payload.source ? ` (${payload.source})` : ''}` : null,
-        xml_data: {
+        ...documentRecord,
+        // Spread keeps original behavior - placeholder block below replaced
+        _placeholder: undefined,
+      } as any].map((r: any) => { delete r._placeholder; return r; }))
+      .select()
+      .single();
+
+    if (false) { const _unused = {
           emisor: {
             nombre: supplier_name,
             identificacion: supplier_tax_id,
