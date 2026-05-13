@@ -1,0 +1,1 @@
+DELETE FROM public.integration_accounts WHERE id='a1ccbeae-fffd-4cbe-ba8e-39af7d083a6d';
