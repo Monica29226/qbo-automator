@@ -152,40 +152,60 @@ const SelectCompany = () => {
 
         <Card className="p-6">
           <div className="space-y-4">
-            {sortedOrganizations.map((org) => (
-              <button
-                key={org.id}
-                onClick={() => setSelectedOrg(org.id)}
-                className={`w-full p-4 rounded-lg border-2 transition-all text-left flex items-center gap-4 hover:border-primary ${
-                  selectedOrg === org.id
-                    ? "border-primary bg-primary/5"
-                    : "border-border bg-card"
-                }`}
-              >
-                <div className="flex-shrink-0">
-                  <div className={`w-12 h-12 rounded-full flex items-center justify-center ${
-                    selectedOrg === org.id ? "bg-primary text-primary-foreground" : "bg-muted"
-                  }`}>
-                    <Building2 className="h-6 w-6" />
-                  </div>
-                </div>
-                <div className="flex-1">
-                  <div className="font-semibold text-foreground">{org.name}</div>
-                  <div className="text-sm text-muted-foreground capitalize">
-                    Rol: {org.role}
-                  </div>
-                </div>
-                {selectedOrg === org.id && (
+            {sortedOrganizations.map((org) => {
+              const canDelete = org.role === "owner" || org.role === "admin" || isAdmin;
+              return (
+                <div
+                  key={org.id}
+                  onClick={() => setSelectedOrg(org.id)}
+                  role="button"
+                  tabIndex={0}
+                  className={`w-full p-4 rounded-lg border-2 transition-all text-left flex items-center gap-4 hover:border-primary cursor-pointer ${
+                    selectedOrg === org.id
+                      ? "border-primary bg-primary/5"
+                      : "border-border bg-card"
+                  }`}
+                >
                   <div className="flex-shrink-0">
-                    <div className="w-6 h-6 rounded-full bg-primary flex items-center justify-center">
-                      <svg className="w-4 h-4 text-primary-foreground" fill="currentColor" viewBox="0 0 20 20">
-                        <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                      </svg>
+                    <div className={`w-12 h-12 rounded-full flex items-center justify-center ${
+                      selectedOrg === org.id ? "bg-primary text-primary-foreground" : "bg-muted"
+                    }`}>
+                      <Building2 className="h-6 w-6" />
                     </div>
                   </div>
-                )}
-              </button>
-            ))}
+                  <div className="flex-1">
+                    <div className="font-semibold text-foreground">{org.name}</div>
+                    <div className="text-sm text-muted-foreground capitalize">
+                      Rol: {org.role}
+                    </div>
+                  </div>
+                  {selectedOrg === org.id && (
+                    <div className="flex-shrink-0">
+                      <div className="w-6 h-6 rounded-full bg-primary flex items-center justify-center">
+                        <svg className="w-4 h-4 text-primary-foreground" fill="currentColor" viewBox="0 0 20 20">
+                          <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                        </svg>
+                      </div>
+                    </div>
+                  )}
+                  {canDelete && (
+                    <button
+                      type="button"
+                      onClick={(e) => handleDeleteOrg(e, org.id, org.name)}
+                      disabled={deletingOrgId === org.id}
+                      title="Eliminar empresa"
+                      className="flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-muted-foreground hover:bg-destructive hover:text-destructive-foreground transition-colors disabled:opacity-50"
+                    >
+                      {deletingOrgId === org.id ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <X className="h-4 w-4" />
+                      )}
+                    </button>
+                  )}
+                </div>
+              );
+            })}
           </div>
 
           <div className="flex gap-3 mt-6">
