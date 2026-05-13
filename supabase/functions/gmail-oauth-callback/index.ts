@@ -105,7 +105,7 @@ serve(async (req) => {
           expires_at: Date.now() + (tokens.expires_in * 1000),
         },
       }, {
-        onConflict: "organization_id,service_type,account_email"
+        onConflict: "organization_id,service_type"
       });
 
     if (upsertError) {
