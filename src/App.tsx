@@ -31,6 +31,7 @@ import AllInvoices from "./pages/AllInvoices";
 import BankStatements from "./pages/BankStatements";
 import ResetPassword from "./pages/ResetPassword";
 import ForgotPassword from "./pages/ForgotPassword";
+import XmlDebug from "./pages/XmlDebug";
 import NotFound from "./pages/NotFound";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import { AppErrorBoundary } from "./components/AppErrorBoundary";
@@ -187,6 +188,14 @@ const App = () => (
                 element={
                   <ProtectedRoute>
                     <AuditReport />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/xml-debug"
+                element={
+                  <ProtectedRoute>
+                    <XmlDebug />
                   </ProtectedRoute>
                 }
               />
