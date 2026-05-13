@@ -373,6 +373,67 @@ const Organizations = () => {
     }
   };
 
+  const handleDeleteOrg = async (orgId: string, orgName: string) => {
+    if (orgId === activeOrganization) {
+      toast.error("No puede eliminar la empresa activa. Cambie a otra primero.");
+      return;
+    }
+    const confirmText = prompt(
+      `Esta acción eliminará permanentemente la empresa "${orgName}" y todos sus datos relacionados (miembros, configuración, documentos, proveedores, etc.).\n\nEscriba ELIMINAR para confirmar:`
+    );
+    if (confirmText !== "ELIMINAR") {
+      toast.info("Eliminación cancelada");
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      // Borrar dependencias primero (no hay FK con cascade)
+      const tables = [
+        "organization_members",
+        "organization_invitations",
+        "system_settings",
+        "vendor_defaults",
+        "vendors",
+        "vendor_classification_rules",
+        "vendor_categories",
+        "processed_documents",
+        "qbo_publish_tracking",
+        "sync_logs",
+        "alert_history",
+        "audit_log",
+        "sales_invoices",
+        "customer_defaults",
+        "cabys_items",
+        "billing_sequences",
+        "hacienda_certificates",
+        "integration_accounts",
+        "oauth_credentials",
+        "onedrive_subscriptions",
+        "bank_import_configs",
+        "bank_import_jobs",
+        "bank_import_job_items",
+        "bank_import_sources",
+      ] as const;
+
+      for (const t of tables) {
+        const { error } = await supabase.from(t as any).delete().eq("organization_id", orgId);
+        if (error) console.warn(`No se pudo limpiar ${t}:`, error.message);
+      }
+
+      const { error: orgErr } = await supabase.from("organizations").delete().eq("id", orgId);
+      if (orgErr) {
+        toast.error(`Error al eliminar empresa: ${orgErr.message}`);
+      } else {
+        toast.success(`Empresa "${orgName}" eliminada. Recarga la página.`);
+      }
+    } catch (e: any) {
+      toast.error(`Error inesperado: ${e.message}`);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const roleLabels: Record<string, string> = {
     owner: "Propietario",
     admin: "Administrador",
@@ -594,10 +655,24 @@ const Organizations = () => {
                         <div>
                           <h3 className="font-semibold">{org.name}</h3>
                           <p className="text-sm text-muted-foreground capitalize">{org.role}</p>
+                          <p className="text-xs text-muted-foreground font-mono mt-1">{org.id}</p>
                         </div>
-                        {org.id === activeOrganization && (
-                          <Badge>Activa</Badge>
-                        )}
+                        <div className="flex items-center gap-2">
+                          {org.id === activeOrganization && (
+                            <Badge>Activa</Badge>
+                          )}
+                          {org.role === "owner" && org.id !== activeOrganization && (
+                            <Button
+                              variant="destructive"
+                              size="sm"
+                              onClick={() => handleDeleteOrg(org.id, org.name)}
+                              disabled={isLoading}
+                            >
+                              <Trash2 className="h-4 w-4 mr-1" />
+                              Eliminar
+                            </Button>
+                          )}
+                        </div>
                       </div>
                     </Card>
                   ))}
