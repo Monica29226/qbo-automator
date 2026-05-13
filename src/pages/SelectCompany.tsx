@@ -70,6 +70,65 @@ const SelectCompany = () => {
     navigate("/dashboard");
   };
 
+  const handleDeleteOrg = async (e: React.MouseEvent, orgId: string, orgName: string) => {
+    e.stopPropagation();
+    const confirmText = prompt(
+      `Esta acción eliminará permanentemente la empresa "${orgName}" y todos sus datos relacionados.\n\nEscriba ELIMINAR para confirmar:`
+    );
+    if (confirmText !== "ELIMINAR") {
+      toast.info("Eliminación cancelada");
+      return;
+    }
+
+    setDeletingOrgId(orgId);
+    try {
+      const tables = [
+        "organization_members",
+        "organization_invitations",
+        "system_settings",
+        "vendor_defaults",
+        "vendors",
+        "vendor_classification_rules",
+        "vendor_categories",
+        "processed_documents",
+        "qbo_publish_tracking",
+        "sync_logs",
+        "alert_history",
+        "audit_log",
+        "sales_invoices",
+        "customer_defaults",
+        "cabys_items",
+        "billing_sequences",
+        "hacienda_certificates",
+        "integration_accounts",
+        "oauth_credentials",
+        "onedrive_subscriptions",
+        "bank_import_configs",
+        "bank_import_jobs",
+        "bank_import_job_items",
+        "bank_import_sources",
+      ] as const;
+
+      for (const t of tables) {
+        const { error } = await supabase.from(t as any).delete().eq("organization_id", orgId);
+        if (error) console.warn(`No se pudo limpiar ${t}:`, error.message);
+      }
+
+      const { error: orgErr } = await supabase.from("organizations").delete().eq("id", orgId);
+      if (orgErr) {
+        toast.error(`Error al eliminar empresa: ${orgErr.message}`);
+      } else {
+        toast.success(`Empresa "${orgName}" eliminada`);
+        if (selectedOrg === orgId) setSelectedOrg(null);
+        setTimeout(() => window.location.reload(), 800);
+      }
+    } catch (err: any) {
+      toast.error(`Error inesperado: ${err.message}`);
+    } finally {
+      setDeletingOrgId(null);
+    }
+  };
+
   if (authLoading) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-primary/5 via-background to-accent/5 flex items-center justify-center">
