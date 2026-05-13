@@ -65,7 +65,7 @@ interface PendingInvitation {
 }
 
 const Organizations = () => {
-  const { activeOrganization, organizations: userOrgs } = useAuth();
+  const { activeOrganization, organizations: userOrgs, isAdmin } = useAuth();
   const [orgDetails, setOrgDetails] = useState<Organization | null>(null);
   const [members, setMembers] = useState<Member[]>([]);
   const [pendingInvitations, setPendingInvitations] = useState<PendingInvitation[]>([]);
@@ -661,12 +661,13 @@ const Organizations = () => {
                           {org.id === activeOrganization && (
                             <Badge>Activa</Badge>
                           )}
-                          {org.role === "owner" && org.id !== activeOrganization && (
+                          {(org.role === "owner" || org.role === "admin" || isAdmin) && (
                             <Button
                               variant="destructive"
                               size="sm"
                               onClick={() => handleDeleteOrg(org.id, org.name)}
-                              disabled={isLoading}
+                              disabled={isLoading || org.id === activeOrganization}
+                              title={org.id === activeOrganization ? "Cambia a otra empresa primero" : "Eliminar empresa"}
                             >
                               <Trash2 className="h-4 w-4 mr-1" />
                               Eliminar
