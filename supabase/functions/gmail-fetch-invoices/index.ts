@@ -534,12 +534,17 @@ serve(async (req) => {
         });
         
         const pdfPart = allParts.find((p: any) => p.filename?.toLowerCase().endsWith(".pdf"));
+        if (pdfPart) {
+          messagesWithPdf.add(message.id);
+        }
         
         // Si no hay XMLs de factura válidos, saltar este mensaje
         if (xmlParts.length === 0) {
           console.log(`📭 No invoice XMLs found in message ${message.id} (${allXmlParts.length} response XMLs skipped)`);
           continue;
         }
+
+        messagesWithXml.add(message.id);
         
         let pdfAttachmentId = pdfPart?.body?.attachmentId;
         let pdfFilename = pdfPart?.filename;
@@ -572,6 +577,22 @@ serve(async (req) => {
               const xmlContent = new TextDecoder('utf-8').decode(bytes);
 
               console.log(`Processing invoice: ${xmlPart.filename}`);
+
+              const issueDateFromXml = parseIssueDateFromXml(xmlContent);
+              if (requestedPeriod && !matchesRequestedPeriod(issueDateFromXml)) {
+                filteredByXmlDateCount++;
+                console.log(`⏭️ XML fuera del período solicitado (${requestedPeriod}): ${xmlPart.filename} -> ${issueDateFromXml || 'sin FechaEmision'}`);
+                skippedInvoices.push({
+                  filename: xmlPart.filename,
+                  reason: `XML fuera del período solicitado (${requestedPeriod})`,
+                  issue_date: issueDateFromXml,
+                });
+                continue;
+              }
+
+              if (requestedPeriod) {
+                messagesInRequestedPeriod.add(message.id);
+              }
 
               // Descargar y guardar PDF si existe (antes de procesar)
               let pdfUrl = null;
@@ -660,6 +681,7 @@ serve(async (req) => {
                 if (isDuplicate || isResponseXml || isReceptorMismatch) {
                   console.log(`⏭️ Skipped ${xmlPart.filename}: ${errorMsg}`);
                   skippedInvoices.push({ filename: xmlPart.filename, reason: errorMsg });
+                  if (isDuplicate) existingSkippedCount++;
                 } else {
                   console.error(`❌ Processing error for ${xmlPart.filename}:`, errorMsg);
                   errors.push({ filename: xmlPart.filename, error: errorMsg });
@@ -721,16 +743,25 @@ serve(async (req) => {
     const status = wasTimeLimitReached ? "partial" : "success";
     
     console.log(`📊 Summary [${status}]: ${processedInvoices.length} processed, ${skippedInvoices.length} skipped, ${errors.length} errors. Time: ${(totalExecutionTime / 1000).toFixed(1)}s`);
+    if (requestedPeriod) {
+      console.log(`📅 XML period ${requestedPeriod}: ${messagesInRequestedPeriod.size} mensajes con XML dentro del período, ${filteredByXmlDateCount} XML fuera del período`);
+    }
     
     return new Response(
       JSON.stringify({
         success: true,
         status, // "success" o "partial"
         messages_found: messages.length,
+        total_messages_in_range: requestedPeriod ? messagesInRequestedPeriod.size : messages.length,
+        emails_with_xml: messagesWithXml.size,
+        emails_with_pdf: messagesWithPdf.size,
         invoices_processed: processedInvoices.length,
         invoices_skipped: skippedInvoices.length,
+        invoices_existing_skipped: existingSkippedCount,
         invoices_failed: errors.length,
         invoices: processedInvoices,
+        requested_period: requestedPeriod,
+        xml_filtered_out_of_period: filteredByXmlDateCount,
         skipped: skippedInvoices.length > 0 ? skippedInvoices : undefined,
         errors: errors.length > 0 ? errors : undefined,
         time_limit_reached: wasTimeLimitReached,
