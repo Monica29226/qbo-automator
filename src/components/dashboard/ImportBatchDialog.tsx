@@ -232,8 +232,12 @@ export function ImportBatchDialog({ onSuccess }: ImportBatchDialogProps) {
 
       if (totalProcessed > 0) {
         toast.success(`✓ ${totalProcessed} factura${totalProcessed !== 1 ? "s" : ""} importada${totalProcessed !== 1 ? "s" : ""}`);
+      } else if (totalExistingSkipped > 0 || totalEmailsWithXml > 0 || totalEmails > 0) {
+        toast.info(
+          `Se encontraron correos/facturas, pero no hubo nuevas para importar (${totalExistingSkipped} existentes, ${totalFailed} con error).`
+        );
       } else {
-        toast.info("No se encontraron facturas nuevas para este período");
+        toast.info("No se encontraron correos con facturas para ese período");
       }
 
       onSuccess?.();

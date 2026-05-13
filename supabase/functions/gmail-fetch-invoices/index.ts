@@ -215,6 +215,31 @@ serve(async (req) => {
       .eq("organization_id", organization_id)
       .in("key", ["mail_query"]);
 
+    const requestedPeriod = month && year
+      ? `${year}-${String(month).padStart(2, '0')}`
+      : null;
+
+    const parseXMLValue = (xml: string, tagName: string): string | null => {
+      const match = xml.match(new RegExp(`<(?:[\\w-]+:)?${tagName}>([\\s\\S]*?)<\\/(?:[\\w-]+:)?${tagName}>`, "i"));
+      return match?.[1]?.trim() || null;
+    };
+
+    const parseIssueDateFromXml = (xml: string): string | null => {
+      const rawDate =
+        parseXMLValue(xml, "FechaEmision") ||
+        parseXMLValue(xml, "FechaEmisionDoc") ||
+        parseXMLValue(xml, "Fecha");
+
+      if (!rawDate) return null;
+      const normalized = rawDate.includes("T") ? rawDate.split("T")[0] : rawDate;
+      return /^\d{4}-\d{2}-\d{2}$/.test(normalized) ? normalized : null;
+    };
+
+    const matchesRequestedPeriod = (issueDate: string | null): boolean => {
+      if (!requestedPeriod) return true;
+      return issueDate?.startsWith(requestedPeriod) ?? false;
+    };
+
     // Construir query de Gmail con filtro de fecha personalizado si se proporciona
     let mailQuery: string;
     
@@ -236,9 +261,10 @@ serve(async (req) => {
       // Sin filtro 'filename:' porque a veces el XML viene con filename raro o sin extensión visible.
       // Filtramos por extensión más abajo. Sin 'in:anywhere' porque combina mal con date-range en algunas cuentas.
       mailQuery = `has:attachment after:${formatDate(startDate)} before:${formatDate(afterEndDate)}`;
-      console.log(`📅 Using date range query for ${year}-${String(month).padStart(2, '0')}: ${mailQuery}`);
+      console.log(`📅 Using Gmail candidate query for requested XML period ${requestedPeriod}: ${mailQuery}`);
       console.log(`   Start date: ${formatDate(startDate)} (inclusive)`);
       console.log(`   End date: ${formatDate(afterEndDate)} (exclusive, so includes ${year}-${String(month).padStart(2, '0')}-${new Date(year, month, 0).getDate()})`);
+      console.log(`   Final validation will use XML FechaEmision, not Gmail received date`);
     } else {
       mailQuery = settings?.find(s => s.key === "mail_query")?.value || 
         "has:attachment (filename:xml OR filename:pdf) newer_than:3d";
@@ -307,25 +333,38 @@ serve(async (req) => {
     
     console.log(`Found ${messages.length} messages matching query: ${mailQuery}`);
 
-    // Fallback: si hay rango de fechas y 0 resultados, reintentar con timestamps unix
-    // e incluyendo Spam/Trash. Gmail a veces no matchea YYYY/MM/DD por TZ.
+    // Fallback: si hay rango de fechas y 0 resultados, reintentar con búsquedas más amplias.
+    // La validación final SIEMPRE se hará con la FechaEmision del XML para respetar la factura real.
     if (messages.length === 0 && month && year) {
       const startTs = Math.floor(new Date(year, month - 1, 1).getTime() / 1000);
       const endTs = Math.floor(new Date(year, month, 1).getTime() / 1000);
-      const fallbackQuery = `has:attachment after:${startTs} before:${endTs}`;
-      console.log(`🔁 Fallback con timestamps unix + spam/trash: ${fallbackQuery}`);
-      const fbResp = await fetch(
-        `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(fallbackQuery)}&maxResults=${maxResults}&includeSpamTrash=true`,
-        { headers: { Authorization: `Bearer ${accessToken}` } }
-      );
-      if (fbResp.ok) {
+      const fallbackQueries = [
+        `has:attachment after:${startTs} before:${endTs}`,
+        `has:attachment after:${year}/01/01 before:${year + 1}/01/01`,
+        `has:attachment newer_than:730d`,
+        `has:attachment`,
+      ];
+
+      for (const fallbackQuery of fallbackQueries) {
+        console.log(`🔁 Fallback Gmail query: ${fallbackQuery}`);
+        const fbResp = await fetch(
+          `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(fallbackQuery)}&maxResults=${maxResults}&includeSpamTrash=true`,
+          { headers: { Authorization: `Bearer ${accessToken}` } }
+        );
+
+        if (!fbResp.ok) {
+          const errBody = await fbResp.text();
+          console.log(`🔁 Fallback falló: ${fbResp.status} ${errBody}`);
+          continue;
+        }
+
         const fbData = await fbResp.json();
         messages = fbData.messages || [];
         console.log(`🔁 Fallback encontró ${messages.length} mensajes`);
-        if (messages.length > 0) mailQuery = fallbackQuery;
-      } else {
-        const errBody = await fbResp.text();
-        console.log(`🔁 Fallback falló: ${fbResp.status} ${errBody}`);
+        if (messages.length > 0) {
+          mailQuery = fallbackQuery;
+          break;
+        }
       }
     }
 
@@ -365,6 +404,11 @@ serve(async (req) => {
     const processedInvoices: any[] = [];
     const skippedInvoices: any[] = [];
     const errors: any[] = [];
+    const messagesInRequestedPeriod = new Set<string>();
+    const messagesWithXml = new Set<string>();
+    const messagesWithPdf = new Set<string>();
+    let existingSkippedCount = 0;
+    let filteredByXmlDateCount = 0;
 
     // Helper function to recursively find all attachments (handles nested multipart)
     function findAllParts(part: any, result: any[] = []): any[] {
@@ -490,12 +534,17 @@ serve(async (req) => {
         });
         
         const pdfPart = allParts.find((p: any) => p.filename?.toLowerCase().endsWith(".pdf"));
+        if (pdfPart) {
+          messagesWithPdf.add(message.id);
+        }
         
         // Si no hay XMLs de factura válidos, saltar este mensaje
         if (xmlParts.length === 0) {
           console.log(`📭 No invoice XMLs found in message ${message.id} (${allXmlParts.length} response XMLs skipped)`);
           continue;
         }
+
+        messagesWithXml.add(message.id);
         
         let pdfAttachmentId = pdfPart?.body?.attachmentId;
         let pdfFilename = pdfPart?.filename;
@@ -528,6 +577,22 @@ serve(async (req) => {
               const xmlContent = new TextDecoder('utf-8').decode(bytes);
 
               console.log(`Processing invoice: ${xmlPart.filename}`);
+
+              const issueDateFromXml = parseIssueDateFromXml(xmlContent);
+              if (requestedPeriod && !matchesRequestedPeriod(issueDateFromXml)) {
+                filteredByXmlDateCount++;
+                console.log(`⏭️ XML fuera del período solicitado (${requestedPeriod}): ${xmlPart.filename} -> ${issueDateFromXml || 'sin FechaEmision'}`);
+                skippedInvoices.push({
+                  filename: xmlPart.filename,
+                  reason: `XML fuera del período solicitado (${requestedPeriod})`,
+                  issue_date: issueDateFromXml,
+                });
+                continue;
+              }
+
+              if (requestedPeriod) {
+                messagesInRequestedPeriod.add(message.id);
+              }
 
               // Descargar y guardar PDF si existe (antes de procesar)
               let pdfUrl = null;
@@ -616,6 +681,7 @@ serve(async (req) => {
                 if (isDuplicate || isResponseXml || isReceptorMismatch) {
                   console.log(`⏭️ Skipped ${xmlPart.filename}: ${errorMsg}`);
                   skippedInvoices.push({ filename: xmlPart.filename, reason: errorMsg });
+                  if (isDuplicate) existingSkippedCount++;
                 } else {
                   console.error(`❌ Processing error for ${xmlPart.filename}:`, errorMsg);
                   errors.push({ filename: xmlPart.filename, error: errorMsg });
@@ -677,16 +743,25 @@ serve(async (req) => {
     const status = wasTimeLimitReached ? "partial" : "success";
     
     console.log(`📊 Summary [${status}]: ${processedInvoices.length} processed, ${skippedInvoices.length} skipped, ${errors.length} errors. Time: ${(totalExecutionTime / 1000).toFixed(1)}s`);
+    if (requestedPeriod) {
+      console.log(`📅 XML period ${requestedPeriod}: ${messagesInRequestedPeriod.size} mensajes con XML dentro del período, ${filteredByXmlDateCount} XML fuera del período`);
+    }
     
     return new Response(
       JSON.stringify({
         success: true,
         status, // "success" o "partial"
         messages_found: messages.length,
+        total_messages_in_range: requestedPeriod ? messagesInRequestedPeriod.size : messages.length,
+        emails_with_xml: messagesWithXml.size,
+        emails_with_pdf: messagesWithPdf.size,
         invoices_processed: processedInvoices.length,
         invoices_skipped: skippedInvoices.length,
+        invoices_existing_skipped: existingSkippedCount,
         invoices_failed: errors.length,
         invoices: processedInvoices,
+        requested_period: requestedPeriod,
+        xml_filtered_out_of_period: filteredByXmlDateCount,
         skipped: skippedInvoices.length > 0 ? skippedInvoices : undefined,
         errors: errors.length > 0 ? errors : undefined,
         time_limit_reached: wasTimeLimitReached,
