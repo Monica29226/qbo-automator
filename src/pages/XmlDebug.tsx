@@ -34,7 +34,7 @@ const StatusIcon = ({ status }: { status: TraceStep["status"] }) => {
 };
 
 export default function XmlDebug() {
-  const { activeOrganization } = useAuth();
+  const { activeOrganization, isAdmin, signOut } = useAuth();
   const [xml, setXml] = useState("");
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<DebugResult | null>(null);
@@ -65,7 +65,7 @@ export default function XmlDebug() {
   return (
     <SidebarProvider>
       <div className="flex min-h-screen w-full bg-background">
-        <DashboardSidebar />
+        <DashboardSidebar isAdmin={isAdmin} reviewCount={0} onSignOut={signOut} />
         <main className="flex-1 p-6 space-y-6">
           <div className="flex items-center gap-2">
             <SidebarTrigger />
