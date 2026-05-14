@@ -809,6 +809,23 @@ Deno.serve(async (req) => {
     const qboAccounts = accountsData.QueryResponse?.Account || [];
     console.log(`📊 ${qboAccounts.length} cuentas cargadas`);
 
+    // Load TaxCodes + TaxRates so each line can carry the correct tax classification
+    console.log('📊 Cargando TaxCodes y TaxRates de QuickBooks...');
+    const [taxCodesResp, taxRatesResp] = await Promise.all([
+      fetch(`https://quickbooks.api.intuit.com/v3/company/${realmId}/query?query=${encodeURIComponent('SELECT Id, Name, Description, SalesTaxRateList, PurchaseTaxRateList FROM TaxCode WHERE Active = true MAXRESULTS 200')}`,
+        { headers: { 'Authorization': `Bearer ${access_token}`, 'Accept': 'application/json' } }),
+      fetch(`https://quickbooks.api.intuit.com/v3/company/${realmId}/query?query=${encodeURIComponent('SELECT Id, Name, RateValue FROM TaxRate WHERE Active = true MAXRESULTS 200')}`,
+        { headers: { 'Authorization': `Bearer ${access_token}`, 'Accept': 'application/json' } }),
+    ]);
+    const qboTaxCodes: any[] = taxCodesResp.ok ? ((await taxCodesResp.json()).QueryResponse?.TaxCode || []) : [];
+    const qboTaxRates: any[] = taxRatesResp.ok ? ((await taxRatesResp.json()).QueryResponse?.TaxRate || []) : [];
+    const taxRatesMap = new Map<string, number>();
+    for (const tr of qboTaxRates) {
+      const v = parseFloat(tr.RateValue);
+      if (!isNaN(v)) taxRatesMap.set(tr.Id, v);
+    }
+    console.log(`📊 TaxCodes=${qboTaxCodes.length}, TaxRates=${qboTaxRates.length}`);
+
     // 4. Fetch documents to publish
     let query = supabase
       .from('processed_documents')
