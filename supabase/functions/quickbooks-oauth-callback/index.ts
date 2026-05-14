@@ -161,7 +161,7 @@ serve(async (req) => {
       updated_at: new Date().toISOString(),
     };
 
-    console.log("[oauth-callback] Looking up existing integration", {
+    log("log", "Looking up existing integration", {
       organization_id,
       service_type: "quickbooks",
       realm_id: realmId,
@@ -174,7 +174,7 @@ serve(async (req) => {
       .eq("service_type", "quickbooks");
 
     if (existingIntegrationError) {
-      console.error("[oauth-callback] Error checking existing QuickBooks integration:", {
+      log("error", "Error checking existing QuickBooks integration", {
         message: existingIntegrationError.message,
         details: (existingIntegrationError as any).details,
         hint: (existingIntegrationError as any).hint,
@@ -183,7 +183,7 @@ serve(async (req) => {
       throw existingIntegrationError;
     }
 
-    console.log("[oauth-callback] Found existing integrations:", {
+    log("log", "Found existing integrations", {
       count: existingIntegrations?.length ?? 0,
       records: (existingIntegrations ?? []).map((r) => ({
         id: r.id,
@@ -198,7 +198,7 @@ serve(async (req) => {
     const existingIntegration = existingIntegrations?.[0] ?? null;
 
     if ((existingIntegrations?.length ?? 0) > 1) {
-      console.warn("[oauth-callback] Multiple QuickBooks integrations found for org — updating the first and deactivating the rest", {
+      log("warn", "Multiple QuickBooks integrations found for org — updating the first and deactivating the rest", {
         organization_id,
         ids: existingIntegrations!.map((r) => r.id),
       });
@@ -210,7 +210,7 @@ serve(async (req) => {
         .in("id", extraIds);
 
       if (deactivateError) {
-        console.error("[oauth-callback] Failed to deactivate duplicate integrations:", {
+        log("error", "Failed to deactivate duplicate integrations", {
           message: deactivateError.message,
           details: (deactivateError as any).details,
           hint: (deactivateError as any).hint,
@@ -221,7 +221,7 @@ serve(async (req) => {
     }
 
     const writeOperation = existingIntegration ? "update" : "insert";
-    console.log(`[oauth-callback] Performing ${writeOperation} on integration_accounts`, {
+    log("log", `Performing ${writeOperation} on integration_accounts`, {
       target_id: existingIntegration?.id ?? null,
       organization_id,
       realm_id: realmId,
@@ -239,7 +239,7 @@ serve(async (req) => {
     const { error: writeError } = await writeQuery;
 
     if (writeError) {
-      console.error(`[oauth-callback] Error storing tokens (${writeOperation}):`, {
+      log("error", `Error storing tokens (${writeOperation})`, {
         message: writeError.message,
         details: (writeError as any).details,
         hint: (writeError as any).hint,
@@ -257,10 +257,10 @@ serve(async (req) => {
       throw writeError;
     }
 
-    console.log(`[oauth-callback] ${writeOperation} succeeded for org ${organization_id}`);
+    log("log", `${writeOperation} succeeded`, { organization_id, target_id: existingIntegration?.id ?? null });
 
     // Update organization connection status
-    await supabase
+    const { error: orgUpdateError } = await supabase
       .from("organizations")
       .update({
         quickbooks_connected: true,
@@ -268,7 +268,14 @@ serve(async (req) => {
       })
       .eq("id", organization_id);
 
-    console.log("QuickBooks connected successfully");
+    if (orgUpdateError) {
+      log("warn", "Organization status update failed (non-fatal)", {
+        message: orgUpdateError.message,
+        code: (orgUpdateError as any).code,
+      });
+    }
+
+    log("log", "✅ QuickBooks connected successfully", { organization_id, realmId });
 
     const escapedRealmId = escapeHtml(realmId);
     const allowedOrigin = new URL(SUPABASE_URL).origin;
