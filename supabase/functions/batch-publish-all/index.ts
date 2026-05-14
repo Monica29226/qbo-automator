@@ -1044,7 +1044,7 @@ Deno.serve(async (req) => {
       // Process batch in parallel with timeout
       const batchPromises = batch.map(doc =>
         publishWithTimeout(
-          processSingleDocument(supabase, doc, access_token, realmId, qboAccounts),
+          processSingleDocument(supabase, doc, access_token, realmId, qboAccounts, qboTaxCodes, taxRatesMap),
           TIMEOUT_MS,
           doc.doc_number
         ).catch(error => ({
