@@ -2162,6 +2162,8 @@ Deno.serve(async (req) => {
               const taxCodeId = await getTaxCodeRef(tasaImpuesto);
               if (taxCodeId) {
                 lineDetail.AccountBasedExpenseLineDetail.TaxCodeRef = { value: taxCodeId };
+              } else if (tasaImpuesto > 0) {
+                missingLineTaxRates.add(Number(tasaImpuesto.toFixed(2)));
               }
               
               // Store montoTotalLinea for TaxInclusive retry fallback
