@@ -149,17 +149,71 @@ serve(async (req) => {
       updated_at: new Date().toISOString(),
     };
 
-    const { data: existingIntegration, error: existingIntegrationError } = await supabase
+    console.log("[oauth-callback] Looking up existing integration", {
+      organization_id,
+      service_type: "quickbooks",
+      realm_id: realmId,
+    });
+
+    const { data: existingIntegrations, error: existingIntegrationError } = await supabase
       .from("integration_accounts")
-      .select("id")
+      .select("id, organization_id, service_type, is_active, account_name, credentials, created_at, updated_at")
       .eq("organization_id", organization_id)
-      .eq("service_type", "quickbooks")
-      .maybeSingle();
+      .eq("service_type", "quickbooks");
 
     if (existingIntegrationError) {
-      console.error("Error checking existing QuickBooks integration:", existingIntegrationError);
+      console.error("[oauth-callback] Error checking existing QuickBooks integration:", {
+        message: existingIntegrationError.message,
+        details: (existingIntegrationError as any).details,
+        hint: (existingIntegrationError as any).hint,
+        code: (existingIntegrationError as any).code,
+      });
       throw existingIntegrationError;
     }
+
+    console.log("[oauth-callback] Found existing integrations:", {
+      count: existingIntegrations?.length ?? 0,
+      records: (existingIntegrations ?? []).map((r) => ({
+        id: r.id,
+        is_active: r.is_active,
+        account_name: r.account_name,
+        existing_realm: (r.credentials as any)?.realm_id ?? null,
+        created_at: r.created_at,
+        updated_at: r.updated_at,
+      })),
+    });
+
+    const existingIntegration = existingIntegrations?.[0] ?? null;
+
+    if ((existingIntegrations?.length ?? 0) > 1) {
+      console.warn("[oauth-callback] Multiple QuickBooks integrations found for org — updating the first and deactivating the rest", {
+        organization_id,
+        ids: existingIntegrations!.map((r) => r.id),
+      });
+
+      const extraIds = existingIntegrations!.slice(1).map((r) => r.id);
+      const { error: deactivateError } = await supabase
+        .from("integration_accounts")
+        .update({ is_active: false, updated_at: new Date().toISOString() })
+        .in("id", extraIds);
+
+      if (deactivateError) {
+        console.error("[oauth-callback] Failed to deactivate duplicate integrations:", {
+          message: deactivateError.message,
+          details: (deactivateError as any).details,
+          hint: (deactivateError as any).hint,
+          code: (deactivateError as any).code,
+          ids: extraIds,
+        });
+      }
+    }
+
+    const writeOperation = existingIntegration ? "update" : "insert";
+    console.log(`[oauth-callback] Performing ${writeOperation} on integration_accounts`, {
+      target_id: existingIntegration?.id ?? null,
+      organization_id,
+      realm_id: realmId,
+    });
 
     const writeQuery = existingIntegration
       ? supabase
@@ -173,9 +227,25 @@ serve(async (req) => {
     const { error: writeError } = await writeQuery;
 
     if (writeError) {
-      console.error("Error storing tokens:", writeError);
+      console.error(`[oauth-callback] Error storing tokens (${writeOperation}):`, {
+        message: writeError.message,
+        details: (writeError as any).details,
+        hint: (writeError as any).hint,
+        code: (writeError as any).code,
+        operation: writeOperation,
+        target_id: existingIntegration?.id ?? null,
+        payload_summary: {
+          organization_id: connectionPayload.organization_id,
+          service_type: connectionPayload.service_type,
+          account_name: connectionPayload.account_name,
+          is_active: connectionPayload.is_active,
+          realm_id: realmId,
+        },
+      });
       throw writeError;
     }
+
+    console.log(`[oauth-callback] ${writeOperation} succeeded for org ${organization_id}`);
 
     // Update organization connection status
     await supabase
