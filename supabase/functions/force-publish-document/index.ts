@@ -336,9 +336,10 @@ Deno.serve(async (req) => {
     );
 
     // Tax error retry: switch to TaxInclusive
+    let initialErrorText: string | null = null;
     if (!response.ok && hasTax) {
-      const errorText = await response.text();
-      if (errorText.includes('impuesto') || errorText.includes('tax') || errorText.includes('TaxCodeRef') || errorText.includes('impositiva')) {
+      initialErrorText = await response.text();
+      if (initialErrorText.includes('impuesto') || initialErrorText.includes('tax') || initialErrorText.includes('TaxCodeRef') || initialErrorText.includes('impositiva')) {
         console.log(`⚠️ Tax error, retrying with NotApplicable (no tax)...`);
         delete billPayload.TxnTaxDetail;
         billPayload.GlobalTaxCalculation = "NotApplicable";
@@ -365,11 +366,12 @@ Deno.serve(async (req) => {
             body: JSON.stringify(billPayload),
           }
         );
+        initialErrorText = null; // body of new response not consumed yet
       }
     }
 
     if (!response.ok) {
-      const errorText = await response.text();
+      const errorText = initialErrorText ?? await response.text();
       throw new Error(`QuickBooks ${isCreditNote ? 'VendorCredit' : 'Bill'} Error: ${errorText}`);
     }
 
