@@ -376,7 +376,7 @@ Deno.serve(async (req) => {
               Accept: "application/json",
               "Content-Type": "application/json",
             },
-            body: JSON.stringify(billPayload),
+            body: JSON.stringify(sanitizePayload(billPayload)),
           }
         );
         initialErrorText = null; // body of new response not consumed yet
