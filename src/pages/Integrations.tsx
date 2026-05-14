@@ -12,7 +12,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { ArrowLeft, Plus, Plug, Check, X, Mail, Building2, HardDrive, Loader2, Server } from "lucide-react";
+import { ArrowLeft, Plus, Plug, Check, X, Mail, Building2, HardDrive, Loader2, Server, RefreshCw } from "lucide-react";
 import { Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -859,16 +859,28 @@ const Integrations = () => {
                     </div>
                   </div>
 
-                  <Button
-                    onClick={() => {
-                      setSelectedService(service.id);
-                      setIsDialogOpen(true);
-                    }}
-                    size="sm"
-                  >
-                    <Plus className="h-4 w-4 mr-2" />
-                    Agregar cuenta
-                  </Button>
+                  <div className="flex flex-col gap-2">
+                    {service.id === "quickbooks" && service.connected && (
+                      <Button
+                        onClick={handleQuickBooksOAuth}
+                        size="sm"
+                        variant="outline"
+                      >
+                        <RefreshCw className="h-4 w-4 mr-2" />
+                        Reconectar
+                      </Button>
+                    )}
+                    <Button
+                      onClick={() => {
+                        setSelectedService(service.id);
+                        setIsDialogOpen(true);
+                      }}
+                      size="sm"
+                    >
+                      <Plus className="h-4 w-4 mr-2" />
+                      Agregar cuenta
+                    </Button>
+                  </div>
                 </div>
               </Card>
             ))}
