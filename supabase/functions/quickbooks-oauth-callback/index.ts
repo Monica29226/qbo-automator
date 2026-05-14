@@ -31,6 +31,12 @@ const getErrorMessage = (error: unknown): string => {
 };
 
 serve(async (req) => {
+  const requestId = (crypto as any).randomUUID?.() ?? `rid-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  const log = (level: "log" | "warn" | "error", msg: string, extra?: Record<string, unknown>) => {
+    const payload = { requestId, ...(extra ?? {}) };
+    (console as any)[level](`[oauth-callback rid=${requestId}] ${msg}`, payload);
+  };
+  log("log", "▶ Callback invoked", { method: req.method });
   try {
     const url = new URL(req.url);
     const code = url.searchParams.get("code");
@@ -39,9 +45,9 @@ serve(async (req) => {
     const error = url.searchParams.get("error");
 
     if (error) {
-      console.error("OAuth error:", error);
+      log("error", "OAuth provider returned error", { error });
       return new Response(
-        `<html><body><h1>Error</h1><p>OAuth failed: ${escapeHtml(error)}</p><script>setTimeout(() => window.close(), 3000);</script></body></html>`,
+        `<html><body><h1>Error</h1><p>OAuth failed: ${escapeHtml(error)}</p><p style="font-size:11px;color:#666">rid: ${escapeHtml(requestId)}</p><script>setTimeout(() => window.close(), 3000);</script></body></html>`,
         { headers: { 
           "Content-Type": "text/html",
           "Content-Security-Policy": "default-src 'self' 'unsafe-inline'"
@@ -82,16 +88,17 @@ serve(async (req) => {
 
     if (!tokenResponse.ok) {
       const errorText = await tokenResponse.text();
-      console.error("Token exchange failed:", errorText);
+      log("error", "Token exchange failed", { status: tokenResponse.status, body: errorText.substring(0, 500) });
       throw new Error("Failed to exchange code for tokens");
     }
 
     const tokens = await tokenResponse.json();
-    console.log("Tokens received successfully");
+    log("log", "Tokens received", { expires_in: tokens.expires_in });
 
     // Parse state to get organization_id and user_id
     const stateData = JSON.parse(atob(state));
     const { organization_id, user_id } = stateData;
+    log("log", "State decoded", { organization_id, user_id, realmId });
 
     // Initialize Supabase client
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
@@ -108,7 +115,11 @@ serve(async (req) => {
       for (const conn of existingConnections) {
         const credentials = conn.credentials as any;
         if (credentials?.realm_id === realmId && conn.organization_id !== organization_id) {
-          console.error("QuickBooks realm already connected to another organization");
+          log("error", "Realm already connected to a different organization", {
+            realmId,
+            attempted_org: organization_id,
+            owning_org: conn.organization_id,
+          });
           const errorHtml = `<!DOCTYPE html>
             <html>
               <head>
@@ -119,6 +130,7 @@ serve(async (req) => {
                 <h1>Error de Conexión</h1>
                 <p>Esta cuenta de QuickBooks (Realm ${escapeHtml(realmId)}) ya está conectada a otra empresa.</p>
                 <p style="font-size: 12px; color: #666;">Cada empresa debe tener su propia conexión de QuickBooks independiente.</p>
+                <p style="font-size: 11px; color: #999;">rid: ${escapeHtml(requestId)}</p>
                 <script>setTimeout(() => window.close(), 5000);</script>
               </body>
             </html>`;
@@ -149,7 +161,7 @@ serve(async (req) => {
       updated_at: new Date().toISOString(),
     };
 
-    console.log("[oauth-callback] Looking up existing integration", {
+    log("log", "Looking up existing integration", {
       organization_id,
       service_type: "quickbooks",
       realm_id: realmId,
@@ -162,7 +174,7 @@ serve(async (req) => {
       .eq("service_type", "quickbooks");
 
     if (existingIntegrationError) {
-      console.error("[oauth-callback] Error checking existing QuickBooks integration:", {
+      log("error", "Error checking existing QuickBooks integration", {
         message: existingIntegrationError.message,
         details: (existingIntegrationError as any).details,
         hint: (existingIntegrationError as any).hint,
@@ -171,7 +183,7 @@ serve(async (req) => {
       throw existingIntegrationError;
     }
 
-    console.log("[oauth-callback] Found existing integrations:", {
+    log("log", "Found existing integrations", {
       count: existingIntegrations?.length ?? 0,
       records: (existingIntegrations ?? []).map((r) => ({
         id: r.id,
@@ -186,7 +198,7 @@ serve(async (req) => {
     const existingIntegration = existingIntegrations?.[0] ?? null;
 
     if ((existingIntegrations?.length ?? 0) > 1) {
-      console.warn("[oauth-callback] Multiple QuickBooks integrations found for org — updating the first and deactivating the rest", {
+      log("warn", "Multiple QuickBooks integrations found for org — updating the first and deactivating the rest", {
         organization_id,
         ids: existingIntegrations!.map((r) => r.id),
       });
@@ -198,7 +210,7 @@ serve(async (req) => {
         .in("id", extraIds);
 
       if (deactivateError) {
-        console.error("[oauth-callback] Failed to deactivate duplicate integrations:", {
+        log("error", "Failed to deactivate duplicate integrations", {
           message: deactivateError.message,
           details: (deactivateError as any).details,
           hint: (deactivateError as any).hint,
@@ -209,7 +221,7 @@ serve(async (req) => {
     }
 
     const writeOperation = existingIntegration ? "update" : "insert";
-    console.log(`[oauth-callback] Performing ${writeOperation} on integration_accounts`, {
+    log("log", `Performing ${writeOperation} on integration_accounts`, {
       target_id: existingIntegration?.id ?? null,
       organization_id,
       realm_id: realmId,
@@ -227,7 +239,7 @@ serve(async (req) => {
     const { error: writeError } = await writeQuery;
 
     if (writeError) {
-      console.error(`[oauth-callback] Error storing tokens (${writeOperation}):`, {
+      log("error", `Error storing tokens (${writeOperation})`, {
         message: writeError.message,
         details: (writeError as any).details,
         hint: (writeError as any).hint,
@@ -245,10 +257,10 @@ serve(async (req) => {
       throw writeError;
     }
 
-    console.log(`[oauth-callback] ${writeOperation} succeeded for org ${organization_id}`);
+    log("log", `${writeOperation} succeeded`, { organization_id, target_id: existingIntegration?.id ?? null });
 
     // Update organization connection status
-    await supabase
+    const { error: orgUpdateError } = await supabase
       .from("organizations")
       .update({
         quickbooks_connected: true,
@@ -256,7 +268,14 @@ serve(async (req) => {
       })
       .eq("id", organization_id);
 
-    console.log("QuickBooks connected successfully");
+    if (orgUpdateError) {
+      log("warn", "Organization status update failed (non-fatal)", {
+        message: orgUpdateError.message,
+        code: (orgUpdateError as any).code,
+      });
+    }
+
+    log("log", "✅ QuickBooks connected successfully", { organization_id, realmId });
 
     const escapedRealmId = escapeHtml(realmId);
     const allowedOrigin = new URL(SUPABASE_URL).origin;
@@ -293,10 +312,17 @@ serve(async (req) => {
       }, status: 200 }
     );
   } catch (error) {
-    console.error("Error in quickbooks-oauth-callback:", error);
+    log("error", "Unhandled error in callback", {
+      error_message: getErrorMessage(error),
+      error_name: (error as any)?.name,
+      error_code: (error as any)?.code,
+      error_details: (error as any)?.details,
+      error_hint: (error as any)?.hint,
+      stack: (error as Error)?.stack?.split("\n").slice(0, 5).join(" | "),
+    });
     const errorMessage = getErrorMessage(error);
     return new Response(
-      `<html><body><h1>Error</h1><p>${escapeHtml(errorMessage)}</p><script>setTimeout(() => window.close(), 3000);</script></body></html>`,
+      `<html><body><h1>Error</h1><p>${escapeHtml(errorMessage)}</p><p style="font-size:11px;color:#999">rid: ${escapeHtml(requestId)}</p><script>setTimeout(() => window.close(), 5000);</script></body></html>`,
       { headers: { 
         "Content-Type": "text/html",
         "Content-Security-Policy": "default-src 'self' 'unsafe-inline'"
