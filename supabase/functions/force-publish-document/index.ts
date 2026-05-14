@@ -336,9 +336,10 @@ Deno.serve(async (req) => {
     );
 
     // Tax error retry: switch to TaxInclusive
+    let initialErrorText: string | null = null;
     if (!response.ok && hasTax) {
-      const errorText = await response.text();
-      if (errorText.includes('impuesto') || errorText.includes('tax') || errorText.includes('TaxCodeRef') || errorText.includes('impositiva')) {
+      initialErrorText = await response.text();
+      if (initialErrorText.includes('impuesto') || initialErrorText.includes('tax') || initialErrorText.includes('TaxCodeRef') || initialErrorText.includes('impositiva')) {
         console.log(`⚠️ Tax error, retrying with NotApplicable (no tax)...`);
         delete billPayload.TxnTaxDetail;
         billPayload.GlobalTaxCalculation = "NotApplicable";
