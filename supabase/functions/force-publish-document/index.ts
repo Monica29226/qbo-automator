@@ -318,6 +318,19 @@ Deno.serve(async (req) => {
 
     await delay(500);
 
+    // Sanitize payload: strip internal underscore-prefixed props that QBO rejects
+    const sanitizePayload = (p: any) => {
+      const clone = JSON.parse(JSON.stringify(p));
+      if (Array.isArray(clone.Line)) {
+        for (const line of clone.Line) {
+          for (const key of Object.keys(line)) {
+            if (key.startsWith('_')) delete line[key];
+          }
+        }
+      }
+      return clone;
+    };
+
     let entityId: string;
     let entityType: string;
     const endpoint = isCreditNote ? 'vendorcredit' : 'bill';
@@ -331,7 +344,7 @@ Deno.serve(async (req) => {
           Accept: "application/json",
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(billPayload),
+        body: JSON.stringify(sanitizePayload(billPayload)),
       }
     );
 
