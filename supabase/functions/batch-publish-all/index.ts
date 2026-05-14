@@ -249,13 +249,86 @@ async function checkDuplicateInQBO(
   }
 }
 
+// Resolve the QuickBooks TaxCode Id matching a Costa Rican IVA rate (0, 1, 2, 4, 8, 13, etc.)
+// Returns null when no match exists so the caller can decide what to do (we surface a hard error).
+function resolveTaxCodeId(rate: number, qboTaxCodes: any[], taxRatesMap: Map<string, number>): string | null {
+  const TOL = 0.15;
+  const r = Number(rate) || 0;
+  const isExempt = (n: string) => {
+    const s = (n || '').toLowerCase();
+    return s.includes('no vat') || s.includes('exento') || s.includes('out of scope') ||
+           s.includes('exempt') || s.includes('fuera del') || s.includes('fuera de') ||
+           s === 'non' || s.startsWith('non ') || s.includes('no aplica') || s.includes('no sujet');
+  };
+  if (r < TOL) {
+    for (const tc of qboTaxCodes) if (isExempt(tc.Name || '')) return tc.Id;
+    return qboTaxCodes[0]?.Id || null;
+  }
+  // Match by actual purchase rate value (most reliable)
+  let best: { id: string; diff: number } | null = null;
+  for (const tc of qboTaxCodes) {
+    if (isExempt(tc.Name || '')) continue;
+    const purchase = tc.PurchaseTaxRateList?.TaxRateDetail || [];
+    for (const d of purchase) {
+      const ref = d.TaxRateRef?.value;
+      if (ref && taxRatesMap.has(ref)) {
+        const actual = taxRatesMap.get(ref)!;
+        const diff = Math.abs(actual - r);
+        if (diff < TOL && (!best || diff < best.diff)) best = { id: tc.Id, diff };
+      }
+    }
+  }
+  if (best) return best.id;
+  // Match by name regex (e.g., "IVA 13%", "Tarifa Reducida 1%")
+  const rateStr = (Number.isInteger(r) ? r.toString() : r.toString()).replace('.', '\\.');
+  const ratePattern = new RegExp(`(^|[^0-9.])${rateStr}\\s*%`);
+  for (const tc of qboTaxCodes) {
+    if (isExempt(tc.Name || '')) continue;
+    if (ratePattern.test(tc.Name || '') || ratePattern.test(tc.Description || '')) return tc.Id;
+  }
+  // Spanish aliases for known CR reduced rates
+  const aliasMap: Record<number, string[]> = {
+    13: ['tarifa general', 'iva general', 'iva 13', 'vat 13'],
+    8:  ['tarifa reducida 8', 'iva 8', 'reducida 8'],
+    4:  ['tarifa reducida 4', 'iva 4', 'servicios médicos', 'servicios medicos', 'educacion', 'educación'],
+    2:  ['tarifa reducida 2', 'iva 2', 'medicamentos'],
+    1:  ['tarifa reducida 1', 'iva 1', 'canasta básica', 'canasta basica'],
+  };
+  const aliases = aliasMap[Math.round(r)];
+  if (aliases) {
+    for (const tc of qboTaxCodes) {
+      if (isExempt(tc.Name || '')) continue;
+      const n = (tc.Name || '').toLowerCase();
+      if (aliases.some(a => n.includes(a))) return tc.Id;
+    }
+  }
+  return null;
+}
+
+// Extract the IVA rate (codigo 01/07/08) from an XML detail item
+function getLineTaxRate(item: any): number {
+  const impuestos = item?.impuestos || item?.Impuestos || [];
+  const arr = Array.isArray(impuestos) ? impuestos : [impuestos];
+  for (const imp of arr) {
+    const codigo = String(imp?.codigo || imp?.Codigo || '');
+    if (!codigo || codigo === '01' || codigo === '07' || codigo === '08') {
+      const t = parseFloat(imp?.tarifa ?? imp?.Tarifa ?? '');
+      if (!isNaN(t)) return t;
+    }
+  }
+  const flat = parseFloat(item?.tarifa ?? item?.Tarifa ?? '');
+  return isNaN(flat) ? 0 : flat;
+}
+
 // Process single document to QuickBooks
 async function processSingleDocument(
   supabase: any,
   doc: any,
   accessToken: string,
   realmId: string,
-  qboAccounts: any[]
+  qboAccounts: any[],
+  qboTaxCodes: any[],
+  taxRatesMap: Map<string, number>,
 ): Promise<ProcessResult> {
   const startTime = Date.now();
   const docNumber = doc.doc_number;
@@ -490,58 +563,93 @@ async function processSingleDocument(
     }
     
     // 7. Build lines (positive amounts for both Bill and VendorCredit)
+    // CRITICAL: Each XML line carries its own IVA rate (0, 1, 2, 4, 8, 13...).
+    // We must attach the matching QBO TaxCode per line so QuickBooks classifies the
+    // expense under the correct rate instead of "Out of scope".
     const lines: any[] = [];
     const detalle = doc.xml_data?.detalle || doc.xml_data?.lineas || [];
-    
+    const missingTaxRates = new Set<number>();
+
     if (Array.isArray(detalle) && detalle.length > 0) {
       for (const item of detalle) {
         const amount = Math.abs(parseFloat(item.monto_total_linea || item.MontoTotalLinea || item.subtotal || item.monto || '0'));
         if (amount > 0) {
-          lines.push({
+          const lineRate = getLineTaxRate(item);
+          const taxCodeId = resolveTaxCodeId(lineRate, qboTaxCodes, taxRatesMap);
+          if (lineRate > 0 && !taxCodeId) missingTaxRates.add(Math.round(lineRate * 100) / 100);
+          const lineDetail: any = {
             DetailType: "AccountBasedExpenseLineDetail",
             Amount: amount,
             Description: (item.detalle || item.Detalle || item.descripcion || (isCreditNote ? 'Línea NC' : 'Línea de factura')).substring(0, 4000),
             AccountBasedExpenseLineDetail: {
               AccountRef: { value: account.Id },
-              BillableStatus: "NotBillable"
-            }
-          });
+              BillableStatus: "NotBillable",
+            },
+          };
+          if (taxCodeId) lineDetail.AccountBasedExpenseLineDetail.TaxCodeRef = { value: taxCodeId };
+          lines.push(lineDetail);
         }
       }
     }
-    
-    // If no lines from detail, create single line
+
+    // If we have line-level rates that QBO can't map, abort with a clear error so the
+    // user can configure the missing TaxCode instead of silently publishing as exempt.
+    if (missingTaxRates.size > 0) {
+      const ratesList = [...missingTaxRates].sort((a, b) => a - b).map(r => `${r}%`).join(', ');
+      const msg = `Falta configurar TaxCode en QuickBooks para tarifa(s): ${ratesList}. Cree el TaxCode correspondiente y vuelva a publicar.`;
+      await supabase.from('processed_documents')
+        .update({ status: 'error', error_message: msg.substring(0, 500), updated_at: new Date().toISOString() })
+        .eq('id', doc.id);
+      return {
+        doc_id: doc.id,
+        doc_number: docNumber,
+        supplier_name: supplierName,
+        success: false,
+        reason: msg,
+        elapsed_ms: Date.now() - startTime,
+      };
+    }
+
+    // If no lines from detail, create single line using the dominant rate from the XML totals
     if (lines.length === 0) {
       const baseAmount = Math.abs(doc.total_amount) - Math.abs(doc.total_tax || 0);
-      lines.push({
+      const fallbackLine: any = {
         DetailType: "AccountBasedExpenseLineDetail",
         Amount: baseAmount > 0 ? baseAmount : Math.abs(doc.total_amount),
         Description: `${isCreditNote ? 'Nota de Crédito' : 'Factura'} ${docNumber} - ${supplierName}`,
         AccountBasedExpenseLineDetail: {
           AccountRef: { value: account.Id },
-          BillableStatus: "NotBillable"
-        }
-      });
+          BillableStatus: "NotBillable",
+        },
+      };
+      const fallbackRate = baseAmount > 0 && doc.total_tax > 0
+        ? Math.round((doc.total_tax / baseAmount) * 100)
+        : 0;
+      const fbTaxCodeId = resolveTaxCodeId(fallbackRate, qboTaxCodes, taxRatesMap);
+      if (fbTaxCodeId) fallbackLine.AccountBasedExpenseLineDetail.TaxCodeRef = { value: fbTaxCodeId };
+      lines.push(fallbackLine);
     }
-    
-    // 8. Add OtrosCargos as additional lines
+
+    // 8. Add OtrosCargos as additional lines (sin impuesto)
     for (const cargo of otrosCargos) {
-      // Find or use default account for otros cargos
-      const cargosAccount = qboAccounts.find(a => 
-        a.AcctNum === '79' || 
+      const cargosAccount = qboAccounts.find(a =>
+        a.AcctNum === '79' ||
         a.Name?.toLowerCase().includes('otros') ||
         a.Name?.toLowerCase().includes('gastos')
       ) || account;
-      
-      lines.push({
+
+      const cargoLine: any = {
         DetailType: "AccountBasedExpenseLineDetail",
         Amount: cargo.monto,
         Description: `Otros Cargos: ${cargo.detalle}`.substring(0, 4000),
         AccountBasedExpenseLineDetail: {
           AccountRef: { value: cargosAccount.Id },
-          BillableStatus: "NotBillable"
-        }
-      });
+          BillableStatus: "NotBillable",
+        },
+      };
+      const cargoTaxCodeId = resolveTaxCodeId(0, qboTaxCodes, taxRatesMap);
+      if (cargoTaxCodeId) cargoLine.AccountBasedExpenseLineDetail.TaxCodeRef = { value: cargoTaxCodeId };
+      lines.push(cargoLine);
     }
     
     // Use full document number as-is from XML
@@ -809,6 +917,23 @@ Deno.serve(async (req) => {
     const qboAccounts = accountsData.QueryResponse?.Account || [];
     console.log(`📊 ${qboAccounts.length} cuentas cargadas`);
 
+    // Load TaxCodes + TaxRates so each line can carry the correct tax classification
+    console.log('📊 Cargando TaxCodes y TaxRates de QuickBooks...');
+    const [taxCodesResp, taxRatesResp] = await Promise.all([
+      fetch(`https://quickbooks.api.intuit.com/v3/company/${realmId}/query?query=${encodeURIComponent('SELECT Id, Name, Description, SalesTaxRateList, PurchaseTaxRateList FROM TaxCode WHERE Active = true MAXRESULTS 200')}`,
+        { headers: { 'Authorization': `Bearer ${access_token}`, 'Accept': 'application/json' } }),
+      fetch(`https://quickbooks.api.intuit.com/v3/company/${realmId}/query?query=${encodeURIComponent('SELECT Id, Name, RateValue FROM TaxRate WHERE Active = true MAXRESULTS 200')}`,
+        { headers: { 'Authorization': `Bearer ${access_token}`, 'Accept': 'application/json' } }),
+    ]);
+    const qboTaxCodes: any[] = taxCodesResp.ok ? ((await taxCodesResp.json()).QueryResponse?.TaxCode || []) : [];
+    const qboTaxRates: any[] = taxRatesResp.ok ? ((await taxRatesResp.json()).QueryResponse?.TaxRate || []) : [];
+    const taxRatesMap = new Map<string, number>();
+    for (const tr of qboTaxRates) {
+      const v = parseFloat(tr.RateValue);
+      if (!isNaN(v)) taxRatesMap.set(tr.Id, v);
+    }
+    console.log(`📊 TaxCodes=${qboTaxCodes.length}, TaxRates=${qboTaxRates.length}`);
+
     // 4. Fetch documents to publish
     let query = supabase
       .from('processed_documents')
@@ -919,7 +1044,7 @@ Deno.serve(async (req) => {
       // Process batch in parallel with timeout
       const batchPromises = batch.map(doc =>
         publishWithTimeout(
-          processSingleDocument(supabase, doc, access_token, realmId, qboAccounts),
+          processSingleDocument(supabase, doc, access_token, realmId, qboAccounts, qboTaxCodes, taxRatesMap),
           TIMEOUT_MS,
           doc.doc_number
         ).catch(error => ({
