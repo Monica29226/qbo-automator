@@ -1717,7 +1717,7 @@ Deno.serve(async (req) => {
       }
       
       // STRICT: For non-zero rates, NEVER fall back to an exempt code.
-      logInfo(`   ⚠️ No TaxCode match for ${rate}% — will publish without TxnTaxDetail (NotApplicable retry)`);
+      logInfo(`   ⚠️ No TaxCode match for ${rate}% — se enviará a validación de QBO y se bloqueará si intenta degradarlo a fuera del alcance`);
       return null;
     };
 
