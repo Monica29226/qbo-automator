@@ -64,6 +64,13 @@ async function persistQuickbooksIntegration(organization_id: string, realmId: st
 }
 
 Deno.test("OAuth reconnect does not raise duplicate constraint error", async () => {
+  if (!HAS_CREDS) {
+    console.warn(
+      "[skip] SUPABASE_SERVICE_ROLE_KEY not available — this test must be run with the service role key in .env",
+    );
+    return;
+  }
+
   // Create a temporary org for isolation
   const { data: org, error: orgError } = await admin
     .from("organizations")
