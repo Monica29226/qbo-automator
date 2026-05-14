@@ -115,7 +115,11 @@ serve(async (req) => {
       for (const conn of existingConnections) {
         const credentials = conn.credentials as any;
         if (credentials?.realm_id === realmId && conn.organization_id !== organization_id) {
-          console.error("QuickBooks realm already connected to another organization");
+          log("error", "Realm already connected to a different organization", {
+            realmId,
+            attempted_org: organization_id,
+            owning_org: conn.organization_id,
+          });
           const errorHtml = `<!DOCTYPE html>
             <html>
               <head>
@@ -126,6 +130,7 @@ serve(async (req) => {
                 <h1>Error de Conexión</h1>
                 <p>Esta cuenta de QuickBooks (Realm ${escapeHtml(realmId)}) ya está conectada a otra empresa.</p>
                 <p style="font-size: 12px; color: #666;">Cada empresa debe tener su propia conexión de QuickBooks independiente.</p>
+                <p style="font-size: 11px; color: #999;">rid: ${escapeHtml(requestId)}</p>
                 <script>setTimeout(() => window.close(), 5000);</script>
               </body>
             </html>`;
