@@ -1717,7 +1717,7 @@ Deno.serve(async (req) => {
       }
       
       // STRICT: For non-zero rates, NEVER fall back to an exempt code.
-      logInfo(`   ⚠️ No TaxCode match for ${rate}% — will publish without TxnTaxDetail (NotApplicable retry)`);
+      logInfo(`   ⚠️ No TaxCode match for ${rate}% — se enviará a validación de QBO y se bloqueará si intenta degradarlo a fuera del alcance`);
       return null;
     };
 
@@ -2476,7 +2476,8 @@ Deno.serve(async (req) => {
             }
           );
           
-          // CRITICAL FIX: If QBO returns tax calculation error on VendorCredit, retry WITHOUT TxnTaxDetail
+          // CRITICAL FIX: If QBO returns tax calculation error on VendorCredit, never
+          // downgrade taxed XML to NotApplicable because that misclassifies it as out of scope.
           if (!vcResponse.ok) {
             const errorText = await vcResponse.clone().text();
             
@@ -2488,57 +2489,16 @@ Deno.serve(async (req) => {
                 errorText.includes('Invalid tax rate') ||
                 errorText.includes('TaxCodeRef')) {
               
-              logInfo(`⚠️ ${doc.doc_number}: Error de impuesto en VendorCredit, reintentando con NotApplicable (sin impuesto)...`);
-              
-              // FIX: Use NotApplicable instead of TaxInclusive to prevent QBO from adding tax on top
-              delete vendorCreditPayload.TxnTaxDetail;
-              vendorCreditPayload.GlobalTaxCalculation = "NotApplicable";
-              
-              // Remove TaxCodeRef from all lines to prevent QBO from calculating tax
-              vendorCreditPayload.Line.forEach((line: any) => {
-                if (line.AccountBasedExpenseLineDetail?.TaxCodeRef) {
-                  delete line.AccountBasedExpenseLineDetail.TaxCodeRef;
-                }
-              });
-              
-              // Set line amounts to montoTotalLinea (full amount including tax, since no tax separation)
-              vendorCreditPayload.Line.forEach((line: any, idx: number) => {
-                const savedMonto = vcMontoTotalMap.get(idx);
-                if (savedMonto && savedMonto > line.Amount) {
-                  logInfo(`   📊 ${doc.doc_number}: VC Line ${line.Amount} → ${savedMonto} (NotApplicable)`);
-                  line.Amount = parseFloat(savedMonto.toFixed(2));
-                }
-              });
-              logInfo(`   📊 ${doc.doc_number}: Reintento VendorCredit NotApplicable - Total incluye impuesto como gasto`);
-              
-              // Retry without tax
-              await delay(1000);
-              const vcRetryResponse = await fetchWithRetry(
-                `https://quickbooks.api.intuit.com/v3/company/${realmId}/vendorcredit`,
-                {
-                  method: "POST",
-                  headers: {
-                    "Authorization": `Bearer ${accessToken}`,
-                    "Accept": "application/json",
-                    "Content-Type": "application/json",
-                  },
-                  body: JSON.stringify(vendorCreditPayload),
-                }
-              );
-              
-              if (vcRetryResponse.ok) {
-                logInfo(`✅ ${doc.doc_number}: Reintento VendorCredit exitoso sin impuestos`);
-                const vcRetryData = await vcRetryResponse.json();
-                entityId = vcRetryData.VendorCredit.Id;
-                entityType = "VendorCredit";
-              } else {
-                const retryErrorText = await vcRetryResponse.text();
-                await registerInTracking(doc, 'error', null, null, retryErrorText.substring(0, 500));
+              const xmlHasTax = Math.abs(totalTax) > 0.001;
+              if (xmlHasTax) {
+                const taxErrorMsg = `QBO rechazó el impuesto de la nota de crédito. Se bloqueó la publicación para evitar enviarla como Fuera del alcance del impuesto. Detalle: ${errorText.substring(0, 350)}`;
+                logError(`❌ ${doc.doc_number}: ${taxErrorMsg}`);
+                await registerInTracking(doc, 'error', null, null, taxErrorMsg.substring(0, 500));
                 await supabase
                   .from("processed_documents")
-                  .update({ status: "error", error_message: `QBO VendorCredit Error (retry): ${retryErrorText.substring(0, 500)}` })
+                  .update({ status: "error", error_message: taxErrorMsg.substring(0, 500) })
                   .eq("id", doc.id);
-                return { success: false, docNumber: doc.doc_number, error: retryErrorText.substring(0, 200) };
+                return { success: false, docNumber: doc.doc_number, error: taxErrorMsg.substring(0, 200) };
               }
             } else {
               await registerInTracking(doc, 'error', null, null, errorText.substring(0, 500));
@@ -2653,7 +2613,8 @@ Deno.serve(async (req) => {
             }
           );
           
-          // CRITICAL FIX: If QBO returns tax calculation error, retry WITHOUT TxnTaxDetail
+          // CRITICAL FIX: If QBO returns tax calculation error, never downgrade taxed XML
+          // to NotApplicable because that misclassifies it as out of scope.
           if (!billResponse.ok) {
             const errorText = await billResponse.clone().text();
             
@@ -2666,46 +2627,16 @@ Deno.serve(async (req) => {
                 errorText.includes('tasa impositiva') ||
                 errorText.includes('TaxCodeRef')) {
               
-              logInfo(`⚠️ ${doc.doc_number}: Error de impuesto en QBO, reintentando con NotApplicable (sin impuesto)...`);
-              
-              // FIX: Use NotApplicable instead of TaxInclusive to prevent QBO from adding tax on top
-              delete billPayload.TxnTaxDetail;
-              billPayload.GlobalTaxCalculation = "NotApplicable";
-              
-              // Remove TaxCodeRef from all lines to prevent QBO from calculating tax
-              billPayload.Line.forEach((line: any) => {
-                if (line.AccountBasedExpenseLineDetail?.TaxCodeRef) {
-                  delete line.AccountBasedExpenseLineDetail.TaxCodeRef;
-                }
-              });
-              
-              // Set line amounts to montoTotalLinea (full amount including tax, since no tax separation)
-              billPayload.Line.forEach((line: any, idx: number) => {
-                const savedMonto = billMontoTotalMap.get(idx);
-                if (savedMonto && savedMonto > line.Amount) {
-                  logInfo(`   📊 ${doc.doc_number}: Line ${line.Amount} → ${savedMonto} (NotApplicable)`);
-                  line.Amount = parseFloat(savedMonto.toFixed(2));
-                }
-              });
-              logInfo(`   📊 ${doc.doc_number}: Reintento NotApplicable - Total incluye impuesto como gasto, QBO NO calculará impuesto`);
-              
-              // Retry without tax
-              await delay(1000);
-              billResponse = await fetchWithRetry(
-                `https://quickbooks.api.intuit.com/v3/company/${realmId}/bill`,
-                {
-                  method: "POST",
-                  headers: {
-                    "Authorization": `Bearer ${accessToken}`,
-                    "Accept": "application/json",
-                    "Content-Type": "application/json",
-                  },
-                  body: JSON.stringify(billPayload),
-                }
-              );
-              
-              if (billResponse.ok) {
-                logInfo(`✅ ${doc.doc_number}: Reintento exitoso sin impuestos`);
+              const xmlHasTax = Math.abs(totalTax) > 0.001;
+              if (xmlHasTax) {
+                const taxErrorMsg = `QBO rechazó el impuesto de la factura. Se bloqueó la publicación para evitar enviarla como Fuera del alcance del impuesto. Detalle: ${errorText.substring(0, 350)}`;
+                logError(`❌ ${doc.doc_number}: ${taxErrorMsg}`);
+                await registerInTracking(doc, 'error', null, null, taxErrorMsg.substring(0, 500));
+                await supabase
+                  .from("processed_documents")
+                  .update({ status: "error", error_message: taxErrorMsg.substring(0, 500) })
+                  .eq("id", doc.id);
+                return { success: false, docNumber: doc.doc_number, error: taxErrorMsg.substring(0, 200) };
               }
             }
           }
