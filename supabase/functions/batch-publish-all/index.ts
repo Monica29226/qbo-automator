@@ -563,58 +563,93 @@ async function processSingleDocument(
     }
     
     // 7. Build lines (positive amounts for both Bill and VendorCredit)
+    // CRITICAL: Each XML line carries its own IVA rate (0, 1, 2, 4, 8, 13...).
+    // We must attach the matching QBO TaxCode per line so QuickBooks classifies the
+    // expense under the correct rate instead of "Out of scope".
     const lines: any[] = [];
     const detalle = doc.xml_data?.detalle || doc.xml_data?.lineas || [];
-    
+    const missingTaxRates = new Set<number>();
+
     if (Array.isArray(detalle) && detalle.length > 0) {
       for (const item of detalle) {
         const amount = Math.abs(parseFloat(item.monto_total_linea || item.MontoTotalLinea || item.subtotal || item.monto || '0'));
         if (amount > 0) {
-          lines.push({
+          const lineRate = getLineTaxRate(item);
+          const taxCodeId = resolveTaxCodeId(lineRate, qboTaxCodes, taxRatesMap);
+          if (lineRate > 0 && !taxCodeId) missingTaxRates.add(Math.round(lineRate * 100) / 100);
+          const lineDetail: any = {
             DetailType: "AccountBasedExpenseLineDetail",
             Amount: amount,
             Description: (item.detalle || item.Detalle || item.descripcion || (isCreditNote ? 'Línea NC' : 'Línea de factura')).substring(0, 4000),
             AccountBasedExpenseLineDetail: {
               AccountRef: { value: account.Id },
-              BillableStatus: "NotBillable"
-            }
-          });
+              BillableStatus: "NotBillable",
+            },
+          };
+          if (taxCodeId) lineDetail.AccountBasedExpenseLineDetail.TaxCodeRef = { value: taxCodeId };
+          lines.push(lineDetail);
         }
       }
     }
-    
-    // If no lines from detail, create single line
+
+    // If we have line-level rates that QBO can't map, abort with a clear error so the
+    // user can configure the missing TaxCode instead of silently publishing as exempt.
+    if (missingTaxRates.size > 0) {
+      const ratesList = [...missingTaxRates].sort((a, b) => a - b).map(r => `${r}%`).join(', ');
+      const msg = `Falta configurar TaxCode en QuickBooks para tarifa(s): ${ratesList}. Cree el TaxCode correspondiente y vuelva a publicar.`;
+      await supabase.from('processed_documents')
+        .update({ status: 'error', error_message: msg.substring(0, 500), updated_at: new Date().toISOString() })
+        .eq('id', doc.id);
+      return {
+        doc_id: doc.id,
+        doc_number: docNumber,
+        supplier_name: supplierName,
+        success: false,
+        reason: msg,
+        elapsed_ms: Date.now() - startTime,
+      };
+    }
+
+    // If no lines from detail, create single line using the dominant rate from the XML totals
     if (lines.length === 0) {
       const baseAmount = Math.abs(doc.total_amount) - Math.abs(doc.total_tax || 0);
-      lines.push({
+      const fallbackLine: any = {
         DetailType: "AccountBasedExpenseLineDetail",
         Amount: baseAmount > 0 ? baseAmount : Math.abs(doc.total_amount),
         Description: `${isCreditNote ? 'Nota de Crédito' : 'Factura'} ${docNumber} - ${supplierName}`,
         AccountBasedExpenseLineDetail: {
           AccountRef: { value: account.Id },
-          BillableStatus: "NotBillable"
-        }
-      });
+          BillableStatus: "NotBillable",
+        },
+      };
+      const fallbackRate = baseAmount > 0 && doc.total_tax > 0
+        ? Math.round((doc.total_tax / baseAmount) * 100)
+        : 0;
+      const fbTaxCodeId = resolveTaxCodeId(fallbackRate, qboTaxCodes, taxRatesMap);
+      if (fbTaxCodeId) fallbackLine.AccountBasedExpenseLineDetail.TaxCodeRef = { value: fbTaxCodeId };
+      lines.push(fallbackLine);
     }
-    
-    // 8. Add OtrosCargos as additional lines
+
+    // 8. Add OtrosCargos as additional lines (sin impuesto)
     for (const cargo of otrosCargos) {
-      // Find or use default account for otros cargos
-      const cargosAccount = qboAccounts.find(a => 
-        a.AcctNum === '79' || 
+      const cargosAccount = qboAccounts.find(a =>
+        a.AcctNum === '79' ||
         a.Name?.toLowerCase().includes('otros') ||
         a.Name?.toLowerCase().includes('gastos')
       ) || account;
-      
-      lines.push({
+
+      const cargoLine: any = {
         DetailType: "AccountBasedExpenseLineDetail",
         Amount: cargo.monto,
         Description: `Otros Cargos: ${cargo.detalle}`.substring(0, 4000),
         AccountBasedExpenseLineDetail: {
           AccountRef: { value: cargosAccount.Id },
-          BillableStatus: "NotBillable"
-        }
-      });
+          BillableStatus: "NotBillable",
+        },
+      };
+      const cargoTaxCodeId = resolveTaxCodeId(0, qboTaxCodes, taxRatesMap);
+      if (cargoTaxCodeId) cargoLine.AccountBasedExpenseLineDetail.TaxCodeRef = { value: cargoTaxCodeId };
+      lines.push(cargoLine);
     }
     
     // Use full document number as-is from XML
