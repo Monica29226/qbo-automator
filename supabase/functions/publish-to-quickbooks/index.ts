@@ -2031,6 +2031,8 @@ Deno.serve(async (req) => {
         
         // Tax accumulator: group IVA by rate for TxnTaxDetail.TaxLine
         const taxByRate: Record<number, { taxAmount: number; netAmount: number }> = {};
+        // PRE-VALIDATION: track rates whose TaxCodeRef cannot be resolved in QBO
+        const missingLineTaxRates = new Set<number>();
         
         // Parse detail lines
         if (xmlData.detalle && Array.isArray(xmlData.detalle) && xmlData.detalle.length > 0) {
