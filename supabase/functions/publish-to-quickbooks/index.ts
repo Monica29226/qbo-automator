@@ -1513,11 +1513,14 @@ Deno.serve(async (req) => {
         const allAccounts = data.QueryResponse?.Account || [];
         
         const searchCode = accountCode.trim();
-        
-        // Check if it's a pure number (internal QB ID)
-        if (/^\d{1,3}$/.test(searchCode)) {
-          const byId = allAccounts.find((acc: any) => acc.Id === searchCode);
-          if (byId) return byId.Id;
+
+        // Check by internal QB Id FIRST (Ids can be any length: "16", "70", "1150040000"...)
+        if (/^\d+$/.test(searchCode)) {
+          const byId = allAccounts.find((acc: any) => String(acc.Id) === searchCode);
+          if (byId) {
+            logInfo(`✓ Cuenta encontrada por Id interno QB: ${byId.Name} (Id=${byId.Id}, AcctNum=${byId.AcctNum || 'n/a'})`);
+            return byId.Id;
+          }
         }
         
         // FIXED: Account codes can include dashes for sub-accounts (e.g., "6130-03")
