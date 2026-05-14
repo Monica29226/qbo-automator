@@ -366,11 +366,12 @@ Deno.serve(async (req) => {
             body: JSON.stringify(billPayload),
           }
         );
+        initialErrorText = null; // body of new response not consumed yet
       }
     }
 
     if (!response.ok) {
-      const errorText = await response.text();
+      const errorText = initialErrorText ?? await response.text();
       throw new Error(`QuickBooks ${isCreditNote ? 'VendorCredit' : 'Bill'} Error: ${errorText}`);
     }
 
