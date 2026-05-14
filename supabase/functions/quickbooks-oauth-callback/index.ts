@@ -88,16 +88,17 @@ serve(async (req) => {
 
     if (!tokenResponse.ok) {
       const errorText = await tokenResponse.text();
-      console.error("Token exchange failed:", errorText);
+      log("error", "Token exchange failed", { status: tokenResponse.status, body: errorText.substring(0, 500) });
       throw new Error("Failed to exchange code for tokens");
     }
 
     const tokens = await tokenResponse.json();
-    console.log("Tokens received successfully");
+    log("log", "Tokens received", { expires_in: tokens.expires_in });
 
     // Parse state to get organization_id and user_id
     const stateData = JSON.parse(atob(state));
     const { organization_id, user_id } = stateData;
+    log("log", "State decoded", { organization_id, user_id, realmId });
 
     // Initialize Supabase client
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
