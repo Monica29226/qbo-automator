@@ -249,13 +249,86 @@ async function checkDuplicateInQBO(
   }
 }
 
+// Resolve the QuickBooks TaxCode Id matching a Costa Rican IVA rate (0, 1, 2, 4, 8, 13, etc.)
+// Returns null when no match exists so the caller can decide what to do (we surface a hard error).
+function resolveTaxCodeId(rate: number, qboTaxCodes: any[], taxRatesMap: Map<string, number>): string | null {
+  const TOL = 0.15;
+  const r = Number(rate) || 0;
+  const isExempt = (n: string) => {
+    const s = (n || '').toLowerCase();
+    return s.includes('no vat') || s.includes('exento') || s.includes('out of scope') ||
+           s.includes('exempt') || s.includes('fuera del') || s.includes('fuera de') ||
+           s === 'non' || s.startsWith('non ') || s.includes('no aplica') || s.includes('no sujet');
+  };
+  if (r < TOL) {
+    for (const tc of qboTaxCodes) if (isExempt(tc.Name || '')) return tc.Id;
+    return qboTaxCodes[0]?.Id || null;
+  }
+  // Match by actual purchase rate value (most reliable)
+  let best: { id: string; diff: number } | null = null;
+  for (const tc of qboTaxCodes) {
+    if (isExempt(tc.Name || '')) continue;
+    const purchase = tc.PurchaseTaxRateList?.TaxRateDetail || [];
+    for (const d of purchase) {
+      const ref = d.TaxRateRef?.value;
+      if (ref && taxRatesMap.has(ref)) {
+        const actual = taxRatesMap.get(ref)!;
+        const diff = Math.abs(actual - r);
+        if (diff < TOL && (!best || diff < best.diff)) best = { id: tc.Id, diff };
+      }
+    }
+  }
+  if (best) return best.id;
+  // Match by name regex (e.g., "IVA 13%", "Tarifa Reducida 1%")
+  const rateStr = (Number.isInteger(r) ? r.toString() : r.toString()).replace('.', '\\.');
+  const ratePattern = new RegExp(`(^|[^0-9.])${rateStr}\\s*%`);
+  for (const tc of qboTaxCodes) {
+    if (isExempt(tc.Name || '')) continue;
+    if (ratePattern.test(tc.Name || '') || ratePattern.test(tc.Description || '')) return tc.Id;
+  }
+  // Spanish aliases for known CR reduced rates
+  const aliasMap: Record<number, string[]> = {
+    13: ['tarifa general', 'iva general', 'iva 13', 'vat 13'],
+    8:  ['tarifa reducida 8', 'iva 8', 'reducida 8'],
+    4:  ['tarifa reducida 4', 'iva 4', 'servicios médicos', 'servicios medicos', 'educacion', 'educación'],
+    2:  ['tarifa reducida 2', 'iva 2', 'medicamentos'],
+    1:  ['tarifa reducida 1', 'iva 1', 'canasta básica', 'canasta basica'],
+  };
+  const aliases = aliasMap[Math.round(r)];
+  if (aliases) {
+    for (const tc of qboTaxCodes) {
+      if (isExempt(tc.Name || '')) continue;
+      const n = (tc.Name || '').toLowerCase();
+      if (aliases.some(a => n.includes(a))) return tc.Id;
+    }
+  }
+  return null;
+}
+
+// Extract the IVA rate (codigo 01/07/08) from an XML detail item
+function getLineTaxRate(item: any): number {
+  const impuestos = item?.impuestos || item?.Impuestos || [];
+  const arr = Array.isArray(impuestos) ? impuestos : [impuestos];
+  for (const imp of arr) {
+    const codigo = String(imp?.codigo || imp?.Codigo || '');
+    if (!codigo || codigo === '01' || codigo === '07' || codigo === '08') {
+      const t = parseFloat(imp?.tarifa ?? imp?.Tarifa ?? '');
+      if (!isNaN(t)) return t;
+    }
+  }
+  const flat = parseFloat(item?.tarifa ?? item?.Tarifa ?? '');
+  return isNaN(flat) ? 0 : flat;
+}
+
 // Process single document to QuickBooks
 async function processSingleDocument(
   supabase: any,
   doc: any,
   accessToken: string,
   realmId: string,
-  qboAccounts: any[]
+  qboAccounts: any[],
+  qboTaxCodes: any[],
+  taxRatesMap: Map<string, number>,
 ): Promise<ProcessResult> {
   const startTime = Date.now();
   const docNumber = doc.doc_number;
