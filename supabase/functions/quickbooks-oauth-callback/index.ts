@@ -13,6 +13,23 @@ const escapeHtml = (str: string): string => {
   return str.replace(/[&<>"']/g, (char) => htmlEntities[char]);
 };
 
+const getErrorMessage = (error: unknown): string => {
+  if (error instanceof Error && error.message) return error.message;
+  if (typeof error === "string") return error;
+  if (error && typeof error === "object") {
+    const maybeMessage = Reflect.get(error, "message");
+    const maybeDetails = Reflect.get(error, "details");
+
+    if (typeof maybeMessage === "string" && maybeMessage.trim()) {
+      return typeof maybeDetails === "string" && maybeDetails.trim()
+        ? `${maybeMessage} (${maybeDetails})`
+        : maybeMessage;
+    }
+  }
+
+  return "Unknown error";
+};
+
 serve(async (req) => {
   try {
     const url = new URL(req.url);
@@ -117,29 +134,47 @@ serve(async (req) => {
       }
     }
 
-    // Store tokens in integration_accounts (upsert to allow reconnect)
-    const { error: insertError } = await supabase
-      .from("integration_accounts")
-      .upsert({
-        organization_id,
-        service_type: "quickbooks",
-        account_name: `QuickBooks (${realmId})`,
-        created_by: user_id,
-        is_active: true,
-        credentials: {
-          access_token: tokens.access_token,
-          refresh_token: tokens.refresh_token,
-          expires_at: Date.now() + (tokens.expires_in * 1000),
-          realm_id: realmId,
-        },
-        updated_at: new Date().toISOString(),
-      }, {
-        onConflict: "organization_id,service_type",
-      });
+    const connectionPayload = {
+      organization_id,
+      service_type: "quickbooks",
+      account_name: `QuickBooks (${realmId})`,
+      created_by: user_id,
+      is_active: true,
+      credentials: {
+        access_token: tokens.access_token,
+        refresh_token: tokens.refresh_token,
+        expires_at: Date.now() + (tokens.expires_in * 1000),
+        realm_id: realmId,
+      },
+      updated_at: new Date().toISOString(),
+    };
 
-    if (insertError) {
-      console.error("Error storing tokens:", insertError);
-      throw insertError;
+    const { data: existingIntegration, error: existingIntegrationError } = await supabase
+      .from("integration_accounts")
+      .select("id")
+      .eq("organization_id", organization_id)
+      .eq("service_type", "quickbooks")
+      .maybeSingle();
+
+    if (existingIntegrationError) {
+      console.error("Error checking existing QuickBooks integration:", existingIntegrationError);
+      throw existingIntegrationError;
+    }
+
+    const writeQuery = existingIntegration
+      ? supabase
+          .from("integration_accounts")
+          .update(connectionPayload)
+          .eq("id", existingIntegration.id)
+      : supabase
+          .from("integration_accounts")
+          .insert(connectionPayload);
+
+    const { error: writeError } = await writeQuery;
+
+    if (writeError) {
+      console.error("Error storing tokens:", writeError);
+      throw writeError;
     }
 
     // Update organization connection status
@@ -189,7 +224,7 @@ serve(async (req) => {
     );
   } catch (error) {
     console.error("Error in quickbooks-oauth-callback:", error);
-    const errorMessage = error instanceof Error ? error.message : "Unknown error";
+    const errorMessage = getErrorMessage(error);
     return new Response(
       `<html><body><h1>Error</h1><p>${escapeHtml(errorMessage)}</p><script>setTimeout(() => window.close(), 3000);</script></body></html>`,
       { headers: { 
