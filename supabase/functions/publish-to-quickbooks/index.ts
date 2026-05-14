@@ -2269,9 +2269,47 @@ Deno.serve(async (req) => {
           const fallbackTaxCodeId = await getTaxCodeRef(fallbackTaxRate);
           if (fallbackTaxCodeId) {
             fallbackLine.AccountBasedExpenseLineDetail.TaxCodeRef = { value: fallbackTaxCodeId };
+          } else if (fallbackTaxRate > 0) {
+            missingLineTaxRates.add(Number(fallbackTaxRate.toFixed(2)));
           }
           
           lines.push(fallbackLine);
+        }
+        
+        // =============================================================
+        // PRE-VALIDATION (NEW): If XML has IVA but we couldn't resolve TaxCodeRef
+        // and/or TaxRateRef for any rate, ABORT before sending to QBO to avoid
+        // any silent fallback to "Fuera del alcance del impuesto" (NotApplicable).
+        // =============================================================
+        const xmlHasTaxPre = Math.abs(parseFloat(doc.total_tax as any) || 0) > 0.001;
+        const effectiveUsesTaxPre = (doc.uses_tax !== false) && orgDefaultUsesTax && !includeTaxInLines;
+        if (xmlHasTaxPre && effectiveUsesTaxPre) {
+          // Pre-resolve TaxRateRef for every rate that will appear in TxnTaxDetail
+          const missingTxnTaxRateIds = new Set<number>();
+          for (const rateKey of Object.keys(taxByRate)) {
+            const rateNum = Number(rateKey);
+            if (rateNum <= 0) continue;
+            const { taxAmount } = taxByRate[rateNum as any];
+            if (taxAmount <= 0.001) continue;
+            const taxRateId = await getTaxRateRefForRate(rateNum);
+            if (!taxRateId) missingTxnTaxRateIds.add(rateNum);
+          }
+          
+          if (missingLineTaxRates.size > 0 || missingTxnTaxRateIds.size > 0) {
+            const ratesLine = Array.from(missingLineTaxRates).sort((a, b) => a - b).map(r => `${r}%`).join(', ');
+            const ratesTxn = Array.from(missingTxnTaxRateIds).sort((a, b) => a - b).map(r => `${r}%`).join(', ');
+            const parts: string[] = [];
+            if (ratesLine) parts.push(`TaxCodeRef faltante para tarifa(s): ${ratesLine}`);
+            if (ratesTxn) parts.push(`TaxRateRef (TxnTaxDetail) faltante para tarifa(s): ${ratesTxn}`);
+            const errorMsg = `VALIDACIÓN PREVIA BLOQUEADA: el XML trae IVA pero QuickBooks no tiene los códigos requeridos. ${parts.join(' | ')}. Configure los TaxCode/TaxRate en QuickBooks antes de publicar. NO se intentará fallback a Fuera del alcance del impuesto.`;
+            logError(`❌ ${doc.doc_number}: ${errorMsg}`);
+            await registerInTracking(doc, 'error', null, null, errorMsg.substring(0, 500));
+            await supabase
+              .from("processed_documents")
+              .update({ status: "error", error_message: errorMsg.substring(0, 500) })
+              .eq("id", doc.id);
+            return { success: false, docNumber: doc.doc_number, error: errorMsg.substring(0, 200) };
+          }
         }
         
         // =============================================================
