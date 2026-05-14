@@ -11,16 +11,17 @@ export interface QBOAccount {
 }
 
 const fetchQBOAccountsFromAPI = async (organizationId: string): Promise<QBOAccount[]> => {
-  // Verificar conexión QuickBooks primero
-  const { data: qbIntegration } = await supabase
-    .from("integration_accounts")
-    .select("id")
-    .eq("organization_id", organizationId)
-    .eq("service_type", "quickbooks")
-    .eq("is_active", true)
-    .maybeSingle();
+  // Verificar conexión QuickBooks vía RPC seguro (RLS bloquea SELECT directo a integration_accounts)
+  const { data: isConnected, error: rpcError } = await supabase.rpc("has_active_integration", {
+    _org_id: organizationId,
+    _service_type: "quickbooks",
+  });
 
-  if (!qbIntegration) {
+  if (rpcError) {
+    console.warn("⚠️ Error checking QuickBooks connection:", rpcError);
+  }
+
+  if (!isConnected) {
     console.log("⚠️ QuickBooks not connected");
     return [];
   }

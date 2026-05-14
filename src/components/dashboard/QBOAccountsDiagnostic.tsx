@@ -41,16 +41,13 @@ export const QBOAccountsDiagnostic = () => {
   const fetchAccounts = async () => {
     if (!activeOrganization) return;
 
-    // Check if QuickBooks is connected first
-    const { data: qbIntegration } = await supabase
-      .from("integration_accounts")
-      .select("id")
-      .eq("organization_id", activeOrganization)
-      .eq("service_type", "quickbooks")
-      .eq("is_active", true)
-      .maybeSingle();
+    // Check if QuickBooks is connected first (vía RPC seguro)
+    const { data: isConnected } = await supabase.rpc("has_active_integration", {
+      _org_id: activeOrganization,
+      _service_type: "quickbooks",
+    });
 
-    if (!qbIntegration) {
+    if (!isConnected) {
       toast.error("QuickBooks no está conectado. Por favor conecta QuickBooks desde la página de Integraciones.");
       return;
     }
