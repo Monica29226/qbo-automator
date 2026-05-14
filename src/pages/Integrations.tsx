@@ -12,7 +12,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { ArrowLeft, Plus, Plug, Check, X, Mail, Building2, HardDrive, Loader2, Server } from "lucide-react";
+import { ArrowLeft, Plus, Plug, Check, X, Mail, Building2, HardDrive, Loader2, Server, RefreshCw } from "lucide-react";
 import { Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
