@@ -312,10 +312,17 @@ serve(async (req) => {
       }, status: 200 }
     );
   } catch (error) {
-    console.error("Error in quickbooks-oauth-callback:", error);
+    log("error", "Unhandled error in callback", {
+      error_message: getErrorMessage(error),
+      error_name: (error as any)?.name,
+      error_code: (error as any)?.code,
+      error_details: (error as any)?.details,
+      error_hint: (error as any)?.hint,
+      stack: (error as Error)?.stack?.split("\n").slice(0, 5).join(" | "),
+    });
     const errorMessage = getErrorMessage(error);
     return new Response(
-      `<html><body><h1>Error</h1><p>${escapeHtml(errorMessage)}</p><script>setTimeout(() => window.close(), 3000);</script></body></html>`,
+      `<html><body><h1>Error</h1><p>${escapeHtml(errorMessage)}</p><p style="font-size:11px;color:#999">rid: ${escapeHtml(requestId)}</p><script>setTimeout(() => window.close(), 5000);</script></body></html>`,
       { headers: { 
         "Content-Type": "text/html",
         "Content-Security-Policy": "default-src 'self' 'unsafe-inline'"
