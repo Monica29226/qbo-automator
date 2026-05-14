@@ -117,20 +117,24 @@ serve(async (req) => {
       }
     }
 
-    // Store tokens in integration_accounts
+    // Store tokens in integration_accounts (upsert to allow reconnect)
     const { error: insertError } = await supabase
       .from("integration_accounts")
-      .insert({
+      .upsert({
         organization_id,
         service_type: "quickbooks",
         account_name: `QuickBooks (${realmId})`,
         created_by: user_id,
+        is_active: true,
         credentials: {
           access_token: tokens.access_token,
           refresh_token: tokens.refresh_token,
           expires_at: Date.now() + (tokens.expires_in * 1000),
           realm_id: realmId,
         },
+        updated_at: new Date().toISOString(),
+      }, {
+        onConflict: "organization_id,service_type",
       });
 
     if (insertError) {
