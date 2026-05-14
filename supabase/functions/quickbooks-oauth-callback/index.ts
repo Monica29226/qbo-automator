@@ -45,9 +45,9 @@ serve(async (req) => {
     const error = url.searchParams.get("error");
 
     if (error) {
-      console.error("OAuth error:", error);
+      log("error", "OAuth provider returned error", { error });
       return new Response(
-        `<html><body><h1>Error</h1><p>OAuth failed: ${escapeHtml(error)}</p><script>setTimeout(() => window.close(), 3000);</script></body></html>`,
+        `<html><body><h1>Error</h1><p>OAuth failed: ${escapeHtml(error)}</p><p style="font-size:11px;color:#666">rid: ${escapeHtml(requestId)}</p><script>setTimeout(() => window.close(), 3000);</script></body></html>`,
         { headers: { 
           "Content-Type": "text/html",
           "Content-Security-Policy": "default-src 'self' 'unsafe-inline'"
