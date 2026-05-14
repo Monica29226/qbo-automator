@@ -31,6 +31,12 @@ const getErrorMessage = (error: unknown): string => {
 };
 
 serve(async (req) => {
+  const requestId = (crypto as any).randomUUID?.() ?? `rid-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  const log = (level: "log" | "warn" | "error", msg: string, extra?: Record<string, unknown>) => {
+    const payload = { requestId, ...(extra ?? {}) };
+    (console as any)[level](`[oauth-callback rid=${requestId}] ${msg}`, payload);
+  };
+  log("log", "▶ Callback invoked", { method: req.method });
   try {
     const url = new URL(req.url);
     const code = url.searchParams.get("code");
