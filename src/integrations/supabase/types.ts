@@ -1640,6 +1640,12 @@ export type Database = {
         Args: { _org_id: string; _user_id: string }
         Returns: boolean
       }
+      get_active_email_services: {
+        Args: { _org_id: string }
+        Returns: {
+          service_type: string
+        }[]
+      }
       get_user_active_organization: {
         Args: { _user_id: string }
         Returns: string
