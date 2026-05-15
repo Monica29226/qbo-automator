@@ -181,17 +181,21 @@ const Organizations = () => {
     setIsLoading(false);
   };
 
-  // Validar cédula jurídica (10 dígitos)
-  const validateTaxId = (taxId: string): string | null => {
-    if (!taxId) return null; // Es opcional
-    
-    // Limpiar guiones y espacios
-    const cleanNumber = taxId.replace(/[-\s]/g, "");
-    
-    if (!/^\d{10}$/.test(cleanNumber)) {
-      return "La cédula jurídica debe tener exactamente 10 dígitos (sin guiones)";
+  // Validar identificación según tipo
+  const validateIdentification = (type: string, number: string): string | null => {
+    if (!number) return null;
+    const clean = number.replace(/[-\s]/g, "");
+    if (type === "juridica") {
+      if (!/^[234]\d{9}$/.test(clean)) {
+        return "La cédula jurídica debe tener 10 dígitos y empezar con 2, 3 o 4";
+      }
+    } else if (type === "fisica") {
+      if (!/^\d{9}$/.test(clean)) return "La cédula física debe tener 9 dígitos";
+    } else if (type === "dimex") {
+      if (!/^\d{11,12}$/.test(clean)) return "El DIMEX debe tener 11 o 12 dígitos";
+    } else if (type === "nite") {
+      if (!/^\d{10}$/.test(clean)) return "El NITE debe tener 10 dígitos";
     }
-    
     return null;
   };
 
@@ -201,9 +205,11 @@ const Organizations = () => {
       return;
     }
 
-    // Validar cédula jurídica
-    if (orgFormData.tax_id) {
-      const validationError = validateTaxId(orgFormData.tax_id);
+    if (orgFormData.identification_number) {
+      const validationError = validateIdentification(
+        orgFormData.identification_type,
+        orgFormData.identification_number
+      );
       if (validationError) {
         toast.error(validationError);
         return;
@@ -218,12 +224,14 @@ const Organizations = () => {
       .from("organizations")
       .update({
         name: orgFormData.name,
-        tax_id: orgFormData.tax_id || null,
+        tax_id: orgFormData.identification_number || orgFormData.tax_id || null,
+        identification_type: orgFormData.identification_type || null,
+        identification_number: orgFormData.identification_number || null,
         email: orgFormData.email || null,
         qbo_company_id: orgFormData.qbo_company_id || null,
         google_drive_folder_id: orgFormData.google_drive_folder_id || null,
         google_drive_enabled: orgFormData.google_drive_enabled,
-      })
+      } as any)
       .eq("id", activeOrganization);
 
     setIsLoading(false);
