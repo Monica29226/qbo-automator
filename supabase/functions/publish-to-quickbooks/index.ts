@@ -2171,6 +2171,12 @@ Deno.serve(async (req) => {
               } else if (tasaImpuesto > 0) {
                 missingLineTaxRates.add(Number(tasaImpuesto.toFixed(2)));
               }
+
+              const taxCodeMatched = taxCodeId
+                ? (taxCodesCache?.find((tc: any) => tc.Id === taxCodeId)?.Name || taxCodeId)
+                : (tasaImpuesto > 0 ? 'BLOQUEADO (no encontrado en QBO)' : 'exento');
+
+              logInfo(`   🧾 ${doc.doc_number} Línea ${item.numeroLinea || '?'}: subtotal=${Number(subtotal).toFixed(2)} | IVA ${tasaImpuesto}% = ${Number(montoImpuestoIVA).toFixed(2)} | TaxCode QBO: ${taxCodeMatched}`);
               
               // Store montoTotalLinea for TaxInclusive retry fallback
             const montoTotalLinea = parseFloat(item.montoTotalLinea) || (Math.abs(subtotal) + Math.abs(montoImpuestoIVA) + Math.abs(montoImpuestoIEBLE));
