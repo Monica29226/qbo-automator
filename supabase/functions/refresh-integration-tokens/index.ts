@@ -41,6 +41,8 @@ serve(async (req) => {
       gmail: { checked: 0, refreshed: 0, warned: 0, failed: 0 },
       quickbooks: { checked: 0, refreshed: 0, warned: 0, failed: 0 },
       outlook: { checked: 0, refreshed: 0, warned: 0, failed: 0 },
+      hostinger: { checked: 0, refreshed: 0, warned: 0, failed: 0 },
+      bluehost: { checked: 0, refreshed: 0, warned: 0, failed: 0 },
     };
 
     for (const account of accounts) {
