@@ -1260,6 +1260,37 @@ Deno.serve(async (req) => {
     };
 
     // =============================================================
+    // HELPER: Classify QBO error as transient (waiting_for_qbo) vs permanent (error)
+    // Transient = problem on QBO side (suspended subscription, closed period, server down)
+    // Permanent = problem with the invoice (missing account, vendor conflict, currency)
+    // =============================================================
+    const TRANSIENT_PATTERNS = [
+      /estado de la empresa no v[aá]lido/i,
+      /per[ií]odo.*cerrado/i,
+      /closed period/i,
+      /subscription/i,
+      /suspended/i,
+      /suspendid/i,
+      /service.*unavailable/i,
+      /503/,
+      /temporarily unavailable/i,
+    ];
+    const isTransientQboError = (msg: string): boolean => {
+      if (!msg) return false;
+      return TRANSIENT_PATTERNS.some((re) => re.test(msg));
+    };
+    const writeFailureStatus = async (docId: string, fullErrorMessage: string) => {
+      const transient = isTransientQboError(fullErrorMessage);
+      const status = transient ? "waiting_for_qbo" : "error";
+      await supabase
+        .from("processed_documents")
+        .update({ status, error_message: fullErrorMessage.substring(0, 500) })
+        .eq("id", docId);
+      if (transient) logInfo(`⏳ Doc ${docId} marcado waiting_for_qbo (error transitorio QBO)`);
+      return status;
+    };
+
+    // =============================================================
     // HELPER: Register in tracking table
     // =============================================================
     const registerInTracking = async (doc: any, status: string, qboEntityId?: string | null, qboEntityType?: string | null, errorMessage?: string) => {
