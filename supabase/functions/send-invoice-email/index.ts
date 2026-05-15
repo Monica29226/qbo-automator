@@ -26,7 +26,39 @@ Deno.serve(async (req) => {
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
+    // SECURITY: require authenticated caller
+    const token = req.headers.get("Authorization")?.replace("Bearer ", "");
+    if (!token) {
+      return new Response(JSON.stringify({ success: false, error: "Unauthorized" }), {
+        status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    const anon = createClient(supabaseUrl, Deno.env.get("SUPABASE_ANON_KEY")!);
+    const { data: userData, error: userErr } = await anon.auth.getUser(token);
+    if (userErr || !userData?.user) {
+      return new Response(JSON.stringify({ success: false, error: "Unauthorized" }), {
+        status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     const { invoice_id, organization_id, to_email, subject, include_pdf, invoice_type } = await req.json();
+
+    // Caller must belong to the organization
+    if (organization_id) {
+      const { data: membership } = await supabase
+        .from("organization_members")
+        .select("id")
+        .eq("user_id", userData.user.id)
+        .eq("organization_id", organization_id)
+        .eq("is_active", true)
+        .maybeSingle();
+      if (!membership) {
+        return new Response(JSON.stringify({ success: false, error: "Forbidden" }), {
+          status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+    }
+
 
     // Validation
     if (!invoice_id || !organization_id) {

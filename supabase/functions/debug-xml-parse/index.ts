@@ -184,6 +184,10 @@ interface Step {
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
 
+  const authError = await requireAuthenticatedUser(req);
+  if (authError) return authError;
+
+
   const trace: Step[] = [];
   const log = (step: string, status: Step['status'], message: string, data?: any) => {
     trace.push({ step, status, message, data });
