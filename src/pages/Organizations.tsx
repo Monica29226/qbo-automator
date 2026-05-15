@@ -330,12 +330,14 @@ const Organizations = () => {
         .from("organizations")
         .insert({
           name: orgFormData.name,
-          tax_id: orgFormData.tax_id || null,
+          tax_id: orgFormData.identification_number || orgFormData.tax_id || null,
+          identification_type: orgFormData.identification_type || null,
+          identification_number: orgFormData.identification_number || null,
           email: orgFormData.email || null,
           qbo_company_id: orgFormData.qbo_company_id || null,
           google_drive_folder_id: orgFormData.google_drive_folder_id || null,
           google_drive_enabled: orgFormData.google_drive_enabled,
-        })
+        } as any)
         .select('id');
 
       if (orgError) {
