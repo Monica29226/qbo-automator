@@ -202,7 +202,7 @@ serve(async (req) => {
         key: cursorKey,
         value: String(skipCount),
         description: `Resume cursor for ${provider} sync`,
-      }, { onConflict: "organization_id,key" });
+      }, { onConflict: "key,organization_id" });
     }
 
     // Trigger publish-to-quickbooks if anything was processed

@@ -372,7 +372,7 @@ async function processOrganization(
           key: cursorKey,
           value: String(skipCount),
           description: `Resume cursor for ${mailProvider} sync`,
-        }, { onConflict: "organization_id,key" });
+        }, { onConflict: "key,organization_id" });
         console.log(`💾 Persisted resume cursor for ${org.name}: skip_count=${skipCount}`);
       } else {
         await supabase.from("system_settings").delete()
