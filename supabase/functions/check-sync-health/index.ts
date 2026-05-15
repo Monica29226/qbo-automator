@@ -19,6 +19,9 @@ interface Organization {
   name: string;
   email: string;
   gmail_connected: boolean;
+  outlook_connected: boolean;
+  hostinger_connected: boolean;
+  bluehost_connected: boolean;
   quickbooks_connected: boolean;
 }
 
