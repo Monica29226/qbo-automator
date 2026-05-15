@@ -20,6 +20,53 @@ const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 const INVOICE_TIMEOUT_MS = 45000; // 45 seconds per invoice max
 
 // =============================================================
+// Per-org QBO CompanyInfo cache (homeCurrency, multiCurrencyEnabled)
+// Cached 1h to avoid hitting CompanyInfo on every doc.
+// =============================================================
+interface QBOCurrencyConfig {
+  country: string;
+  homeCurrency: string;
+  multiCurrencyEnabled: boolean;
+}
+const QBO_CURRENCY_CACHE = new Map<string, { value: QBOCurrencyConfig; expiresAt: number }>();
+const QBO_CURRENCY_TTL_MS = 60 * 60 * 1000;
+
+async function getQBOCurrencyConfig(
+  organizationId: string,
+  realmId: string,
+  accessToken: string,
+): Promise<QBOCurrencyConfig> {
+  const cached = QBO_CURRENCY_CACHE.get(organizationId);
+  if (cached && cached.expiresAt > Date.now()) return cached.value;
+
+  // Defaults are intentionally restrictive: assume CRC + no multi-currency on failure
+  let result: QBOCurrencyConfig = { country: 'CR', homeCurrency: 'CRC', multiCurrencyEnabled: false };
+  try {
+    const url = `https://quickbooks.api.intuit.com/v3/company/${realmId}/companyinfo/${realmId}`;
+    const resp = await fetch(url, {
+      headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" },
+    });
+    if (resp.ok) {
+      const data = await resp.json();
+      const ci = data?.CompanyInfo || {};
+      result = {
+        country: ci.Country || 'CR',
+        homeCurrency: ci.Country === 'US' ? 'USD' : (ci?.NameValue?.find?.((nv: any) => nv?.Name === 'NeoEnabled') ? 'CRC' : (ci?.HomeCurrency || 'CRC')),
+        multiCurrencyEnabled: !!(ci?.NameValue?.some?.((nv: any) => nv?.Name === 'MultiCurrencyEnabled' && String(nv?.Value).toLowerCase() === 'true')),
+      };
+      // Some QBO responses expose currency directly via Currency field on companyinfo
+      if (ci?.Currency) result.homeCurrency = ci.Currency;
+    } else {
+      console.error(`getQBOCurrencyConfig: HTTP ${resp.status} for org ${organizationId}`);
+    }
+  } catch (e) {
+    console.error(`getQBOCurrencyConfig failed for org ${organizationId}:`, e);
+  }
+  QBO_CURRENCY_CACHE.set(organizationId, { value: result, expiresAt: Date.now() + QBO_CURRENCY_TTL_MS });
+  return result;
+}
+
+// =============================================================
 // INTERFACE: OtrosCargos from Costa Rica XML schema v4.4
 // =============================================================
 interface OtroCargo {
