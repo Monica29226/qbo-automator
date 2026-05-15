@@ -125,6 +125,8 @@ const Organizations = () => {
       setOrgFormData({
         name: org.name,
         tax_id: org.tax_id || "",
+        identification_type: (org as any).identification_type || "juridica",
+        identification_number: (org as any).identification_number || org.tax_id || "",
         email: org.email || "",
         qbo_company_id: org.qbo_company_id || "",
         google_drive_folder_id: org.google_drive_folder_id || "",
