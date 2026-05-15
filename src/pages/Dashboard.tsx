@@ -575,6 +575,9 @@ const Dashboard = () => {
           </Suspense>
         </div>
 
+        <div className="mb-4 flex justify-end">
+          <SyncEmailNowButton />
+        </div>
         <Suspense fallback={<LazyFallback />}>
           <CronMonitor />
         </Suspense>
