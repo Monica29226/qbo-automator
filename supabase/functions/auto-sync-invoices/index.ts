@@ -224,10 +224,27 @@ async function processOrganization(
       total_messages_in_range: 0,
     };
 
+    // Resume from persisted cursor if a previous run was interrupted (Hostinger/Bluehost only)
+    const cursorKey = `${mailProvider}_resume_skip_${org.id}`;
     let skipCount = 0;
+    if (mailProvider === "hostinger" || mailProvider === "bluehost") {
+      const { data: cursorRow } = await supabase
+        .from("system_settings")
+        .select("value")
+        .eq("organization_id", org.id)
+        .eq("key", cursorKey)
+        .maybeSingle();
+      const persisted = Number(cursorRow?.value);
+      if (Number.isFinite(persisted) && persisted > 0) {
+        skipCount = persisted;
+        console.log(`▶️ Resuming ${mailProvider} sync for ${org.name} from skip_count=${skipCount}`);
+      }
+    }
     let continueFetching = true;
     let iteration = 0;
-    const maxIterations = 8;
+    const maxIterations = 15;
+    const dispatcherStartTime = Date.now();
+    const MAX_DISPATCHER_TIME_MS = 90_000;
 
     while (continueFetching && iteration < maxIterations) {
       iteration += 1;
