@@ -244,6 +244,26 @@ async function checkOrganization(supabase: any, org: any): Promise<number> {
     }
   }
 
+  // 8. Facturas con divisa incompatible (currency_mismatch)
+  {
+    const { count } = await supabase
+      .from("processed_documents")
+      .select("id", { count: "exact", head: true })
+      .eq("organization_id", orgId)
+      .eq("status", "currency_mismatch");
+    if ((count || 0) > 0) {
+      checks.push({
+        code: "currency_mismatch",
+        severity: "warning",
+        title: "Facturas con divisa incompatible",
+        description: `${count} factura(s) no se pueden publicar por incompatibilidad de divisa con QBO. Configura multi-currency en QBO o registra manualmente.`,
+        action: "Revisar",
+        action_link: "/error-documents",
+        count: count || 0,
+      });
+    }
+  }
+
   // Anti-duplicación: filtrar alertas con un row no resuelto creado en las últimas 4h
   if (checks.length === 0) return 0;
 
