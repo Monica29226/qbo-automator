@@ -2589,10 +2589,14 @@ Deno.serve(async (req) => {
             GlobalTaxCalculation: "TaxExcluded",
           };
           
-          if (documentCurrency === 'USD') {
-            vendorCreditPayload.CurrencyRef = { value: "USD" };
-            const exchangeRate = parseFloat(xmlData?.resumen_factura?.tipoCambio || xmlData?.tipoCambio || '1');
-            if (exchangeRate > 1) vendorCreditPayload.ExchangeRate = exchangeRate;
+          // Always set CurrencyRef; include ExchangeRate if differs from QBO home currency
+          {
+            const _docCur = (documentCurrency || 'CRC').toUpperCase();
+            vendorCreditPayload.CurrencyRef = { value: _docCur };
+            if (_docCur !== homeCurrency) {
+              const exchangeRate = parseFloat(doc.exchange_rate || xmlData?.resumen_factura?.tipoCambio || xmlData?.tipoCambio || '1');
+              if (exchangeRate > 0) vendorCreditPayload.ExchangeRate = exchangeRate;
+            }
           }
           
           // ALWAYS set TxnTaxDetail with exact XML value when IVA is recoverable
