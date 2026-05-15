@@ -41,7 +41,7 @@ serve(async (req) => {
     // Get all active organizations
     const { data: orgs, error: orgsError } = await supabase
       .from("organizations")
-      .select("id, name, email, gmail_connected, quickbooks_connected")
+      .select("id, name, email, gmail_connected, outlook_connected, hostinger_connected, bluehost_connected, quickbooks_connected")
       .eq("is_active", true);
 
     if (orgsError) {
