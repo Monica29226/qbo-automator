@@ -346,6 +346,10 @@ async function processOrganization(
         skipCount = nextSkip;
         aggregatedEmailData.status = "partial";
         aggregatedEmailData.time_limit_reached = true;
+        if (Date.now() - dispatcherStartTime > MAX_DISPATCHER_TIME_MS) {
+          console.log(`⏱️ Dispatcher wall-time exceeded for ${org.name}, will resume next cron`);
+          break;
+        }
         await new Promise((resolve) => setTimeout(resolve, 300));
       } else {
         aggregatedEmailData.status = chunk.status || (chunk.partial ? "partial" : "complete");
@@ -357,6 +361,24 @@ async function processOrganization(
     if (continueFetching && iteration >= maxIterations) {
       aggregatedEmailData.status = "partial";
       aggregatedEmailData.time_limit_reached = true;
+    }
+
+    // Persist or clear cursor for next cron invocation (Hostinger/Bluehost only)
+    if (mailProvider === "hostinger" || mailProvider === "bluehost") {
+      const isPartial = aggregatedEmailData.status === "partial" || aggregatedEmailData.time_limit_reached;
+      if (isPartial && skipCount > 0) {
+        await supabase.from("system_settings").upsert({
+          organization_id: org.id,
+          key: cursorKey,
+          value: String(skipCount),
+          description: `Resume cursor for ${mailProvider} sync`,
+        }, { onConflict: "organization_id,key" });
+        console.log(`💾 Persisted resume cursor for ${org.name}: skip_count=${skipCount}`);
+      } else {
+        await supabase.from("system_settings").delete()
+          .eq("organization_id", org.id)
+          .eq("key", cursorKey);
+      }
     }
 
     const emailData = aggregatedEmailData;
