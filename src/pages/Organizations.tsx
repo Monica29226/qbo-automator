@@ -535,10 +535,16 @@ const Organizations = () => {
                     <p className="text-sm text-muted-foreground mb-1">Nombre</p>
                     <p className="font-medium">{orgDetails?.name}</p>
                   </div>
-                  <div>
-                    <p className="text-sm text-muted-foreground mb-1">Cédula Jurídica</p>
-                    <p className="font-medium">{orgDetails?.tax_id || "No configurado"}</p>
-                  </div>
+                  {(() => {
+                    const idType = (orgDetails as any)?.identification_type || "juridica";
+                    const idNumber = (orgDetails as any)?.identification_number || orgDetails?.tax_id || "";
+                    return (
+                      <div>
+                        <p className="text-sm text-muted-foreground mb-1">{ID_TYPE_LABELS[idType] || "Identificación"}</p>
+                        <p className="font-medium">{idNumber || "No configurado"}</p>
+                      </div>
+                    );
+                  })()}
                   <div>
                     <p className="text-sm text-muted-foreground mb-1">Correo</p>
                     <p className="font-medium">{orgDetails?.email || "No configurado"}</p>
