@@ -17,11 +17,10 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-// Cache keys para sessionStorage
+// Cache keys para sessionStorage (UX only - NEVER cache authorization state like isAdmin)
 const CACHE_KEYS = {
   ORGANIZATIONS: 'auth_orgs_cache',
   ACTIVE_ORG: 'auth_active_org_cache',
-  IS_ADMIN: 'auth_is_admin_cache',
   CACHE_TIME: 'auth_cache_time'
 };
 
@@ -34,16 +33,14 @@ const getCachedData = () => {
     if (!cacheTime || Date.now() - parseInt(cacheTime) > CACHE_TTL_MS) {
       return null;
     }
-    
+
     const orgs = sessionStorage.getItem(CACHE_KEYS.ORGANIZATIONS);
     const activeOrg = sessionStorage.getItem(CACHE_KEYS.ACTIVE_ORG);
-    const isAdmin = sessionStorage.getItem(CACHE_KEYS.IS_ADMIN);
-    
+
     if (orgs) {
       return {
         organizations: JSON.parse(orgs),
         activeOrganization: activeOrg || null,
-        isAdmin: isAdmin === 'true'
       };
     }
   } catch {
@@ -52,16 +49,18 @@ const getCachedData = () => {
   return null;
 };
 
-const setCachedData = (orgs: any[], activeOrg: string | null, isAdmin: boolean) => {
+const setCachedData = (orgs: any[], activeOrg: string | null) => {
   try {
     sessionStorage.setItem(CACHE_KEYS.ORGANIZATIONS, JSON.stringify(orgs));
     sessionStorage.setItem(CACHE_KEYS.ACTIVE_ORG, activeOrg || '');
-    sessionStorage.setItem(CACHE_KEYS.IS_ADMIN, isAdmin ? 'true' : 'false');
     sessionStorage.setItem(CACHE_KEYS.CACHE_TIME, Date.now().toString());
   } catch {
     // Ignore cache errors
   }
 };
+
+// Legacy cleanup: remove any previously persisted admin flag
+try { sessionStorage.removeItem('auth_is_admin_cache'); } catch { /* ignore */ }
 
 const clearCachedData = () => {
   try {
@@ -89,7 +88,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     if (cached) {
       setOrganizations(cached.organizations);
       setActiveOrganization(cached.activeOrganization);
-      setIsAdmin(cached.isAdmin);
+      // isAdmin is NEVER cached client-side - always re-derived from user_roles on each load
     }
 
     // Configurar listener PRIMERO (sincrónico, no bloquea)
@@ -211,8 +210,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       admin = !adminRoleResult.error && adminRoleResult.data && adminRoleResult.data.length > 0;
       setIsAdmin(admin);
 
-      // Guardar en cache
-      setCachedData(orgs, activeOrg, admin);
+      // Guardar en cache (sin isAdmin - se re-deriva siempre del servidor)
+      setCachedData(orgs, activeOrg);
 
     } catch (error) {
       console.error("❌ Error cargando datos de usuario:", error);
@@ -224,8 +223,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
   const setActiveOrganizationLocal = (organizationId: string) => {
     setActiveOrganization(organizationId);
-    // Actualizar cache
-    setCachedData(organizations, organizationId, isAdmin);
+    // Actualizar cache (sin isAdmin)
+    setCachedData(organizations, organizationId);
   };
 
   const switchOrganization = async (organizationId: string) => {
@@ -238,7 +237,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
       if (!error) {
         setActiveOrganization(organizationId);
-        setCachedData(organizations, organizationId, isAdmin);
+        setCachedData(organizations, organizationId);
       }
     } catch (error) {
       console.error("Error switching organization:", error);

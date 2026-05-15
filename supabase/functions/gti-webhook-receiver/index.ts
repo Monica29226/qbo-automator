@@ -150,7 +150,7 @@ serve(async (req) => {
     if (orgError || !org) {
       console.error("❌ Organization not found for tax_id:", receptor.identificacion);
       return new Response(
-        JSON.stringify({ error: "Organization not found", tax_id: receptor.identificacion }),
+        JSON.stringify({ error: "Organization not found" }),
         { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
@@ -257,9 +257,10 @@ serve(async (req) => {
     );
 
   } catch (error: any) {
-    console.error("❌ GTI Webhook error:", error);
+    // Log full details server-side only; never expose internal error messages to callers
+    console.error("❌ GTI Webhook error:", error?.message, error?.stack);
     return new Response(
-      JSON.stringify({ error: error.message }),
+      JSON.stringify({ error: "Internal server error" }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }

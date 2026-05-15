@@ -35,6 +35,31 @@ const handler = async (req: Request): Promise<Response> => {
       );
     }
 
+    // SECURITY: Validate redirectUrl against an allowlist of trusted origins to prevent
+    // attackers from sending phishing emails that look like they come from us but link
+    // to attacker-controlled sites.
+    const ALLOWED_ORIGINS = new Set<string>([
+      "https://invoiceflow.calderon.cr",
+      "https://qbo-automator.lovable.app",
+      "https://facturas.aureoncr.com",
+    ]);
+    const RESET_PATH = "/reset-password";
+    let safeRedirectUrl = `https://invoiceflow.calderon.cr${RESET_PATH}`;
+    try {
+      if (redirectUrl) {
+        const parsed = new URL(redirectUrl);
+        const originOk = ALLOWED_ORIGINS.has(parsed.origin)
+          || /^https:\/\/([a-z0-9-]+\.)*lovable\.app$/.test(parsed.origin);
+        if (originOk) {
+          safeRedirectUrl = `${parsed.origin}${RESET_PATH}`;
+        } else {
+          console.warn("Rejected untrusted redirectUrl origin:", parsed.origin);
+        }
+      }
+    } catch {
+      console.warn("Invalid redirectUrl, using default");
+    }
+
     console.log(`Password reset requested for: ${email}`);
 
     const supabaseAdmin = createClient(
@@ -93,7 +118,7 @@ const handler = async (req: Request): Promise<Response> => {
     }
 
     // Build reset URL
-    const resetUrl = `${redirectUrl}?token=${token}`;
+    const resetUrl = `${safeRedirectUrl}?token=${token}`;
 
     // Get email sender from system settings or use default
     let emailSender = "FacturaFlow <onboarding@resend.dev>";

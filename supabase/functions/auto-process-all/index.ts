@@ -17,10 +17,46 @@ Deno.serve(async (req) => {
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
+    // SECURITY: require service-role (cron) or authenticated user JWT
+    const token = req.headers.get("Authorization")?.replace("Bearer ", "");
+    const isServiceRole = !!token && token === supabaseKey;
+    let callerUserId: string | null = null;
+    if (!isServiceRole) {
+      if (!token) {
+        return new Response(JSON.stringify({ error: "Unauthorized" }), {
+          status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      const anon = createClient(supabaseUrl, Deno.env.get("SUPABASE_ANON_KEY")!);
+      const { data: userData, error: userErr } = await anon.auth.getUser(token);
+      if (userErr || !userData?.user) {
+        return new Response(JSON.stringify({ error: "Unauthorized" }), {
+          status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      callerUserId = userData.user.id;
+    }
+
     const { organization_id } = await req.json();
 
     if (!organization_id) {
       throw new Error("organization_id is required");
+    }
+
+    // If the caller is a user (not service role), enforce org membership
+    if (callerUserId) {
+      const { data: membership } = await supabase
+        .from("organization_members")
+        .select("id")
+        .eq("user_id", callerUserId)
+        .eq("organization_id", organization_id)
+        .eq("is_active", true)
+        .maybeSingle();
+      if (!membership) {
+        return new Response(JSON.stringify({ error: "Forbidden" }), {
+          status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
     }
 
     console.log(`🚀 Auto-processing all pending documents for: ${organization_id}`);
