@@ -2586,11 +2586,9 @@ Deno.serve(async (req) => {
                 return { success: false, docNumber: doc.doc_number, error: taxErrorMsg.substring(0, 200) };
               }
             } else {
-              await registerInTracking(doc, 'error', null, null, errorText.substring(0, 500));
-              await supabase
-                .from("processed_documents")
-                .update({ status: "error", error_message: `QBO VendorCredit Error: ${errorText.substring(0, 500)}` })
-                .eq("id", doc.id);
+              const fullMsg = `QBO VendorCredit Error: ${errorText.substring(0, 500)}`;
+              await registerInTracking(doc, 'error', null, null, fullMsg.substring(0, 500));
+              await writeFailureStatus(doc.id, fullMsg);
               return { success: false, docNumber: doc.doc_number, error: errorText.substring(0, 200) };
             }
           }
