@@ -20,12 +20,12 @@ serve(async (req) => {
 
     console.log("ℹ️ QuickBooks tokens are refreshed exclusively by auto-renew-tokens to avoid race conditions");
 
-    // Gmail y Outlook only. QuickBooks is handled by auto-renew-tokens to avoid
+    // Gmail, Outlook, Hostinger, and Bluehost. QuickBooks is handled by auto-renew-tokens to avoid
     // refresh_token rotation races that mark integrations inactive.
     const { data: accounts, error: fetchError } = await supabase
       .from("integration_accounts")
       .select("*")
-      .in("service_type", ["gmail", "outlook"])
+      .in("service_type", ["gmail", "outlook", "hostinger", "bluehost"])
       .eq("is_active", true);
 
     if (fetchError) throw fetchError;
@@ -41,6 +41,8 @@ serve(async (req) => {
       gmail: { checked: 0, refreshed: 0, warned: 0, failed: 0 },
       quickbooks: { checked: 0, refreshed: 0, warned: 0, failed: 0 },
       outlook: { checked: 0, refreshed: 0, warned: 0, failed: 0 },
+      hostinger: { checked: 0, refreshed: 0, warned: 0, failed: 0 },
+      bluehost: { checked: 0, refreshed: 0, warned: 0, failed: 0 },
     };
 
     for (const account of accounts) {
