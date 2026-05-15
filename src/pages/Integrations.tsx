@@ -700,6 +700,20 @@ const Integrations = () => {
   const handleRemoveAccount = async (accountId: string) => {
     if (!confirm("¿Está seguro de remover esta cuenta?")) return;
 
+    // Read service_type + organization_id before disabling so we can also
+    // clear the matching connected flag on organizations (kept consistent).
+    const { data: account, error: fetchError } = await supabase
+      .from("integration_accounts")
+      .select("service_type, organization_id")
+      .eq("id", accountId)
+      .maybeSingle();
+
+    if (fetchError) {
+      toast.error("Error al remover cuenta");
+      console.error(fetchError);
+      return;
+    }
+
     const { error } = await supabase
       .from("integration_accounts")
       .update({ is_active: false })
@@ -708,10 +722,34 @@ const Integrations = () => {
     if (error) {
       toast.error("Error al remover cuenta");
       console.error(error);
-    } else {
-      toast.success("Cuenta removida");
-      fetchData();
+      return;
     }
+
+    if (account?.service_type && account?.organization_id) {
+      const flagByService: Record<string, string> = {
+        gmail: "gmail_connected",
+        outlook: "outlook_connected",
+        bluehost: "bluehost_connected",
+        hostinger: "hostinger_connected",
+        quickbooks: "quickbooks_connected",
+        google_drive: "google_drive_connected",
+      };
+
+      const flag = flagByService[account.service_type];
+      if (flag) {
+        const { error: orgError } = await supabase
+          .from("organizations")
+          .update({ [flag]: false })
+          .eq("id", account.organization_id);
+
+        if (orgError) {
+          console.error("Error clearing organization connected flag:", orgError);
+        }
+      }
+    }
+
+    toast.success("Cuenta removida");
+    fetchData();
   };
 
   const services = [
