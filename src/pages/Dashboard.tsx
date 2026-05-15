@@ -23,6 +23,7 @@ import { ReconcileXmlQboButton } from "@/components/dashboard/ReconcileXmlQboBut
 const RecentDocuments = lazy(() => import("@/components/dashboard/RecentDocuments").then(m => ({ default: m.RecentDocuments })));
 const CronMonitor = lazy(() => import("@/components/dashboard/CronMonitor").then(m => ({ default: m.CronMonitor })));
 import { SyncEmailNowButton } from "@/components/dashboard/SyncEmailNowButton";
+import { RecoverBacklogButton } from "@/components/dashboard/RecoverBacklogButton";
 const AICreditsMonitor = lazy(() => import("@/components/dashboard/AICreditsMonitor").then(m => ({ default: m.AICreditsMonitor })));
 const ErrorLogsViewer = lazy(() => import("@/components/dashboard/ErrorLogsViewer").then(m => ({ default: m.ErrorLogsViewer })));
 const ErrorDocumentsModal = lazy(() => import("@/components/dashboard/ErrorDocumentsModal").then(m => ({ default: m.ErrorDocumentsModal })));
@@ -576,7 +577,8 @@ const Dashboard = () => {
           </Suspense>
         </div>
 
-        <div className="mb-4 flex justify-end">
+        <div className="mb-4 flex justify-end gap-2 flex-wrap">
+          <RecoverBacklogButton />
           <SyncEmailNowButton />
         </div>
         <Suspense fallback={<LazyFallback />}>

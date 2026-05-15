@@ -19,6 +19,9 @@ interface Organization {
   name: string;
   email: string;
   gmail_connected: boolean;
+  outlook_connected: boolean;
+  hostinger_connected: boolean;
+  bluehost_connected: boolean;
   quickbooks_connected: boolean;
 }
 
@@ -38,7 +41,7 @@ serve(async (req) => {
     // Get all active organizations
     const { data: orgs, error: orgsError } = await supabase
       .from("organizations")
-      .select("id, name, email, gmail_connected, quickbooks_connected")
+      .select("id, name, email, gmail_connected, outlook_connected, hostinger_connected, bluehost_connected, quickbooks_connected")
       .eq("is_active", true);
 
     if (orgsError) {
@@ -336,12 +339,16 @@ async function checkAICredits(
 }
 
 function checkConnections(org: Organization): HealthIssue | null {
-  if (!org.gmail_connected) {
+  const hasAnyMail =
+    org.gmail_connected || org.outlook_connected ||
+    org.hostinger_connected || org.bluehost_connected;
+
+  if (!hasAnyMail) {
     return {
       type: "critical",
-      title: "Gmail desconectado",
-      description: "La cuenta de Gmail no está conectada",
-      actionRequired: "Reconectar Gmail en Configuración > Integraciones",
+      title: "Sin canal de correo conectado",
+      description: "No hay ninguna cuenta de correo activa (Gmail, Outlook, Hostinger o Bluehost)",
+      actionRequired: "Conectar al menos un proveedor de correo en Configuración > Integraciones",
     };
   }
 
