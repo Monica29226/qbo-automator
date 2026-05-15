@@ -35,11 +35,7 @@ export const SyncEmailNowButton = () => {
     const t = toast.loading("Sincronizando correos...");
     try {
       const { data: accounts, error } = await supabase
-        .from("integration_accounts")
-        .select("service_type")
-        .eq("organization_id", activeOrganization)
-        .eq("is_active", true)
-        .in("service_type", ["gmail", "outlook", "hostinger", "bluehost"]);
+        .rpc("get_active_email_services", { _org_id: activeOrganization });
 
       if (error) throw error;
 
@@ -49,7 +45,9 @@ export const SyncEmailNowButton = () => {
         return;
       }
 
-      const unique = Array.from(new Set(accounts.map((a) => a.service_type)));
+      const unique = Array.from(
+        new Set((accounts as Array<{ service_type: string }>).map((a) => a.service_type))
+      ).filter((s) => FN_MAP[s]);
 
       const results = await Promise.allSettled(
         unique.map(async (svc) => {
