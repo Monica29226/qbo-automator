@@ -743,12 +743,32 @@ const Organizations = () => {
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="org-tax-id">Cédula Jurídica</Label>
+              <Label htmlFor="org-id-type">Tipo de Identificación</Label>
+              <Select
+                value={orgFormData.identification_type}
+                onValueChange={(v) => setOrgFormData({ ...orgFormData, identification_type: v })}
+              >
+                <SelectTrigger id="org-id-type">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="juridica">Cédula Jurídica</SelectItem>
+                  <SelectItem value="fisica">Cédula Física</SelectItem>
+                  <SelectItem value="dimex">DIMEX</SelectItem>
+                  <SelectItem value="nite">NITE</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="org-id-number">{ID_TYPE_LABELS[orgFormData.identification_type] || "Identificación"}</Label>
               <Input
-                id="org-tax-id"
-                value={orgFormData.tax_id}
-                onChange={(e) => setOrgFormData({ ...orgFormData, tax_id: e.target.value })}
-                placeholder="3-101-123456"
+                id="org-id-number"
+                value={orgFormData.identification_number}
+                onChange={(e) =>
+                  setOrgFormData({ ...orgFormData, identification_number: e.target.value })
+                }
+                placeholder={ID_TYPE_PLACEHOLDERS[orgFormData.identification_type] || ""}
               />
             </div>
 
