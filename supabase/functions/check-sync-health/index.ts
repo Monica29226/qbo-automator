@@ -339,12 +339,16 @@ async function checkAICredits(
 }
 
 function checkConnections(org: Organization): HealthIssue | null {
-  if (!org.gmail_connected) {
+  const hasAnyMail =
+    org.gmail_connected || org.outlook_connected ||
+    org.hostinger_connected || org.bluehost_connected;
+
+  if (!hasAnyMail) {
     return {
       type: "critical",
-      title: "Gmail desconectado",
-      description: "La cuenta de Gmail no está conectada",
-      actionRequired: "Reconectar Gmail en Configuración > Integraciones",
+      title: "Sin canal de correo conectado",
+      description: "No hay ninguna cuenta de correo activa (Gmail, Outlook, Hostinger o Bluehost)",
+      actionRequired: "Conectar al menos un proveedor de correo en Configuración > Integraciones",
     };
   }
 
