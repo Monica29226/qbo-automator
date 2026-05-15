@@ -2867,10 +2867,7 @@ Deno.serve(async (req) => {
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : "Unknown error";
         
-        await supabase
-          .from("processed_documents")
-          .update({ status: "error", error_message: errorMessage.substring(0, 500) })
-          .eq("id", doc.id);
+        await writeFailureStatus(doc.id, errorMessage);
         
         return { success: false, docNumber: doc.doc_number, error: errorMessage };
       }
