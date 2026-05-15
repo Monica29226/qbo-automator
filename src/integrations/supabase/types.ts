@@ -26,6 +26,9 @@ export type Database = {
           issues_count: number
           issues_data: Json | null
           organization_id: string
+          resolved: boolean
+          resolved_at: string | null
+          resolved_by: string | null
           sent_at: string | null
         }
         Insert: {
@@ -39,6 +42,9 @@ export type Database = {
           issues_count?: number
           issues_data?: Json | null
           organization_id: string
+          resolved?: boolean
+          resolved_at?: string | null
+          resolved_by?: string | null
           sent_at?: string | null
         }
         Update: {
@@ -52,6 +58,9 @@ export type Database = {
           issues_count?: number
           issues_data?: Json | null
           organization_id?: string
+          resolved?: boolean
+          resolved_at?: string | null
+          resolved_by?: string | null
           sent_at?: string | null
         }
         Relationships: [
