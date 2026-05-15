@@ -118,7 +118,7 @@ const handler = async (req: Request): Promise<Response> => {
     }
 
     // Build reset URL
-    const resetUrl = `${redirectUrl}?token=${token}`;
+    const resetUrl = `${safeRedirectUrl}?token=${token}`;
 
     // Get email sender from system settings or use default
     let emailSender = "FacturaFlow <onboarding@resend.dev>";
