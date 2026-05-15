@@ -144,10 +144,27 @@ function parseLineItems(xml: string): any[] {
 
     for (const taxXml of taxBlocks) {
       const codigo = parseXMLValue(taxXml, 'Codigo');
-      const tarifa = parseFloat(parseXMLValue(taxXml, 'Tarifa') || '0');
+      let tarifa = parseFloat(parseXMLValue(taxXml, 'Tarifa') || '0');
       const monto = parseFloat(parseXMLValue(taxXml, 'Monto') || '0');
       const codigoTarifaIVA = parseXMLValue(taxXml, 'CodigoTarifaIVA');
-      
+
+      // Hacienda's CodigoTarifaIVA → expected rate. Reliable backup when
+      // <Tarifa> is missing/0 or has formatting issues.
+      const codigoToTarifa: Record<string, number> = {
+        '01': 0, '02': 1, '03': 2, '04': 4,
+        '05': 0.5, '06': 4, '07': 8, '08': 13
+      };
+
+      if (codigo === '01' && codigoTarifaIVA && codigoToTarifa[codigoTarifaIVA] !== undefined) {
+        const derived = codigoToTarifa[codigoTarifaIVA];
+        if (tarifa === 0 && derived !== 0) {
+          console.warn(`⚠️ Tarifa=0 pero CodigoTarifaIVA=${codigoTarifaIVA} indica ${derived}%. Usando tarifa derivada.`);
+          tarifa = derived;
+        } else if (Math.abs(tarifa - derived) > 0.1) {
+          console.warn(`⚠️ Tarifa=${tarifa} no coincide con CodigoTarifaIVA=${codigoTarifaIVA} (esperado ${derived}%). Se confía en <Tarifa>.`);
+        }
+      }
+
       impuestos.push({
         codigo,
         tarifa,
