@@ -1972,9 +1972,50 @@ Deno.serve(async (req) => {
         logInfo(`✅ ${doc.doc_number}: Totales validados correctamente (Total: ${totalsValidation.xmlTotal.toFixed(2)})`);
         
         // =============================================================
+        // STEP 3.5: CURRENCY COMPATIBILITY CHECK
+        // Block early if QBO doesn't accept this invoice's currency
+        // =============================================================
+        const qboCurrency = await getQBOCurrencyConfig(organization_id, realmId, accessToken);
+        const docCurrencyEarly = (doc.currency || (doc.xml_data as any)?.moneda || 'CRC').toUpperCase();
+        const homeCurrency = (qboCurrency.homeCurrency || 'CRC').toUpperCase();
+
+        if (docCurrencyEarly === homeCurrency) {
+          logInfo(`💱 ${doc.doc_number}: currency ${docCurrencyEarly} = QBO base ${homeCurrency} → publicar normal`);
+        } else if (!qboCurrency.multiCurrencyEnabled) {
+          const errorMsg = `Factura en ${docCurrencyEarly} no compatible. QBO de esta empresa solo acepta ${homeCurrency}. Para procesarla: (1) habilita multi-currency en QBO si es posible, o (2) convierte manualmente el monto a ${homeCurrency}, o (3) registra la factura directamente en QBO.`;
+          logInfo(`🚫 ${doc.doc_number}: currency ${docCurrencyEarly} ≠ QBO base ${homeCurrency} sin multi-currency → currency_mismatch`);
+          await supabase
+            .from("processed_documents")
+            .update({ status: 'currency_mismatch', error_message: errorMsg.substring(0, 500) })
+            .eq("id", doc.id);
+          await registerInTracking(doc, 'currency_mismatch', null, null, errorMsg.substring(0, 500));
+          return {
+            success: false,
+            docNumber: doc.doc_number,
+            error: errorMsg.substring(0, 200),
+            reason: 'currency_mismatch',
+          };
+        } else {
+          // Multi-currency enabled and currencies differ — verify exchange rate is present
+          const xRate = parseFloat(doc.exchange_rate || (doc.xml_data as any)?.tipoCambio || (doc.xml_data as any)?.resumen_factura?.tipoCambio || '0');
+          if (!xRate || xRate <= 0) {
+            const errorMsg = `Factura en ${docCurrencyEarly} sin tipo de cambio válido. Verifica el campo TipoCambio del XML.`;
+            logError(`❌ ${doc.doc_number}: ${errorMsg}`);
+            await supabase
+              .from("processed_documents")
+              .update({ status: 'error', error_message: errorMsg.substring(0, 500) })
+              .eq("id", doc.id);
+            await registerInTracking(doc, 'error', null, null, errorMsg);
+            return { success: false, docNumber: doc.doc_number, error: errorMsg };
+          }
+          logInfo(`💱 ${doc.doc_number}: currency ${docCurrencyEarly} ≠ ${homeCurrency} con multi-currency ON, ExchangeRate=${xRate} → publicar`);
+        }
+
+        // =============================================================
         // STEP 4: FIND OR CREATE VENDOR
         // =============================================================
-        const vendorId = await findOrCreateVendor(doc.supplier_name, doc.supplier_tax_id, doc.currency);
+        const vendorId = await findOrCreateVendor(doc.supplier_name, doc.supplier_tax_id, docCurrencyEarly);
+        
         
         // =============================================================
         // STEP 5: CHECK DUPLICATE IN QBO (SECONDARY CHECK - with amount validation)
