@@ -1260,6 +1260,37 @@ Deno.serve(async (req) => {
     };
 
     // =============================================================
+    // HELPER: Classify QBO error as transient (waiting_for_qbo) vs permanent (error)
+    // Transient = problem on QBO side (suspended subscription, closed period, server down)
+    // Permanent = problem with the invoice (missing account, vendor conflict, currency)
+    // =============================================================
+    const TRANSIENT_PATTERNS = [
+      /estado de la empresa no v[aá]lido/i,
+      /per[ií]odo.*cerrado/i,
+      /closed period/i,
+      /subscription/i,
+      /suspended/i,
+      /suspendid/i,
+      /service.*unavailable/i,
+      /503/,
+      /temporarily unavailable/i,
+    ];
+    const isTransientQboError = (msg: string): boolean => {
+      if (!msg) return false;
+      return TRANSIENT_PATTERNS.some((re) => re.test(msg));
+    };
+    const writeFailureStatus = async (docId: string, fullErrorMessage: string) => {
+      const transient = isTransientQboError(fullErrorMessage);
+      const status = transient ? "waiting_for_qbo" : "error";
+      await supabase
+        .from("processed_documents")
+        .update({ status, error_message: fullErrorMessage.substring(0, 500) })
+        .eq("id", docId);
+      if (transient) logInfo(`⏳ Doc ${docId} marcado waiting_for_qbo (error transitorio QBO)`);
+      return status;
+    };
+
+    // =============================================================
     // HELPER: Register in tracking table
     // =============================================================
     const registerInTracking = async (doc: any, status: string, qboEntityId?: string | null, qboEntityType?: string | null, errorMessage?: string) => {
@@ -2555,11 +2586,9 @@ Deno.serve(async (req) => {
                 return { success: false, docNumber: doc.doc_number, error: taxErrorMsg.substring(0, 200) };
               }
             } else {
-              await registerInTracking(doc, 'error', null, null, errorText.substring(0, 500));
-              await supabase
-                .from("processed_documents")
-                .update({ status: "error", error_message: `QBO VendorCredit Error: ${errorText.substring(0, 500)}` })
-                .eq("id", doc.id);
+              const fullMsg = `QBO VendorCredit Error: ${errorText.substring(0, 500)}`;
+              await registerInTracking(doc, 'error', null, null, fullMsg.substring(0, 500));
+              await writeFailureStatus(doc.id, fullMsg);
               return { success: false, docNumber: doc.doc_number, error: errorText.substring(0, 200) };
             }
           }
@@ -2752,29 +2781,23 @@ Deno.serve(async (req) => {
                     logInfo(`✅ ${doc.doc_number}: Bill created with suffixed vendor (ID: ${entityId})`);
                   } else {
                     const retryError = await retryBillResponse.text();
-                    await registerInTracking(doc, 'error', null, null, retryError.substring(0, 500));
-                    await supabase
-                      .from("processed_documents")
-                      .update({ status: "error", error_message: `QBO Bill Error (retry): ${retryError.substring(0, 500)}` })
-                      .eq("id", doc.id);
+                    const fullMsg = `QBO Bill Error (retry): ${retryError.substring(0, 500)}`;
+                    await registerInTracking(doc, 'error', null, null, fullMsg.substring(0, 500));
+                    await writeFailureStatus(doc.id, fullMsg);
                     return { success: false, docNumber: doc.doc_number, error: retryError.substring(0, 200) };
                   }
                 }
               } catch (retryErr: any) {
                 logInfo(`❌ ${doc.doc_number}: Suffix retry also failed: ${retryErr.message}`);
-                await registerInTracking(doc, 'error', null, null, errorText.substring(0, 500));
-                await supabase
-                  .from("processed_documents")
-                  .update({ status: "error", error_message: `QBO Bill Error: ${errorText.substring(0, 500)}` })
-                  .eq("id", doc.id);
+                const fullMsg = `QBO Bill Error: ${errorText.substring(0, 500)}`;
+                await registerInTracking(doc, 'error', null, null, fullMsg.substring(0, 500));
+                await writeFailureStatus(doc.id, fullMsg);
                 return { success: false, docNumber: doc.doc_number, error: errorText.substring(0, 200) };
               }
             } else {
-              await registerInTracking(doc, 'error', null, null, errorText.substring(0, 500));
-              await supabase
-                .from("processed_documents")
-                .update({ status: "error", error_message: `QBO Bill Error: ${errorText.substring(0, 500)}` })
-                .eq("id", doc.id);
+              const fullMsg = `QBO Bill Error: ${errorText.substring(0, 500)}`;
+              await registerInTracking(doc, 'error', null, null, fullMsg.substring(0, 500));
+              await writeFailureStatus(doc.id, fullMsg);
               return { success: false, docNumber: doc.doc_number, error: errorText.substring(0, 200) };
             }
           }
@@ -2844,10 +2867,7 @@ Deno.serve(async (req) => {
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : "Unknown error";
         
-        await supabase
-          .from("processed_documents")
-          .update({ status: "error", error_message: errorMessage.substring(0, 500) })
-          .eq("id", doc.id);
+        await writeFailureStatus(doc.id, errorMessage);
         
         return { success: false, docNumber: doc.doc_number, error: errorMessage };
       }

@@ -25,6 +25,7 @@ const CronMonitor = lazy(() => import("@/components/dashboard/CronMonitor").then
 import { SyncEmailNowButton } from "@/components/dashboard/SyncEmailNowButton";
 import { RecoverBacklogButton } from "@/components/dashboard/RecoverBacklogButton";
 import { SystemAlertsPanel } from "@/components/dashboard/SystemAlertsPanel";
+import WaitingForQboPanel from "@/components/dashboard/WaitingForQboPanel";
 const AICreditsMonitor = lazy(() => import("@/components/dashboard/AICreditsMonitor").then(m => ({ default: m.AICreditsMonitor })));
 const ErrorLogsViewer = lazy(() => import("@/components/dashboard/ErrorLogsViewer").then(m => ({ default: m.ErrorLogsViewer })));
 const ErrorDocumentsModal = lazy(() => import("@/components/dashboard/ErrorDocumentsModal").then(m => ({ default: m.ErrorDocumentsModal })));
@@ -579,6 +580,7 @@ const Dashboard = () => {
         </div>
 
         <SystemAlertsPanel organizationId={activeOrganization} />
+        <WaitingForQboPanel organizationId={activeOrganization} />
         <div className="mb-4 flex justify-end gap-2 flex-wrap">
           <RecoverBacklogButton />
           <SyncEmailNowButton />

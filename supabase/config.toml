@@ -188,3 +188,6 @@ verify_jwt = true
 
 [functions.onedrive-oauth-callback]
 verify_jwt = false
+
+[functions.retry-qbo-waiting]
+verify_jwt = false
