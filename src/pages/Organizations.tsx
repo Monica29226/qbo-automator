@@ -77,11 +77,27 @@ const Organizations = () => {
   const [orgFormData, setOrgFormData] = useState({
     name: "",
     tax_id: "",
+    identification_type: "juridica",
+    identification_number: "",
     email: "",
     qbo_company_id: "",
     google_drive_folder_id: "",
     google_drive_enabled: false,
   });
+
+  const ID_TYPE_LABELS: Record<string, string> = {
+    juridica: "Cédula Jurídica",
+    fisica: "Cédula Física",
+    dimex: "DIMEX",
+    nite: "NITE",
+  };
+
+  const ID_TYPE_PLACEHOLDERS: Record<string, string> = {
+    juridica: "3-101-123456",
+    fisica: "1-2345-6789",
+    dimex: "111199999999",
+    nite: "3-014-123456",
+  };
 
   useEffect(() => {
     if (activeOrganization) {
@@ -109,6 +125,8 @@ const Organizations = () => {
       setOrgFormData({
         name: org.name,
         tax_id: org.tax_id || "",
+        identification_type: (org as any).identification_type || "juridica",
+        identification_number: (org as any).identification_number || org.tax_id || "",
         email: org.email || "",
         qbo_company_id: org.qbo_company_id || "",
         google_drive_folder_id: org.google_drive_folder_id || "",
@@ -163,17 +181,21 @@ const Organizations = () => {
     setIsLoading(false);
   };
 
-  // Validar cédula jurídica (10 dígitos)
-  const validateTaxId = (taxId: string): string | null => {
-    if (!taxId) return null; // Es opcional
-    
-    // Limpiar guiones y espacios
-    const cleanNumber = taxId.replace(/[-\s]/g, "");
-    
-    if (!/^\d{10}$/.test(cleanNumber)) {
-      return "La cédula jurídica debe tener exactamente 10 dígitos (sin guiones)";
+  // Validar identificación según tipo
+  const validateIdentification = (type: string, number: string): string | null => {
+    if (!number) return null;
+    const clean = number.replace(/[-\s]/g, "");
+    if (type === "juridica") {
+      if (!/^[234]\d{9}$/.test(clean)) {
+        return "La cédula jurídica debe tener 10 dígitos y empezar con 2, 3 o 4";
+      }
+    } else if (type === "fisica") {
+      if (!/^\d{9}$/.test(clean)) return "La cédula física debe tener 9 dígitos";
+    } else if (type === "dimex") {
+      if (!/^\d{11,12}$/.test(clean)) return "El DIMEX debe tener 11 o 12 dígitos";
+    } else if (type === "nite") {
+      if (!/^\d{10}$/.test(clean)) return "El NITE debe tener 10 dígitos";
     }
-    
     return null;
   };
 
@@ -183,9 +205,11 @@ const Organizations = () => {
       return;
     }
 
-    // Validar cédula jurídica
-    if (orgFormData.tax_id) {
-      const validationError = validateTaxId(orgFormData.tax_id);
+    if (orgFormData.identification_number) {
+      const validationError = validateIdentification(
+        orgFormData.identification_type,
+        orgFormData.identification_number
+      );
       if (validationError) {
         toast.error(validationError);
         return;
@@ -200,12 +224,14 @@ const Organizations = () => {
       .from("organizations")
       .update({
         name: orgFormData.name,
-        tax_id: orgFormData.tax_id || null,
+        tax_id: orgFormData.identification_number || orgFormData.tax_id || null,
+        identification_type: orgFormData.identification_type || null,
+        identification_number: orgFormData.identification_number || null,
         email: orgFormData.email || null,
         qbo_company_id: orgFormData.qbo_company_id || null,
         google_drive_folder_id: orgFormData.google_drive_folder_id || null,
         google_drive_enabled: orgFormData.google_drive_enabled,
-      })
+      } as any)
       .eq("id", activeOrganization);
 
     setIsLoading(false);
@@ -304,12 +330,14 @@ const Organizations = () => {
         .from("organizations")
         .insert({
           name: orgFormData.name,
-          tax_id: orgFormData.tax_id || null,
+          tax_id: orgFormData.identification_number || orgFormData.tax_id || null,
+          identification_type: orgFormData.identification_type || null,
+          identification_number: orgFormData.identification_number || null,
           email: orgFormData.email || null,
           qbo_company_id: orgFormData.qbo_company_id || null,
           google_drive_folder_id: orgFormData.google_drive_folder_id || null,
           google_drive_enabled: orgFormData.google_drive_enabled,
-        })
+        } as any)
         .select('id');
 
       if (orgError) {
@@ -360,6 +388,8 @@ const Organizations = () => {
       setOrgFormData({
         name: "",
         tax_id: "",
+        identification_type: "juridica",
+        identification_number: "",
         email: "",
         qbo_company_id: "",
         google_drive_folder_id: "",
@@ -505,10 +535,16 @@ const Organizations = () => {
                     <p className="text-sm text-muted-foreground mb-1">Nombre</p>
                     <p className="font-medium">{orgDetails?.name}</p>
                   </div>
-                  <div>
-                    <p className="text-sm text-muted-foreground mb-1">Cédula Jurídica</p>
-                    <p className="font-medium">{orgDetails?.tax_id || "No configurado"}</p>
-                  </div>
+                  {(() => {
+                    const idType = (orgDetails as any)?.identification_type || "juridica";
+                    const idNumber = (orgDetails as any)?.identification_number || orgDetails?.tax_id || "";
+                    return (
+                      <div>
+                        <p className="text-sm text-muted-foreground mb-1">{ID_TYPE_LABELS[idType] || "Identificación"}</p>
+                        <p className="font-medium">{idNumber || "No configurado"}</p>
+                      </div>
+                    );
+                  })()}
                   <div>
                     <p className="text-sm text-muted-foreground mb-1">Correo</p>
                     <p className="font-medium">{orgDetails?.email || "No configurado"}</p>
@@ -632,6 +668,8 @@ const Organizations = () => {
                       setOrgFormData({
                         name: "",
                         tax_id: "",
+                        identification_type: "juridica",
+                        identification_number: "",
                         email: "",
                         qbo_company_id: "",
                         google_drive_folder_id: "",
@@ -705,12 +743,32 @@ const Organizations = () => {
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="org-tax-id">Cédula Jurídica</Label>
+              <Label htmlFor="org-id-type">Tipo de Identificación</Label>
+              <Select
+                value={orgFormData.identification_type}
+                onValueChange={(v) => setOrgFormData({ ...orgFormData, identification_type: v })}
+              >
+                <SelectTrigger id="org-id-type">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="juridica">Cédula Jurídica</SelectItem>
+                  <SelectItem value="fisica">Cédula Física</SelectItem>
+                  <SelectItem value="dimex">DIMEX</SelectItem>
+                  <SelectItem value="nite">NITE</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="org-id-number">{ID_TYPE_LABELS[orgFormData.identification_type] || "Identificación"}</Label>
               <Input
-                id="org-tax-id"
-                value={orgFormData.tax_id}
-                onChange={(e) => setOrgFormData({ ...orgFormData, tax_id: e.target.value })}
-                placeholder="3-101-123456"
+                id="org-id-number"
+                value={orgFormData.identification_number}
+                onChange={(e) =>
+                  setOrgFormData({ ...orgFormData, identification_number: e.target.value })
+                }
+                placeholder={ID_TYPE_PLACEHOLDERS[orgFormData.identification_type] || ""}
               />
             </div>
 
