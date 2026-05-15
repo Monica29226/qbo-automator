@@ -2781,29 +2781,23 @@ Deno.serve(async (req) => {
                     logInfo(`✅ ${doc.doc_number}: Bill created with suffixed vendor (ID: ${entityId})`);
                   } else {
                     const retryError = await retryBillResponse.text();
-                    await registerInTracking(doc, 'error', null, null, retryError.substring(0, 500));
-                    await supabase
-                      .from("processed_documents")
-                      .update({ status: "error", error_message: `QBO Bill Error (retry): ${retryError.substring(0, 500)}` })
-                      .eq("id", doc.id);
+                    const fullMsg = `QBO Bill Error (retry): ${retryError.substring(0, 500)}`;
+                    await registerInTracking(doc, 'error', null, null, fullMsg.substring(0, 500));
+                    await writeFailureStatus(doc.id, fullMsg);
                     return { success: false, docNumber: doc.doc_number, error: retryError.substring(0, 200) };
                   }
                 }
               } catch (retryErr: any) {
                 logInfo(`❌ ${doc.doc_number}: Suffix retry also failed: ${retryErr.message}`);
-                await registerInTracking(doc, 'error', null, null, errorText.substring(0, 500));
-                await supabase
-                  .from("processed_documents")
-                  .update({ status: "error", error_message: `QBO Bill Error: ${errorText.substring(0, 500)}` })
-                  .eq("id", doc.id);
+                const fullMsg = `QBO Bill Error: ${errorText.substring(0, 500)}`;
+                await registerInTracking(doc, 'error', null, null, fullMsg.substring(0, 500));
+                await writeFailureStatus(doc.id, fullMsg);
                 return { success: false, docNumber: doc.doc_number, error: errorText.substring(0, 200) };
               }
             } else {
-              await registerInTracking(doc, 'error', null, null, errorText.substring(0, 500));
-              await supabase
-                .from("processed_documents")
-                .update({ status: "error", error_message: `QBO Bill Error: ${errorText.substring(0, 500)}` })
-                .eq("id", doc.id);
+              const fullMsg = `QBO Bill Error: ${errorText.substring(0, 500)}`;
+              await registerInTracking(doc, 'error', null, null, fullMsg.substring(0, 500));
+              await writeFailureStatus(doc.id, fullMsg);
               return { success: false, docNumber: doc.doc_number, error: errorText.substring(0, 200) };
             }
           }
