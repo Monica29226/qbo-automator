@@ -2671,26 +2671,50 @@ Deno.serve(async (req) => {
           // to NotApplicable because that misclassifies it as out of scope.
           if (!billResponse.ok) {
             const errorText = await billResponse.clone().text();
-            
             // Check if it's a tax calculation error
             if (errorText.includes('impositiva no válida') ||
-                errorText.includes('error al calcular el impuesto') || 
+                errorText.includes('error al calcular el impuesto') ||
                 errorText.includes('calculating the tax') ||
                 errorText.includes('tax rate') ||
                 errorText.includes('Invalid tax rate') ||
                 errorText.includes('tasa impositiva') ||
                 errorText.includes('TaxCodeRef')) {
-              
               const xmlHasTax = Math.abs(totalTax) > 0.001;
               if (xmlHasTax) {
-                const taxErrorMsg = `QBO rechazó el impuesto de la factura. Se bloqueó la publicación para evitar enviarla como Fuera del alcance del impuesto. Detalle: ${errorText.substring(0, 350)}`;
-                logError(`❌ ${doc.doc_number}: ${taxErrorMsg}`);
-                await registerInTracking(doc, 'error', null, null, taxErrorMsg.substring(0, 500));
-                await supabase
-                  .from("processed_documents")
-                  .update({ status: "error", error_message: taxErrorMsg.substring(0, 500) })
-                  .eq("id", doc.id);
-                return { success: false, docNumber: doc.doc_number, error: taxErrorMsg.substring(0, 200) };
+                // Smart retry: strip TaxLine breakdown from TxnTaxDetail. Lets QBO
+                // compute per-line tax from each line's TaxCodeRef and only
+                // verifies the TotalTax matches. Avoids rounding mismatches.
+                if (billPayload.TxnTaxDetail?.TaxLine) {
+                  logInfo(`   🔁 ${doc.doc_number}: QBO rechazó cálculo de impuesto. Reintentando sin TaxLine breakdown (solo TotalTax)...`);
+                  billPayload.TxnTaxDetail = { TotalTax: parseFloat(totalTax.toFixed(2)) };
+                  billResponse = await fetchWithRetry(
+                    `https://quickbooks.api.intuit.com/v3/company/${realmId}/bill`,
+                    {
+                      method: "POST",
+                      headers: {
+                        "Authorization": `Bearer ${accessToken}`,
+                        "Accept": "application/json",
+                        "Content-Type": "application/json",
+                      },
+                      body: JSON.stringify(billPayload),
+                    }
+                  );
+                  if (billResponse.ok) {
+                    logInfo(`   ✅ ${doc.doc_number}: Publicado en reintento sin TaxLine breakdown`);
+                  }
+                }
+
+                if (!billResponse.ok) {
+                  const finalErrorText = await billResponse.clone().text();
+                  const taxErrorMsg = `QBO rechazó el impuesto de la factura. Se bloqueó la publicación para evitar enviarla como Fuera del alcance del impuesto. Detalle: ${finalErrorText.substring(0, 350)}`;
+                  logError(`❌ ${doc.doc_number}: ${taxErrorMsg}`);
+                  await registerInTracking(doc, 'error', null, null, taxErrorMsg.substring(0, 500));
+                  await supabase
+                    .from("processed_documents")
+                    .update({ status: "error", error_message: taxErrorMsg.substring(0, 500) })
+                    .eq("id", doc.id);
+                  return { success: false, docNumber: doc.doc_number, error: taxErrorMsg.substring(0, 200) };
+                }
               }
             }
           }
