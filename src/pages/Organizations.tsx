@@ -77,11 +77,27 @@ const Organizations = () => {
   const [orgFormData, setOrgFormData] = useState({
     name: "",
     tax_id: "",
+    identification_type: "juridica",
+    identification_number: "",
     email: "",
     qbo_company_id: "",
     google_drive_folder_id: "",
     google_drive_enabled: false,
   });
+
+  const ID_TYPE_LABELS: Record<string, string> = {
+    juridica: "Cédula Jurídica",
+    fisica: "Cédula Física",
+    dimex: "DIMEX",
+    nite: "NITE",
+  };
+
+  const ID_TYPE_PLACEHOLDERS: Record<string, string> = {
+    juridica: "3-101-123456",
+    fisica: "1-2345-6789",
+    dimex: "111199999999",
+    nite: "3-014-123456",
+  };
 
   useEffect(() => {
     if (activeOrganization) {
