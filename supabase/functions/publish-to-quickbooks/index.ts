@@ -42,22 +42,29 @@ async function getQBOCurrencyConfig(
   // Defaults are intentionally restrictive: assume CRC + no multi-currency on failure
   let result: QBOCurrencyConfig = { country: 'CR', homeCurrency: 'CRC', multiCurrencyEnabled: false };
   try {
-    const url = `https://quickbooks.api.intuit.com/v3/company/${realmId}/companyinfo/${realmId}`;
-    const resp = await fetch(url, {
-      headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" },
-    });
-    if (resp.ok) {
-      const data = await resp.json();
-      const ci = data?.CompanyInfo || {};
-      result = {
-        country: ci.Country || 'CR',
-        homeCurrency: ci.Country === 'US' ? 'USD' : (ci?.NameValue?.find?.((nv: any) => nv?.Name === 'NeoEnabled') ? 'CRC' : (ci?.HomeCurrency || 'CRC')),
-        multiCurrencyEnabled: !!(ci?.NameValue?.some?.((nv: any) => nv?.Name === 'MultiCurrencyEnabled' && String(nv?.Value).toLowerCase() === 'true')),
-      };
-      // Some QBO responses expose currency directly via Currency field on companyinfo
-      if (ci?.Currency) result.homeCurrency = ci.Currency;
+    // Query Preferences (has CurrencyPrefs.HomeCurrency + MultiCurrencyEnabled) and CompanyInfo (Country)
+    const [prefResp, infoResp] = await Promise.all([
+      fetch(`https://quickbooks.api.intuit.com/v3/company/${realmId}/preferences?minorversion=70`, {
+        headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" },
+      }),
+      fetch(`https://quickbooks.api.intuit.com/v3/company/${realmId}/companyinfo/${realmId}?minorversion=70`, {
+        headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" },
+      }),
+    ]);
+    if (prefResp.ok) {
+      const prefData = await prefResp.json();
+      const cp = prefData?.Preferences?.CurrencyPrefs || {};
+      const home = cp?.HomeCurrency?.value || cp?.HomeCurrencyRef?.value;
+      if (home) result.homeCurrency = home;
+      if (typeof cp?.MultiCurrencyEnabled === 'boolean') result.multiCurrencyEnabled = cp.MultiCurrencyEnabled;
+      else if (String(cp?.MultiCurrencyEnabled).toLowerCase() === 'true') result.multiCurrencyEnabled = true;
     } else {
-      console.error(`getQBOCurrencyConfig: HTTP ${resp.status} for org ${organizationId}`);
+      console.error(`getQBOCurrencyConfig: preferences HTTP ${prefResp.status} for org ${organizationId}`);
+    }
+    if (infoResp.ok) {
+      const infoData = await infoResp.json();
+      const ci = infoData?.CompanyInfo || {};
+      if (ci.Country) result.country = ci.Country;
     }
   } catch (e) {
     console.error(`getQBOCurrencyConfig failed for org ${organizationId}:`, e);
