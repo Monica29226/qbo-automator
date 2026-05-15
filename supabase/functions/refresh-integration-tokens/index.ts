@@ -18,11 +18,14 @@ serve(async (req) => {
 
     console.log("🔄 Iniciando verificación de tokens de integración...");
 
-    // Obtener todas las cuentas activas de Gmail, QuickBooks y Outlook
+    console.log("ℹ️ QuickBooks tokens are refreshed exclusively by auto-renew-tokens to avoid race conditions");
+
+    // Gmail y Outlook only. QuickBooks is handled by auto-renew-tokens to avoid
+    // refresh_token rotation races that mark integrations inactive.
     const { data: accounts, error: fetchError } = await supabase
       .from("integration_accounts")
       .select("*")
-      .in("service_type", ["gmail", "quickbooks", "outlook"])
+      .in("service_type", ["gmail", "outlook"])
       .eq("is_active", true);
 
     if (fetchError) throw fetchError;
