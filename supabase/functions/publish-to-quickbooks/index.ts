@@ -1638,7 +1638,9 @@ Deno.serve(async (req) => {
         const n = (name || '').toLowerCase();
         return n.includes('no vat') || n.includes('exento') || n.includes('out of scope') ||
                n.includes('exempt') || n.includes('fuera del') || n.includes('fuera de') ||
-               n === 'non' || n.startsWith('non ') || n.includes('no aplica') || n.includes('no sujet');
+               n === 'non' || n.startsWith('non ') || n.includes('no aplica') || n.includes('no sujet') ||
+               /(^|[^0-9.])0\s*%/.test(name || '') ||
+               n.includes('tarifa 0') || n.includes('iva 0') || n === 'cero';
       };
       
       // Rate 0 / exempt: pick a real exempt code
@@ -1649,7 +1651,8 @@ Deno.serve(async (req) => {
             return taxCode.Id;
           }
         }
-        return taxCodesCache![0]?.Id || null;
+        logInfo(`   ⚠️ No exempt TaxCode found for 0% — returning null to block publish instead of using wrong code`);
+        return null;
       }
       
       // STEP 1 (PRIORITY): Match by ACTUAL PurchaseTaxRateList rate - most reliable
