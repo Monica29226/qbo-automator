@@ -8,6 +8,7 @@ import { ArrowLeft, Building2, Loader2, Plus, Check, Settings } from "lucide-rea
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { CreateOrganizationDialog } from "@/components/CreateOrganizationDialog";
+import { getIdentificationLabel, formatIdentification } from "@/lib/identification-types";
 
 interface Organization {
   id: string;
