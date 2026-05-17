@@ -1320,6 +1320,7 @@ Deno.serve(async (req) => {
     // =============================================================
     const TRANSIENT_PATTERNS = [
       /estado de la empresa no v[aá]lido/i,
+      /estado de la empresa/i,
       /per[ií]odo.*cerrado/i,
       /closed period/i,
       /subscription/i,
@@ -1328,6 +1329,9 @@ Deno.serve(async (req) => {
       /service.*unavailable/i,
       /503/,
       /temporarily unavailable/i,
+      /cannot find user/i,
+      /ApplicationAuthenticationFailed/i,
+      /BusinessValidationError.*(cuentas?\s+por\s+(cobrar|pagar)|accounts?\s+(receivable|payable))/i,
     ];
     const isTransientQboError = (msg: string): boolean => {
       if (!msg) return false;
