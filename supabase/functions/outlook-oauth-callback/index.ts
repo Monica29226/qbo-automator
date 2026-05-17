@@ -1,19 +1,57 @@
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
 
-// HTML escape function to prevent XSS
 const escapeHtml = (str: string): string => {
-  const htmlEntities: Record<string, string> = {
-    '&': '&amp;',
-    '<': '&lt;',
-    '>': '&gt;',
-    '"': '&quot;',
-    "'": '&#39;'
-  };
-  return str.replace(/[&<>"']/g, (char) => htmlEntities[char]);
+  const m: Record<string, string> = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
+  return str.replace(/[&<>"']/g, (c) => m[c]);
 };
 
+const AADSTS_MAP: Record<string, string> = {
+  AADSTS50020: "Tu cuenta no es del tipo aceptado por la app. Si es una cuenta empresarial, contacta a tu admin de TI.",
+  AADSTS65001: "Tu administrador de TI debe aprobar la app de FacturaFlow primero. Comparte la URL de aprobación con ellos.",
+  AADSTS50105: "Tu administrador bloqueó las apps OAuth de terceros. Considera conectar vía IMAP en su lugar.",
+  AADSTS500113: "Error de configuración (redirect_uri). Reporta al soporte de FacturaFlow.",
+  AADSTS70008: "El código de autorización expiró. Vuelve a intentar la conexión.",
+};
+
+function mapAadError(errorCode: string | null, errorDescription: string | null): { code: string; message: string } {
+  const desc = errorDescription || "";
+  // Try direct code, then extract AADSTSxxxxx from description
+  if (errorCode && AADSTS_MAP[errorCode]) return { code: errorCode, message: AADSTS_MAP[errorCode] };
+  const match = desc.match(/AADSTS(\d+)/);
+  if (match) {
+    const code = `AADSTS${match[1]}`;
+    if (AADSTS_MAP[code]) return { code, message: AADSTS_MAP[code] };
+    return { code, message: `Error de Microsoft: ${code}. Si persiste, intenta conexión IMAP.` };
+  }
+  return { code: errorCode || "oauth_error", message: errorDescription || "Error desconocido de OAuth." };
+}
+
+function buildResultHtml(opts: {
+  success: boolean;
+  email?: string;
+  errorCode?: string;
+  errorMessage?: string;
+  allowedOrigin: string;
+}): string {
+  const payload = opts.success
+    ? { type: "outlook-connected", email: opts.email }
+    : { type: "outlook-error", code: opts.errorCode, message: opts.errorMessage };
+  const json = JSON.stringify(payload).replace(/</g, "\\u003c");
+  const title = opts.success ? "¡Conexión exitosa!" : "Error de conexión";
+  const body = opts.success
+    ? `<h1>${title}</h1><p>Outlook conectado: ${escapeHtml(opts.email || "")}</p><p>Puedes cerrar esta ventana.</p>`
+    : `<h1>${title}</h1><p><strong>${escapeHtml(opts.errorCode || "")}</strong></p><p>${escapeHtml(opts.errorMessage || "")}</p><p style="color:#666;font-size:12px">Esta ventana se cerrará automáticamente.</p>`;
+  return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${title}</title></head><body>${body}<script>
+    try { if (window.opener) window.opener.postMessage(${json}, '${opts.allowedOrigin}'); } catch (e) {}
+    setTimeout(() => window.close(), 3500);
+  </script></body></html>`;
+}
+
 serve(async (req) => {
+  const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
+  const allowedOrigin = "*"; // permissive: opener may be on lovable.app, custom domain, or preview
+
   try {
     const url = new URL(req.url);
     const code = url.searchParams.get("code");
@@ -22,32 +60,25 @@ serve(async (req) => {
     const errorDescription = url.searchParams.get("error_description");
 
     if (error) {
-      console.error("OAuth error:", error, errorDescription);
+      console.error("OAuth error from Microsoft:", error, errorDescription);
+      const mapped = mapAadError(error, errorDescription);
       return new Response(
-        `<html><body><h1>Error</h1><p>OAuth failed: ${escapeHtml(error)} - ${escapeHtml(errorDescription || '')}</p><script>setTimeout(() => window.close(), 3000);</script></body></html>`,
-        { headers: { 
-          "Content-Type": "text/html",
-          "Content-Security-Policy": "default-src 'self' 'unsafe-inline'"
-        }, status: 400 }
+        buildResultHtml({ success: false, errorCode: mapped.code, errorMessage: mapped.message, allowedOrigin }),
+        { headers: { "Content-Type": "text/html; charset=UTF-8" }, status: 400 },
       );
     }
 
-    if (!code || !state) {
-      throw new Error("Missing code or state parameter");
-    }
+    if (!code || !state) throw new Error("Missing code or state parameter");
 
-    const MICROSOFT_CLIENT_ID = Deno.env.get("MICROSOFT_CLIENT_ID");
-    const MICROSOFT_CLIENT_SECRET = Deno.env.get("MICROSOFT_CLIENT_SECRET");
-    const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
-    const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-
-    if (!MICROSOFT_CLIENT_ID || !MICROSOFT_CLIENT_SECRET || !SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+    const MICROSOFT_CLIENT_ID = Deno.env.get("MICROSOFT_CLIENT_ID")!;
+    const MICROSOFT_CLIENT_SECRET = Deno.env.get("MICROSOFT_CLIENT_SECRET")!;
+    const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    if (!MICROSOFT_CLIENT_ID || !MICROSOFT_CLIENT_SECRET || !SUPABASE_SERVICE_ROLE_KEY) {
       throw new Error("Missing required environment variables");
     }
 
     const redirectUri = `${SUPABASE_URL}/functions/v1/outlook-oauth-callback`;
 
-    // Exchange code for tokens using Microsoft OAuth 2.0 token endpoint
     const tokenResponse = await fetch("https://login.microsoftonline.com/common/oauth2/v2.0/token", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -57,47 +88,55 @@ serve(async (req) => {
         client_secret: MICROSOFT_CLIENT_SECRET,
         redirect_uri: redirectUri,
         grant_type: "authorization_code",
+        scope: "offline_access https://graph.microsoft.com/Mail.Read https://graph.microsoft.com/User.Read",
       }),
     });
 
     if (!tokenResponse.ok) {
-      const errorText = await tokenResponse.text();
-      console.error("Token exchange failed:", errorText);
-      throw new Error(`Failed to exchange code for tokens: ${errorText}`);
+      const errText = await tokenResponse.text();
+      console.error("Token exchange failed:", errText);
+      let parsed: any = {};
+      try { parsed = JSON.parse(errText); } catch (_) { /* ignore */ }
+      const mapped = mapAadError(parsed.error || null, parsed.error_description || errText);
+      return new Response(
+        buildResultHtml({ success: false, errorCode: mapped.code, errorMessage: mapped.message, allowedOrigin }),
+        { headers: { "Content-Type": "text/html; charset=UTF-8" }, status: 400 },
+      );
     }
 
     const tokens = await tokenResponse.json();
-    console.log("Tokens received successfully from Microsoft");
 
-    // Get user info from Microsoft Graph API
-    const userInfoResponse = await fetch("https://graph.microsoft.com/v1.0/me", {
+    // CRITICAL: validate immediately by calling Graph /me
+    const meResp = await fetch("https://graph.microsoft.com/v1.0/me", {
       headers: { Authorization: `Bearer ${tokens.access_token}` },
     });
 
-    if (!userInfoResponse.ok) {
-      const errorText = await userInfoResponse.text();
-      console.error("Failed to get user info:", errorText);
-      throw new Error("Failed to get user info from Microsoft Graph");
+    if (!meResp.ok) {
+      const errText = await meResp.text();
+      console.error("Graph /me failed:", meResp.status, errText);
+      return new Response(
+        buildResultHtml({
+          success: false,
+          errorCode: `graph_${meResp.status}`,
+          errorMessage: "El token se obtuvo pero Microsoft Graph rechazó la petición. Posiblemente faltan permisos. Intenta IMAP si tu admin bloquea OAuth.",
+          allowedOrigin,
+        }),
+        { headers: { "Content-Type": "text/html; charset=UTF-8" }, status: 400 },
+      );
     }
 
-    const userInfo = await userInfoResponse.json();
+    const userInfo = await meResp.json();
     const userEmail = userInfo.mail || userInfo.userPrincipalName;
     const userName = userInfo.displayName || userEmail;
-    
-    console.log("User info retrieved:", userEmail);
 
-    // Parse state to get organization_id and user_id
     const stateData = JSON.parse(atob(state));
     const { organization_id, user_id } = stateData;
 
-    // Initialize Supabase client with service role
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
-
-    // Calculate token expiration
     const expiresAt = Date.now() + (tokens.expires_in * 1000);
+    const nowIso = new Date().toISOString();
 
-    // Check if account already exists for this org/email
-    const { data: existingAccount } = await supabase
+    const { data: existing } = await supabase
       .from("integration_accounts")
       .select("id")
       .eq("organization_id", organization_id)
@@ -105,119 +144,49 @@ serve(async (req) => {
       .eq("account_email", userEmail)
       .maybeSingle();
 
-    let saveError = null;
-    
-    if (existingAccount) {
-      // Update existing account with new tokens
-      const { error } = await supabase
-        .from("integration_accounts")
-        .update({
-          account_name: userName,
-          is_active: true,
-          credentials: {
-            access_token: tokens.access_token,
-            refresh_token: tokens.refresh_token,
-            expires_at: expiresAt,
-          },
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", existingAccount.id);
-      saveError = error;
-      console.log("Updated existing Outlook account:", existingAccount.id);
+    const credentials = {
+      access_token: tokens.access_token,
+      refresh_token: tokens.refresh_token,
+      expires_at: expiresAt,
+      last_test_success_at: nowIso,
+    };
+
+    if (existing) {
+      await supabase.from("integration_accounts").update({
+        account_name: userName,
+        is_active: true,
+        credentials,
+        updated_at: nowIso,
+      }).eq("id", existing.id);
     } else {
-      // Insert new account
-      const { error } = await supabase
-        .from("integration_accounts")
-        .insert({
-          organization_id,
-          service_type: "outlook",
-          account_email: userEmail,
-          account_name: userName,
-          created_by: user_id,
-          is_active: true,
-          credentials: {
-            access_token: tokens.access_token,
-            refresh_token: tokens.refresh_token,
-            expires_at: expiresAt,
-          },
-        });
-      saveError = error;
-      console.log("Created new Outlook account for:", userEmail);
+      await supabase.from("integration_accounts").insert({
+        organization_id,
+        service_type: "outlook",
+        account_email: userEmail,
+        account_name: userName,
+        created_by: user_id,
+        is_active: true,
+        credentials,
+      });
     }
 
-    if (saveError) {
-      console.error("Error storing tokens:", saveError);
-      throw saveError;
-    }
+    await supabase.from("organizations").update({
+      outlook_connected: true,
+      outlook_email: userEmail,
+    }).eq("id", organization_id);
 
-    // Update organization connection status
-    await supabase
-      .from("organizations")
-      .update({
-        outlook_connected: true,
-        outlook_email: userEmail,
-      })
-      .eq("id", organization_id);
-
-    console.log("Outlook account connected successfully for:", userEmail);
-
-    const escapedEmail = escapeHtml(userEmail);
-    const allowedOrigin = new URL(SUPABASE_URL).origin;
-    
-    const successHtml = `<!DOCTYPE html>
-      <html>
-        <head>
-          <meta charset="UTF-8">
-          <title>Outlook Connected</title>
-        </head>
-        <body>
-          <h1>¡Conexión Exitosa!</h1>
-          <p>Outlook conectado: ${escapedEmail}</p>
-          <p>Puedes cerrar esta ventana.</p>
-          <script>
-            console.log('Sending Outlook postMessage to opener');
-            if (window.opener) {
-              window.opener.postMessage({ type: 'outlook-connected', email: '${escapedEmail}' }, '${allowedOrigin}');
-              console.log('Outlook message sent');
-            } else {
-              console.error('No window.opener found');
-            }
-            setTimeout(() => window.close(), 2000);
-          </script>
-        </body>
-      </html>`;
+    console.log("Outlook connected successfully:", userEmail);
 
     return new Response(
-      new TextEncoder().encode(successHtml),
-      { headers: { 
-        "Content-Type": "text/html; charset=UTF-8",
-        "Content-Security-Policy": "default-src 'self' 'unsafe-inline'"
-      }, status: 200 }
+      buildResultHtml({ success: true, email: userEmail, allowedOrigin }),
+      { headers: { "Content-Type": "text/html; charset=UTF-8" }, status: 200 },
     );
   } catch (error) {
     console.error("Error in outlook-oauth-callback:", error);
-    const errorMessage = error instanceof Error ? error.message : "Unknown error";
-    
-    const errorHtml = `<!DOCTYPE html>
-      <html>
-        <head>
-          <meta charset="UTF-8">
-          <title>Error</title>
-        </head>
-        <body>
-          <h1>Error de Conexión</h1>
-          <p>${escapeHtml(errorMessage)}</p>
-          <p style="font-size: 12px; color: #666;">Verifica que las credenciales de Microsoft estén correctas y que la URL de redirección esté autorizada en Azure Portal.</p>
-          <script>setTimeout(() => window.close(), 5000);</script>
-        </body>
-      </html>`;
-
+    const msg = error instanceof Error ? error.message : "Unknown error";
     return new Response(
-      new TextEncoder().encode(errorHtml),
-      { headers: { 
-        "Content-Type": "text/html; charset=UTF-8",
-        "Content-Security-Policy": "default-src 'self' 'unsafe-inline'"
-      }, status: 500 }
+      buildResultHtml({ success: false, errorCode: "callback_error", errorMessage: msg, allowedOrigin }),
+      { headers: { "Content-Type": "text/html; charset=UTF-8" }, status: 500 },
     );
   }
 });

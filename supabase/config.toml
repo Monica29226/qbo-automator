@@ -191,3 +191,9 @@ verify_jwt = false
 
 [functions.retry-qbo-waiting]
 verify_jwt = false
+
+[functions.outlook-imap-connect]
+verify_jwt = true
+
+[functions.outlook-imap-fetch-invoices]
+verify_jwt = true

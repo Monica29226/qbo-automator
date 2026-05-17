@@ -12,12 +12,14 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { ArrowLeft, Plus, Plug, Check, X, Mail, Building2, HardDrive, Loader2, Server, RefreshCw } from "lucide-react";
+import { ArrowLeft, Plus, Plug, Check, X, Mail, Building2, HardDrive, Loader2, Server, RefreshCw, AlertTriangle } from "lucide-react";
 import { Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
 import { OrganizationSwitcher } from "@/components/OrganizationSwitcher";
+import { OutlookImapConnectDialog } from "@/components/OutlookImapConnectDialog";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
 interface IntegrationAccount {
   id: string;
@@ -58,6 +60,8 @@ const Integrations = () => {
   const [hostingerHost, setHostingerHost] = useState("imap.hostinger.com");
   const [hostingerPort, setHostingerPort] = useState("993");
   const [isConnecting, setIsConnecting] = useState(false);
+  const [imapDialogOpen, setImapDialogOpen] = useState(false);
+  const [outlookError, setOutlookError] = useState<{ code: string; message: string } | null>(null);
 
   useEffect(() => {
     if (activeOrganization) {
@@ -468,10 +472,15 @@ const Integrations = () => {
 
       const messageHandler = (event: MessageEvent) => {
         console.log("Message received:", event.data);
-        if (event.data.type === "outlook-connected") {
+        if (event.data?.type === "outlook-connected") {
+          setOutlookError(null);
           toast.success(`Outlook conectado: ${event.data.email}`);
           setIsDialogOpen(false);
           fetchData();
+          window.removeEventListener("message", messageHandler);
+        } else if (event.data?.type === "outlook-error") {
+          setOutlookError({ code: event.data.code || "oauth_error", message: event.data.message || "Error desconocido" });
+          toast.error(`OAuth de Outlook falló: ${event.data.message || event.data.code}`, { duration: 10000 });
           window.removeEventListener("message", messageHandler);
         }
       };
@@ -763,11 +772,11 @@ const Integrations = () => {
     },
     {
       id: "outlook",
-      name: "Outlook",
+      name: "Outlook / Microsoft 365",
       icon: Mail,
       connected: orgData?.outlook_connected || false,
-      accounts: accounts.filter((a) => a.service_type === "outlook"),
-      description: "Recibir facturas por correo Outlook",
+      accounts: accounts.filter((a) => a.service_type === "outlook" || a.service_type === "outlook_imap"),
+      description: "Recibir facturas por correo Outlook (OAuth) o Microsoft 365 vía IMAP (avanzado)",
     },
     {
       id: "bluehost",
@@ -840,6 +849,24 @@ const Integrations = () => {
           </div>
         ) : (
           <div className="space-y-4">
+            {outlookError && (
+              <Alert variant="destructive">
+                <AlertTriangle className="h-4 w-4" />
+                <AlertTitle>Falla al conectar Outlook ({outlookError.code})</AlertTitle>
+                <AlertDescription className="space-y-2">
+                  <p>{outlookError.message}</p>
+                  <div className="flex gap-2 pt-1">
+                    <Button size="sm" variant="outline" onClick={() => { setOutlookError(null); handleOutlookOAuth(); }}>
+                      Reintentar OAuth
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={() => { setOutlookError(null); setImapDialogOpen(true); }}>
+                      Probar IMAP
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={() => setOutlookError(null)}>Cerrar</Button>
+                  </div>
+                </AlertDescription>
+              </Alert>
+            )}
             {services.map((service) => (
               <Card key={service.id} className="p-6">
                 <div className="flex items-start justify-between">
@@ -908,6 +935,17 @@ const Integrations = () => {
                         Reconectar
                       </Button>
                     )}
+                    {service.id === "outlook" && (
+                      <Button
+                        onClick={() => setImapDialogOpen(true)}
+                        size="sm"
+                        variant="outline"
+                        title="Para entornos donde el admin de TI bloquea OAuth de terceros"
+                      >
+                        <Server className="h-4 w-4 mr-2" />
+                        Conectar con IMAP (avanzado)
+                      </Button>
+                    )}
                     <Button
                       onClick={() => {
                         setSelectedService(service.id);
@@ -916,7 +954,7 @@ const Integrations = () => {
                       size="sm"
                     >
                       <Plus className="h-4 w-4 mr-2" />
-                      Agregar cuenta
+                      {service.id === "outlook" ? "Conectar con Microsoft (OAuth)" : "Agregar cuenta"}
                     </Button>
                   </div>
                 </div>
@@ -1175,6 +1213,12 @@ const Integrations = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <OutlookImapConnectDialog
+        open={imapDialogOpen}
+        onOpenChange={setImapDialogOpen}
+        onConnected={() => fetchData()}
+      />
     </div>
   );
 };
