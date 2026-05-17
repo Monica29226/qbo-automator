@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -84,6 +85,7 @@ export function CreateOrganizationDialog({
   onSuccess,
 }: CreateOrganizationDialogProps) {
   const { setActiveOrganizationLocal } = useAuth();
+  const navigate = useNavigate();
   const [isCreating, setIsCreating] = useState(false);
   const [formData, setFormData] = useState<OrganizationFormData>(initialFormData);
 
@@ -132,13 +134,14 @@ export function CreateOrganizationDialog({
       // Update local state
       setActiveOrganizationLocal(organizationId);
       
-      toast.success("Empresa creada exitosamente");
+      toast.success("Empresa creada. Vamos a configurarla…");
       setFormData(initialFormData);
       onOpenChange(false);
-      
+
       if (onSuccess) {
         onSuccess(organizationId);
       }
+      navigate(`/onboarding/${organizationId}`);
     } catch (error: any) {
       console.error("Error:", error);
       toast.error("Error de conexión. Verifica tu internet.");

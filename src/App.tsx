@@ -33,6 +33,7 @@ import ResetPassword from "./pages/ResetPassword";
 import ForgotPassword from "./pages/ForgotPassword";
 import XmlDebug from "./pages/XmlDebug";
 import LegacyAccountMapping from "./pages/LegacyAccountMapping";
+import Onboarding from "./pages/Onboarding";
 import NotFound from "./pages/NotFound";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import { AppErrorBoundary } from "./components/AppErrorBoundary";
@@ -261,6 +262,14 @@ const App = () => (
                 element={
                   <ProtectedRoute>
                     <BankStatements />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/onboarding/:orgId"
+                element={
+                  <ProtectedRoute>
+                    <Onboarding />
                   </ProtectedRoute>
                 }
               />

@@ -685,6 +685,42 @@ export type Database = {
           },
         ]
       }
+      onboarding_progress: {
+        Row: {
+          completed_at: string | null
+          completed_steps: number[]
+          created_at: string
+          created_by: string | null
+          current_step: number
+          id: string
+          organization_id: string
+          step_data: Json
+          updated_at: string
+        }
+        Insert: {
+          completed_at?: string | null
+          completed_steps?: number[]
+          created_at?: string
+          created_by?: string | null
+          current_step?: number
+          id?: string
+          organization_id: string
+          step_data?: Json
+          updated_at?: string
+        }
+        Update: {
+          completed_at?: string | null
+          completed_steps?: number[]
+          created_at?: string
+          created_by?: string | null
+          current_step?: number
+          id?: string
+          organization_id?: string
+          step_data?: Json
+          updated_at?: string
+        }
+        Relationships: []
+      }
       onedrive_subscriptions: {
         Row: {
           created_at: string
@@ -818,6 +854,7 @@ export type Database = {
           bluehost_email: string | null
           canton: string | null
           created_at: string
+          default_account_ref: string | null
           district: string | null
           economic_activity_code: string | null
           email: string | null
@@ -845,6 +882,7 @@ export type Database = {
           qbo_realm_id: string | null
           quickbooks_connected: boolean | null
           quickbooks_realm_id: string | null
+          sector: string | null
           settings: Json | null
           tax_id: string | null
           tax_regime: string | null
@@ -857,6 +895,7 @@ export type Database = {
           bluehost_email?: string | null
           canton?: string | null
           created_at?: string
+          default_account_ref?: string | null
           district?: string | null
           economic_activity_code?: string | null
           email?: string | null
@@ -884,6 +923,7 @@ export type Database = {
           qbo_realm_id?: string | null
           quickbooks_connected?: boolean | null
           quickbooks_realm_id?: string | null
+          sector?: string | null
           settings?: Json | null
           tax_id?: string | null
           tax_regime?: string | null
@@ -896,6 +936,7 @@ export type Database = {
           bluehost_email?: string | null
           canton?: string | null
           created_at?: string
+          default_account_ref?: string | null
           district?: string | null
           economic_activity_code?: string | null
           email?: string | null
@@ -923,6 +964,7 @@ export type Database = {
           qbo_realm_id?: string | null
           quickbooks_connected?: boolean | null
           quickbooks_realm_id?: string | null
+          sector?: string | null
           settings?: Json | null
           tax_id?: string | null
           tax_regime?: string | null
