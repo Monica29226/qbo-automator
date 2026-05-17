@@ -218,3 +218,6 @@ verify_jwt = false
 
 [functions.retry-sharepoint-uploads]
 verify_jwt = false
+
+[functions.unstick-publishing]
+verify_jwt = false
