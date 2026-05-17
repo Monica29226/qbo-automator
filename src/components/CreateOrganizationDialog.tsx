@@ -85,6 +85,7 @@ export function CreateOrganizationDialog({
   onSuccess,
 }: CreateOrganizationDialogProps) {
   const { setActiveOrganizationLocal } = useAuth();
+  const navigate = useNavigate();
   const [isCreating, setIsCreating] = useState(false);
   const [formData, setFormData] = useState<OrganizationFormData>(initialFormData);
 
