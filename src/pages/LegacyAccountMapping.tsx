@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { ArrowLeft, RefreshCw, Save, PlayCircle } from "lucide-react";
+import { ArrowLeft, RefreshCw, Save, PlayCircle, Wand2, ChevronDown, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { AccountCombobox } from "@/components/AccountCombobox";
 import { useAuth } from "@/hooks/useAuth";
 import { useQBOAccounts } from "@/hooks/useQBOAccounts";
