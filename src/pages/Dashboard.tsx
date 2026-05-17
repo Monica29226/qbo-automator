@@ -375,6 +375,10 @@ const Dashboard = () => {
               </div>
 
               <div className="mb-4">
+                <OnboardingBanner organizationId={activeOrganization} />
+              </div>
+
+              <div className="mb-4">
                 <StabilityScorePanel organizationId={activeOrganization} />
               </div>
 
