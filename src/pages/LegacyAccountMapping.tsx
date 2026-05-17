@@ -216,8 +216,8 @@ export default function LegacyAccountMapping() {
               <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground">Sin cuentas legacy pendientes.</TableCell></TableRow>
             )}
             {rows.map((row) => (
-              <>
-                <TableRow key={row.legacy_code}>
+              <React.Fragment key={row.legacy_code}>
+                <TableRow>
                   <TableCell>
                     {row.doc_count > 0 && (
                       <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => toggleExpand(row.legacy_code)}>
