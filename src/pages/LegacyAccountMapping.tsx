@@ -130,6 +130,38 @@ export default function LegacyAccountMapping() {
     }
   };
 
+  const autoMap = () => {
+    let suggested = 0;
+    setRows((prev) =>
+      prev.map((r) => {
+        if (r.qbo_account_id) return r;
+        const last4 = r.legacy_code.slice(-4);
+        const last3 = r.legacy_code.slice(-3);
+        const match = accounts.find((a) => {
+          const n = (a.accountNumber || "").toString();
+          const name = (a.name || "").toLowerCase();
+          return n === last4 || n.startsWith(last4) || n === last3 || name.includes(last4);
+        });
+        if (match) { suggested++; return { ...r, qbo_account_id: match.id }; }
+        return r;
+      })
+    );
+    toast.success(`Sugeridas ${suggested} cuenta(s). Revisa y guarda las que apliquen.`);
+  };
+
+  const [expanded, setExpanded] = useState<Record<string, any[]>>({});
+  const toggleExpand = async (code: string) => {
+    if (expanded[code]) { setExpanded((p) => { const n = { ...p }; delete n[code]; return n; }); return; }
+    const { data } = await supabase
+      .from("processed_documents")
+      .select("doc_number, supplier_name, total_amount, currency, issue_date")
+      .eq("organization_id", activeOrganization!)
+      .in("status", ["error", "needs_account_mapping"])
+      .or(`error_message.ilike.%${code}%,default_account_ref.ilike.%${code}%`)
+      .limit(20);
+    setExpanded((p) => ({ ...p, [code]: data || [] }));
+  };
+
   const totalDocs = useMemo(() => rows.reduce((s, r) => s + r.doc_count, 0), [rows]);
 
   return (
@@ -142,6 +174,9 @@ export default function LegacyAccountMapping() {
           <h1 className="text-2xl font-semibold">Mapeo de cuentas legacy</h1>
         </div>
         <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={autoMap} disabled={accountsLoading || rows.length === 0}>
+            <Wand2 className="h-4 w-4 mr-1" />Auto-mapear por patrones
+          </Button>
           <Button variant="outline" size="sm" onClick={() => { refetchAccounts(); load(); }}>
             <RefreshCw className="h-4 w-4 mr-1" />Refrescar
           </Button>
@@ -166,6 +201,7 @@ export default function LegacyAccountMapping() {
         <Table>
           <TableHeader>
             <TableRow>
+              <TableHead className="w-10"></TableHead>
               <TableHead>Código legacy</TableHead>
               <TableHead>Facturas</TableHead>
               <TableHead>Cuenta QuickBooks</TableHead>
@@ -174,32 +210,58 @@ export default function LegacyAccountMapping() {
           </TableHeader>
           <TableBody>
             {loading && (
-              <TableRow><TableCell colSpan={4} className="text-center text-muted-foreground">Cargando…</TableCell></TableRow>
+              <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground">Cargando…</TableCell></TableRow>
             )}
             {!loading && rows.length === 0 && (
-              <TableRow><TableCell colSpan={4} className="text-center text-muted-foreground">Sin cuentas legacy pendientes.</TableCell></TableRow>
+              <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground">Sin cuentas legacy pendientes.</TableCell></TableRow>
             )}
             {rows.map((row) => (
-              <TableRow key={row.legacy_code}>
-                <TableCell className="font-mono">{row.legacy_code}</TableCell>
-                <TableCell>
-                  <Badge variant={row.doc_count > 0 ? "destructive" : "secondary"}>{row.doc_count}</Badge>
-                </TableCell>
-                <TableCell>
-                  <AccountCombobox
-                    accounts={accounts}
-                    value={row.qbo_account_id}
-                    onValueChange={(v) => setRowAccount(row.legacy_code, v)}
-                    placeholder={accountsLoading ? "Cargando cuentas…" : "Seleccionar cuenta QBO"}
-                    className="w-full"
-                  />
-                </TableCell>
-                <TableCell>
-                  <Button size="sm" onClick={() => saveRow(row)} disabled={saving === row.legacy_code || !row.qbo_account_id}>
-                    <Save className="h-4 w-4 mr-1" />Guardar
-                  </Button>
-                </TableCell>
-              </TableRow>
+              <>
+                <TableRow key={row.legacy_code}>
+                  <TableCell>
+                    {row.doc_count > 0 && (
+                      <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => toggleExpand(row.legacy_code)}>
+                        {expanded[row.legacy_code] ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                      </Button>
+                    )}
+                  </TableCell>
+                  <TableCell className="font-mono">{row.legacy_code}</TableCell>
+                  <TableCell>
+                    <Badge variant={row.doc_count > 0 ? "destructive" : "secondary"}>{row.doc_count}</Badge>
+                  </TableCell>
+                  <TableCell>
+                    <AccountCombobox
+                      accounts={accounts}
+                      value={row.qbo_account_id}
+                      onValueChange={(v) => setRowAccount(row.legacy_code, v)}
+                      placeholder={accountsLoading ? "Cargando cuentas…" : "Seleccionar cuenta QBO"}
+                      className="w-full"
+                    />
+                  </TableCell>
+                  <TableCell>
+                    <Button size="sm" onClick={() => saveRow(row)} disabled={saving === row.legacy_code || !row.qbo_account_id}>
+                      <Save className="h-4 w-4 mr-1" />Guardar
+                    </Button>
+                  </TableCell>
+                </TableRow>
+                {expanded[row.legacy_code] && (
+                  <TableRow>
+                    <TableCell colSpan={5} className="bg-muted/40">
+                      <div className="text-xs space-y-1 max-h-64 overflow-auto">
+                        {expanded[row.legacy_code].length === 0 && <span className="text-muted-foreground">Sin facturas asociadas.</span>}
+                        {expanded[row.legacy_code].map((d: any, i: number) => (
+                          <div key={i} className="flex gap-3 py-1 border-b last:border-0">
+                            <span className="font-mono w-32 truncate">{d.doc_number}</span>
+                            <span className="flex-1 truncate">{d.supplier_name}</span>
+                            <span>{d.issue_date}</span>
+                            <span className="font-mono">{d.currency} {Number(d.total_amount).toLocaleString()}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                )}
+              </>
             ))}
           </TableBody>
         </Table>
