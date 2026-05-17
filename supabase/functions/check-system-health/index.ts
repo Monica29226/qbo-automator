@@ -264,40 +264,59 @@ async function checkOrganization(supabase: any, org: any): Promise<number> {
     }
   }
 
-  // Anti-duplicación: filtrar alertas con un row no resuelto creado en las últimas 4h
+  // Anti-duplicación por (organization_id, code) en últimas 4h.
+  // Si existe un row no resuelto reciente, incrementar issues_count en vez de insertar.
   if (checks.length === 0) return 0;
 
   const fourHoursAgo = iso(now - 4 * 3600 * 1000);
   const { data: recent } = await supabase
     .from("alert_history")
-    .select("issues_data, resolved, sent_at")
+    .select("id, issues_data, issues_count, resolved, created_at")
     .eq("organization_id", orgId)
-    .gte("sent_at", fourHoursAgo);
+    .eq("resolved", false)
+    .gte("created_at", fourHoursAgo);
 
-  const recentCodes = new Set(
-    (recent || [])
-      .filter((r: any) => !r.resolved)
-      .map((r: any) => r?.issues_data?.code)
-      .filter(Boolean)
-  );
-
-  const toInsert = checks
-    .filter((c) => !recentCodes.has(c.code))
-    .map((c) => ({
-      organization_id: orgId,
-      alert_type: c.severity,
-      issues_count: c.count ?? 1,
-      issues_data: c,
-    }));
-
-  if (toInsert.length === 0) return 0;
-
-  const { error } = await supabase.from("alert_history").insert(toInsert);
-  if (error) {
-    console.error(`[${org.name}] insert alerts failed:`, error.message);
-    throw error;
+  const recentByCode = new Map<string, any>();
+  for (const r of recent || []) {
+    const code = Array.isArray(r.issues_data) ? r?.issues_data?.[0]?.code : r?.issues_data?.code;
+    if (code) recentByCode.set(code, r);
   }
 
-  console.log(`[${org.name}] inserted ${toInsert.length} alerts: ${toInsert.map((a) => a.issues_data.code).join(", ")}`);
-  return toInsert.length;
+  let createdOrUpdated = 0;
+  for (const c of checks) {
+    const issuePayload = {
+      type: c.severity,
+      title: c.title,
+      description: c.description,
+      code: c.code,
+      actionRequired: c.action || "",
+      action_link: c.action_link,
+      metadata: c.metadata,
+    };
+
+    const existing = recentByCode.get(c.code);
+    if (existing) {
+      const { error } = await supabase
+        .from("alert_history")
+        .update({
+          issues_count: (existing.issues_count || 1) + 1,
+          issues_data: [issuePayload],
+        })
+        .eq("id", existing.id);
+      if (error) console.error(`[${org.name}] update alert failed:`, error.message);
+      else createdOrUpdated++;
+    } else {
+      const { error } = await supabase.from("alert_history").insert({
+        organization_id: orgId,
+        alert_type: c.severity,
+        issues_count: c.count ?? 1,
+        issues_data: [issuePayload],
+      });
+      if (error) console.error(`[${org.name}] insert alert failed:`, error.message);
+      else createdOrUpdated++;
+    }
+  }
+
+  console.log(`[${org.name}] processed ${createdOrUpdated} alerts (${checks.map((c) => c.code).join(", ")})`);
+  return createdOrUpdated;
 }
