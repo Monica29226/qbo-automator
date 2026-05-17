@@ -111,22 +111,27 @@ export const useOrganizationConnections = (organizationId: string | null) => {
         return { gmail: false, quickbooks: false, outlook: false, outlook_imap: false, hostinger: false, bluehost: false };
       }
 
-      const { data, error } = await supabase
-        .from("integration_accounts")
-        .select("service_type")
-        .eq("organization_id", organizationId)
-        .eq("is_active", true);
+      // integration_accounts has no SELECT RLS policy (credentials are sensitive).
+      // Use SECURITY DEFINER RPCs that safely expose only the presence of integrations.
+      const [qboRes, emailsRes] = await Promise.all([
+        supabase.rpc("has_active_integration", {
+          _org_id: organizationId,
+          _service_type: "quickbooks",
+        }),
+        supabase.rpc("get_active_email_services", { _org_id: organizationId }),
+      ]);
 
-      if (error) throw error;
+      if (qboRes.error) throw qboRes.error;
+      if (emailsRes.error) throw emailsRes.error;
 
-      const accounts = data || [];
+      const emailTypes = new Set(((emailsRes.data as Array<{ service_type: string }>) || []).map(r => r.service_type));
       return {
-        gmail: accounts.some(a => a.service_type === "gmail"),
-        quickbooks: accounts.some(a => a.service_type === "quickbooks"),
-        outlook: accounts.some(a => a.service_type === "outlook"),
-        outlook_imap: accounts.some(a => a.service_type === "outlook_imap"),
-        hostinger: accounts.some(a => a.service_type === "hostinger"),
-        bluehost: accounts.some(a => a.service_type === "bluehost"),
+        gmail: emailTypes.has("gmail"),
+        outlook: emailTypes.has("outlook"),
+        outlook_imap: emailTypes.has("outlook_imap"),
+        hostinger: emailTypes.has("hostinger"),
+        bluehost: emailTypes.has("bluehost"),
+        quickbooks: !!qboRes.data,
       };
     },
     enabled: !!organizationId,
