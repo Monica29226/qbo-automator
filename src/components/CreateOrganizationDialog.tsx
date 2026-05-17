@@ -134,13 +134,14 @@ export function CreateOrganizationDialog({
       // Update local state
       setActiveOrganizationLocal(organizationId);
       
-      toast.success("Empresa creada exitosamente");
+      toast.success("Empresa creada. Vamos a configurarla…");
       setFormData(initialFormData);
       onOpenChange(false);
-      
+
       if (onSuccess) {
         onSuccess(organizationId);
       }
+      navigate(`/onboarding/${organizationId}`);
     } catch (error: any) {
       console.error("Error:", error);
       toast.error("Error de conexión. Verifica tu internet.");
