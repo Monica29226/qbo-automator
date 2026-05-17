@@ -8,6 +8,7 @@ import { Loader2, RefreshCw } from "lucide-react";
 const FN_MAP: Record<string, string> = {
   gmail: "gmail-fetch-invoices",
   outlook: "outlook-fetch-invoices",
+  outlook_imap: "outlook-imap-fetch-invoices",
   hostinger: "hostinger-fetch-invoices",
   bluehost: "bluehost-fetch-invoices",
 };
