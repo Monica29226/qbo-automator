@@ -1320,6 +1320,7 @@ Deno.serve(async (req) => {
     // =============================================================
     const TRANSIENT_PATTERNS = [
       /estado de la empresa no v[aá]lido/i,
+      /estado de la empresa/i,
       /per[ií]odo.*cerrado/i,
       /closed period/i,
       /subscription/i,
@@ -1328,6 +1329,9 @@ Deno.serve(async (req) => {
       /service.*unavailable/i,
       /503/,
       /temporarily unavailable/i,
+      /cannot find user/i,
+      /ApplicationAuthenticationFailed/i,
+      /BusinessValidationError.*(cuentas?\s+por\s+(cobrar|pagar)|accounts?\s+(receivable|payable))/i,
     ];
     const isTransientQboError = (msg: string): boolean => {
       if (!msg) return false;
@@ -2126,8 +2130,32 @@ Deno.serve(async (req) => {
         const extractedCode = accountCode.includes(' - ') 
           ? accountCode.split(' - ')[0].trim()
           : accountCode.split(' ')[0].trim();
-        
-        const accountRef = await getAccountIdByCode(extractedCode);
+
+        // LEGACY ACCOUNT MAPPING: if code matches legacy pattern (1150040xxx), resolve via mapping
+        let accountRef: string | null = null;
+        const isLegacyCode = /^1150040\d+/.test(extractedCode);
+        if (isLegacyCode) {
+          const { data: mapping } = await supabase
+            .from("legacy_account_mapping")
+            .select("qbo_account_id")
+            .eq("organization_id", organization_id)
+            .eq("legacy_account_code", extractedCode)
+            .maybeSingle();
+          if (mapping?.qbo_account_id) {
+            accountRef = mapping.qbo_account_id;
+            logInfo(`   🔁 ${doc.doc_number}: Legacy ${extractedCode} → QBO ${accountRef}`);
+          } else {
+            const errMsg = `Cuenta legacy ${extractedCode} sin mapeo a QuickBooks. Configura en /legacy-account-mapping`;
+            await registerInTracking(doc, 'needs_account_mapping', null, null, errMsg);
+            await supabase
+              .from("processed_documents")
+              .update({ status: "needs_account_mapping", error_message: errMsg })
+              .eq("id", doc.id);
+            return { success: false, docNumber: doc.doc_number, error: errMsg };
+          }
+        } else {
+          accountRef = await getAccountIdByCode(extractedCode);
+        }
         
         if (!accountRef) {
           const errMsg = `Cuenta ${accountCode} no existe en QuickBooks`;

@@ -609,6 +609,44 @@ export type Database = {
           },
         ]
       }
+      legacy_account_mapping: {
+        Row: {
+          created_at: string
+          id: string
+          legacy_account_code: string
+          organization_id: string
+          qbo_account_id: string | null
+          qbo_account_name: string | null
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          legacy_account_code: string
+          organization_id: string
+          qbo_account_id?: string | null
+          qbo_account_name?: string | null
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          legacy_account_code?: string
+          organization_id?: string
+          qbo_account_id?: string | null
+          qbo_account_name?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "legacy_account_mapping_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       oauth_credentials: {
         Row: {
           client_id: string
