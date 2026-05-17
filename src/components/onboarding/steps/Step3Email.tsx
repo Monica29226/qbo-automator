@@ -10,7 +10,7 @@ interface Props {
   organizationId: string;
   initial?: any;
   onSaved: (data: any) => void;
-  bindActions: (a: { onNext: () => Promise<void> | void; disableNext?: boolean }) => void;
+  bindActions: (a: { onNext: () => any; disableNext?: boolean }) => void;
 }
 
 export default function Step3Email({ organizationId, onSaved, bindActions }: Props) {

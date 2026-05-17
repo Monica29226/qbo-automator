@@ -11,7 +11,7 @@ interface Props {
   organizationId: string;
   initial?: any;
   onSaved: (data: any) => void;
-  bindActions: (a: { onNext: () => Promise<void> | void; disableNext?: boolean }) => void;
+  bindActions: (a: { onNext: () => any; disableNext?: boolean }) => void;
 }
 
 interface CheckItem { key: string; label: string; required: boolean; found: boolean; qboName?: string | null; }
