@@ -265,6 +265,14 @@ const App = () => (
                   </ProtectedRoute>
                 }
               />
+              <Route
+                path="/onboarding/:orgId"
+                element={
+                  <ProtectedRoute>
+                    <Onboarding />
+                  </ProtectedRoute>
+                }
+              />
               {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
               <Route path="*" element={<NotFound />} />
             </Routes>
