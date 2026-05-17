@@ -277,6 +277,22 @@ const App = () => (
                 }
               />
               <Route
+                path="/admin/sharepoint-setup"
+                element={
+                  <ProtectedRoute requireAdmin>
+                    <AdminSharePointSetup />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/admin/sharepoint-bulk-upload"
+                element={
+                  <ProtectedRoute requireAdmin>
+                    <AdminSharePointBulkUpload />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
                 path="/onboarding/:orgId"
                 element={
                   <ProtectedRoute>
