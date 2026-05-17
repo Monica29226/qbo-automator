@@ -4,9 +4,8 @@ import { useAuth } from "@/hooks/useAuth";
 
 export default function OnboardingPage() {
   const { orgId } = useParams<{ orgId: string }>();
-  const { user, loading } = useAuth();
+  const { user } = useAuth();
 
-  if (loading) return null;
   if (!user) return <Navigate to="/auth" replace />;
   if (!orgId) return <Navigate to="/dashboard" replace />;
 
