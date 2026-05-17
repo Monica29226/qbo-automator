@@ -8,6 +8,7 @@ import { ArrowLeft, Building2, Loader2, Plus, Check, Settings } from "lucide-rea
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { CreateOrganizationDialog } from "@/components/CreateOrganizationDialog";
+import { getIdentificationLabel, formatIdentification } from "@/lib/identification-types";
 
 interface Organization {
   id: string;
@@ -148,12 +149,14 @@ const MyCompany = () => {
                         )}
                         {(org.identification_number || org.tax_id) && (
                           <div>
-                            <p className="text-sm text-muted-foreground">Identificación</p>
+                            <p className="text-sm text-muted-foreground">
+                              {getIdentificationLabel(org.identification_type)}
+                            </p>
                             <p className="font-medium">
-                              {org.identification_type && (
-                                <span className="capitalize">{org.identification_type}: </span>
+                              {formatIdentification(
+                                org.identification_type,
+                                org.identification_number || org.tax_id || "",
                               )}
-                              {org.identification_number || org.tax_id}
                             </p>
                           </div>
                         )}

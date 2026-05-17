@@ -18,11 +18,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Loader2, Building2, MapPin, FileText } from "lucide-react";
+import { Loader2, Building2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { IdentificationInput } from "@/components/IdentificationInput";
+import { validateIdentification } from "@/lib/identification-types";
 
 interface CreateOrganizationDialogProps {
   open: boolean;
@@ -89,34 +91,6 @@ export function CreateOrganizationDialog({
     setFormData((prev) => ({ ...prev, [field]: value }));
   };
 
-  // Validar cédula según tipo de identificación
-  const validateIdentification = (type: string, number: string): string | null => {
-    if (!number) return null; // Es opcional
-    
-    // Limpiar guiones y espacios
-    const cleanNumber = number.replace(/[-\s]/g, "");
-    
-    if (type === "juridica") {
-      if (!/^\d{10}$/.test(cleanNumber)) {
-        return "La cédula jurídica debe tener exactamente 10 dígitos";
-      }
-    } else if (type === "fisica") {
-      if (!/^\d{9}$/.test(cleanNumber)) {
-        return "La cédula física debe tener exactamente 9 dígitos";
-      }
-    } else if (type === "dimex") {
-      if (!/^\d{11,12}$/.test(cleanNumber)) {
-        return "El DIMEX debe tener 11 o 12 dígitos";
-      }
-    } else if (type === "nite") {
-      if (!/^\d{10}$/.test(cleanNumber)) {
-        return "El NITE debe tener exactamente 10 dígitos";
-      }
-    }
-    
-    return null;
-  };
-
   const handleSubmit = async () => {
     if (!formData.name.trim()) {
       toast.error("El nombre de la empresa es requerido");
@@ -124,10 +98,13 @@ export function CreateOrganizationDialog({
     }
 
     // Validar identificación si está presente
-    if (formData.identification_number && formData.identification_type) {
-      const validationError = validateIdentification(formData.identification_type, formData.identification_number);
-      if (validationError) {
-        toast.error(validationError);
+    if (formData.identification_number || formData.identification_type) {
+      const result = validateIdentification(
+        formData.identification_type,
+        formData.identification_number,
+      );
+      if (!result.ok) {
+        toast.error(result.error || "Identificación inválida");
         return;
       }
     }
@@ -258,36 +235,14 @@ export function CreateOrganizationDialog({
           </TabsContent>
 
           <TabsContent value="fiscal" className="space-y-4 mt-4">
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-2">
-                <Label htmlFor="identification_type">Tipo de Identificación</Label>
-                <Select
-                  value={formData.identification_type}
-                  onValueChange={(value) => handleInputChange("identification_type", value)}
-                  disabled={isCreating}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Seleccionar tipo" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="fisica">Cédula Física</SelectItem>
-                    <SelectItem value="juridica">Cédula Jurídica</SelectItem>
-                    <SelectItem value="nite">NITE</SelectItem>
-                    <SelectItem value="dimex">DIMEX</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="identification_number">Número de Identificación</Label>
-                <Input
-                  id="identification_number"
-                  placeholder="3-101-123456"
-                  value={formData.identification_number}
-                  onChange={(e) => handleInputChange("identification_number", e.target.value)}
-                  disabled={isCreating}
-                />
-              </div>
-            </div>
+            <IdentificationInput
+              type={formData.identification_type}
+              number={formData.identification_number}
+              onTypeChange={(v) => handleInputChange("identification_type", v)}
+              onNumberChange={(v) => handleInputChange("identification_number", v)}
+              disabled={isCreating}
+              idPrefix="org-id"
+            />
 
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
