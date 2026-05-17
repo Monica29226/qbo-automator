@@ -314,6 +314,27 @@ async function checkOrganization(supabase: any, org: any): Promise<number> {
       });
       if (error) console.error(`[${org.name}] insert alert failed:`, error.message);
       else createdOrUpdated++;
+
+      // Auto-resolve stale alerts of the same code (>24h with no newer occurrence)
+      const cutoff = iso(now - 24 * 3600 * 1000);
+      const { data: stale } = await supabase
+        .from("alert_history")
+        .select("id, issues_data, created_at")
+        .eq("organization_id", orgId)
+        .eq("resolved", false)
+        .lt("created_at", cutoff);
+      const staleIds = (stale || [])
+        .filter((r: any) => {
+          const code = Array.isArray(r.issues_data) ? r?.issues_data?.[0]?.code : r?.issues_data?.code;
+          return code === c.code;
+        })
+        .map((r: any) => r.id);
+      if (staleIds.length) {
+        await supabase
+          .from("alert_history")
+          .update({ resolved: true, resolved_at: new Date().toISOString() })
+          .in("id", staleIds);
+      }
     }
   }
 

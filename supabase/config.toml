@@ -197,3 +197,9 @@ verify_jwt = true
 
 [functions.outlook-imap-fetch-invoices]
 verify_jwt = true
+
+[functions.get-optimal-config]
+verify_jwt = true
+
+[functions.replicate-org-config]
+verify_jwt = true

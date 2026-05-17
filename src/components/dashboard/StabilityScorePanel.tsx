@@ -32,6 +32,20 @@ export const StabilityScorePanel = ({ organizationId }: Props) => {
     refetchInterval: 60_000,
   });
 
+  const { data: needsMappingCount } = useQuery({
+    queryKey: ["stability-needs-mapping", organizationId],
+    queryFn: async () => {
+      const { count } = await supabase
+        .from("processed_documents")
+        .select("id", { count: "exact", head: true })
+        .eq("organization_id", organizationId)
+        .eq("status", "needs_account_mapping");
+      return count || 0;
+    },
+    enabled: !!organizationId,
+    refetchInterval: 120_000,
+  });
+
   // Heuristic for IVA rates: any published invoice in last 60 days with total_tax > 0
   // means tax codes are mapped in QBO. Otherwise we flag it.
   const { data: taxStatus } = useQuery({
@@ -104,6 +118,9 @@ export const StabilityScorePanel = ({ organizationId }: Props) => {
   }
   if (!taxOk) {
     actions.push({ icon: Percent, title: `Tasas IVA sin configurar${taxStatus?.taxErrors ? ` (${taxStatus.taxErrors} errores de tax)` : ""}`, cta: "Ver detalle", to: "/error-documents", variant: "outline" });
+  }
+  if ((needsMappingCount ?? 0) > 0) {
+    actions.push({ icon: FileWarning, title: `Hay ${needsMappingCount} facturas esperando mapeo de cuenta`, cta: "Ir a mapeo", to: "/legacy-account-mapping", variant: "destructive" });
   }
 
   return (

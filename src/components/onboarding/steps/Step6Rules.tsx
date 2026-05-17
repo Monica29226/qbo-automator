@@ -3,9 +3,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card } from "@/components/ui/card";
-import { Plus, Trash2 } from "lucide-react";
+import { Plus, Trash2, Copy } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { ReplicateConfigDialog } from "@/components/ReplicateConfigDialog";
 
 interface Props {
   organizationId: string;
@@ -19,6 +20,7 @@ interface Rule { vendor_name: string; account_code: string; }
 export default function Step6Rules({ organizationId, onSaved, bindActions }: Props) {
   const [rules, setRules] = useState<Rule[]>([{ vendor_name: "", account_code: "" }]);
   const [mode, setMode] = useState<"now" | "later">("later");
+  const [replicateOpen, setReplicateOpen] = useState(false);
 
   useEffect(() => {
     bindActions({
@@ -43,10 +45,19 @@ export default function Step6Rules({ organizationId, onSaved, bindActions }: Pro
   return (
     <div className="space-y-4">
       <p className="text-sm">¿Quieres agregar reglas de proveedores frecuentes? Esto automatiza la clasificación.</p>
-      <div className="flex gap-2">
+      <div className="flex flex-wrap gap-2">
         <Button variant={mode === "later" ? "default" : "outline"} onClick={() => setMode("later")}>Agregar después</Button>
         <Button variant={mode === "now" ? "default" : "outline"} onClick={() => setMode("now")}>Agregar ahora</Button>
+        <Button variant="secondary" onClick={() => setReplicateOpen(true)}>
+          <Copy className="h-4 w-4 mr-1" /> Replicar desde otra empresa
+        </Button>
       </div>
+      <ReplicateConfigDialog
+        open={replicateOpen}
+        onOpenChange={setReplicateOpen}
+        targetOrgId={organizationId}
+        onReplicated={(r) => toast.success(`Replicado: ${r.vendor_defaults_copied} reglas de proveedor`)}
+      />
 
       {mode === "now" && (
         <div className="space-y-3">

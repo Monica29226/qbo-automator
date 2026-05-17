@@ -1,79 +1,59 @@
-## Plan: Outlook OAuth robusto + IMAP fallback + fix Dashboard
+## Sprint de pulido final — Plan
 
-Implementación en 4 partes que se entregan juntas en este mensaje.
+Trabajo dividido en 6 partes. Ejecuto queries de inspección primero, luego migrations/inserts y código, y cierro con un reporte.
 
-### PARTE A — Endurecer OAuth de Outlook
+### Parte A — Backfill 6 empresas estables
+1. Query a `processed_documents` + `vendor_defaults` para detectar la cuenta más usada por organización (solo las 6 estables).
+2. `UPDATE organizations SET default_account_ref = <top>` cuando se pueda determinar.
+3. `INSERT` en `system_settings` clave `default_uses_tax = 'true'` si no existe.
+4. `INSERT ... ON CONFLICT` en `onboarding_progress` marcando `current_step=7`, `completed_at=NOW()`, `step_data={"backfilled":true}`. Requiere índice/único en `organization_id`; si no existe, crear con migration.
 
-**`supabase/functions/outlook-oauth-init/index.ts`**
-- Endpoint: `https://login.microsoftonline.com/common/oauth2/v2.0/authorize` (ya está correcto).
-- Scopes: `offline_access https://graph.microsoft.com/Mail.Read https://graph.microsoft.com/User.Read` (URLs absolutas para forzar refresh tokens).
-- `prompt=select_account consent` (en lugar de solo `select_account`).
-- `response_mode=query`, `response_type=code`.
-- `state`: ya recibe `state` del cliente; mantener (el cliente codifica org_id + user_id).
+### Parte B — Limpieza alertas obsoletas
+1. Migration: agregar índice `(organization_id, created_at)` en `alert_history` si ayuda; principal: `UPDATE alert_history SET resolved=true` con la condición del usuario (vía insert tool).
+2. Editar `supabase/functions/check-system-health/index.ts`: tras insertar nueva alerta, marcar como `resolved=true` las del mismo código con `created_at < now()-24h` sin ocurrencia más reciente.
 
-**`supabase/functions/outlook-oauth-callback/index.ts`**
-- Tras intercambiar code → tokens, hacer `GET https://graph.microsoft.com/v1.0/me`.
-- Si 200: guardar tokens en `integration_accounts` con `last_test_success_at = now()` dentro de `credentials`, marcar `outlook_connected = true` y `outlook_email`.
-- Si !=200: NO marcar conectado, redirigir con `?error=token_test_failed&detail=...`.
-- Mapear `?error=` de Microsoft: detectar códigos `AADSTS50020 / 65001 / 50105 / 500113 / 70008` y otros, redirigir a `/integrations?outlook_error=<code>&message=<texto>`.
+### Parte C — Archivar empresas fantasma
+1. Query candidatas (sin integrations activos y sin processed_documents).
+2. Listar nombres y `UPDATE organizations SET is_active=false` para esos IDs.
 
-**`src/pages/Integrations.tsx`** (banner de errores)
-- Leer query params `outlook_error` y mostrar Alert con mensaje claro + 2 botones: "Reintentar OAuth" y "Probar IMAP" (abre modal IMAP).
+### Parte D — UI rápida
+1. `src/pages/LegacyAccountMapping.tsx`: botón "Auto-mapear por similitud" (matching de nombre legacy code vs `accounts[].name`/number con `Levenshtein` simple/`includes`); por cada fila sin mapear, expandible mostrando facturas afectadas (doc_number, supplier_name, total).
+2. Nueva página `src/pages/AdminCleanupQuickActions.tsx` con selector de empresa y 4 botones que invocan: `publish-to-quickbooks`, `retry-qbo-waiting`, update alertas, y un nuevo endpoint de backfill.
+3. Dashboard: en `Dashboard.tsx`/`StabilityScorePanel`, mostrar CTA "Hay X facturas esperando mapeo" si `processed_documents.status='needs_account_mapping' > 0`. Enlace a `/legacy-account-mapping`.
+4. Registrar nueva ruta en `src/App.tsx`.
 
-### PARTE B — IMAP fallback para Microsoft 365
+### Parte E — Edge function `get-optimal-config`
+- Input: `{ organization_id }`.
+- Output JSON:
+  - `top_vendor_defaults` (10 más usados con cuenta).
+  - `tax_rates` configuradas en QBO vs faltantes (6 estándar CR: 0/1/2/4/8/13).
+  - `top_accounts` (cuentas más usadas en `processed_documents`).
+  - `suggested_default_account_ref`.
+- JWT verify true + RLS membership check.
 
-**Nueva edge function `supabase/functions/outlook-imap-connect/index.ts`**
-- Recibe `{ organization_id, email, app_password }`.
-- Hace LOGIN IMAP a `outlook.office365.com:993` TLS (mismo patrón que `bluehost-connect`).
-- Si OK: upsert en `integration_accounts` con `service_type='outlook_imap'`, `credentials={ host, port:993, tls:true, username, password, last_test_success_at }`.
-- Setear `organizations.outlook_connected = true`, `outlook_email = email`.
+### Parte F — Edge function `replicate-org-config`
+- Input: `{ source_org_id, target_org_id, confirm: true }`.
+- Verifica que el caller es admin de ambas orgs.
+- Copia:
+  - `vendor_defaults` del source al target (skip si ya existe el vendor_name en target).
+  - `legacy_account_mapping` (skip duplicados).
+  - `system_settings` solo claves IVA (`default_uses_tax`, `tax_handling_mode`, etc.).
+- NO copia integrations ni documentos.
+- UI: en `Step6Rules.tsx` agregar botón "Replicar desde otra empresa" que muestra dialog con dropdown de orgs y llama la function.
 
-**Nueva edge function `supabase/functions/outlook-imap-fetch-invoices/index.ts`**
-- Clon ligero de `hostinger-fetch-invoices` filtrando `service_type='outlook_imap'`, host por defecto `outlook.office365.com`.
+### Migrations necesarias
+- `onboarding_progress`: UNIQUE en `organization_id` (verificar primero, si ya existe skip).
+- `supabase/config.toml`: registrar `get-optimal-config` y `replicate-org-config` con `verify_jwt = true`.
 
-**`supabase/config.toml`**: registrar ambas con `verify_jwt = true` (connect) y `true` (fetch).
+### Reporte final
+Después de aplicar, ejecuto queries y reporto:
+1. Empresas con `default_account_ref` poblado (de las 6).
+2. Total alertas resueltas (cambio en COUNT).
+3. Empresas archivadas (nombres).
+4. Score nuevo de las 6 (invocando `validate-org-setup`).
+5. Confirmación operativa.
 
-**UI — `src/components/OutlookImapConnectDialog.tsx`** (nuevo)
-- Modal con guía paso a paso para generar app password en Microsoft 365 + link.
-- Inputs: email + app password + botón "Conectar y probar".
-- Llama `outlook-imap-connect`.
-
-**`src/pages/Integrations.tsx`**
-- En tarjeta de Outlook agregar botón secundario "⚙️ Conectar con IMAP (avanzado)" que abre el modal.
-- Reconocer `outlook_imap` como integración válida en la lista.
-
-### PARTE C — `validate-org-setup` salud de correo
-
-**`supabase/functions/validate-org-setup/index.ts`**
-- Cambiar detección de email: consultar `integration_accounts` con `service_type IN ('gmail','outlook','outlook_imap','bluehost','hostinger')` y `is_active=true` (no depender solo de flags en `organizations`).
-- `checks.email = true` por presencia (25 pts).
-- Nuevo sub-check `emailFresh` (warning si última `last_test_success_at > 7 días`), sin restar puntos.
-- Devolver `email_accounts: [{ service_type, account_email, last_test_success_at }]` para UI.
-
-### PARTE D — Fix dashboard (StabilityScorePanel)
-
-**`src/components/dashboard/StabilityScorePanel.tsx`**
-- QBO conectado: consultar `integration_accounts` con `service_type='quickbooks' AND is_active=true` (no flag en `organizations`).
-- Email conectado: cualquier `integration_accounts` activo en los 5 tipos.
-- "Correo fresco" = sub-indicador informativo, NO penaliza score.
-- Recalcular pesos: 30 QBO + 30 email + 20 sin errores + 20 IVA = 100.
-
-### Updates auxiliares
-- **`SyncEmailNowButton.tsx`**: añadir `outlook_imap → 'outlook-imap-fetch-invoices'` al `FN_MAP`.
-- **`check-system-health` y `check-sync-health`**: incluir `'outlook_imap'` en arrays de tipos de email reconocidos.
-- **`auto-sync-invoices`**: añadir dispatcher para `outlook_imap`.
-- **`get_active_email_services` (DB function)**: ya incluye los 4 existentes — extender vía migración para incluir `outlook_imap`.
-
-### Migración SQL
-- Actualizar función `get_active_email_services` para añadir `'outlook_imap'` al array.
-- (No requiere nueva tabla; `integration_accounts.credentials` es JSONB y absorbe `last_test_success_at`.)
-
-### Notas y limitaciones
-- Microsoft deshabilitó IMAP/app-passwords por defecto en muchos tenants empresariales desde sept-2024 (Basic Auth deprecation). La UI lo advierte; si el LOGIN falla con `LOGIN failed`, mostramos guía para que el admin habilite SMTP/IMAP AUTH en Exchange Admin Center.
-- No tocaré `src/integrations/supabase/client.ts` ni `types.ts` (auto-gen).
-- El reporte final con conteos lo correré con `read_query` tras aplicar la migración.
-
-### Verificación post-cambio
-1. Deploy de las 4 edge functions nuevas/editadas.
-2. `read_query` por proveedor de correo + score de DENTORORI y Cafe Luna.
-3. Validar build limpio.
+### Notas
+- Todo respeta aislamiento `organization_id`.
+- Cero borrado destructivo; solo flags y backfill.
+- Los nuevos endpoints requieren JWT y validan membership.
