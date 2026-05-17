@@ -201,6 +201,14 @@ const App = () => (
                 }
               />
               <Route
+                path="/legacy-account-mapping"
+                element={
+                  <ProtectedRoute requireAdmin>
+                    <LegacyAccountMapping />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
                 path="/invoices-pending-log"
                 element={
                   <ProtectedRoute>
