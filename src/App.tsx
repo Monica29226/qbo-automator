@@ -34,6 +34,7 @@ import ForgotPassword from "./pages/ForgotPassword";
 import XmlDebug from "./pages/XmlDebug";
 import LegacyAccountMapping from "./pages/LegacyAccountMapping";
 import Onboarding from "./pages/Onboarding";
+import AdminCleanupQuickActions from "./pages/AdminCleanupQuickActions";
 import NotFound from "./pages/NotFound";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import { AppErrorBoundary } from "./components/AppErrorBoundary";
@@ -262,6 +263,14 @@ const App = () => (
                 element={
                   <ProtectedRoute>
                     <BankStatements />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/admin/cleanup-quick-actions"
+                element={
+                  <ProtectedRoute requireAdmin>
+                    <AdminCleanupQuickActions />
                   </ProtectedRoute>
                 }
               />
