@@ -29,7 +29,7 @@ interface Props {
 export function OnboardingWizard({ organizationId }: Props) {
   const { state, loading, save, completeStep, finish, goToStep } = useOnboarding(organizationId);
   const [busy, setBusy] = useState(false);
-  const actionsRef = useRef<{ onNext: () => Promise<void> | void; disableNext?: boolean }>({ onNext: () => {} });
+  const actionsRef = useRef<{ onNext: () => any; disableNext?: boolean }>({ onNext: () => {} });
 
   const bindActions = useCallback((a: typeof actionsRef.current) => {
     actionsRef.current = a;
