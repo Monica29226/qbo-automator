@@ -35,6 +35,8 @@ import XmlDebug from "./pages/XmlDebug";
 import LegacyAccountMapping from "./pages/LegacyAccountMapping";
 import Onboarding from "./pages/Onboarding";
 import AdminCleanupQuickActions from "./pages/AdminCleanupQuickActions";
+import AdminSharePointSetup from "./pages/AdminSharePointSetup";
+import AdminSharePointBulkUpload from "./pages/AdminSharePointBulkUpload";
 import NotFound from "./pages/NotFound";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import { AppErrorBoundary } from "./components/AppErrorBoundary";
