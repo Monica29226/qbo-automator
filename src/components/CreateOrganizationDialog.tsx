@@ -235,36 +235,14 @@ export function CreateOrganizationDialog({
           </TabsContent>
 
           <TabsContent value="fiscal" className="space-y-4 mt-4">
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-2">
-                <Label htmlFor="identification_type">Tipo de Identificación</Label>
-                <Select
-                  value={formData.identification_type}
-                  onValueChange={(value) => handleInputChange("identification_type", value)}
-                  disabled={isCreating}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Seleccionar tipo" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="fisica">Cédula Física</SelectItem>
-                    <SelectItem value="juridica">Cédula Jurídica</SelectItem>
-                    <SelectItem value="nite">NITE</SelectItem>
-                    <SelectItem value="dimex">DIMEX</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="identification_number">Número de Identificación</Label>
-                <Input
-                  id="identification_number"
-                  placeholder="3-101-123456"
-                  value={formData.identification_number}
-                  onChange={(e) => handleInputChange("identification_number", e.target.value)}
-                  disabled={isCreating}
-                />
-              </div>
-            </div>
+            <IdentificationInput
+              type={formData.identification_type}
+              number={formData.identification_number}
+              onTypeChange={(v) => handleInputChange("identification_type", v)}
+              onNumberChange={(v) => handleInputChange("identification_number", v)}
+              disabled={isCreating}
+              idPrefix="org-id"
+            />
 
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
