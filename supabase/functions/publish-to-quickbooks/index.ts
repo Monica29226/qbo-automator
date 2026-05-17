@@ -2991,6 +2991,20 @@ Deno.serve(async (req) => {
           }
         }
         
+        // Fire-and-forget SharePoint upload (non-blocking)
+        try {
+          fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/upload-to-sharepoint`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+            },
+            body: JSON.stringify({ document_id: doc.id }),
+          }).catch((e) => logError(`[SharePoint] non-blocking upload error: ${e?.message || e}`));
+        } catch (e: unknown) {
+          logError(`[SharePoint] schedule error: ${e instanceof Error ? e.message : String(e)}`);
+        }
+        
         const elapsedTime = Date.now() - startTime;
         log(`${progress} ✅ Done in ${elapsedTime}ms`);
         return { success: true, docNumber: doc.doc_number, qbo_entity_id: entityId };
