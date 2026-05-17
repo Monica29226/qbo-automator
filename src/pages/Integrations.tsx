@@ -1213,6 +1213,12 @@ const Integrations = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <OutlookImapConnectDialog
+        open={imapDialogOpen}
+        onOpenChange={setImapDialogOpen}
+        onConnected={() => fetchData()}
+      />
     </div>
   );
 };
