@@ -62,16 +62,23 @@ export const StabilityScorePanel = ({ organizationId }: Props) => {
   });
 
   const qboConnected = !!connections?.quickbooks;
-  const emailConnected = !!(connections?.gmail || connections?.outlook || connections?.hostinger || connections?.bluehost);
+  const emailConnected = !!(
+    connections?.gmail ||
+    connections?.outlook ||
+    connections?.outlook_imap ||
+    connections?.hostinger ||
+    connections?.bluehost
+  );
   const lastSyncAgeH = lastSyncAt ? (Date.now() - new Date(lastSyncAt).getTime()) / 3_600_000 : Infinity;
-  const emailRecent = emailConnected && lastSyncAgeH <= 2;
+  const emailFresh = emailConnected && lastSyncAgeH <= 24;
   const errorCount = stats?.errors ?? 0;
   const errorsOk = errorCount < 5;
   const taxOk = taxStatus?.configured ?? true; // optimistic until query loads
 
+  // Score: presence wins. Freshness is informational only (no penalty).
   const score =
     (qboConnected ? 30 : 0) +
-    (emailRecent ? 30 : emailConnected ? 15 : 0) +
+    (emailConnected ? 30 : 0) +
     (errorsOk ? 20 : 0) +
     (taxOk ? 20 : 0);
 
@@ -88,9 +95,9 @@ export const StabilityScorePanel = ({ organizationId }: Props) => {
   }
   if (!emailConnected) {
     actions.push({ icon: Mail, title: "Sin proveedor de correo conectado", cta: "Conectar correo", to: "/integrations", variant: "destructive" });
-  } else if (!emailRecent) {
-    const hLabel = isFinite(lastSyncAgeH) ? `hace ${Math.round(lastSyncAgeH)}h` : "sin registros";
-    actions.push({ icon: Mail, title: `Correo no sincroniza (${hLabel})`, cta: "Reconectar", to: "/integrations", variant: "outline" });
+  } else if (lastSyncAgeH > 24 * 7) {
+    // Warning only if >7 days stale — does NOT reduce score
+    actions.push({ icon: Mail, title: `Correo sin sincronizar hace ${Math.round(lastSyncAgeH / 24)} días`, cta: "Reconectar", to: "/integrations", variant: "outline" });
   }
   if (!errorsOk) {
     actions.push({ icon: FileWarning, title: `${errorCount} errores acumulados`, cta: "Resolver", to: "/error-documents", variant: "destructive" });
@@ -121,7 +128,7 @@ export const StabilityScorePanel = ({ organizationId }: Props) => {
 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
           <ScoreItem ok={qboConnected} label="QBO conectado" points={30} />
-          <ScoreItem ok={emailRecent} partial={emailConnected} label="Correo fresco (<2h)" points={30} />
+          <ScoreItem ok={emailConnected} label="Correo conectado" points={30} sub={emailConnected ? (emailFresh ? "Fresco (<24h)" : `Última: hace ${Math.round(lastSyncAgeH)}h`) : undefined} />
           <ScoreItem ok={errorsOk} label={`Errores <5 (${errorCount})`} points={20} />
           <ScoreItem ok={taxOk} label="Tasas IVA OK" points={20} />
         </div>
@@ -159,7 +166,7 @@ export const StabilityScorePanel = ({ organizationId }: Props) => {
   );
 };
 
-const ScoreItem = ({ ok, partial, label, points }: { ok: boolean; partial?: boolean; label: string; points: number }) => (
+const ScoreItem = ({ ok, partial, label, points, sub }: { ok: boolean; partial?: boolean; label: string; points: number; sub?: string }) => (
   <div className={`flex items-center gap-2 p-2 rounded-md border ${ok ? "bg-success/10 border-success/30" : partial ? "bg-warning/10 border-warning/30" : "bg-destructive/10 border-destructive/30"}`}>
     {ok ? (
       <CheckCircle2 className="h-3.5 w-3.5 text-success flex-shrink-0" />
@@ -168,7 +175,7 @@ const ScoreItem = ({ ok, partial, label, points }: { ok: boolean; partial?: bool
     )}
     <div className="min-w-0">
       <p className="truncate font-medium">{label}</p>
-      <p className="text-[10px] text-muted-foreground">{ok ? `+${points}` : partial ? `+${Math.round(points / 2)}` : "0"} pts</p>
+      <p className="text-[10px] text-muted-foreground">{ok ? `+${points}` : partial ? `+${Math.round(points / 2)}` : "0"} pts{sub ? ` · ${sub}` : ""}</p>
     </div>
   </div>
 );
