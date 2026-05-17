@@ -30,7 +30,7 @@ export default function Step5IVAMode({ organizationId, onSaved, bindActions }: P
             value: mode === "recoverable" ? "true" : "false",
             description: "Modo de IVA: true=recuperable, false=gasto",
           },
-          { onConflict: "organization_id,key" },
+          { onConflict: "key,organization_id" },
         );
         onSaved({ mode });
       },

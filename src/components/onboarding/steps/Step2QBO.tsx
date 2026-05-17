@@ -81,7 +81,7 @@ export default function Step2QBO({ organizationId, initial, onSaved, bindActions
                 key: "qbo_home_currency",
                 value: data.currency.homeCurrency,
               },
-              { onConflict: "organization_id,key" },
+              { onConflict: "key,organization_id" },
             );
         }
         onSaved({ verify: data, skips });
