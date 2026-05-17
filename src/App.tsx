@@ -35,6 +35,8 @@ import XmlDebug from "./pages/XmlDebug";
 import LegacyAccountMapping from "./pages/LegacyAccountMapping";
 import Onboarding from "./pages/Onboarding";
 import AdminCleanupQuickActions from "./pages/AdminCleanupQuickActions";
+import AdminSharePointSetup from "./pages/AdminSharePointSetup";
+import AdminSharePointBulkUpload from "./pages/AdminSharePointBulkUpload";
 import NotFound from "./pages/NotFound";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import { AppErrorBoundary } from "./components/AppErrorBoundary";
@@ -271,6 +273,22 @@ const App = () => (
                 element={
                   <ProtectedRoute requireAdmin>
                     <AdminCleanupQuickActions />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/admin/sharepoint-setup"
+                element={
+                  <ProtectedRoute requireAdmin>
+                    <AdminSharePointSetup />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/admin/sharepoint-bulk-upload"
+                element={
+                  <ProtectedRoute requireAdmin>
+                    <AdminSharePointBulkUpload />
                   </ProtectedRoute>
                 }
               />

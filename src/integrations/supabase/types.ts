@@ -884,6 +884,8 @@ export type Database = {
           quickbooks_realm_id: string | null
           sector: string | null
           settings: Json | null
+          sharepoint_enabled: boolean
+          sharepoint_folder_override: string | null
           tax_id: string | null
           tax_regime: string | null
           trade_name: string | null
@@ -925,6 +927,8 @@ export type Database = {
           quickbooks_realm_id?: string | null
           sector?: string | null
           settings?: Json | null
+          sharepoint_enabled?: boolean
+          sharepoint_folder_override?: string | null
           tax_id?: string | null
           tax_regime?: string | null
           trade_name?: string | null
@@ -966,6 +970,8 @@ export type Database = {
           quickbooks_realm_id?: string | null
           sector?: string | null
           settings?: Json | null
+          sharepoint_enabled?: boolean
+          sharepoint_folder_override?: string | null
           tax_id?: string | null
           tax_regime?: string | null
           trade_name?: string | null
@@ -1027,6 +1033,12 @@ export type Database = {
           qbo_entity_id: string | null
           qbo_entity_type: string | null
           retry_count: number | null
+          sharepoint_error: string | null
+          sharepoint_pdf_id: string | null
+          sharepoint_retry_count: number
+          sharepoint_status: string | null
+          sharepoint_uploaded_at: string | null
+          sharepoint_xml_id: string | null
           status: string
           supplier_email: string | null
           supplier_name: string
@@ -1063,6 +1075,12 @@ export type Database = {
           qbo_entity_id?: string | null
           qbo_entity_type?: string | null
           retry_count?: number | null
+          sharepoint_error?: string | null
+          sharepoint_pdf_id?: string | null
+          sharepoint_retry_count?: number
+          sharepoint_status?: string | null
+          sharepoint_uploaded_at?: string | null
+          sharepoint_xml_id?: string | null
           status?: string
           supplier_email?: string | null
           supplier_name: string
@@ -1099,6 +1117,12 @@ export type Database = {
           qbo_entity_id?: string | null
           qbo_entity_type?: string | null
           retry_count?: number | null
+          sharepoint_error?: string | null
+          sharepoint_pdf_id?: string | null
+          sharepoint_retry_count?: number
+          sharepoint_status?: string | null
+          sharepoint_uploaded_at?: string | null
+          sharepoint_xml_id?: string | null
           status?: string
           supplier_email?: string | null
           supplier_name?: string
@@ -1394,6 +1418,51 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      sharepoint_admin_account: {
+        Row: {
+          admin_email: string
+          created_at: string
+          credentials: Json
+          drive_id: string | null
+          id: string
+          is_active: boolean
+          root_folder_id: string | null
+          root_folder_path: string
+          site_id: string | null
+          site_name: string | null
+          site_url: string | null
+          updated_at: string
+        }
+        Insert: {
+          admin_email: string
+          created_at?: string
+          credentials: Json
+          drive_id?: string | null
+          id?: string
+          is_active?: boolean
+          root_folder_id?: string | null
+          root_folder_path?: string
+          site_id?: string | null
+          site_name?: string | null
+          site_url?: string | null
+          updated_at?: string
+        }
+        Update: {
+          admin_email?: string
+          created_at?: string
+          credentials?: Json
+          drive_id?: string | null
+          id?: string
+          is_active?: boolean
+          root_folder_id?: string | null
+          root_folder_path?: string
+          site_id?: string | null
+          site_name?: string | null
+          site_url?: string | null
+          updated_at?: string
+        }
+        Relationships: []
       }
       sync_logs: {
         Row: {

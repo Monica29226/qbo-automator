@@ -203,3 +203,18 @@ verify_jwt = true
 
 [functions.replicate-org-config]
 verify_jwt = true
+
+[functions.sharepoint-oauth-init]
+verify_jwt = true
+
+[functions.sharepoint-oauth-callback]
+verify_jwt = false
+
+[functions.sharepoint-admin]
+verify_jwt = true
+
+[functions.upload-to-sharepoint]
+verify_jwt = false
+
+[functions.retry-sharepoint-uploads]
+verify_jwt = false

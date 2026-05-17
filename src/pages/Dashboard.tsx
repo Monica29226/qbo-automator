@@ -28,6 +28,7 @@ import { SystemAlertsPanel } from "@/components/dashboard/SystemAlertsPanel";
 import WaitingForQboPanel from "@/components/dashboard/WaitingForQboPanel";
 import CurrencyMismatchPanel from "@/components/dashboard/CurrencyMismatchPanel";
 import { StabilityScorePanel } from "@/components/dashboard/StabilityScorePanel";
+import { SharePointKpiCard } from "@/components/dashboard/SharePointKpiCard";
 import { OnboardingBanner } from "@/components/onboarding/OnboardingBanner";
 const AICreditsMonitor = lazy(() => import("@/components/dashboard/AICreditsMonitor").then(m => ({ default: m.AICreditsMonitor })));
 const ErrorLogsViewer = lazy(() => import("@/components/dashboard/ErrorLogsViewer").then(m => ({ default: m.ErrorLogsViewer })));
@@ -546,6 +547,7 @@ const Dashboard = () => {
             icon={FileText}
             variant="primary"
           />
+          <SharePointKpiCard organizationId={activeOrganization} />
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
