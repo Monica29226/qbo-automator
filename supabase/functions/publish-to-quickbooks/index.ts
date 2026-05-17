@@ -3024,9 +3024,38 @@ Deno.serve(async (req) => {
     const BATCH_SIZE = 2;
     const DELAY_BETWEEN_BATCHES = 2000;
     
+    // SAFETY: garantiza que ningún doc quede atascado en 'publishing'
+    const ensureNotStuck = async (docId: string) => {
+      try {
+        const { data: cur } = await supabase
+          .from("processed_documents")
+          .select("status")
+          .eq("id", docId)
+          .single();
+        if (cur?.status === "publishing") {
+          await supabase
+            .from("processed_documents")
+            .update({
+              status: "processed",
+              error_message: "Recuperado de estado intermedio publishing (finally guard)",
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", docId);
+          logInfo(`🛟 Safety reset doc ${docId} from publishing → processed`);
+        }
+      } catch (e) {
+        logError(`ensureNotStuck failed for ${docId}:`, e);
+      }
+    };
+
     if (isSingleDocument) {
       const doc = documents[0];
-      const result = await processDocument(doc, 0, 1);
+      let result: any;
+      try {
+        result = await processDocument(doc, 0, 1);
+      } finally {
+        await ensureNotStuck(doc.id);
+      }
       
       if (result.success) {
         if (result.skipped) {
@@ -3058,7 +3087,15 @@ Deno.serve(async (req) => {
       
       for (let j = 0; j < batch.length; j++) {
         const doc = batch[j];
-        const result = await processDocument(doc, i + j, documents.length);
+        let result: any;
+        try {
+          result = await processDocument(doc, i + j, documents.length);
+        } catch (e: any) {
+          logError(`processDocument threw for ${doc.id}:`, e);
+          result = { success: false, docNumber: doc.doc_number, error: e?.message || String(e) };
+        } finally {
+          await ensureNotStuck(doc.id);
+        }
         documentResults.push(result);
         
         if (j < batch.length - 1) {
