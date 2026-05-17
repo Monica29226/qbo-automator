@@ -32,6 +32,7 @@ import BankStatements from "./pages/BankStatements";
 import ResetPassword from "./pages/ResetPassword";
 import ForgotPassword from "./pages/ForgotPassword";
 import XmlDebug from "./pages/XmlDebug";
+import LegacyAccountMapping from "./pages/LegacyAccountMapping";
 import NotFound from "./pages/NotFound";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import { AppErrorBoundary } from "./components/AppErrorBoundary";
