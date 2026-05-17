@@ -18,11 +18,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Loader2, Building2, MapPin, FileText } from "lucide-react";
+import { Loader2, Building2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { IdentificationInput } from "@/components/IdentificationInput";
+import { validateIdentification } from "@/lib/identification-types";
 
 interface CreateOrganizationDialogProps {
   open: boolean;
