@@ -849,6 +849,24 @@ const Integrations = () => {
           </div>
         ) : (
           <div className="space-y-4">
+            {outlookError && (
+              <Alert variant="destructive">
+                <AlertTriangle className="h-4 w-4" />
+                <AlertTitle>Falla al conectar Outlook ({outlookError.code})</AlertTitle>
+                <AlertDescription className="space-y-2">
+                  <p>{outlookError.message}</p>
+                  <div className="flex gap-2 pt-1">
+                    <Button size="sm" variant="outline" onClick={() => { setOutlookError(null); handleOutlookOAuth(); }}>
+                      Reintentar OAuth
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={() => { setOutlookError(null); setImapDialogOpen(true); }}>
+                      Probar IMAP
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={() => setOutlookError(null)}>Cerrar</Button>
+                  </div>
+                </AlertDescription>
+              </Alert>
+            )}
             {services.map((service) => (
               <Card key={service.id} className="p-6">
                 <div className="flex items-start justify-between">
