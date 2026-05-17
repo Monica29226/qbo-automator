@@ -373,6 +373,10 @@ const Dashboard = () => {
                 </div>
               </div>
 
+              <div className="mb-4">
+                <StabilityScorePanel organizationId={activeOrganization} />
+              </div>
+
               {activeOrganization === CEMSAN_ORG_ID && cemsanMarchCoverage && (
                 <Card className={`mb-4 border-l-4 ${cemsanMarchCoverage.missing <= 2 ? 'border-l-green-500' : 'border-l-destructive'}`}>
                   <CardHeader className="pb-2">
