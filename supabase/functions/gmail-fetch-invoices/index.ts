@@ -19,7 +19,7 @@ serve(async (req) => {
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    const { organization_id, month, year, force_resync } = await req.json();
+    const { organization_id, month, year, force_resync, search_term, search_days } = await req.json();
     if (!organization_id) throw new Error("organization_id required");
     
     console.log(`Force resync mode: ${force_resync ? 'ENABLED' : 'disabled'}`);
@@ -242,8 +242,14 @@ serve(async (req) => {
 
     // Construir query de Gmail con filtro de fecha personalizado si se proporciona
     let mailQuery: string;
-    
-    if (month && year) {
+
+    if (search_term && typeof search_term === "string" && search_term.trim()) {
+      // Modo búsqueda inteligente: filtrar por remitente o asunto en últimos N días
+      const days = Number.isFinite(Number(search_days)) ? Math.max(1, Number(search_days)) : 90;
+      const safeTerm = search_term.trim().replace(/["\\]/g, "");
+      mailQuery = `has:attachment newer_than:${days}d (from:${safeTerm} OR subject:${safeTerm})`;
+      console.log(`🔎 Gmail SEARCH_TERM query: ${mailQuery}`);
+    } else if (month && year) {
       // Calcular el primer día del mes
       const startDate = new Date(year, month - 1, 1);
       // El día DESPUÉS del último día del mes (para que 'before:' incluya el último día)

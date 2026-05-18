@@ -19,7 +19,7 @@ serve(async (req) => {
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    const { organization_id, month, year, force_resync } = await req.json();
+    const { organization_id, month, year, force_resync, search_term, search_days } = await req.json();
     if (!organization_id) throw new Error("organization_id required");
     
     console.log(`📧 Outlook Fetch: org=${organization_id}, force_resync=${force_resync}`);
@@ -172,7 +172,15 @@ serve(async (req) => {
 
     // Construir filtro de fecha para Microsoft Graph
     let dateFilter = "";
-    if (month && year) {
+    let termFilter = "";
+    if (search_term && typeof search_term === "string" && search_term.trim()) {
+      const days = Number.isFinite(Number(search_days)) ? Math.max(1, Number(search_days)) : 90;
+      const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+      dateFilter = ` and receivedDateTime ge ${since}`;
+      const safe = search_term.trim().replace(/'/g, "''");
+      // Graph supports contains() on subject and from/emailAddress/address
+      termFilter = ` and (contains(subject,'${safe}') or contains(from/emailAddress/address,'${safe}') or contains(from/emailAddress/name,'${safe}'))`;
+    } else if (month && year) {
       const startDate = new Date(year, month - 1, 1).toISOString();
       const endDate = new Date(year, month, 0, 23, 59, 59).toISOString();
       dateFilter = ` and receivedDateTime ge ${startDate} and receivedDateTime le ${endDate}`;
@@ -188,7 +196,7 @@ serve(async (req) => {
 
     // Helper: fetch messages from a folder with error handling
     const fetchMessagesFromFolder = async (folderPath: string): Promise<any[]> => {
-      const searchUrl = `https://graph.microsoft.com/v1.0/me/${folderPath}?$filter=hasAttachments eq true${dateFilter}&$select=id,subject,receivedDateTime,from&$top=50&$orderby=receivedDateTime desc`;
+      const searchUrl = `https://graph.microsoft.com/v1.0/me/${folderPath}?$filter=hasAttachments eq true${dateFilter}${termFilter}&$select=id,subject,receivedDateTime,from&$top=50&$orderby=receivedDateTime desc`;
       console.log(`📡 Searching Outlook ${folderPath}: ${searchUrl}`);
 
       let response = await fetch(searchUrl, {

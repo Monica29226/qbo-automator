@@ -119,7 +119,8 @@ async function fetchEmailsViaIMAP(
   sinceDateStr: string,
   beforeDateStr?: string,
   skipCount: number = 0,
-  globalDeadlineMs: number = 100_000 // 100 seconds max for entire IMAP operation
+  globalDeadlineMs: number = 100_000, // 100 seconds max for entire IMAP operation
+  searchTerm?: string                  // Optional sender/subject filter
 ): Promise<{
   emails: FetchedEmail[];
   error?: string;
@@ -264,9 +265,15 @@ async function fetchEmailsViaIMAP(
           continue;
         }
 
-        const searchQuery = beforeDateStr
+        let searchQuery = beforeDateStr
           ? `SEARCH SINCE ${sinceDateStr} BEFORE ${beforeDateStr}`
           : `SEARCH SINCE ${sinceDateStr}`;
+        if (searchTerm) {
+          const safe = searchTerm.replace(/["\\]/g, "").trim();
+          if (safe) {
+            searchQuery = `${searchQuery} OR FROM "${safe}" SUBJECT "${safe}"`;
+          }
+        }
         const searchResp = await cmd(searchQuery);
         const searchLine = searchResp.split("\r\n").find(l => l.startsWith("* SEARCH"));
         if (!searchLine || searchLine.trim() === "* SEARCH") {
@@ -507,7 +514,7 @@ serve(async (req) => {
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    const { organization_id, month, year, skip_count, force_resync } = await req.json();
+    const { organization_id, month, year, skip_count, force_resync, search_term, search_days } = await req.json();
     if (!organization_id) throw new Error("organization_id required");
 
     const parsedSkipCount = Number.isFinite(Number(skip_count)) ? Number(skip_count) : 0;
@@ -557,7 +564,11 @@ const imapHost = credentials.imap_host || "mail.cemsacr.com";
     let startDate: Date;
     let beforeDate: Date | undefined;
 
-    if (month && year) {
+    if (search_term && typeof search_term === "string" && search_term.trim()) {
+      const days = Number.isFinite(Number(search_days)) ? Math.max(1, Number(search_days)) : 90;
+      startDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+      beforeDate = undefined;
+    } else if (month && year) {
       startDate = new Date(year, month - 1, 1);
       beforeDate = new Date(year, month, 1);
     } else if (startDateSetting) {
@@ -606,7 +617,8 @@ const imapHost = credentials.imap_host || "mail.cemsacr.com";
       sinceDateStr,
       beforeDateStr,
       parsedSkipCount,
-      100_000
+      100_000,
+      typeof search_term === "string" ? search_term : undefined
     );
 
     // For fatal IMAP errors (auth, connection), throw immediately

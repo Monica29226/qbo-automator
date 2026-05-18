@@ -14,7 +14,8 @@ async function fetchEmailsViaIMAP(
   password: string,
   sinceDateStr: string,
   beforeDateStr?: string,  // Para filtrar hasta cierta fecha
-  skipCount?: number       // Para paginación - saltar los primeros N mensajes
+  skipCount?: number,      // Para paginación - saltar los primeros N mensajes
+  searchTerm?: string      // Para búsqueda inteligente por remitente/asunto
 ): Promise<{ rawEmails: string[]; error?: string; totalFound?: number; processedCount?: number }> {
   const rawEmails: string[] = [];
   
@@ -103,6 +104,14 @@ async function fetchEmailsViaIMAP(
     let searchCmd = `SEARCH SINCE ${sinceDateStr}`;
     if (beforeDateStr) {
       searchCmd = `SEARCH SINCE ${sinceDateStr} BEFORE ${beforeDateStr}`;
+    }
+    if (searchTerm) {
+      // Sanitize: strip quotes/backslashes to keep IMAP literal valid
+      const safe = searchTerm.replace(/["\\]/g, "").trim();
+      if (safe) {
+        // IMAP search keys are AND'd; "OR FROM x SUBJECT x" matches either field
+        searchCmd = `${searchCmd} OR FROM "${safe}" SUBJECT "${safe}"`;
+      }
     }
     const searchResp = await sendCommand("A003", searchCmd);
     console.log("[Hostinger IMAP] SEARCH response:", searchResp.substring(0, 300));
@@ -435,7 +444,7 @@ serve(async (req) => {
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    const { organization_id, month, year, force_resync, skip_count } = await req.json();
+    const { organization_id, month, year, force_resync, skip_count, search_term, search_days } = await req.json();
     if (!organization_id) throw new Error("organization_id required");
     
     console.log(`[Hostinger] Fetching invoices for organization ${organization_id}${skip_count ? ` (skipping first ${skip_count} messages)` : ''}`);
@@ -505,7 +514,12 @@ serve(async (req) => {
     let startDate: Date;
     let endDate: Date | undefined;
     
-    if (month && year) {
+    if (search_term && typeof search_term === "string" && search_term.trim()) {
+      // Modo búsqueda inteligente: últimos N días, sin tope superior
+      const days = Number.isFinite(Number(search_days)) ? Math.max(1, Number(search_days)) : 90;
+      startDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+      endDate = undefined;
+    } else if (month && year) {
       // Búsqueda específica de un mes - usar rango SINCE + BEFORE
       startDate = new Date(year, month - 1, 1);
       endDate = new Date(year, month, 1); // Primer día del mes siguiente
@@ -535,7 +549,8 @@ serve(async (req) => {
       credentials.password,
       sinceDateStr,
       beforeDateStr,
-      skip_count || 0
+      skip_count || 0,
+      typeof search_term === "string" ? search_term : undefined
     );
 
     if (imapError) {
