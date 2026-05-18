@@ -242,8 +242,14 @@ serve(async (req) => {
 
     // Construir query de Gmail con filtro de fecha personalizado si se proporciona
     let mailQuery: string;
-    
-    if (month && year) {
+
+    if (search_term && typeof search_term === "string" && search_term.trim()) {
+      // Modo búsqueda inteligente: filtrar por remitente o asunto en últimos N días
+      const days = Number.isFinite(Number(search_days)) ? Math.max(1, Number(search_days)) : 90;
+      const safeTerm = search_term.trim().replace(/["\\]/g, "");
+      mailQuery = `has:attachment newer_than:${days}d (from:${safeTerm} OR subject:${safeTerm})`;
+      console.log(`🔎 Gmail SEARCH_TERM query: ${mailQuery}`);
+    } else if (month && year) {
       // Calcular el primer día del mes
       const startDate = new Date(year, month - 1, 1);
       // El día DESPUÉS del último día del mes (para que 'before:' incluya el último día)
