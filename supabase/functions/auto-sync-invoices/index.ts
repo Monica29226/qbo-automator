@@ -16,18 +16,21 @@ serve(async (req) => {
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    // SECURITY: this is a cron-triggered function. Accept either the service-role key
-    // (cron / internal callers) or a valid authenticated user JWT. Reject anonymous calls.
+    // SECURITY: cron-triggered function. verify_jwt=false at gateway level.
+    // Accept service-role key, anon key (used by pg_cron), or valid user JWT.
+    const anonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
     const token = req.headers.get("Authorization")?.replace("Bearer ", "");
     const isServiceRole = !!token && token === supabaseKey;
-    if (!isServiceRole) {
-      const anon = createClient(supabaseUrl, Deno.env.get("SUPABASE_ANON_KEY")!);
+    const isAnon = !!token && token === anonKey;
+    if (!isServiceRole && !isAnon) {
+      const anon = createClient(supabaseUrl, anonKey);
       const { data: userData, error: userErr } = token
         ? await anon.auth.getUser(token)
-        : { data: { user: null }, error: new Error("missing token") } as any;
+        : ({ data: { user: null }, error: new Error("missing token") } as any);
       if (userErr || !userData?.user) {
         return new Response(JSON.stringify({ error: "Unauthorized" }), {
-          status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
+          status: 401,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
     }
@@ -152,7 +155,14 @@ serve(async (req) => {
       return null;
     });
 
-    await Promise.allSettled(dispatches);
+    // Fire-and-forget: don't block cron HTTP response waiting for per-org sync (which can take 60-90s each).
+    // Per-org invocations run on their own edge instances. EdgeRuntime.waitUntil keeps them alive after we respond.
+    const allDispatches = Promise.allSettled(dispatches);
+    // @ts-ignore - EdgeRuntime is available in Supabase Edge runtime
+    if (typeof EdgeRuntime !== "undefined" && (EdgeRuntime as any).waitUntil) {
+      // @ts-ignore
+      (EdgeRuntime as any).waitUntil(allDispatches);
+    }
 
     return new Response(
       JSON.stringify({
