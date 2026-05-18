@@ -155,7 +155,14 @@ serve(async (req) => {
       return null;
     });
 
-    await Promise.allSettled(dispatches);
+    // Fire-and-forget: don't block cron HTTP response waiting for per-org sync (which can take 60-90s each).
+    // Per-org invocations run on their own edge instances. EdgeRuntime.waitUntil keeps them alive after we respond.
+    const allDispatches = Promise.allSettled(dispatches);
+    // @ts-ignore - EdgeRuntime is available in Supabase Edge runtime
+    if (typeof EdgeRuntime !== "undefined" && (EdgeRuntime as any).waitUntil) {
+      // @ts-ignore
+      (EdgeRuntime as any).waitUntil(allDispatches);
+    }
 
     return new Response(
       JSON.stringify({
