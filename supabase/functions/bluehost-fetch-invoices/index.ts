@@ -514,7 +514,7 @@ serve(async (req) => {
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    const { organization_id, month, year, skip_count, force_resync } = await req.json();
+    const { organization_id, month, year, skip_count, force_resync, search_term, search_days } = await req.json();
     if (!organization_id) throw new Error("organization_id required");
 
     const parsedSkipCount = Number.isFinite(Number(skip_count)) ? Number(skip_count) : 0;
