@@ -617,7 +617,8 @@ const imapHost = credentials.imap_host || "mail.cemsacr.com";
       sinceDateStr,
       beforeDateStr,
       parsedSkipCount,
-      100_000
+      100_000,
+      typeof search_term === "string" ? search_term : undefined
     );
 
     // For fatal IMAP errors (auth, connection), throw immediately
