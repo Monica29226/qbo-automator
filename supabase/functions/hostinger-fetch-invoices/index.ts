@@ -105,6 +105,14 @@ async function fetchEmailsViaIMAP(
     if (beforeDateStr) {
       searchCmd = `SEARCH SINCE ${sinceDateStr} BEFORE ${beforeDateStr}`;
     }
+    if (searchTerm) {
+      // Sanitize: strip quotes/backslashes to keep IMAP literal valid
+      const safe = searchTerm.replace(/["\\]/g, "").trim();
+      if (safe) {
+        // IMAP search keys are AND'd; "OR FROM x SUBJECT x" matches either field
+        searchCmd = `${searchCmd} OR FROM "${safe}" SUBJECT "${safe}"`;
+      }
+    }
     const searchResp = await sendCommand("A003", searchCmd);
     console.log("[Hostinger IMAP] SEARCH response:", searchResp.substring(0, 300));
 
