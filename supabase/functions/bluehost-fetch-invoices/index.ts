@@ -265,9 +265,15 @@ async function fetchEmailsViaIMAP(
           continue;
         }
 
-        const searchQuery = beforeDateStr
+        let searchQuery = beforeDateStr
           ? `SEARCH SINCE ${sinceDateStr} BEFORE ${beforeDateStr}`
           : `SEARCH SINCE ${sinceDateStr}`;
+        if (searchTerm) {
+          const safe = searchTerm.replace(/["\\]/g, "").trim();
+          if (safe) {
+            searchQuery = `${searchQuery} OR FROM "${safe}" SUBJECT "${safe}"`;
+          }
+        }
         const searchResp = await cmd(searchQuery);
         const searchLine = searchResp.split("\r\n").find(l => l.startsWith("* SEARCH"));
         if (!searchLine || searchLine.trim() === "* SEARCH") {
