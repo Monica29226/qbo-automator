@@ -14,7 +14,8 @@ async function fetchEmailsViaIMAP(
   password: string,
   sinceDateStr: string,
   beforeDateStr?: string,  // Para filtrar hasta cierta fecha
-  skipCount?: number       // Para paginación - saltar los primeros N mensajes
+  skipCount?: number,      // Para paginación - saltar los primeros N mensajes
+  searchTerm?: string      // Para búsqueda inteligente por remitente/asunto
 ): Promise<{ rawEmails: string[]; error?: string; totalFound?: number; processedCount?: number }> {
   const rawEmails: string[] = [];
   
