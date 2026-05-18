@@ -514,7 +514,12 @@ serve(async (req) => {
     let startDate: Date;
     let endDate: Date | undefined;
     
-    if (month && year) {
+    if (search_term && typeof search_term === "string" && search_term.trim()) {
+      // Modo búsqueda inteligente: últimos N días, sin tope superior
+      const days = Number.isFinite(Number(search_days)) ? Math.max(1, Number(search_days)) : 90;
+      startDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+      endDate = undefined;
+    } else if (month && year) {
       // Búsqueda específica de un mes - usar rango SINCE + BEFORE
       startDate = new Date(year, month - 1, 1);
       endDate = new Date(year, month, 1); // Primer día del mes siguiente
