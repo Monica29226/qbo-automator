@@ -549,7 +549,8 @@ serve(async (req) => {
       credentials.password,
       sinceDateStr,
       beforeDateStr,
-      skip_count || 0
+      skip_count || 0,
+      typeof search_term === "string" ? search_term : undefined
     );
 
     if (imapError) {
