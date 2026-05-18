@@ -564,7 +564,11 @@ const imapHost = credentials.imap_host || "mail.cemsacr.com";
     let startDate: Date;
     let beforeDate: Date | undefined;
 
-    if (month && year) {
+    if (search_term && typeof search_term === "string" && search_term.trim()) {
+      const days = Number.isFinite(Number(search_days)) ? Math.max(1, Number(search_days)) : 90;
+      startDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+      beforeDate = undefined;
+    } else if (month && year) {
       startDate = new Date(year, month - 1, 1);
       beforeDate = new Date(year, month, 1);
     } else if (startDateSetting) {
