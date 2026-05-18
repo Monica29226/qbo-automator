@@ -105,6 +105,12 @@ async function fetchEmailsViaIMAP(
     if (beforeDateStr) {
       searchCmd = `SEARCH SINCE ${sinceDateStr} BEFORE ${beforeDateStr}`;
     }
+    if (searchTerm) {
+      const safe = searchTerm.replace(/["\\]/g, "").trim();
+      if (safe) {
+        searchCmd = `${searchCmd} OR FROM "${safe}" SUBJECT "${safe}"`;
+      }
+    }
     const searchResp = await sendCommand("A003", searchCmd);
     console.log("[Outlook-IMAP] SEARCH response:", searchResp.substring(0, 300));
 
