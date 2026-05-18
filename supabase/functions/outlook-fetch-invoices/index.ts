@@ -196,7 +196,7 @@ serve(async (req) => {
 
     // Helper: fetch messages from a folder with error handling
     const fetchMessagesFromFolder = async (folderPath: string): Promise<any[]> => {
-      const searchUrl = `https://graph.microsoft.com/v1.0/me/${folderPath}?$filter=hasAttachments eq true${dateFilter}&$select=id,subject,receivedDateTime,from&$top=50&$orderby=receivedDateTime desc`;
+      const searchUrl = `https://graph.microsoft.com/v1.0/me/${folderPath}?$filter=hasAttachments eq true${dateFilter}${termFilter}&$select=id,subject,receivedDateTime,from&$top=50&$orderby=receivedDateTime desc`;
       console.log(`📡 Searching Outlook ${folderPath}: ${searchUrl}`);
 
       let response = await fetch(searchUrl, {
