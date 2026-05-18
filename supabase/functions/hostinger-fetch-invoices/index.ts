@@ -444,7 +444,7 @@ serve(async (req) => {
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    const { organization_id, month, year, force_resync, skip_count } = await req.json();
+    const { organization_id, month, year, force_resync, skip_count, search_term, search_days } = await req.json();
     if (!organization_id) throw new Error("organization_id required");
     
     console.log(`[Hostinger] Fetching invoices for organization ${organization_id}${skip_count ? ` (skipping first ${skip_count} messages)` : ''}`);
