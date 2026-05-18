@@ -119,7 +119,8 @@ async function fetchEmailsViaIMAP(
   sinceDateStr: string,
   beforeDateStr?: string,
   skipCount: number = 0,
-  globalDeadlineMs: number = 100_000 // 100 seconds max for entire IMAP operation
+  globalDeadlineMs: number = 100_000, // 100 seconds max for entire IMAP operation
+  searchTerm?: string                  // Optional sender/subject filter
 ): Promise<{
   emails: FetchedEmail[];
   error?: string;
