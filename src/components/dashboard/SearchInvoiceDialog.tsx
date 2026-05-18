@@ -191,10 +191,11 @@ export function SearchInvoiceDialog() {
 
           {results !== null && results.length === 0 && (
             <div className="text-center py-8 space-y-3">
-              <AlertCircle className="h-10 w-10 text-muted-foreground mx-auto" />
-              <p className="text-muted-foreground font-medium">Factura no encontrada</p>
+              <Search className="h-12 w-12 text-muted-foreground mx-auto" />
+              <h3 className="text-muted-foreground font-medium">Sin resultados</h3>
               <p className="text-sm text-muted-foreground">
-                No hay facturas que coincidan con los criterios de búsqueda.
+                No encontramos facturas con esos criterios.
+                Verificá la ortografía o intentá con menos términos.
               </p>
               <Button
                 variant="outline"

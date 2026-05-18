@@ -84,7 +84,7 @@ export function ImportBatchDialog({ onSuccess }: ImportBatchDialogProps) {
       .select("service_type")
       .eq("organization_id", orgId)
       .eq("is_active", true)
-      .in("service_type", ["gmail", "bluehost", "hostinger", "outlook"])
+      .in("service_type", ["gmail", "bluehost", "hostinger", "outlook", "outlook_imap"])
       .limit(1);
     return data?.[0]?.service_type || null;
   };
@@ -95,6 +95,7 @@ export function ImportBatchDialog({ onSuccess }: ImportBatchDialogProps) {
       case "bluehost": return "bluehost-fetch-invoices";
       case "hostinger": return "hostinger-fetch-invoices";
       case "outlook": return "outlook-fetch-invoices";
+      case "outlook_imap": return "outlook-imap-fetch-invoices";
       default: return null;
     }
   };
