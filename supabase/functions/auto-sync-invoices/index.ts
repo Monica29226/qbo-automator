@@ -452,8 +452,8 @@ async function processOrganization(
           qbo_failed: qboFailed,
           completed_at: new Date().toISOString(),
           execution_time_ms: Date.now() - syncStartTime,
-          error_message: wasPartial ? "Sincronización parcial por límite de tiempo" : 
-                        (realFailures > 0 ? `${realFailures} facturas con errores reales` : null),
+          error_message: wasPartial ? "Sincronización parcial por límite de tiempo" :
+                        (realFailures > 0 ? `${realFailures} adjuntos no procesables (no son facturas válidas)` : null),
           error_detail: null,
           error_code: null,
         })

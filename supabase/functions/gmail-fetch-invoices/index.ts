@@ -679,12 +679,25 @@ serve(async (req) => {
               
               if (!processResult.success) {
                 const errorMsg = processResult.error || processResult.message;
-                // Distinguir entre duplicados/skipped y errores reales
-                const isDuplicate = errorMsg?.includes("duplicado") || errorMsg?.includes("ya existe");
-                const isResponseXml = errorMsg?.includes("FechaEmision") || errorMsg?.includes("not found");
-                const isReceptorMismatch = errorMsg?.includes("rechazada") || errorMsg?.includes("receptor");
-                
-                if (isDuplicate || isResponseXml || isReceptorMismatch) {
+                // Distinguir entre rechazos legítimos (no son facturas válidas) y errores reales
+                const msg = (errorMsg || "").toLowerCase();
+                const isDuplicate = msg.includes("duplicado") || msg.includes("ya existe");
+                const isResponseXml = msg.includes("fechaemision") || msg.includes("not found");
+                const isReceptorMismatch = msg.includes("rechazada") || msg.includes("receptor");
+                // Rechazos legítimos: tipos de documento no soportados, fuera de rango, acuses MH, etc.
+                const isUnsupportedType =
+                  msg.includes("no corresponde a factura") ||
+                  msg.includes("no procesable") ||
+                  msg.includes("tiquete") ||
+                  msg.includes("tipo 04") ||
+                  msg.includes("mensajehacienda") ||
+                  msg.includes("mensajereceptor") ||
+                  msg.includes("estadomensaje") ||
+                  msg.includes("fuera de rango") ||
+                  msg.includes("anterior a") ||
+                  msg.includes("cutoff");
+
+                if (isDuplicate || isResponseXml || isReceptorMismatch || isUnsupportedType) {
                   console.log(`⏭️ Skipped ${xmlPart.filename}: ${errorMsg}`);
                   skippedInvoices.push({ filename: xmlPart.filename, reason: errorMsg });
                   if (isDuplicate) existingSkippedCount++;

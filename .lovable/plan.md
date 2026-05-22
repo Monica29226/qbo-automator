@@ -1,60 +1,84 @@
-# Estado real del sistema post-upgrade
 
-## 1) Proyecto Supabase
-- **Estado:** ACTIVE_HEALTHY (Lovable Cloud responde normal).
-- **Plan:** Pro (upgrade aplicado).
-- **No hay pausas recientes** detectadas en la API.
+# Diagnóstico: conector Gmail a nivel sistema
 
-## 2) Cron jobs (todos `active = true`)
+## TL;DR
+**El conector de Gmail SÍ está funcionando.** Las 12 organizaciones con Gmail están conectadas, autenticadas y descargando correos. Lo que la usuaria percibe como "no funciona" es en realidad el conteo de `gmail_failed` en los logs, que mezcla **errores reales de XML** con sincronizaciones parciales por límite de tiempo. No hay ningún fix de autenticación que aplicar aquí.
 
-| Job | Schedule | Última corrida | Status |
-|---|---|---|---|
-| auto-renew-qbo-tokens-15min | */15 * * * * | 2026-05-18 20:15 | succeeded |
-| auto-sync-invoices-every-30min | */30 * * * * | 2026-05-18 20:00 | succeeded |
-| check-sync-health-hourly | 0 * * * * | 20:00 | succeeded |
-| check-system-health-hourly | 0 * * * * | 20:00 | succeeded |
-| retry-qbo-waiting-every-6h | 0 */6 * * * | 18:00 | succeeded |
-| retry-sharepoint-uploads-hourly | 0 * * * * | 20:00 | succeeded |
-| unstick-publishing-30min | */30 * * * * | 20:00 | succeeded |
+## Evidencia recogida
 
-Todos corrieron dentro del intervalo. Ninguno está atrasado >2h.
+### 1. Estado de las cuentas Gmail (DB)
+12 organizaciones con `service_type='gmail'`, `is_active=true`, **todas con `refresh_token` presente** y **tokens recién renovados a las 23:00 UTC** (válidos por 1 hora). Solo ASADA DE TARBACA está inactiva (caso aislado).
 
-## 3) BUG CRÍTICO encontrado: los crons "succeeded" pero la función no procesa nada
+### 2. Sync logs últimas 3 horas
+Todas las corridas de Gmail completaron — ninguna marcó `status='error'` ni `error_code` de auth. Resultados típicos:
 
-Evidencia:
-- `sync_logs`: última fila **2026-05-15 21:08** (hace ~3 días). 0 logs en últimas 2h.
-- `processed_documents`: último documento **2026-05-15 20:19**. 0 docs nuevos en 24h ni 3d.
-- `function_edge_logs` filtrado por `auto-sync-invoices`: **vacío**.
-- `auto-renew-tokens` sí aparece corriendo cada 15min con éxito (porque autentica internamente vía SERVICE_ROLE secret).
+| Empresa | fetched | processed | failed | mensaje |
+|---|---|---|---|---|
+| Cafe Luna | 50 | 1–2 | 19–21 | "errores reales" |
+| Dentorori | 50 | 0 | 30 | "errores reales" |
+| Eiffel | 50 | 0 | 18 | "errores reales" |
+| Tree of Life | 50 | 0 | 20–21 | "errores reales" |
+| Bluwood | 17 | 0 | 0 | success ✓ |
+| Roberto Artavia | 0 | 0 | 0 | success ✓ |
 
-**Causa raíz:** los crons creados (auto-sync-invoices-every-30min y unstick-publishing-30min) usan la **ANON key** como `Authorization: Bearer`. La función `auto-sync-invoices` exige service-role o JWT de usuario válido y devuelve 401 silenciosamente al ANON. `net.http_post` solo encola y devuelve `request_id`, por eso `job_run_details` aparece como `succeeded` — eso solo confirma que el POST se encoló, no que la función ejecutó.
-
-Comando actual del cron (extracto):
+### 3. Logs de la edge function gmail-fetch-invoices
+Última corrida observada:
 ```
-headers := '{"Authorization": "Bearer eyJ...anon..."}'
+📊 Summary [success]: 1 processed, 47 skipped, 21 errors. Time: 73.0s
+❌ Processing error for AHC_5062…xml: XML no procesable: 
+   no corresponde a Factura/Tiquete/Nota de Crédito/Nota de Débito
 ```
 
-## 4) Plan de corrección
+### 4. processed_documents (filas insertadas últimas 3h)
+Casi todo es `published`, `review` (sin regla de vendor) o `needs_account_mapping`. **Cero filas con `status='error'`** — los "21 errors" del summary no llegan a persistirse.
 
-### Paso 1 — Reescribir los 2 crons con SERVICE_ROLE
-Reemplazar `auto-sync-invoices-every-30min` y `unstick-publishing-30min` con el mismo schedule pero usando `current_setting('app.service_role_key', true)` o, si no está disponible, hardcodear el `SUPABASE_SERVICE_ROLE_KEY` (mismo patrón que ya usan `auto-renew-qbo-tokens-15min` y los otros crons que sí funcionan — voy a verificar cuál mecanismo usan y replicarlo).
+## Causa raíz real
 
-Verificar también el resto: `check-sync-health-hourly`, `check-system-health-hourly`, `retry-qbo-waiting-every-6h`, `retry-sharepoint-uploads-hourly`. Si alguno también usa ANON y su función requiere service-role, repararlo igual.
+En `supabase/functions/gmail-fetch-invoices/index.ts` (líneas 680–694), cuando `process-document-xml` rechaza un archivo, se clasifica como `skipped` o `errors` con este criterio:
 
-### Paso 2 — Disparo manual de prueba
-Llamar a `auto-sync-invoices` con SERVICE_ROLE y `trigger: "manual"`. Esperar 60–90s y revisar:
-- Nuevas filas en `sync_logs` (debería haber una por organización con email conectado).
-- Nuevos `processed_documents`.
-- Logs en `function_edge_logs` para `auto-sync-invoices` y para los `*-fetch-invoices` aguas abajo.
+- `skipped` si el mensaje contiene `"duplicado"`, `"ya existe"`, `"FechaEmision"`, `"not found"`, `"rechazada"` o `"receptor"`.
+- `errors` (cuenta como `gmail_failed`) **todo lo demás**.
 
-### Paso 3 — Verificación post-fix
-A los 30 min, confirmar que el cron disparó automáticamente y generó logs y documentos. Reportar:
-- # de orgs procesadas.
-- # facturas nuevas.
-- # errores nuevos (si hay) clasificados por categoría.
+El caso `"XML no procesable: no corresponde a Factura/Tiquete/Nota de Crédito/Nota de Débito"` cae en el segundo cubo. Esto se dispara con archivos legítimamente no procesables que Gmail trae como adjuntos:
 
-## Notas técnicas
+- **MensajeHacienda / MensajeReceptor** (acuses de recepción del MH, no facturas).
+- **Tiquetes Electrónicos (TE / tipo 04)** — explícitamente excluidos por requisito del proyecto (memoria `exclusive-electronic-invoice-processing`).
+- Archivos firmados (`*_signature.xml`, `AHC_…`) que envuelven el XML real.
+- Notas que ya están fuera del cutoff 2026-01-01.
 
-- No tocar `auto-renew-qbo-tokens-15min` ni edge functions que ya funcionan.
-- El fix es solo en la definición SQL del cron (usar `supabase--insert` con `SELECT cron.unschedule(...)` + nuevo `cron.schedule(...)` o equivalente). Cero cambios de código frontend.
-- Una vez aprobado el plan paso a modo build para aplicar la corrección.
+Es decir: **el conector descarga bien, pero el filtro de tipos válidos rechaza ~40-60% de los XML adjuntos**, y esos rechazos legítimos se reportan como "errores reales" en el badge de sync, lo que da la impresión de que Gmail está fallando.
+
+## Lo que NO es el problema
+
+- ❌ No es OAuth / refresh token (todos los 12 refresh_tokens existen y los access_token se renovaron hace minutos).
+- ❌ No es CORS, timeout de auth, ni el bug del cron (ese ya quedó resuelto post-upgrade).
+- ❌ No es el filtro de `service_type` de ImportBatchDialog (eso era de Outlook IMAP).
+- ❌ No son fallas de la API de Gmail (no hay 401/403/429 en logs).
+
+## Propuesta de fix (visual + métrica, no de conexión)
+
+Pequeño cambio en una sola función para que el dashboard refleje la realidad:
+
+1. **`gmail-fetch-invoices/index.ts`** (mismo patrón para hostinger/bluehost/outlook):
+   - Ampliar la heurística de "skipped" en líneas 683-685 para incluir también:
+     - `"no corresponde a Factura"`
+     - `"Tiquete Electrónico"` / `"TE"` / `tipo 04`
+     - `"fuera de rango"` / `"anterior a 2026"`
+     - `"MensajeHacienda"` / `"MensajeReceptor"`
+   - Así esos archivos cuentan como `gmail_skipped` (informativo) en lugar de `gmail_failed` (alarmante).
+
+2. **Sync log message**: cuando `gmail_failed > 0` pero **ningún** `processed_documents` quedó con `status='error'`, registrar el mensaje como:  
+   _"N adjuntos XML descartados (tipo no soportado / fuera de rango)"_ en lugar de _"N facturas con errores reales"_.
+
+3. **Opcional UI**: en el dashboard separar el badge en dos contadores: "Descargadas" vs "Descartadas (no facturas)" para que la usuaria sepa que el sistema está sano.
+
+## Archivos a tocar (si se aprueba el plan)
+
+- `supabase/functions/gmail-fetch-invoices/index.ts` — ampliar lista de patrones "skipped" + mejorar mensaje de sync_logs.
+- `supabase/functions/hostinger-fetch-invoices/index.ts` — mismo cambio.
+- `supabase/functions/bluehost-fetch-invoices/index.ts` — mismo cambio.
+- `supabase/functions/outlook-fetch-invoices/index.ts` — mismo cambio.
+- `supabase/functions/outlook-imap-fetch-invoices/index.ts` — mismo cambio.
+- (Opcional) `src/components/dashboard/CronMonitor.tsx` o similar — separar "descartadas" de "errores".
+
+Ningún cambio de schema, ni de auth, ni de cron. Solo clasificación correcta de adjuntos no-factura.

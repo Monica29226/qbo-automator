@@ -699,9 +699,33 @@ serve(async (req) => {
             });
 
             if (processError) {
-              console.error(`[Hostinger] Error processing ${clave}:`, processError);
-              errors.push(`${clave}: ${processError.message}`);
-              invoicesFailed++;
+              const errorMsg = processError.message || "";
+              const msg = errorMsg.toLowerCase();
+              const isSoftReject =
+                msg.includes("duplicado") ||
+                msg.includes("ya existe") ||
+                msg.includes("fechaemision") ||
+                msg.includes("not found") ||
+                msg.includes("rechazada") ||
+                msg.includes("receptor") ||
+                msg.includes("no corresponde a factura") ||
+                msg.includes("no procesable") ||
+                msg.includes("tiquete") ||
+                msg.includes("tipo 04") ||
+                msg.includes("mensajehacienda") ||
+                msg.includes("mensajereceptor") ||
+                msg.includes("estadomensaje") ||
+                msg.includes("fuera de rango") ||
+                msg.includes("anterior a") ||
+                msg.includes("cutoff");
+              if (isSoftReject) {
+                console.log(`[Hostinger] ⏭️ Skipped ${clave}: ${errorMsg}`);
+                // No incrementa invoicesFailed: es un rechazo legítimo, no un error
+              } else {
+                console.error(`[Hostinger] Error processing ${clave}:`, processError);
+                errors.push(`${clave}: ${errorMsg}`);
+                invoicesFailed++;
+              }
             } else {
               console.log(`[Hostinger] ✓ Processed ${clave} - PDF saved: ${pdfUrl ? 'YES' : 'NO'}`);
               invoicesProcessed++;

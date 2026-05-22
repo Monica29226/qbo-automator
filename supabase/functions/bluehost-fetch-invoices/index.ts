@@ -752,8 +752,33 @@ const imapHost = credentials.imap_host || "mail.cemsacr.com";
           );
 
           if (processError) {
-            console.error(`[Bluehost] Error processing ${xmlAttachment.filename}:`, processError);
-            errors.push({ filename: xmlAttachment.filename, error: processError.message });
+            const errorMsg = processError.message || "";
+            const msg = errorMsg.toLowerCase();
+            const isSoftReject =
+              msg.includes("duplicado") ||
+              msg.includes("ya existe") ||
+              msg.includes("fechaemision") ||
+              msg.includes("not found") ||
+              msg.includes("rechazada") ||
+              msg.includes("receptor") ||
+              msg.includes("no corresponde a factura") ||
+              msg.includes("no procesable") ||
+              msg.includes("tiquete") ||
+              msg.includes("tipo 04") ||
+              msg.includes("mensajehacienda") ||
+              msg.includes("mensajereceptor") ||
+              msg.includes("estadomensaje") ||
+              msg.includes("fuera de rango") ||
+              msg.includes("anterior a") ||
+              msg.includes("cutoff");
+
+            if (isSoftReject) {
+              console.log(`[Bluehost] ⏭️ Skipped ${xmlAttachment.filename}: ${errorMsg}`);
+              skippedInvoices.push({ filename: xmlAttachment.filename, reason: errorMsg });
+            } else {
+              console.error(`[Bluehost] Error processing ${xmlAttachment.filename}:`, processError);
+              errors.push({ filename: xmlAttachment.filename, error: errorMsg });
+            }
           } else if (processResult?.success) {
             processedInvoices.push({
               doc_key: docKey,

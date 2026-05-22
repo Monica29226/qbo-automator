@@ -381,9 +381,26 @@ serve(async (req) => {
             
             if (!processResult.success) {
               const errorMsg = processResult.error || processResult.message;
-              const isDuplicate = errorMsg?.includes("duplicado") || errorMsg?.includes("ya existe");
-              
-              if (isDuplicate) {
+              const msg = (errorMsg || "").toLowerCase();
+              const isSoftReject =
+                msg.includes("duplicado") ||
+                msg.includes("ya existe") ||
+                msg.includes("fechaemision") ||
+                msg.includes("not found") ||
+                msg.includes("rechazada") ||
+                msg.includes("receptor") ||
+                msg.includes("no corresponde a factura") ||
+                msg.includes("no procesable") ||
+                msg.includes("tiquete") ||
+                msg.includes("tipo 04") ||
+                msg.includes("mensajehacienda") ||
+                msg.includes("mensajereceptor") ||
+                msg.includes("estadomensaje") ||
+                msg.includes("fuera de rango") ||
+                msg.includes("anterior a") ||
+                msg.includes("cutoff");
+
+              if (isSoftReject) {
                 skippedInvoices.push({ filename: xmlAtt.name, reason: errorMsg });
               } else {
                 errors.push({ filename: xmlAtt.name, error: errorMsg });
