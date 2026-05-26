@@ -424,7 +424,10 @@ const Dashboard = () => {
               )}
             </div>
 
-            {/* Quick Actions Section - FIRST, most visible */}
+            {/* Import Health Panel - first signal of system status */}
+            <ImportHealthPanel />
+
+            {/* Quick Actions Section */}
             <Card className="mb-6">
               <CardHeader className="pb-3">
                 <CardTitle className="text-lg">Acciones Rápidas</CardTitle>
