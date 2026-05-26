@@ -50,7 +50,7 @@ function syncLabel(iso: string | null) {
   }
 }
 
-function Metric({ label, value, accent }: { label: string; value: React.ReactNode; accent?: string }) {
+function Metric({ label, value, accent }: { label: React.ReactNode; value: React.ReactNode; accent?: string }) {
   return (
     <div className="rounded-md border p-3">
       <div className="text-xs text-muted-foreground">{label}</div>
