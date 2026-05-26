@@ -1,0 +1,210 @@
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { useAuth } from "@/hooks/useAuth";
+import { useImportHealth, type OrgHealth } from "@/hooks/useImportHealth";
+import {
+  Activity,
+  AlertTriangle,
+  CheckCircle2,
+  Inbox,
+  Mail,
+  RefreshCw,
+  XCircle,
+} from "lucide-react";
+import { formatDistanceToNow } from "date-fns";
+import { es } from "date-fns/locale";
+
+function healthBadge(h: OrgHealth["health"]) {
+  if (h === "ok")
+    return (
+      <Badge className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/30">
+        <CheckCircle2 className="h-3 w-3 mr-1" /> OK
+      </Badge>
+    );
+  if (h === "warning")
+    return (
+      <Badge className="bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/30">
+        <AlertTriangle className="h-3 w-3 mr-1" /> Atención
+      </Badge>
+    );
+  return (
+    <Badge className="bg-destructive/15 text-destructive border-destructive/30">
+      <XCircle className="h-3 w-3 mr-1" /> Crítico
+    </Badge>
+  );
+}
+
+function syncLabel(iso: string | null) {
+  if (!iso) return "Nunca";
+  try {
+    return formatDistanceToNow(new Date(iso), { addSuffix: true, locale: es });
+  } catch {
+    return "—";
+  }
+}
+
+export function ImportHealthPanel() {
+  const { isAdmin, activeOrganization } = useAuth();
+  const { data, isLoading, refetch, isFetching } = useImportHealth({
+    allOrgs: isAdmin,
+    organizationId: activeOrganization,
+  });
+
+  const orgs = data?.orgs ?? [];
+  const summary = orgs.reduce(
+    (acc, o) => {
+      acc[o.health]++;
+      acc.totalBacklog += o.backlog_skip_count;
+      acc.totalToday += o.imported_today;
+      return acc;
+    },
+    { ok: 0, warning: 0, critical: 0, totalBacklog: 0, totalToday: 0 }
+  );
+
+  return (
+    <Card className="mb-6">
+      <CardHeader className="pb-3 flex flex-row items-start justify-between gap-3">
+        <div>
+          <CardTitle className="text-lg flex items-center gap-2">
+            <Activity className="h-5 w-5" />
+            Salud de Importación de Correo
+          </CardTitle>
+          <CardDescription>
+            {isAdmin
+              ? "Estado de importación en todas las organizaciones"
+              : "Estado de importación de tu organización"}
+          </CardDescription>
+        </div>
+        <Button variant="outline" size="sm" onClick={() => refetch()} disabled={isFetching}>
+          <RefreshCw className={`h-4 w-4 mr-2 ${isFetching ? "animate-spin" : ""}`} />
+          Actualizar
+        </Button>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {/* Summary chips */}
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+          <div className="rounded-md border p-3">
+            <div className="text-xs text-muted-foreground">Organizaciones</div>
+            <div className="text-2xl font-semibold">{orgs.length}</div>
+          </div>
+          <div className="rounded-md border p-3">
+            <div className="text-xs text-muted-foreground">OK</div>
+            <div className="text-2xl font-semibold text-emerald-600">{summary.ok}</div>
+          </div>
+          <div className="rounded-md border p-3">
+            <div className="text-xs text-muted-foreground">Atención</div>
+            <div className="text-2xl font-semibold text-amber-600">{summary.warning}</div>
+          </div>
+          <div className="rounded-md border p-3">
+            <div className="text-xs text-muted-foreground">Críticas</div>
+            <div className="text-2xl font-semibold text-destructive">{summary.critical}</div>
+          </div>
+          <div className="rounded-md border p-3">
+            <div className="text-xs text-muted-foreground flex items-center gap-1">
+              <Inbox className="h-3 w-3" /> Backlog total
+            </div>
+            <div className="text-2xl font-semibold">{summary.totalBacklog}</div>
+          </div>
+        </div>
+
+        {/* Table */}
+        {isLoading ? (
+          <div className="space-y-2">
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-10 w-full" />
+          </div>
+        ) : orgs.length === 0 ? (
+          <p className="text-sm text-muted-foreground text-center py-6">Sin datos.</p>
+        ) : (
+          <div className="overflow-x-auto rounded-md border">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Organización</TableHead>
+                  <TableHead>Estado</TableHead>
+                  <TableHead>Integración</TableHead>
+                  <TableHead>Última sync</TableHead>
+                  <TableHead className="text-right">Backlog</TableHead>
+                  <TableHead className="text-right">Hoy</TableHead>
+                  <TableHead className="text-right">7d</TableHead>
+                  <TableHead className="text-right">Mes</TableHead>
+                  <TableHead className="text-right">Pend. config</TableHead>
+                  <TableHead className="text-right">Errores 7d</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {orgs.map((o) => (
+                  <TableRow key={o.organization_id}>
+                    <TableCell className="font-medium">{o.organization_name}</TableCell>
+                    <TableCell>{healthBadge(o.health)}</TableCell>
+                    <TableCell>
+                      {o.has_integration ? (
+                        <Badge variant="outline" className="capitalize">
+                          <Mail className="h-3 w-3 mr-1" />
+                          {o.service_type}
+                        </Badge>
+                      ) : (
+                        <Badge variant="destructive">Sin configurar</Badge>
+                      )}
+                    </TableCell>
+                    <TableCell
+                      className={
+                        o.last_sync_status === "error" ? "text-destructive" : ""
+                      }
+                      title={o.last_sync_error ?? undefined}
+                    >
+                      {syncLabel(o.last_sync_at)}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      {o.backlog_skip_count > 0 ? (
+                        <Badge variant="secondary">{o.backlog_skip_count}</Badge>
+                      ) : (
+                        <span className="text-muted-foreground">0</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-right">{o.imported_today}</TableCell>
+                    <TableCell className="text-right">{o.imported_7d}</TableCell>
+                    <TableCell className="text-right">{o.imported_month}</TableCell>
+                    <TableCell className="text-right">
+                      {o.pending_config > 0 ? (
+                        <Badge variant="outline" className="text-amber-700 dark:text-amber-400">
+                          {o.pending_config}
+                        </Badge>
+                      ) : (
+                        <span className="text-muted-foreground">0</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      {o.errors_count > 0 ? (
+                        <Badge variant="destructive">{o.errors_count}</Badge>
+                      ) : (
+                        <span className="text-muted-foreground">0</span>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        )}
+
+        {data?.generated_at && (
+          <p className="text-xs text-muted-foreground text-right">
+            Actualizado {syncLabel(data.generated_at)}
+          </p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}

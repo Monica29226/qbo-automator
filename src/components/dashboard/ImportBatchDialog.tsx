@@ -20,8 +20,9 @@ import {
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { toast } from "sonner";
-import { Download, Loader2, CheckCircle2, AlertCircle } from "lucide-react";
+import { Download, Loader2, CheckCircle2, AlertCircle, FileDown } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 
 interface ImportResult {
   emailsFound: number;
@@ -71,6 +72,7 @@ export function ImportBatchDialog({ onSuccess }: ImportBatchDialogProps) {
   const [result, setResult] = useState<ImportResult | null>(null);
   const [liveStats, setLiveStats] = useState<ImportResult | null>(null);
   const [statusMessage, setStatusMessage] = useState("");
+  const [drainAll, setDrainAll] = useState(false);
 
   const handleOpen = (val: boolean) => {
     setOpen(val);
@@ -174,7 +176,8 @@ export function ImportBatchDialog({ onSuccess }: ImportBatchDialogProps) {
         // ignore localStorage errors
       }
       let iteration = 0;
-      const maxIterations = 80; // Permite drenar buzones grandes (≈3200 correos con BATCH_SIZE=40)
+      const maxIterations = drainAll ? 1000 : 80;
+      let stagnantStreak = 0;
       let lastNextSkipCount: number | undefined;
       let lastTotalMessages: number | undefined;
 
@@ -253,8 +256,15 @@ export function ImportBatchDialog({ onSuccess }: ImportBatchDialogProps) {
 
         if (data.partial && typeof data.next_skip_count === "number" && data.next_skip_count > skipCount) {
           skipCount = data.next_skip_count;
-          // Persistir cursor por si el usuario cierra/reabre el modal o el navegador
+          stagnantStreak = 0;
           try { localStorage.setItem(cursorKey, String(skipCount)); } catch { /* ignore */ }
+        } else if (data.partial && drainAll) {
+          // Server says partial but skip didn't advance — count stagnant iterations
+          stagnantStreak++;
+          if (stagnantStreak >= 3) {
+            console.warn("[ImportBatch] Drain mode: 3 stagnant iterations, stopping");
+            continueProcessing = false;
+          }
         } else {
           continueProcessing = false;
         }
@@ -372,6 +382,25 @@ export function ImportBatchDialog({ onSuccess }: ImportBatchDialogProps) {
             </div>
           </div>
 
+          <div className="flex items-start gap-2 rounded-md border p-3 bg-muted/30">
+            <Checkbox
+              id="drain-all"
+              checked={drainAll}
+              onCheckedChange={(v) => setDrainAll(!!v)}
+              disabled={isProcessing}
+              className="mt-0.5"
+            />
+            <div className="space-y-0.5">
+              <Label htmlFor="drain-all" className="text-sm font-medium cursor-pointer">
+                Drenar todo el mes (sin límite de iteraciones)
+              </Label>
+              <p className="text-xs text-muted-foreground">
+                Continúa hasta vaciar el mailbox. Úsalo para cerrar el mes en una sola corrida.
+              </p>
+            </div>
+          </div>
+
+
           {isProcessing && (
             <div className="space-y-2">
               <Progress value={progress} className="h-2" />
@@ -395,9 +424,45 @@ export function ImportBatchDialog({ onSuccess }: ImportBatchDialogProps) {
 
           {result && (
             <div className="rounded-lg border bg-muted/30 p-4 space-y-2">
-              <div className="flex items-center gap-2 mb-2">
-                <CheckCircle2 className="h-5 w-5 text-green-600" />
-                <span className="font-semibold text-sm">Resultado de Importación</span>
+              <div className="flex items-center justify-between gap-2 mb-2">
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="h-5 w-5 text-green-600" />
+                  <span className="font-semibold text-sm">Resultado de Importación</span>
+                </div>
+                {(result.skippedDetail.length > 0 || result.errorsDetail.length > 0) && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      const rows = [
+                        ["tipo", "doc_key", "filename", "motivo"],
+                        ...result.skippedDetail.map((s) => [
+                          "omitida",
+                          s.doc_key ?? "",
+                          s.filename ?? "",
+                          s.reason,
+                        ]),
+                        ...result.errorsDetail.map((e) => ["error", "", "", e]),
+                      ];
+                      const csv = rows
+                        .map((r) =>
+                          r
+                            .map((c) => `"${String(c).replace(/"/g, '""')}"`)
+                            .join(",")
+                        )
+                        .join("\n");
+                      const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement("a");
+                      a.href = url;
+                      a.download = `importacion_${selectedYear}-${selectedMonth.padStart(2, "0")}.csv`;
+                      a.click();
+                      URL.revokeObjectURL(url);
+                    }}
+                  >
+                    <FileDown className="h-3 w-3 mr-1" /> CSV
+                  </Button>
+                )}
               </div>
               <div className="grid grid-cols-2 gap-2 text-sm">
                 <span className="text-muted-foreground">Correos encontrados:</span>
