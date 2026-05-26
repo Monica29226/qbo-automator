@@ -38,6 +38,7 @@ import AdminCleanupQuickActions from "./pages/AdminCleanupQuickActions";
 import AdminSharePointSetup from "./pages/AdminSharePointSetup";
 import AdminSharePointBulkUpload from "./pages/AdminSharePointBulkUpload";
 import AdminAccesos from "./pages/AdminAccesos";
+import BatchImportV2 from "./pages/BatchImportV2";
 import NotFound from "./pages/NotFound";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import { AppErrorBoundary } from "./components/AppErrorBoundary";
@@ -298,6 +299,14 @@ const App = () => (
                 element={
                   <ProtectedRoute requireAdmin>
                     <AdminAccesos />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/admin/batch-import-v2"
+                element={
+                  <ProtectedRoute requireAdmin>
+                    <BatchImportV2 />
                   </ProtectedRoute>
                 }
               />

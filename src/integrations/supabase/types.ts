@@ -392,6 +392,140 @@ export type Database = {
           },
         ]
       }
+      batch_import_items: {
+        Row: {
+          batch_id: string
+          created_at: string
+          currency: string | null
+          doc_key: string | null
+          doc_number: string | null
+          doc_type: string | null
+          filename: string
+          hacienda_message_code: string | null
+          id: string
+          issue_date: string | null
+          organization_id: string
+          pdf_storage_path: string | null
+          processed_document_id: string | null
+          reason: string | null
+          receptor_tax_id: string | null
+          receptor_xml_storage_path: string | null
+          status: string
+          supplier_name: string | null
+          supplier_tax_id: string | null
+          total_amount: number | null
+          total_tax: number | null
+          xml_storage_path: string | null
+        }
+        Insert: {
+          batch_id: string
+          created_at?: string
+          currency?: string | null
+          doc_key?: string | null
+          doc_number?: string | null
+          doc_type?: string | null
+          filename: string
+          hacienda_message_code?: string | null
+          id?: string
+          issue_date?: string | null
+          organization_id: string
+          pdf_storage_path?: string | null
+          processed_document_id?: string | null
+          reason?: string | null
+          receptor_tax_id?: string | null
+          receptor_xml_storage_path?: string | null
+          status: string
+          supplier_name?: string | null
+          supplier_tax_id?: string | null
+          total_amount?: number | null
+          total_tax?: number | null
+          xml_storage_path?: string | null
+        }
+        Update: {
+          batch_id?: string
+          created_at?: string
+          currency?: string | null
+          doc_key?: string | null
+          doc_number?: string | null
+          doc_type?: string | null
+          filename?: string
+          hacienda_message_code?: string | null
+          id?: string
+          issue_date?: string | null
+          organization_id?: string
+          pdf_storage_path?: string | null
+          processed_document_id?: string | null
+          reason?: string | null
+          receptor_tax_id?: string | null
+          receptor_xml_storage_path?: string | null
+          status?: string
+          supplier_name?: string | null
+          supplier_tax_id?: string | null
+          total_amount?: number | null
+          total_tax?: number | null
+          xml_storage_path?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "batch_import_items_batch_id_fkey"
+            columns: ["batch_id"]
+            isOneToOne: false
+            referencedRelation: "batch_imports"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      batch_imports: {
+        Row: {
+          accepted_count: number
+          completed_at: string | null
+          created_at: string
+          created_by: string
+          duplicate_count: number
+          id: string
+          missing_consecutives: Json
+          month_filter: string | null
+          notification_sent: boolean
+          organization_id: string
+          pending_count: number
+          rejected_count: number
+          status: string
+          total_files: number
+        }
+        Insert: {
+          accepted_count?: number
+          completed_at?: string | null
+          created_at?: string
+          created_by: string
+          duplicate_count?: number
+          id?: string
+          missing_consecutives?: Json
+          month_filter?: string | null
+          notification_sent?: boolean
+          organization_id: string
+          pending_count?: number
+          rejected_count?: number
+          status?: string
+          total_files?: number
+        }
+        Update: {
+          accepted_count?: number
+          completed_at?: string | null
+          created_at?: string
+          created_by?: string
+          duplicate_count?: number
+          id?: string
+          missing_consecutives?: Json
+          month_filter?: string | null
+          notification_sent?: boolean
+          organization_id?: string
+          pending_count?: number
+          rejected_count?: number
+          status?: string
+          total_files?: number
+        }
+        Relationships: []
+      }
       billing_sequences: {
         Row: {
           branch_code: string | null
