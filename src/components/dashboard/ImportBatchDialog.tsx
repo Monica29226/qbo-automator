@@ -419,6 +419,31 @@ export function ImportBatchDialog({ onSuccess }: ImportBatchDialogProps) {
                   </>
                 )}
               </div>
+              {result.partial && (
+                <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-2 text-xs text-amber-900 dark:text-amber-200">
+                  <div className="font-medium mb-1">Importación parcial</div>
+                  <p>
+                    Se quedaron correos sin recorrer (procesados {result.processedThisSession}
+                    {result.totalMessagesInRange ? ` / ${result.totalMessagesInRange}` : ""}).
+                    Vuelve a presionar <b>Importar</b> con el mismo mes/empresa para continuar desde donde quedó.
+                  </p>
+                </div>
+              )}
+              {result.skippedDetail.length > 0 && (
+                <div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-2 text-xs">
+                  <div className="mb-1 font-medium">Motivos de omisión ({result.skippedDetail.length})</div>
+                  <ul className="space-y-1 text-muted-foreground max-h-40 overflow-auto">
+                    {result.skippedDetail.slice(0, 20).map((s, idx) => (
+                      <li key={`${s.doc_key ?? s.filename ?? idx}-${idx}`}>
+                        • {s.doc_key ? s.doc_key.slice(-10) + " " : ""}{s.filename ? `(${s.filename}) ` : ""}— {s.reason}
+                      </li>
+                    ))}
+                    {result.skippedDetail.length > 20 && (
+                      <li className="italic">… y {result.skippedDetail.length - 20} más</li>
+                    )}
+                  </ul>
+                </div>
+              )}
               {result.errorsDetail.length > 0 && (
                 <div className="rounded-md border border-destructive/30 bg-destructive/5 p-2 text-xs">
                   <div className="mb-1 flex items-center gap-1 font-medium text-destructive">
