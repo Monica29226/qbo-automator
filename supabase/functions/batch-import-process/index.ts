@@ -324,8 +324,42 @@ Deno.serve(async (req) => {
         base.reason = "Falta Mensaje Receptor de Hacienda";
       }
 
+      // Bridge: if accepted, actually create the invoice record via the standard pipeline
+      if (base.status === "accepted") {
+        try {
+          const { data: procData, error: procErr } = await supabase.functions.invoke(
+            "process-document-xml",
+            {
+              body: {
+                organization_id,
+                xml_content: bytesToText(fac.bytes),
+                pdf_attachment_url: base.pdf_storage_path ?? null,
+                file_path: base.pdf_storage_path ?? null,
+                source: "batch_import_v2",
+              },
+            }
+          );
+          if (procErr) {
+            const msg = (procErr.message || "").toLowerCase();
+            if (msg.includes("duplicad") || msg.includes("ya existe")) {
+              base.status = "duplicate";
+              base.reason = "Ya existía en el sistema";
+            } else {
+              base.status = "rejected";
+              base.reason = `Error al crear factura: ${procErr.message}`;
+            }
+          } else if (procData?.status === "review" || procData?.needs_config) {
+            base.reason = "Aceptada — proveedor sin cuenta QBO configurada (Configuración Pendiente)";
+          }
+        } catch (e) {
+          base.status = "rejected";
+          base.reason = `Excepción al crear factura: ${e instanceof Error ? e.message : String(e)}`;
+        }
+      }
+
       results.push(base);
     }
+
 
     // Append "otros" rejected (tiquetes, etc.)
     for (const o of otrosRechazados) {
