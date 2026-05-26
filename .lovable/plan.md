@@ -1,84 +1,71 @@
+# Diagnóstico Centro Médico Terranoa
 
-# Diagnóstico: conector Gmail a nivel sistema
+## Lo que está pasando (datos reales)
 
-## TL;DR
-**El conector de Gmail SÍ está funcionando.** Las 12 organizaciones con Gmail están conectadas, autenticadas y descargando correos. Lo que la usuaria percibe como "no funciona" es en realidad el conteo de `gmail_failed` en los logs, que mezcla **errores reales de XML** con sincronizaciones parciales por límite de tiempo. No hay ningún fix de autenticación que aplicar aquí.
+**Organización:** `CENTRO MEDICO TERRANOA SOCIEDAD ANONIMA`
+**Proveedor de correo:** Hostinger IMAP (`info@centromedicoterranoa.com`)
+**QuickBooks:** conectado ✅
 
-## Evidencia recogida
+### Facturas publicadas por mes
+| Mes | Publicadas | Esperado |
+|---|---|---|
+| Ene 2026 | 37 | ~90 |
+| Feb 2026 | 13 | ~90 |
+| Mar 2026 | 5 | ~90 |
+| Abr 2026 | 29 | ~90 |
+| **May 2026** | **15** | ~90 |
 
-### 1. Estado de las cuentas Gmail (DB)
-12 organizaciones con `service_type='gmail'`, `is_active=true`, **todas con `refresh_token` presente** y **tokens recién renovados a las 23:00 UTC** (válidos por 1 hora). Solo ASADA DE TARBACA está inactiva (caso aislado).
+Hay un **déficit grande** consistente en todos los meses.
 
-### 2. Sync logs últimas 3 horas
-Todas las corridas de Gmail completaron — ninguna marcó `status='error'` ni `error_code` de auth. Resultados típicos:
+### Estado de la sincronización (últimas 20 corridas del cron)
+- Hostinger reporta **510 mensajes** en el buzón filtrado.
+- Cada corrida solo procesa **0–4 facturas** y termina como `partial` por límite de tiempo (60–95 s).
+- El cursor de reanudación `hostinger_resume_skip` está en **300** y avanza lentísimo (~3 por corrida cada 30 min).
+- En el dashboard aparece alerta **"Email IMAP (Hostinger) desconectado · Reconectar"** aunque `is_active=true` en BD (credenciales sin refrescar desde 15-may).
 
-| Empresa | fetched | processed | failed | mensaje |
-|---|---|---|---|---|
-| Cafe Luna | 50 | 1–2 | 19–21 | "errores reales" |
-| Dentorori | 50 | 0 | 30 | "errores reales" |
-| Eiffel | 50 | 0 | 18 | "errores reales" |
-| Tree of Life | 50 | 0 | 20–21 | "errores reales" |
-| Bluwood | 17 | 0 | 0 | success ✓ |
-| Roberto Artavia | 0 | 0 | 0 | success ✓ |
+### Causa raíz
+1. **Backlog gigante de 510 correos** mezclados con XML/PDF que el cron de 30 min no alcanza a drenar.
+2. La función `hostinger-fetch-invoices` está procesando muy pocos mensajes por chunk (tiempo casi todo gastado en IMAP FETCH/decode, no en parseo).
+3. La integración Hostinger probablemente perdió la contraseña/IMAP login (de ahí la alerta del banner), por lo que las nuevas facturas tampoco entran limpio.
+4. 3 facturas quedaron en `review` (pendientes de configuración de proveedor) y no llegan a publicarse.
 
-### 3. Logs de la edge function gmail-fetch-invoices
-Última corrida observada:
-```
-📊 Summary [success]: 1 processed, 47 skipped, 21 errors. Time: 73.0s
-❌ Processing error for AHC_5062…xml: XML no procesable: 
-   no corresponde a Factura/Tiquete/Nota de Crédito/Nota de Débito
-```
+## Plan propuesto (NO importar lote todavía)
 
-### 4. processed_documents (filas insertadas últimas 3h)
-Casi todo es `published`, `review` (sin regla de vendor) o `needs_account_mapping`. **Cero filas con `status='error'`** — los "21 errors" del summary no llegan a persistirse.
+### Fase 1 — Reparar la conexión Hostinger
+- Confirmar/actualizar credenciales IMAP de `info@centromedicoterranoa.com` desde **Conexiones → Hostinger → Reconectar**.
+- Validar login con un fetch manual de 1 chunk y revisar `sync_logs` (debe quedar `success`, no `partial` con error de auth).
 
-## Causa raíz real
+### Fase 2 — Drenar el backlog de 510 correos
+- Ejecutar **Recuperar Backlog** (`recover-org-backlog`) varias veces seguidas para esa organización con `max_chunks=30`. Esto:
+  - Reanuda desde `skip=300` ya guardado.
+  - Procesa hasta 30 chunks por llamada usando el service-role (más rápido que cron de 30 min).
+  - Limpia el cursor cuando termine.
+- Monitorear con `sync_logs` por cada corrida hasta que `gmail_fetched` baje o se procese todo el rango.
 
-En `supabase/functions/gmail-fetch-invoices/index.ts` (líneas 680–694), cuando `process-document-xml` rechaza un archivo, se clasifica como `skipped` o `errors` con este criterio:
+### Fase 3 — Resolver las 3 facturas en `review`
+- Abrir **Configuración Pendiente** para Terranoa.
+- Asignar cuenta contable a los proveedores nuevos para que el auto-publish las suba a QBO.
 
-- `skipped` si el mensaje contiene `"duplicado"`, `"ya existe"`, `"FechaEmision"`, `"not found"`, `"rechazada"` o `"receptor"`.
-- `errors` (cuenta como `gmail_failed`) **todo lo demás**.
+### Fase 4 — Auditoría de huecos
+- Comparar consecutivos Hacienda (clave) por mes contra QBO con el botón **Reconciliar XML vs QBO**.
+- Listar los `NumeroConsecutivo` faltantes mes a mes para saber **exactamente cuántas y cuáles** facturas se perdieron.
 
-El caso `"XML no procesable: no corresponde a Factura/Tiquete/Nota de Crédito/Nota de Débito"` cae en el segundo cubo. Esto se dispara con archivos legítimamente no procesables que Gmail trae como adjuntos:
+### Fase 5 — Importar Lote (solo cuando 1–4 estén OK)
+- Una vez confirmado qué consecutivos faltan, usar `/admin/batch-import-v2` con el ZIP que contenga esos XML específicos + el MensajeReceptor de Hacienda + el PDF.
+- El sistema validará namespace, clave de 50 dígitos, deduplicación contra `qbo_publish_tracking` y solo publicará los aceptados por Hacienda (`Mensaje=1`).
 
-- **MensajeHacienda / MensajeReceptor** (acuses de recepción del MH, no facturas).
-- **Tiquetes Electrónicos (TE / tipo 04)** — explícitamente excluidos por requisito del proyecto (memoria `exclusive-electronic-invoice-processing`).
-- Archivos firmados (`*_signature.xml`, `AHC_…`) que envuelven el XML real.
-- Notas que ya están fuera del cutoff 2026-01-01.
+---
 
-Es decir: **el conector descarga bien, pero el filtro de tipos válidos rechaza ~40-60% de los XML adjuntos**, y esos rechazos legítimos se reportan como "errores reales" en el badge de sync, lo que da la impresión de que Gmail está fallando.
+## Detalle técnico
 
-## Lo que NO es el problema
+- **Tablas/funciones revisadas:** `organizations`, `processed_documents`, `sync_logs`, `system_settings`, `integration_accounts`, función `hostinger-fetch-invoices`, función `recover-org-backlog`.
+- **Cursor activo:** `system_settings.hostinger_resume_skip_a247170a-b083-41e5-82b9-17ca46a37fa2 = 300`.
+- **Tiempos cron:** 60–95 s por corrida (cerca del límite duro). Por eso es crítico drenar con `recover-org-backlog` que corre fuera del cron.
+- **Riesgos:** si se importa lote ANTES de drenar el backlog, las mismas facturas pueden llegar dos veces (el dedupe por `doc_key` lo evita, pero ensucia el log y consume ciclos QBO).
 
-- ❌ No es OAuth / refresh token (todos los 12 refresh_tokens existen y los access_token se renovaron hace minutos).
-- ❌ No es CORS, timeout de auth, ni el bug del cron (ese ya quedó resuelto post-upgrade).
-- ❌ No es el filtro de `service_type` de ImportBatchDialog (eso era de Outlook IMAP).
-- ❌ No son fallas de la API de Gmail (no hay 401/403/429 en logs).
+---
 
-## Propuesta de fix (visual + métrica, no de conexión)
+## Pregunta antes de implementar
 
-Pequeño cambio en una sola función para que el dashboard refleje la realidad:
-
-1. **`gmail-fetch-invoices/index.ts`** (mismo patrón para hostinger/bluehost/outlook):
-   - Ampliar la heurística de "skipped" en líneas 683-685 para incluir también:
-     - `"no corresponde a Factura"`
-     - `"Tiquete Electrónico"` / `"TE"` / `tipo 04`
-     - `"fuera de rango"` / `"anterior a 2026"`
-     - `"MensajeHacienda"` / `"MensajeReceptor"`
-   - Así esos archivos cuentan como `gmail_skipped` (informativo) en lugar de `gmail_failed` (alarmante).
-
-2. **Sync log message**: cuando `gmail_failed > 0` pero **ningún** `processed_documents` quedó con `status='error'`, registrar el mensaje como:  
-   _"N adjuntos XML descartados (tipo no soportado / fuera de rango)"_ en lugar de _"N facturas con errores reales"_.
-
-3. **Opcional UI**: en el dashboard separar el badge en dos contadores: "Descargadas" vs "Descartadas (no facturas)" para que la usuaria sepa que el sistema está sano.
-
-## Archivos a tocar (si se aprueba el plan)
-
-- `supabase/functions/gmail-fetch-invoices/index.ts` — ampliar lista de patrones "skipped" + mejorar mensaje de sync_logs.
-- `supabase/functions/hostinger-fetch-invoices/index.ts` — mismo cambio.
-- `supabase/functions/bluehost-fetch-invoices/index.ts` — mismo cambio.
-- `supabase/functions/outlook-fetch-invoices/index.ts` — mismo cambio.
-- `supabase/functions/outlook-imap-fetch-invoices/index.ts` — mismo cambio.
-- (Opcional) `src/components/dashboard/CronMonitor.tsx` o similar — separar "descartadas" de "errores".
-
-Ningún cambio de schema, ni de auth, ni de cron. Solo clasificación correcta de adjuntos no-factura.
+1. ¿Confirmás que primero corra **Fase 1 (reconectar Hostinger)** y **Fase 2 (drenar backlog con recover-org-backlog)**, y recién después pasemos a Fase 4 (auditar huecos) y Fase 5 (importar lote)?
+2. ¿Tenés acceso a la contraseña IMAP de `info@centromedicoterranoa.com` para reconectar? Si no, hay que pedirla a Terranoa.
