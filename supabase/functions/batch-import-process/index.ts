@@ -241,10 +241,28 @@ Deno.serve(async (req) => {
         continue;
       }
 
+      // Date cutoff: only process invoices from 2026-01-01 onwards
+      if (p.fecha && p.fecha < "2026-01-01") {
+        results.push({ ...base, reason: `Fuera de rango: fecha ${p.fecha} es anterior al 1-ene-2026` });
+        continue;
+      }
+
       // Month filter
       if (month_filter && p.fecha && !p.fecha.startsWith(month_filter)) {
         results.push({ ...base, reason: `Fuera del mes seleccionado (${month_filter})` });
         continue;
+      }
+
+      // Receptor must match organization tax ID
+      if (orgTaxId && p.receptorCedula) {
+        const recCed = p.receptorCedula.replace(/\D/g, "");
+        if (recCed && recCed !== orgTaxId) {
+          results.push({
+            ...base,
+            reason: `Receptor incorrecto: factura dirigida a ${recCed}, esperado ${orgTaxId}`,
+          });
+          continue;
+        }
       }
 
       // Duplicate
@@ -257,6 +275,7 @@ Deno.serve(async (req) => {
         });
         continue;
       }
+
 
       // Upload XML
       const xmlPath = `${organization_id}/${batch_id}/${p.clave}.xml`;
