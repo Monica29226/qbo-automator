@@ -132,14 +132,14 @@ async function fetchEmailsViaIMAP(
     const startIdx = skipCount || 0;
     const availableMessages = messageIds.slice(startIdx);
     
-    // REDUCIDO: Procesar solo 10 mensajes por ejecución para evitar WORKER_LIMIT
-    const BATCH_SIZE = 10;
+    // Procesar hasta 40 mensajes por ejecución (con corte por tiempo más abajo)
+    const BATCH_SIZE = 40;
     const messagesToFetch = availableMessages.slice(0, BATCH_SIZE);
     console.log(`[Hostinger IMAP] Processing messages ${startIdx + 1} to ${startIdx + messagesToFetch.length} of ${messageIds.length} total (batch size: ${BATCH_SIZE})`);
 
     // Track execution time to exit early if approaching limit
     const functionStartTime = Date.now();
-    const MAX_EXECUTION_TIME_MS = 20000; // REDUCIDO: 20 seconds max (leave 10s buffer)
+    const MAX_EXECUTION_TIME_MS = 70000; // 70s para drenar el lote IMAP (BATCH_SIZE=40)
     // Fetch each message with early exit on timeout
     for (let i = 0; i < messagesToFetch.length; i++) {
       // Check if approaching timeout - check BEFORE and AFTER each message
@@ -605,10 +605,13 @@ serve(async (req) => {
 
     let invoicesProcessed = 0;
     let invoicesFailed = 0;
+    let invoicesExistingSkipped = 0;
+    let invoicesMissingPdf = 0;
     let stoppedEarly = false;
     const errors: string[] = [];
+    const skippedInvoices: Array<{ doc_key?: string; filename?: string; reason: string }> = [];
     const processingStartTime = Date.now();
-    const MAX_PROCESSING_TIME_MS = 18000; // REDUCIDO: 18 seconds for processing phase
+    const MAX_PROCESSING_TIME_MS = 40000; // 40s para drenar el lote completo de 40 correos
 
     // Process each email with timeout protection
     for (const rawEmail of rawEmails) {
@@ -635,6 +638,7 @@ serve(async (req) => {
             const claveMatch = xml.content.match(/<Clave>(\d{50})<\/Clave>/);
             if (!claveMatch) {
               console.log(`[Hostinger] No Clave found in ${xml.filename}, skipping`);
+              skippedInvoices.push({ filename: xml.filename, reason: "XML sin Clave válida" });
               continue;
             }
             const clave = claveMatch[1];
@@ -649,6 +653,8 @@ serve(async (req) => {
 
             if (existingDoc && !force_resync) {
               console.log(`[Hostinger] Document ${clave} already exists, skipping`);
+              invoicesExistingSkipped++;
+              skippedInvoices.push({ doc_key: clave, filename: xml.filename, reason: "Ya existía en el sistema" });
               continue;
             }
 
@@ -720,7 +726,7 @@ serve(async (req) => {
                 msg.includes("cutoff");
               if (isSoftReject) {
                 console.log(`[Hostinger] ⏭️ Skipped ${clave}: ${errorMsg}`);
-                // No incrementa invoicesFailed: es un rechazo legítimo, no un error
+                skippedInvoices.push({ doc_key: clave, filename: xml.filename, reason: errorMsg });
               } else {
                 console.error(`[Hostinger] Error processing ${clave}:`, processError);
                 errors.push(`${clave}: ${errorMsg}`);
@@ -729,6 +735,7 @@ serve(async (req) => {
             } else {
               console.log(`[Hostinger] ✓ Processed ${clave} - PDF saved: ${pdfUrl ? 'YES' : 'NO'}`);
               invoicesProcessed++;
+              if (!pdfUrl) invoicesMissingPdf++;
             }
           } catch (xmlErr) {
             console.error(`[Hostinger] Error processing XML ${xml.filename}:`, xmlErr);
@@ -752,14 +759,19 @@ serve(async (req) => {
         success: true,
         invoices_processed: invoicesProcessed,
         invoices_failed: invoicesFailed,
+        invoices_existing_skipped: invoicesExistingSkipped,
+        invoices_missing_pdf: invoicesMissingPdf,
+        invoices_skipped: skippedInvoices.length,
         partial: stoppedEarly || hasMoreMessages,
         total_messages_in_range: totalFound,
+        messages_found: rawEmails.length,
         messages_processed_this_run: processedCount,
         next_skip_count: hasMoreMessages ? nextSkip : undefined,
+        skipped: skippedInvoices,
         message: (stoppedEarly || hasMoreMessages)
-          ? `Procesadas ${invoicesProcessed} facturas (correos ${currentSkip + 1}-${nextSkip} de ${totalFound || '?'}). Ejecute de nuevo para continuar.`
+          ? `Procesadas ${invoicesProcessed} facturas (correos ${currentSkip + 1}-${nextSkip} de ${totalFound || '?'}). Continuando…`
           : `Se procesaron ${invoicesProcessed} facturas de ${totalFound || '?'} correos encontrados.`,
-        errors: errors.length > 0 ? errors : undefined,
+        errors: errors.length > 0 ? errors.map((e) => ({ error: e })) : undefined,
       }),
       {
         headers: { ...corsHeaders, "Content-Type": "application/json" },

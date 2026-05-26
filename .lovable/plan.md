@@ -1,74 +1,101 @@
-# Plan: Importar mayo 2026 de Terranoa sin pérdidas silenciosas
+# Diagnóstico y plan de corrección
 
-## Por qué antes "no subía nada sin dar error"
+## Hallazgos principales
 
-Tras revisar el flujo actual, las facturas se descartan **en silencio** en 3 puntos:
+1. **El botón “Importar Lote” del dashboard no usa el flujo nuevo `batch-import-v2`.**
+   - El dashboard llama a `ImportBatchDialog`.
+   - `ImportBatchDialog` ejecuta `hostinger-fetch-invoices` / `bluehost-fetch-invoices`.
+   - El arreglo reciente en `batch-import-process` solo aplica a `/admin/batch-import-v2`, no al botón principal que estás usando.
 
-1. **Deduplicación por `doc_key`** — si el `doc_key` ya existe en `processed_documents` o en `qbo_publish_tracking`, el ítem se marca como `duplicate` y no entra al log visible.
-2. **Validación de receptor** — si el XML viene sin `MensajeReceptor` o el `Receptor.Identificacion` no coincide con la cédula de Terranoa, se rechaza como "no dirigida a la organización".
-3. **Estado Hacienda** — si no hay XML de respuesta con `EstadoMensaje = 1`, queda en `rejected` sin notificación.
+2. **El importador de Hostinger está limitado por lotes pequeños y el botón manual no recuerda el avance entre clics.**
+   - `hostinger-fetch-invoices` procesa solo **10 correos por ejecución**.
+   - `ImportBatchDialog` corta en **máximo 20 iteraciones**.
+   - Eso significa que un clic puede recorrer como máximo **200 correos**.
+   - En logs reales de Terranoa hay **514 correos** en el rango, así que una parte del mes puede quedar sin recorrer aunque no haya error visible.
 
-El lote actual (`/admin/batch-import-v2`) procesa el ZIP pero **no muestra qué archivos quedaron fuera ni por qué**, por eso parece que "no sube nada".
+3. **No hay cursor persistente para el botón manual del dashboard.**
+   - El sistema sí tiene lógica de reanudación en `auto-sync-invoices` y `recover-org-backlog`.
+   - Pero `ImportBatchDialog` no guarda ni reutiliza ese cursor.
+   - Resultado: el usuario siente que “no sube” porque el flujo manual no garantiza terminar el backlog completo de Hostinger.
 
-## Procedimiento recomendado (sin tocar código todavía)
+4. **El flujo actual oculta rechazos válidos y por eso parece un fallo silencioso.**
+   - `hostinger-fetch-invoices` descarta XML de Hacienda/MensajeReceptor y otros rechazos suaves sin mostrarlos en detalle al usuario.
+   - `ImportBatchDialog` solo resume: nuevas, existentes, sin PDF y errores.
+   - No expone razones como receptor incorrecto, fuera de rango, duplicada, XML no facturable, etc.
 
-### Paso 1 — Identificar EXACTAMENTE qué consecutivos faltan
-1. Abrir Terranoa → Dashboard → **"Sincronizar desde Excel" (Siku)**
-2. Subir el reporte Siku de mayo 2026
-3. El sistema devuelve la lista de `NumeroConsecutivo` que están en Siku pero no en el sistema → exportar como CSV
+5. **El backend sí está funcionando; el problema es de flujo y visibilidad.**
+   - La nube está sana.
+   - Hostinger está conectado para Terranoa.
+   - En la base ya existen **20 documentos de mayo 2026** para Terranoa:
+     - **15 published**
+     - **5 review**
+   - También vi ejecuciones reales de Hostinger avanzando hasta `skip_count=510` y procesando los últimos correos.
 
-### Paso 2 — Armar el ZIP correctamente
-Para cada consecutivo faltante, el ZIP debe contener **3 archivos por factura** con nombres que compartan prefijo:
-```
-50601052600310XXXX...-FE.xml          ← XML de la factura
-50601052600310XXXX...-MR.xml          ← MensajeReceptor (EstadoMensaje=1)
-50601052600310XXXX...-FE.pdf          ← PDF (opcional pero recomendado)
-```
-- Sin MensajeReceptor el sistema rechaza por política de Hacienda
-- Si descargas de ATV vienen ya con esos nombres
+6. **No hay evidencia de que el botón del dashboard esté creando reportes de lote trazables.**
+   - `batch_imports` está vacío.
+   - Confirma que el flujo que usa el dashboard no deja la trazabilidad rica que sí tiene `batch-import-v2`.
 
-### Paso 3 — Mejorar el reporte del lote ANTES de importar (cambio mínimo de código)
-Para evitar que vuelva a "no pasar nada en silencio", ajustar `BatchImportV2` + `batch-import-finalize` para que el reporte final muestre **una fila por archivo del ZIP** con una de estas razones:
+## Qué voy a implementar
 
-| Estado | Significado |
-|---|---|
-| `accepted` | Entró a `processed_documents` |
-| `duplicate` | `doc_key` ya existía (con link a la factura original) |
-| `wrong_receptor` | Cédula receptor ≠ Terranoa |
-| `no_mensaje_receptor` | Falta el MR.xml en el ZIP |
-| `hacienda_rejected` | `EstadoMensaje ≠ 1` |
-| `not_fe` | Es TE/04 u otro tipo no soportado |
-| `out_of_date_range` | Fecha < 2026-01-01 |
-| `pending_config` | Aceptada pero proveedor sin cuenta QBO |
-| `parse_error` | XML inválido (con detalle) |
+1. **Unificar el botón “Importar Lote” con el flujo trazable.**
+   - Hacer que el flujo principal deje detalle auditable por factura.
+   - Evitar que el arreglo quede dividido entre dos importadores distintos.
 
-Y descargar ese reporte como CSV. Así sabés exactamente por qué cada XML no llegó.
+2. **Agregar reanudación real para Hostinger/Bluehost en el flujo manual.**
+   - Guardar `skip_count` por organización.
+   - Reanudar automáticamente en el siguiente clic o continuar dentro del mismo proceso hasta vaciar el rango.
+   - Cerrar el mes completo, no solo una ventana parcial de correos.
 
-### Paso 4 — Importar mayo
-1. `/admin/batch-import-v2` → seleccionar organización **Terranoa**
-2. Etiqueta de mes: `Mayo 2026`
-3. Subir el ZIP del Paso 2
-4. Esperar el resumen → revisar el CSV
-5. Para los `pending_config` → ir a Configuración Pendiente y asignar cuenta QBO → se auto-publican
-6. Para `duplicate` → verificar contra la factura existente (normalmente está bien, solo confirma)
-7. Para `no_mensaje_receptor` / `hacienda_rejected` → descargar MR correcto y reintentar solo esas
+3. **Eliminar el falso “sin error pero no sube”.**
+   - Mostrar contadores separados para:
+     - procesadas
+     - duplicadas
+     - rechazadas por reglas
+     - faltantes de PDF
+     - pendientes de configuración
+   - Exponer motivo por factura, no solo total agregado.
 
-### Paso 5 — Verificar cierre de mes
-- Volver a correr "Sincronizar desde Excel" con el Siku de mayo
-- El delta debe ser 0
-- Confirmar que `qbo_publish_tracking` tiene entradas para todas las facturas con `qbo_entity_id` no nulo
+4. **Mejorar la UI del modal de importación.**
+   - Mostrar si el proceso quedó parcial.
+   - Mostrar cuántos correos faltan por recorrer.
+   - Mostrar si el sistema reanudará desde un cursor previo.
+   - Permitir descargar detalle CSV o ver tabla resumida.
 
-## Detalles técnicos del cambio mínimo (Paso 3)
+5. **Alinear las reglas del importador por correo con el pipeline XML estándar.**
+   - Mantener la validación real en `process-document-xml`.
+   - Hacer que el resumen del importador refleje exactamente los rechazos y omisiones de ese pipeline.
 
-Archivos a modificar:
-- `supabase/functions/batch-import-process/index.ts` → en cada `continue`/`skip` agregar `batch_import_items.insert({status, reason, doc_key, supplier_name, filename})` con motivo específico (hoy varios `continue` silenciosos no escriben nada).
-- `supabase/functions/batch-import-finalize/index.ts` → agregar agregados por `reason` y generar CSV con `Resource: text/csv` subido a `invoice-imports/{batch_id}/report.csv`.
-- `src/pages/BatchImportV2.tsx` → tabla de resultados agrupada por estado con botón "Descargar CSV" y filtro por motivo.
-
-Sin cambios de schema; `batch_import_items` ya tiene las columnas `status`, `reason`, `filename`, `doc_key`, `supplier_name`.
+6. **Validar específicamente mayo para Terranoa.**
+   - Probar el flujo con Terranoa y el rango de mayo 2026.
+   - Confirmar que recorre el backlog completo y que el usuario puede identificar qué faltó y por qué.
 
 ## Resultado esperado
-- Subís el ZIP de mayo y obtenés un CSV con 90 filas explicando el destino de cada archivo
-- Nunca más "no pasó nada en silencio"
-- Las que entran como `pending_config` se desbloquean asignando cuenta al proveedor
-- Cierre mensual auditable contra Siku
+
+- Un clic en **Importar Lote** ya no dará la impresión de que “no hace nada”.
+- Si faltan facturas, el sistema mostrará si fue por:
+  - backlog no terminado,
+  - duplicado,
+  - XML no facturable,
+  - receptor incorrecto,
+  - fuera de rango,
+  - pendiente de configuración,
+  - u otro rechazo real.
+- Terranoa podrá cerrar mayo con trazabilidad clara.
+
+## Detalles técnicos
+
+- **UI involucrada:** `src/components/dashboard/ImportBatchDialog.tsx`
+- **Funciones involucradas:**
+  - `supabase/functions/hostinger-fetch-invoices/index.ts`
+  - `supabase/functions/bluehost-fetch-invoices/index.ts`
+  - `supabase/functions/process-document-xml/index.ts`
+- **Observación crítica:** el fix previo en `batch-import-process` no impacta el botón del dashboard porque ese botón usa otro backend.
+- **Dato real observado:** Terranoa tiene 514 correos en el rango inspeccionado y el importador Hostinger procesa 10 por ejecución; el modal manual corta a 20 iteraciones.
+
+## Validación al terminar
+
+1. Ejecutar importación manual de mayo con Terranoa.
+2. Confirmar que el flujo completa todo el rango o deja cursor persistido para continuar sin perder avance.
+3. Confirmar que el resumen diferencia procesadas, omitidas y rechazadas con motivo.
+4. Verificar documentos creados de mayo y sus estados finales en base de datos.
+5. Confirmarte explícitamente si mayo queda completo o qué consecutivos siguen faltando.
