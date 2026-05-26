@@ -424,9 +424,45 @@ export function ImportBatchDialog({ onSuccess }: ImportBatchDialogProps) {
 
           {result && (
             <div className="rounded-lg border bg-muted/30 p-4 space-y-2">
-              <div className="flex items-center gap-2 mb-2">
-                <CheckCircle2 className="h-5 w-5 text-green-600" />
-                <span className="font-semibold text-sm">Resultado de Importación</span>
+              <div className="flex items-center justify-between gap-2 mb-2">
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="h-5 w-5 text-green-600" />
+                  <span className="font-semibold text-sm">Resultado de Importación</span>
+                </div>
+                {(result.skippedDetail.length > 0 || result.errorsDetail.length > 0) && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      const rows = [
+                        ["tipo", "doc_key", "filename", "motivo"],
+                        ...result.skippedDetail.map((s) => [
+                          "omitida",
+                          s.doc_key ?? "",
+                          s.filename ?? "",
+                          s.reason,
+                        ]),
+                        ...result.errorsDetail.map((e) => ["error", "", "", e]),
+                      ];
+                      const csv = rows
+                        .map((r) =>
+                          r
+                            .map((c) => `"${String(c).replace(/"/g, '""')}"`)
+                            .join(",")
+                        )
+                        .join("\n");
+                      const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement("a");
+                      a.href = url;
+                      a.download = `importacion_${selectedYear}-${selectedMonth.padStart(2, "0")}.csv`;
+                      a.click();
+                      URL.revokeObjectURL(url);
+                    }}
+                  >
+                    <FileDown className="h-3 w-3 mr-1" /> CSV
+                  </Button>
+                )}
               </div>
               <div className="grid grid-cols-2 gap-2 text-sm">
                 <span className="text-muted-foreground">Correos encontrados:</span>
