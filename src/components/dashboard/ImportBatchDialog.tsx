@@ -382,6 +382,25 @@ export function ImportBatchDialog({ onSuccess }: ImportBatchDialogProps) {
             </div>
           </div>
 
+          <div className="flex items-start gap-2 rounded-md border p-3 bg-muted/30">
+            <Checkbox
+              id="drain-all"
+              checked={drainAll}
+              onCheckedChange={(v) => setDrainAll(!!v)}
+              disabled={isProcessing}
+              className="mt-0.5"
+            />
+            <div className="space-y-0.5">
+              <Label htmlFor="drain-all" className="text-sm font-medium cursor-pointer">
+                Drenar todo el mes (sin límite de iteraciones)
+              </Label>
+              <p className="text-xs text-muted-foreground">
+                Continúa hasta vaciar el mailbox. Úsalo para cerrar el mes en una sola corrida.
+              </p>
+            </div>
+          </div>
+
+
           {isProcessing && (
             <div className="space-y-2">
               <Progress value={progress} className="h-2" />
