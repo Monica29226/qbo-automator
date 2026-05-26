@@ -158,6 +158,15 @@ Deno.serve(async (req) => {
     });
     if (!isAdmin) return json({ error: "forbidden" }, 403);
 
+    // Load org tax_id for receptor validation
+    const { data: org } = await supabase
+      .from("organizations")
+      .select("tax_id, identification_number")
+      .eq("id", organization_id)
+      .maybeSingle();
+    const orgTaxId = String(org?.tax_id ?? org?.identification_number ?? "").replace(/\D/g, "");
+
+
     // Index files by clave
     const xmls: { filename: string; text: string; bytes: Uint8Array }[] = [];
     const pdfsByClave = new Map<string, { filename: string; bytes: Uint8Array }>();
