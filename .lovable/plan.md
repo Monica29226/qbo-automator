@@ -1,94 +1,83 @@
-# Plan: Garantizar importación correcta desde correo
+# Problema
 
-## Recomendación de origen
-**Hostinger/Bluehost IMAP como fuente principal** — ya está optimizado (BATCH_SIZE=40, cursor persistente, UTF-8). Outlook OAuth queda como secundario por la expiración de tokens. Reportes Siku se usan sólo para auditoría final.
+Al usar **Importar Lote** con Jimena Cross o Centro Médico Terranoa, aparece el toast:
 
----
+> "Esta empresa no tiene integración de correo configurada. Ve a Integraciones para conectar una."
 
-## 1. Panel de Salud de Importación (Dashboard)
+…aunque ambas empresas **sí están conectadas** (verificado en la base):
 
-Nuevo componente `ImportHealthPanel.tsx` que muestra, para **cada organización** (vista admin) o la activa:
+- Jimena Cross → `gmail` activo
+- Centro Médico Terranoa → `hostinger` activo
 
-- **Última sincronización exitosa** — timestamp + badge (verde <2h, amarillo <24h, rojo >24h)
-- **Estado IMAP** — conectado / token expirado / sin integración
-- **Backlog en mailbox** — `skip_count` persistido vs total estimado
-- **Importadas hoy / 7d / mes** — conteo desde `processed_documents`
-- **Errores recientes** — últimos 7 días desde `sync_logs` con código de error
-- **Botón "Drenar mailbox completo"** — abre el dialog con modo drenaje activado
+# Causa raíz
 
-Se ubica en Dashboard arriba de las quick actions.
+`ImportBatchDialog.tsx` (línea 88-97) detecta el proveedor consultando la tabla `integration_accounts` desde el cliente:
 
----
+```ts
+const { data } = await supabase
+  .from("integration_accounts")
+  .select("service_type")
+  .eq("organization_id", orgId)
+  .eq("is_active", true)
+  ...
+```
 
-## 2. Modo "Drenaje Completo" en ImportBatchDialog
+Pero la tabla `integration_accounts` **no tiene policy de SELECT** (sólo INSERT/UPDATE/DELETE para admins). En el esquema está explícito:
 
-Checkbox **"Drenar todo el mes (sin límite de iteraciones)"** que:
+> *"Currently users can't do any of the following actions on the table integration_accounts: Can't SELECT records from the table"*
 
-- Quita el tope de 80 iteraciones
-- Continúa llamando a `hostinger-fetch-invoices` hasta que la respuesta indique `messages_remaining = 0` **o** se acumulen 3 iteraciones consecutivas sin avance
-- Muestra barra de progreso en vivo: `X procesados / Y restantes en mailbox`
-- Persiste el cursor entre iteraciones (ya implementado)
-- Al finalizar genera resumen descargable (CSV) con: clave, proveedor, fecha, estado, motivo
+Esto es intencional porque la columna `credentials` (JSONB con tokens / passwords) **no debe** exponerse al frontend. Resultado: el query devuelve `[]` → `serviceType = null` → toast de error falso.
 
----
+Esto explica por qué falla **en todas las organizaciones**, no sólo en esas dos. El bug se introdujo cuando `ImportBatchDialog` empezó a auto-detectar el proveedor en vez de recibirlo por parámetro.
 
-## 3. Reporte diario por email (todas las organizaciones)
+# Solución propuesta
 
-Edge function programada **`daily-import-health-report`** que corre cada día a las 7am CR:
+Reemplazar la consulta a `integration_accounts` por una fuente que el cliente **sí** pueda leer. Hay dos opciones limpias:
 
-- Para cada organización activa, calcula:
-  - Sincronizaciones últimas 24h (éxito / fallo)
-  - Facturas importadas, pendientes de configuración, en error
-  - Backlog acumulado en mailbox
-  - Conexiones IMAP con problemas (token vencido, login fallido)
-- Envía un único email HTML al admin global con tabla resumen por org
-- Usa Resend (ya configurado, `RESEND_API_KEY` existe)
-- Plantilla con código de colores: verde (OK), amarillo (atención), rojo (acción requerida)
+### Opción A (recomendada) — Usar los flags de `organizations`
 
-Programación vía `pg_cron` apuntando a la edge function.
+La tabla `organizations` ya tiene los booleanos `gmail_connected`, `outlook_connected`, `hostinger_connected`, `bluehost_connected` (y RLS de SELECT para miembros). Refactorizar `getOrgIntegrationType` así:
 
----
+```ts
+const { data: org } = await supabase
+  .from("organizations")
+  .select("gmail_connected, outlook_connected, hostinger_connected, bluehost_connected")
+  .eq("id", orgId).single();
 
-## 4. Verificación post-importación reforzada
+// Prioridad: hostinger > bluehost > outlook(imap) > gmail
+if (org?.hostinger_connected) return "hostinger";
+if (org?.bluehost_connected)  return "bluehost";
+if (org?.outlook_connected)   return "outlook_imap"; // o "outlook" según preferencia actual
+if (org?.gmail_connected)     return "gmail";
+return null;
+```
 
-Al terminar **Importar Lote**, mostrar tarjetas con:
+Ventajas: no toca RLS, no expone credenciales, datos ya cacheables.
 
-- ✅ Aceptadas y publicadas en QBO (con `qbo_entity_id`)
-- ⏳ Aceptadas pero pendientes QBO (sin entity_id aún)
-- ⚠️ Pendientes de configuración (proveedor sin cuenta)
-- 📭 Falta Mensaje Receptor de Hacienda
-- ❌ Rechazadas con motivo específico
-- 🔁 Duplicadas (ya existían)
+Riesgo: si un flag `*_connected` quedara desincronizado de `integration_accounts`, podría mentir. Mitigación → ya existe la edge function `check-system-health`; podemos llamarla como fallback antes de mostrar el toast (sólo cuando `null`).
 
-Cada categoría es clickeable y abre lista filtrada en `/invoices-pending-log` o `/error-documents`.
+### Opción B — Crear una RPC `get_org_email_provider(_org_id)`
 
----
+Función `SECURITY DEFINER` que retorne sólo `service_type` (sin `credentials`), accesible a miembros vía `is_organization_member`. Más estricta pero requiere migración.
 
-## Archivos a crear/editar
+**Recomiendo Opción A** por simplicidad y porque los flags ya se mantienen por las propias edge functions de conexión.
 
-**Nuevos:**
-- `src/components/dashboard/ImportHealthPanel.tsx` — panel principal
-- `src/hooks/useImportHealth.ts` — query agregada por org
-- `supabase/functions/daily-import-health-report/index.ts` — cron de email
-- `supabase/functions/import-health-summary/index.ts` — datos para el panel
+# Cambios concretos
 
-**Editados:**
-- `src/components/dashboard/ImportBatchDialog.tsx` — modo drenaje + CSV + categorías
-- `src/pages/Dashboard.tsx` — incluir `<ImportHealthPanel />`
-- `supabase/functions/hostinger-fetch-invoices/index.ts` — exponer `messages_remaining` y `mailbox_total` en respuesta
-- `supabase/functions/bluehost-fetch-invoices/index.ts` — mismo cambio
+1. **`src/components/dashboard/ImportBatchDialog.tsx`**
+   - Reemplazar `getOrgIntegrationType` por la lectura de flags en `organizations`.
+   - Si el resultado es `null`, hacer un fallback que invoque la edge function `check-system-health` (que sí corre con service role) para confirmar antes de mostrar el toast — evita falsos negativos por flags desactualizados.
+   - Mostrar en el toast cuál fue el resultado del check para diagnóstico.
 
-**Migración:**
-- Crear cron job en `pg_cron` para ejecutar `daily-import-health-report` diariamente a las 13:00 UTC (7am CR)
+2. **`src/hooks/useImportHealth.ts`** y **`ImportHealthPanel`**
+   - Revisar si tienen el mismo bug (consultar `integration_accounts` desde cliente). Aplicar el mismo fix.
 
----
+3. **(Opcional) Sincronización de flags**
+   - Verificar que `integrations-connect-*` y `integrations-disconnect-*` actualicen los booleanos en `organizations`. Si encontramos un proveedor activo en `integration_accounts` pero con flag en `false`, agregar un trigger o migración one-shot que reconcilie.
 
-## Cómo verificarás que todo importa correctamente
+# Verificación
 
-Después del cambio tendrás 3 puntos de control:
-
-1. **Diario automático**: te llega un email cada mañana con el estado de todas las orgs
-2. **Visual en tiempo real**: el Panel de Salud en el dashboard muestra backlog y última sync
-3. **Bajo demanda**: el modo "Drenar todo el mes" garantiza vaciar el mailbox de una corrida
-
-Si una org tiene backlog >0 en el panel o el email diario marca rojo, sabes exactamente cuál revisar.
+1. Login como admin de Jimena Cross → abrir Importar Lote → debe detectar `gmail` y conectar.
+2. Login como admin de Centro Médico Terranoa → debe detectar `hostinger`.
+3. Probar con una org sin integración → toast correcto.
+4. Revisar logs de la edge function correspondiente para confirmar que recibe `organization_id` y procesa.

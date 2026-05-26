@@ -86,14 +86,23 @@ export function ImportBatchDialog({ onSuccess }: ImportBatchDialogProps) {
   };
 
   const getOrgIntegrationType = async (orgId: string): Promise<string | null> => {
-    const { data } = await supabase
-      .from("integration_accounts")
-      .select("service_type")
-      .eq("organization_id", orgId)
-      .eq("is_active", true)
-      .in("service_type", ["gmail", "bluehost", "hostinger", "outlook", "outlook_imap"])
-      .limit(1);
-    return data?.[0]?.service_type || null;
+    // NOTA: integration_accounts no expone SELECT al cliente (contiene credenciales).
+    // Usamos los flags *_connected de organizations, que sí tienen RLS para miembros.
+    const { data: org, error } = await supabase
+      .from("organizations")
+      .select("gmail_connected, outlook_connected, hostinger_connected, bluehost_connected")
+      .eq("id", orgId)
+      .maybeSingle();
+    if (error) {
+      console.error("[ImportBatch] Error leyendo flags de integración:", error);
+      return null;
+    }
+    // Prioridad: hostinger > bluehost > outlook(imap) > gmail
+    if (org?.hostinger_connected) return "hostinger";
+    if (org?.bluehost_connected) return "bluehost";
+    if (org?.outlook_connected) return "outlook_imap";
+    if (org?.gmail_connected) return "gmail";
+    return null;
   };
 
   const getFetchFunction = (serviceType: string) => {
