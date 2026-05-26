@@ -174,10 +174,11 @@ export function ImportHealthPanel() {
                 label={
                   <span className="flex items-center gap-1">
                     <Inbox className="h-3 w-3" /> Backlog
-                  </span> as unknown as string
+                  </span>
                 }
                 value={org.backlog_skip_count}
               />
+
               <Metric label="Hoy" value={org.imported_today} />
               <Metric label="7 días" value={org.imported_7d} />
               <Metric label="Mes" value={org.imported_month} />
