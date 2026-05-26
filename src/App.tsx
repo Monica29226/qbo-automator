@@ -37,6 +37,7 @@ import Onboarding from "./pages/Onboarding";
 import AdminCleanupQuickActions from "./pages/AdminCleanupQuickActions";
 import AdminSharePointSetup from "./pages/AdminSharePointSetup";
 import AdminSharePointBulkUpload from "./pages/AdminSharePointBulkUpload";
+import AdminAccesos from "./pages/AdminAccesos";
 import NotFound from "./pages/NotFound";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import { AppErrorBoundary } from "./components/AppErrorBoundary";
@@ -289,6 +290,14 @@ const App = () => (
                 element={
                   <ProtectedRoute requireAdmin>
                     <AdminSharePointBulkUpload />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/admin/accesos"
+                element={
+                  <ProtectedRoute requireAdmin>
+                    <AdminAccesos />
                   </ProtectedRoute>
                 }
               />

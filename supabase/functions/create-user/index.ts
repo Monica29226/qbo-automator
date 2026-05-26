@@ -153,6 +153,15 @@ Deno.serve(async (req) => {
       }
     } else {
       console.log(`📝 Creating new user: ${email}`);
+
+      // Pre-insert into allowed_emails so handle_new_user trigger accepts the signup
+      await supabaseAdmin.from('allowed_emails').upsert({
+        email: email.toLowerCase().trim(),
+        default_role: role === 'admin' ? 'admin' : 'user',
+        note: 'Auto-added via create-user',
+        added_by: callingUser.id,
+      });
+      
       
       const { data: authData, error: createAuthError } = await supabaseAdmin.auth.admin.createUser({
         email,
