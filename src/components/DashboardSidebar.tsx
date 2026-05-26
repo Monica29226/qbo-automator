@@ -127,6 +127,12 @@ export function DashboardSidebar({ isAdmin, reviewCount, onSignOut }: DashboardS
       path: "/settings",
       show: isAdmin,
     },
+    {
+      title: "Salud Importación (Admin)",
+      icon: Activity,
+      path: "/admin/import-health",
+      show: isAdmin,
+    },
   ], [isAdmin]);
 
   const rulesItems = useMemo(() => [
