@@ -304,6 +304,14 @@ const App = () => (
                 }
               />
               <Route
+                path="/admin/import-health"
+                element={
+                  <ProtectedRoute requireAdmin>
+                    <AdminImportHealth />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
                 path="/admin/batch-import-v2"
                 element={
                   <ProtectedRoute requireAdmin>
@@ -311,6 +319,7 @@ const App = () => (
                   </ProtectedRoute>
                 }
               />
+
               <Route
                 path="/onboarding/:orgId"
                 element={
