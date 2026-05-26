@@ -72,6 +72,7 @@ export function ImportBatchDialog({ onSuccess }: ImportBatchDialogProps) {
   const [result, setResult] = useState<ImportResult | null>(null);
   const [liveStats, setLiveStats] = useState<ImportResult | null>(null);
   const [statusMessage, setStatusMessage] = useState("");
+  const [drainAll, setDrainAll] = useState(false);
 
   const handleOpen = (val: boolean) => {
     setOpen(val);
