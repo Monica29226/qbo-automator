@@ -14,6 +14,7 @@ import {
   Shield,
   Users,
   TrendingUp,
+  Activity,
 } from "lucide-react";
 import calderonLogo from "@/assets/acl-logo-new.png";
 import {
@@ -124,6 +125,12 @@ export function DashboardSidebar({ isAdmin, reviewCount, onSignOut }: DashboardS
       title: "Configuración",
       icon: Settings,
       path: "/settings",
+      show: isAdmin,
+    },
+    {
+      title: "Salud Importación (Admin)",
+      icon: Activity,
+      path: "/admin/import-health",
       show: isAdmin,
     },
   ], [isAdmin]);

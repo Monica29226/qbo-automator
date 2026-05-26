@@ -2,14 +2,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import { useAuth } from "@/hooks/useAuth";
 import { useImportHealth, type OrgHealth } from "@/hooks/useImportHealth";
 import {
@@ -27,6 +19,7 @@ import { es } from "date-fns/locale";
 import { useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { Link } from "react-router-dom";
 
 function healthBadge(h: OrgHealth["health"]) {
   if (h === "ok")
@@ -57,36 +50,35 @@ function syncLabel(iso: string | null) {
   }
 }
 
+function Metric({ label, value, accent }: { label: React.ReactNode; value: React.ReactNode; accent?: string }) {
+  return (
+    <div className="rounded-md border p-3">
+      <div className="text-xs text-muted-foreground">{label}</div>
+      <div className={`text-2xl font-semibold ${accent ?? ""}`}>{value}</div>
+    </div>
+  );
+}
+
 export function ImportHealthPanel() {
-  const { isAdmin, activeOrganization } = useAuth();
+  const { activeOrganization } = useAuth();
   const { data, isLoading, refetch, isFetching } = useImportHealth({
-    allOrgs: isAdmin,
+    allOrgs: false,
     organizationId: activeOrganization,
   });
 
-  const [drainingAll, setDrainingAll] = useState(false);
-  const [drainingOrg, setDrainingOrg] = useState<string | null>(null);
+  const [draining, setDraining] = useState(false);
+  const org = data?.orgs?.[0];
 
-  const orgs = data?.orgs ?? [];
-  const summary = orgs.reduce(
-    (acc, o) => {
-      acc[o.health]++;
-      acc.totalBacklog += o.backlog_skip_count;
-      acc.totalToday += o.imported_today;
-      return acc;
-    },
-    { ok: 0, warning: 0, critical: 0, totalBacklog: 0, totalToday: 0 }
-  );
-
-  const drainOne = async (orgId: string, orgName: string) => {
-    setDrainingOrg(orgId);
-    const t = toast.loading(`Drenando correo de ${orgName}...`);
+  const drain = async () => {
+    if (!org) return;
+    setDraining(true);
+    const t = toast.loading(`Drenando correo de ${org.organization_name}...`);
     try {
       const { data: res, error } = await supabase.functions.invoke("auto-sync-invoices", {
-        body: { trigger: "manual_drain", organization_id: orgId },
+        body: { trigger: "manual_drain", organization_id: org.organization_id },
       });
       if (error) throw error;
-      toast.success(`Drenado de ${orgName} disparado`, {
+      toast.success("Drenado disparado", {
         id: t,
         description: res?.summary
           ? `Procesadas: ${res.summary.processed ?? 0} · Errores: ${res.summary.errors ?? 0}`
@@ -94,39 +86,27 @@ export function ImportHealthPanel() {
       });
       refetch();
     } catch (e) {
-      toast.error(`Falló el drenado de ${orgName}`, {
+      toast.error("Falló el drenado", {
         id: t,
         description: e instanceof Error ? e.message : String(e),
       });
     } finally {
-      setDrainingOrg(null);
+      setDraining(false);
     }
   };
 
-  const drainAll = async () => {
-    setDrainingAll(true);
-    const t = toast.loading(`Drenando ${orgs.length} organizaciones...`);
-    try {
-      const { data: res, error } = await supabase.functions.invoke("auto-sync-invoices", {
-        body: { trigger: "manual_drain_all" },
-      });
-      if (error) throw error;
-      toast.success("Drenado masivo completado", {
-        id: t,
-        description: res?.total
-          ? `${res.total.processed ?? 0} mensajes procesados en ${res.total.orgs ?? orgs.length} empresas`
-          : "Revisa el panel para ver el resultado",
-      });
-      refetch();
-    } catch (e) {
-      toast.error("Falló el drenado masivo", {
-        id: t,
-        description: e instanceof Error ? e.message : String(e),
-      });
-    } finally {
-      setDrainingAll(false);
-    }
-  };
+  if (!activeOrganization) {
+    return (
+      <Card className="mb-6">
+        <CardHeader>
+          <CardTitle className="text-lg flex items-center gap-2">
+            <Activity className="h-5 w-5" /> Salud de Importación de Correo
+          </CardTitle>
+          <CardDescription>Selecciona una empresa para ver su estado.</CardDescription>
+        </CardHeader>
+      </Card>
+    );
+  }
 
   return (
     <Card className="mb-6">
@@ -137,23 +117,19 @@ export function ImportHealthPanel() {
             Salud de Importación de Correo
           </CardTitle>
           <CardDescription>
-            {isAdmin
-              ? "Estado de importación en todas las organizaciones"
-              : "Estado de importación de tu organización"}
+            {org ? `Estado de importación de ${org.organization_name}` : "Estado de importación de tu empresa"}
           </CardDescription>
         </div>
         <div className="flex gap-2">
-          {isAdmin && (
-            <Button
-              variant="default"
-              size="sm"
-              onClick={drainAll}
-              disabled={drainingAll || orgs.length === 0}
-            >
-              <Download className={`h-4 w-4 mr-2 ${drainingAll ? "animate-pulse" : ""}`} />
-              {drainingAll ? "Drenando..." : "Drenar todas"}
-            </Button>
-          )}
+          <Button
+            variant="default"
+            size="sm"
+            onClick={drain}
+            disabled={!org?.has_integration || draining}
+          >
+            <Download className={`h-4 w-4 mr-2 ${draining ? "animate-pulse" : ""}`} />
+            {draining ? "Drenando..." : "Drenar correo"}
+          </Button>
           <Button variant="outline" size="sm" onClick={() => refetch()} disabled={isFetching}>
             <RefreshCw className={`h-4 w-4 mr-2 ${isFetching ? "animate-spin" : ""}`} />
             Actualizar
@@ -161,126 +137,74 @@ export function ImportHealthPanel() {
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
-        {/* Summary chips */}
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
-          <div className="rounded-md border p-3">
-            <div className="text-xs text-muted-foreground">Organizaciones</div>
-            <div className="text-2xl font-semibold">{orgs.length}</div>
-          </div>
-          <div className="rounded-md border p-3">
-            <div className="text-xs text-muted-foreground">OK</div>
-            <div className="text-2xl font-semibold text-emerald-600">{summary.ok}</div>
-          </div>
-          <div className="rounded-md border p-3">
-            <div className="text-xs text-muted-foreground">Atención</div>
-            <div className="text-2xl font-semibold text-amber-600">{summary.warning}</div>
-          </div>
-          <div className="rounded-md border p-3">
-            <div className="text-xs text-muted-foreground">Críticas</div>
-            <div className="text-2xl font-semibold text-destructive">{summary.critical}</div>
-          </div>
-          <div className="rounded-md border p-3">
-            <div className="text-xs text-muted-foreground flex items-center gap-1">
-              <Inbox className="h-3 w-3" /> Backlog total
-            </div>
-            <div className="text-2xl font-semibold">{summary.totalBacklog}</div>
-          </div>
-        </div>
-
-        {/* Table */}
         {isLoading ? (
           <div className="space-y-2">
             <Skeleton className="h-10 w-full" />
-            <Skeleton className="h-10 w-full" />
-            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-24 w-full" />
           </div>
-        ) : orgs.length === 0 ? (
+        ) : !org ? (
           <p className="text-sm text-muted-foreground text-center py-6">Sin datos.</p>
         ) : (
-          <div className="overflow-x-auto rounded-md border">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Organización</TableHead>
-                  <TableHead>Estado</TableHead>
-                  <TableHead>Integración</TableHead>
-                  <TableHead>Última sync</TableHead>
-                  <TableHead className="text-right">Backlog</TableHead>
-                  <TableHead className="text-right">Hoy</TableHead>
-                  <TableHead className="text-right">7d</TableHead>
-                  <TableHead className="text-right">Mes</TableHead>
-                  <TableHead className="text-right">Pend. config</TableHead>
-                  <TableHead className="text-right">Errores 7d</TableHead>
-                  <TableHead className="text-right">Acción</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {orgs.map((o) => (
-                  <TableRow key={o.organization_id}>
-                    <TableCell className="font-medium">{o.organization_name}</TableCell>
-                    <TableCell>{healthBadge(o.health)}</TableCell>
-                    <TableCell>
-                      {o.has_integration ? (
-                        <Badge variant="outline" className="capitalize">
-                          <Mail className="h-3 w-3 mr-1" />
-                          {o.service_type}
-                        </Badge>
-                      ) : (
-                        <Badge variant="destructive">Sin configurar</Badge>
-                      )}
-                    </TableCell>
-                    <TableCell
-                      className={
-                        o.last_sync_status === "error" ? "text-destructive" : ""
-                      }
-                      title={o.last_sync_error ?? undefined}
-                    >
-                      {syncLabel(o.last_sync_at)}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      {o.backlog_skip_count > 0 ? (
-                        <Badge variant="secondary">{o.backlog_skip_count}</Badge>
-                      ) : (
-                        <span className="text-muted-foreground">0</span>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-right">{o.imported_today}</TableCell>
-                    <TableCell className="text-right">{o.imported_7d}</TableCell>
-                    <TableCell className="text-right">{o.imported_month}</TableCell>
-                    <TableCell className="text-right">
-                      {o.pending_config > 0 ? (
-                        <Badge variant="outline" className="text-amber-700 dark:text-amber-400">
-                          {o.pending_config}
-                        </Badge>
-                      ) : (
-                        <span className="text-muted-foreground">0</span>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      {o.errors_count > 0 ? (
-                        <Badge variant="destructive">{o.errors_count}</Badge>
-                      ) : (
-                        <span className="text-muted-foreground">0</span>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        disabled={!o.has_integration || drainingOrg === o.organization_id || drainingAll}
-                        onClick={() => drainOne(o.organization_id, o.organization_name)}
-                      >
-                        <Download
-                          className={`h-3.5 w-3.5 ${drainingOrg === o.organization_id ? "animate-pulse" : ""}`}
-                        />
-                        <span className="ml-1">Drenar</span>
-                      </Button>
-                    </TableCell>
-                  </TableRow>
+          <>
+            <div className="flex flex-wrap items-center gap-2">
+              {healthBadge(org.health)}
+              {org.has_integration ? (
+                <Badge variant="outline" className="capitalize">
+                  <Mail className="h-3 w-3 mr-1" />
+                  {org.service_type}
+                </Badge>
+              ) : (
+                <Badge variant="destructive">Sin integración de correo</Badge>
+              )}
+              <span
+                className={`text-sm ${org.last_sync_status === "error" ? "text-destructive" : "text-muted-foreground"}`}
+                title={org.last_sync_error ?? undefined}
+              >
+                Última sync: {syncLabel(org.last_sync_at)}
+              </span>
+              {!org.has_integration && (
+                <Button asChild size="sm" variant="link" className="h-auto px-1">
+                  <Link to="/integrations">Configurar →</Link>
+                </Button>
+              )}
+            </div>
+
+            <div className="grid grid-cols-2 md:grid-cols-6 gap-2">
+              <Metric
+                label={
+                  <span className="flex items-center gap-1">
+                    <Inbox className="h-3 w-3" /> Backlog
+                  </span>
+                }
+                value={org.backlog_skip_count}
+              />
+
+              <Metric label="Hoy" value={org.imported_today} />
+              <Metric label="7 días" value={org.imported_7d} />
+              <Metric label="Mes" value={org.imported_month} />
+              <Metric
+                label="Pend. config"
+                value={org.pending_config}
+                accent={org.pending_config > 0 ? "text-amber-600" : ""}
+              />
+              <Metric
+                label="Errores 7d"
+                value={org.errors_count}
+                accent={org.errors_count > 0 ? "text-destructive" : ""}
+              />
+            </div>
+
+            {org.recent_error_codes.length > 0 && (
+              <div className="text-xs text-muted-foreground">
+                Códigos de error recientes:{" "}
+                {org.recent_error_codes.map((c) => (
+                  <Badge key={c} variant="outline" className="mr-1">
+                    {c}
+                  </Badge>
                 ))}
-              </TableBody>
-            </Table>
-          </div>
+              </div>
+            )}
+          </>
         )}
 
         {data?.generated_at && (

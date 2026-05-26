@@ -38,6 +38,7 @@ import AdminCleanupQuickActions from "./pages/AdminCleanupQuickActions";
 import AdminSharePointSetup from "./pages/AdminSharePointSetup";
 import AdminSharePointBulkUpload from "./pages/AdminSharePointBulkUpload";
 import AdminAccesos from "./pages/AdminAccesos";
+import AdminImportHealth from "./pages/AdminImportHealth";
 import BatchImportV2 from "./pages/BatchImportV2";
 import NotFound from "./pages/NotFound";
 import { ProtectedRoute } from "./components/ProtectedRoute";
@@ -303,6 +304,14 @@ const App = () => (
                 }
               />
               <Route
+                path="/admin/import-health"
+                element={
+                  <ProtectedRoute requireAdmin>
+                    <AdminImportHealth />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
                 path="/admin/batch-import-v2"
                 element={
                   <ProtectedRoute requireAdmin>
@@ -310,6 +319,7 @@ const App = () => (
                   </ProtectedRoute>
                 }
               />
+
               <Route
                 path="/onboarding/:orgId"
                 element={
