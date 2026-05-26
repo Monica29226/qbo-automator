@@ -1,71 +1,74 @@
-# Diagnóstico Centro Médico Terranoa
+# Plan: Importar mayo 2026 de Terranoa sin pérdidas silenciosas
 
-## Lo que está pasando (datos reales)
+## Por qué antes "no subía nada sin dar error"
 
-**Organización:** `CENTRO MEDICO TERRANOA SOCIEDAD ANONIMA`
-**Proveedor de correo:** Hostinger IMAP (`info@centromedicoterranoa.com`)
-**QuickBooks:** conectado ✅
+Tras revisar el flujo actual, las facturas se descartan **en silencio** en 3 puntos:
 
-### Facturas publicadas por mes
-| Mes | Publicadas | Esperado |
-|---|---|---|
-| Ene 2026 | 37 | ~90 |
-| Feb 2026 | 13 | ~90 |
-| Mar 2026 | 5 | ~90 |
-| Abr 2026 | 29 | ~90 |
-| **May 2026** | **15** | ~90 |
+1. **Deduplicación por `doc_key`** — si el `doc_key` ya existe en `processed_documents` o en `qbo_publish_tracking`, el ítem se marca como `duplicate` y no entra al log visible.
+2. **Validación de receptor** — si el XML viene sin `MensajeReceptor` o el `Receptor.Identificacion` no coincide con la cédula de Terranoa, se rechaza como "no dirigida a la organización".
+3. **Estado Hacienda** — si no hay XML de respuesta con `EstadoMensaje = 1`, queda en `rejected` sin notificación.
 
-Hay un **déficit grande** consistente en todos los meses.
+El lote actual (`/admin/batch-import-v2`) procesa el ZIP pero **no muestra qué archivos quedaron fuera ni por qué**, por eso parece que "no sube nada".
 
-### Estado de la sincronización (últimas 20 corridas del cron)
-- Hostinger reporta **510 mensajes** en el buzón filtrado.
-- Cada corrida solo procesa **0–4 facturas** y termina como `partial` por límite de tiempo (60–95 s).
-- El cursor de reanudación `hostinger_resume_skip` está en **300** y avanza lentísimo (~3 por corrida cada 30 min).
-- En el dashboard aparece alerta **"Email IMAP (Hostinger) desconectado · Reconectar"** aunque `is_active=true` en BD (credenciales sin refrescar desde 15-may).
+## Procedimiento recomendado (sin tocar código todavía)
 
-### Causa raíz
-1. **Backlog gigante de 510 correos** mezclados con XML/PDF que el cron de 30 min no alcanza a drenar.
-2. La función `hostinger-fetch-invoices` está procesando muy pocos mensajes por chunk (tiempo casi todo gastado en IMAP FETCH/decode, no en parseo).
-3. La integración Hostinger probablemente perdió la contraseña/IMAP login (de ahí la alerta del banner), por lo que las nuevas facturas tampoco entran limpio.
-4. 3 facturas quedaron en `review` (pendientes de configuración de proveedor) y no llegan a publicarse.
+### Paso 1 — Identificar EXACTAMENTE qué consecutivos faltan
+1. Abrir Terranoa → Dashboard → **"Sincronizar desde Excel" (Siku)**
+2. Subir el reporte Siku de mayo 2026
+3. El sistema devuelve la lista de `NumeroConsecutivo` que están en Siku pero no en el sistema → exportar como CSV
 
-## Plan propuesto (NO importar lote todavía)
+### Paso 2 — Armar el ZIP correctamente
+Para cada consecutivo faltante, el ZIP debe contener **3 archivos por factura** con nombres que compartan prefijo:
+```
+50601052600310XXXX...-FE.xml          ← XML de la factura
+50601052600310XXXX...-MR.xml          ← MensajeReceptor (EstadoMensaje=1)
+50601052600310XXXX...-FE.pdf          ← PDF (opcional pero recomendado)
+```
+- Sin MensajeReceptor el sistema rechaza por política de Hacienda
+- Si descargas de ATV vienen ya con esos nombres
 
-### Fase 1 — Reparar la conexión Hostinger
-- Confirmar/actualizar credenciales IMAP de `info@centromedicoterranoa.com` desde **Conexiones → Hostinger → Reconectar**.
-- Validar login con un fetch manual de 1 chunk y revisar `sync_logs` (debe quedar `success`, no `partial` con error de auth).
+### Paso 3 — Mejorar el reporte del lote ANTES de importar (cambio mínimo de código)
+Para evitar que vuelva a "no pasar nada en silencio", ajustar `BatchImportV2` + `batch-import-finalize` para que el reporte final muestre **una fila por archivo del ZIP** con una de estas razones:
 
-### Fase 2 — Drenar el backlog de 510 correos
-- Ejecutar **Recuperar Backlog** (`recover-org-backlog`) varias veces seguidas para esa organización con `max_chunks=30`. Esto:
-  - Reanuda desde `skip=300` ya guardado.
-  - Procesa hasta 30 chunks por llamada usando el service-role (más rápido que cron de 30 min).
-  - Limpia el cursor cuando termine.
-- Monitorear con `sync_logs` por cada corrida hasta que `gmail_fetched` baje o se procese todo el rango.
+| Estado | Significado |
+|---|---|
+| `accepted` | Entró a `processed_documents` |
+| `duplicate` | `doc_key` ya existía (con link a la factura original) |
+| `wrong_receptor` | Cédula receptor ≠ Terranoa |
+| `no_mensaje_receptor` | Falta el MR.xml en el ZIP |
+| `hacienda_rejected` | `EstadoMensaje ≠ 1` |
+| `not_fe` | Es TE/04 u otro tipo no soportado |
+| `out_of_date_range` | Fecha < 2026-01-01 |
+| `pending_config` | Aceptada pero proveedor sin cuenta QBO |
+| `parse_error` | XML inválido (con detalle) |
 
-### Fase 3 — Resolver las 3 facturas en `review`
-- Abrir **Configuración Pendiente** para Terranoa.
-- Asignar cuenta contable a los proveedores nuevos para que el auto-publish las suba a QBO.
+Y descargar ese reporte como CSV. Así sabés exactamente por qué cada XML no llegó.
 
-### Fase 4 — Auditoría de huecos
-- Comparar consecutivos Hacienda (clave) por mes contra QBO con el botón **Reconciliar XML vs QBO**.
-- Listar los `NumeroConsecutivo` faltantes mes a mes para saber **exactamente cuántas y cuáles** facturas se perdieron.
+### Paso 4 — Importar mayo
+1. `/admin/batch-import-v2` → seleccionar organización **Terranoa**
+2. Etiqueta de mes: `Mayo 2026`
+3. Subir el ZIP del Paso 2
+4. Esperar el resumen → revisar el CSV
+5. Para los `pending_config` → ir a Configuración Pendiente y asignar cuenta QBO → se auto-publican
+6. Para `duplicate` → verificar contra la factura existente (normalmente está bien, solo confirma)
+7. Para `no_mensaje_receptor` / `hacienda_rejected` → descargar MR correcto y reintentar solo esas
 
-### Fase 5 — Importar Lote (solo cuando 1–4 estén OK)
-- Una vez confirmado qué consecutivos faltan, usar `/admin/batch-import-v2` con el ZIP que contenga esos XML específicos + el MensajeReceptor de Hacienda + el PDF.
-- El sistema validará namespace, clave de 50 dígitos, deduplicación contra `qbo_publish_tracking` y solo publicará los aceptados por Hacienda (`Mensaje=1`).
+### Paso 5 — Verificar cierre de mes
+- Volver a correr "Sincronizar desde Excel" con el Siku de mayo
+- El delta debe ser 0
+- Confirmar que `qbo_publish_tracking` tiene entradas para todas las facturas con `qbo_entity_id` no nulo
 
----
+## Detalles técnicos del cambio mínimo (Paso 3)
 
-## Detalle técnico
+Archivos a modificar:
+- `supabase/functions/batch-import-process/index.ts` → en cada `continue`/`skip` agregar `batch_import_items.insert({status, reason, doc_key, supplier_name, filename})` con motivo específico (hoy varios `continue` silenciosos no escriben nada).
+- `supabase/functions/batch-import-finalize/index.ts` → agregar agregados por `reason` y generar CSV con `Resource: text/csv` subido a `invoice-imports/{batch_id}/report.csv`.
+- `src/pages/BatchImportV2.tsx` → tabla de resultados agrupada por estado con botón "Descargar CSV" y filtro por motivo.
 
-- **Tablas/funciones revisadas:** `organizations`, `processed_documents`, `sync_logs`, `system_settings`, `integration_accounts`, función `hostinger-fetch-invoices`, función `recover-org-backlog`.
-- **Cursor activo:** `system_settings.hostinger_resume_skip_a247170a-b083-41e5-82b9-17ca46a37fa2 = 300`.
-- **Tiempos cron:** 60–95 s por corrida (cerca del límite duro). Por eso es crítico drenar con `recover-org-backlog` que corre fuera del cron.
-- **Riesgos:** si se importa lote ANTES de drenar el backlog, las mismas facturas pueden llegar dos veces (el dedupe por `doc_key` lo evita, pero ensucia el log y consume ciclos QBO).
+Sin cambios de schema; `batch_import_items` ya tiene las columnas `status`, `reason`, `filename`, `doc_key`, `supplier_name`.
 
----
-
-## Pregunta antes de implementar
-
-1. ¿Confirmás que primero corra **Fase 1 (reconectar Hostinger)** y **Fase 2 (drenar backlog con recover-org-backlog)**, y recién después pasemos a Fase 4 (auditar huecos) y Fase 5 (importar lote)?
-2. ¿Tenés acceso a la contraseña IMAP de `info@centromedicoterranoa.com` para reconectar? Si no, hay que pedirla a Terranoa.
+## Resultado esperado
+- Subís el ZIP de mayo y obtenés un CSV con 90 filas explicando el destino de cada archivo
+- Nunca más "no pasó nada en silencio"
+- Las que entran como `pending_config` se desbloquean asignando cuenta al proveedor
+- Cierre mensual auditable contra Siku

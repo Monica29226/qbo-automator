@@ -158,6 +158,15 @@ Deno.serve(async (req) => {
     });
     if (!isAdmin) return json({ error: "forbidden" }, 403);
 
+    // Load org tax_id for receptor validation
+    const { data: org } = await supabase
+      .from("organizations")
+      .select("tax_id, identification_number")
+      .eq("id", organization_id)
+      .maybeSingle();
+    const orgTaxId = String(org?.tax_id ?? org?.identification_number ?? "").replace(/\D/g, "");
+
+
     // Index files by clave
     const xmls: { filename: string; text: string; bytes: Uint8Array }[] = [];
     const pdfsByClave = new Map<string, { filename: string; bytes: Uint8Array }>();
@@ -232,10 +241,28 @@ Deno.serve(async (req) => {
         continue;
       }
 
+      // Date cutoff: only process invoices from 2026-01-01 onwards
+      if (p.fecha && p.fecha < "2026-01-01") {
+        results.push({ ...base, reason: `Fuera de rango: fecha ${p.fecha} es anterior al 1-ene-2026` });
+        continue;
+      }
+
       // Month filter
       if (month_filter && p.fecha && !p.fecha.startsWith(month_filter)) {
         results.push({ ...base, reason: `Fuera del mes seleccionado (${month_filter})` });
         continue;
+      }
+
+      // Receptor must match organization tax ID
+      if (orgTaxId && p.receptorCedula) {
+        const recCed = p.receptorCedula.replace(/\D/g, "");
+        if (recCed && recCed !== orgTaxId) {
+          results.push({
+            ...base,
+            reason: `Receptor incorrecto: factura dirigida a ${recCed}, esperado ${orgTaxId}`,
+          });
+          continue;
+        }
       }
 
       // Duplicate
@@ -248,6 +275,7 @@ Deno.serve(async (req) => {
         });
         continue;
       }
+
 
       // Upload XML
       const xmlPath = `${organization_id}/${batch_id}/${p.clave}.xml`;
@@ -296,8 +324,42 @@ Deno.serve(async (req) => {
         base.reason = "Falta Mensaje Receptor de Hacienda";
       }
 
+      // Bridge: if accepted, actually create the invoice record via the standard pipeline
+      if (base.status === "accepted") {
+        try {
+          const { data: procData, error: procErr } = await supabase.functions.invoke(
+            "process-document-xml",
+            {
+              body: {
+                organization_id,
+                xml_content: bytesToText(fac.bytes),
+                pdf_attachment_url: base.pdf_storage_path ?? null,
+                file_path: base.pdf_storage_path ?? null,
+                source: "batch_import_v2",
+              },
+            }
+          );
+          if (procErr) {
+            const msg = (procErr.message || "").toLowerCase();
+            if (msg.includes("duplicad") || msg.includes("ya existe")) {
+              base.status = "duplicate";
+              base.reason = "Ya existía en el sistema";
+            } else {
+              base.status = "rejected";
+              base.reason = `Error al crear factura: ${procErr.message}`;
+            }
+          } else if (procData?.status === "review" || procData?.needs_config) {
+            base.reason = "Aceptada — proveedor sin cuenta QBO configurada (Configuración Pendiente)";
+          }
+        } catch (e) {
+          base.status = "rejected";
+          base.reason = `Excepción al crear factura: ${e instanceof Error ? e.message : String(e)}`;
+        }
+      }
+
       results.push(base);
     }
+
 
     // Append "otros" rejected (tiquetes, etc.)
     for (const o of otrosRechazados) {
