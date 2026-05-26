@@ -256,8 +256,15 @@ export function ImportBatchDialog({ onSuccess }: ImportBatchDialogProps) {
 
         if (data.partial && typeof data.next_skip_count === "number" && data.next_skip_count > skipCount) {
           skipCount = data.next_skip_count;
-          // Persistir cursor por si el usuario cierra/reabre el modal o el navegador
+          stagnantStreak = 0;
           try { localStorage.setItem(cursorKey, String(skipCount)); } catch { /* ignore */ }
+        } else if (data.partial && drainAll) {
+          // Server says partial but skip didn't advance — count stagnant iterations
+          stagnantStreak++;
+          if (stagnantStreak >= 3) {
+            console.warn("[ImportBatch] Drain mode: 3 stagnant iterations, stopping");
+            continueProcessing = false;
+          }
         } else {
           continueProcessing = false;
         }
