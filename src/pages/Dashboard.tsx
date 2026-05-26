@@ -18,6 +18,7 @@ import { useDashboardStats, useOrganizationConnections } from "@/hooks/useDashbo
 import { ImportBatchDialog } from "@/components/dashboard/ImportBatchDialog";
 import { SearchInvoiceDialog } from "@/components/dashboard/SearchInvoiceDialog";
 import { ReconcileXmlQboButton } from "@/components/dashboard/ReconcileXmlQboButton";
+import { ImportHealthPanel } from "@/components/dashboard/ImportHealthPanel";
 
 // Lazy load componentes pesados
 const RecentDocuments = lazy(() => import("@/components/dashboard/RecentDocuments").then(m => ({ default: m.RecentDocuments })));
