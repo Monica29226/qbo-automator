@@ -1,61 +1,78 @@
 ## Objetivo
 
-Generar un paquete de diagnóstico (`/mnt/documents/qbo_diagnostic_terranoa.json` + `/mnt/documents/qbo_diagnostic_terranoa.py`) con toda la configuración relevante de la org **Centro Medico Terranoa** y los errores actuales, para que Claude Code pueda analizarlo offline.
+Reemplazar el diagnóstico específico de Terranoa por un **paquete de diagnóstico global** que cubra **todas las organizaciones activas** del sistema, para pegárselo a Claude Code y que pueda detectar errores transversales (no solo de una empresa).
 
-## Qué incluirá el JSON exportado
+## Archivos a generar
 
-1. **Organization**
-   - id, name, tax_id, identification, qbo_realm_id, banderas de conexión (gmail/outlook/hostinger/bluehost/quickbooks), default_account_ref.
+1. `/mnt/documents/qbo_diagnostic_global.json` — snapshot completo del sistema (sin tokens ni secretos).
+2. `/mnt/documents/qbo_diagnostic_global.py` — script standalone re-ejecutable contra cualquier ambiente.
 
-2. **Integraciones activas** (`integration_accounts`)
-   - service_type, account_email, is_active, created_at, realm_id, expires_at del token (sin exponer access_token/refresh_token — solo metadatos).
+Mantengo los archivos de Terranoa como están (no los borro) por si los necesitas de referencia.
 
-3. **Settings** (`system_settings` de la org)
-   - Todos los pares key/value (dry_run, mail_provider, currency_fallback, duplicate_window_days, tax_handling_mode si existe, etc.).
+## Contenido del JSON global
 
-4. **Vendor defaults** (35 reglas)
-   - vendor_name, default_account_ref, default_uses_tax. Marcar cuáles apuntan a cuentas de activo (rango 1xx) vs gasto (rango 6xx).
+### 1. Metadatos del sistema
+- Fecha de generación, versión de schema, conteo total de orgs activas/inactivas.
 
-5. **Resumen de facturas** (`processed_documents`)
-   - Conteo por status.
-   - Totales por mes y por moneda.
-   - Listado completo de **errores y review** con: id, supplier_name, doc_number, total, issue_date, default_account_ref, error_message, qbo_entity_id.
+### 2. Resumen por organización (una fila por org)
+Para **cada** organización activa:
+- `id`, `name`, `tax_id`, `qbo_realm_id`
+- Flags de conexión: gmail / outlook / hostinger / bluehost / quickbooks / sharepoint
+- `default_account_ref`
+- Conteos de `processed_documents` por status (pending, processed, review, error, currency_mismatch, published)
+- Última fecha de factura recibida / publicada
+- Conteo de `vendor_defaults` y cuántos apuntan a cuentas de activo (1xx) vs gasto (6xx)
+- Estado del token QBO (expires_at, sin exponer access/refresh tokens)
+- Última corrida de `sync_logs` (status, error_code)
 
-6. **Tracking QBO** (`qbo_publish_tracking`)
-   - Últimos 20 registros con status != published para detectar limbo.
+### 3. Diagnóstico agregado (cross-org)
+- **Orgs sin QBO conectado** pero con facturas pendientes.
+- **Tokens QBO expirados o por expirar** (<24h).
+- **Orgs con backlog > X horas** (procesadas sin publicar).
+- **Errores recurrentes** agrupados por `error_message` con conteo y orgs afectadas (p.ej. "TaxCode 13% no existe" aparece en N orgs).
+- **Vendors mapeados a cuentas de activo** — lista global con org + vendor + cuenta.
+- **Tarifas IVA bloqueadas** detectadas en errores de QBO (13%, 4%, etc.) con conteo por org.
+- **Inconsistencias** entre `organizations.{provider}_connected` y `integration_accounts.is_active`.
+- **Orgs sin facturas en los últimos 7 días** con correo activo (posible backlog de correo).
+- **Settings divergentes** entre orgs (p.ej. quién tiene `dry_run=true`).
 
-7. **Logs de sincronización** (`sync_logs`)
-   - Últimos 10 corridos: status, error_detail, timestamps.
+### 4. Configuración global
+- `system_settings` por org agrupados por key (para detectar valores raros).
+- `bank_import_configs` activos.
+- `sharepoint_admin_account` (solo metadatos: email, drive_id, is_active).
+- Conteo de `alert_history` no resueltas por org y por código.
 
-8. **Diagnóstico precomputado**
-   - Lista de vendors mapeados a cuentas de activo (no aparecen en P&L).
-   - Lista de tarifas IVA bloqueadas que QBO no tiene configuradas (13%, 4% — ya detectadas).
-   - Vendors sin regla automática que están en review.
+### 5. Errores actuales detallados (top 50 globales)
+De `processed_documents` con status in ('error','review','currency_mismatch'):
+- org_name, supplier_name, doc_number, total, currency, issue_date, default_account_ref, error_message, qbo_entity_id.
 
-## Script Python (`qbo_diagnostic_terranoa.py`)
+### 6. Tracking QBO en limbo
+Últimos 50 `qbo_publish_tracking` con status != 'published' agrupados por org.
 
-Será un script standalone que recibe:
-- `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` y `ORG_ID` por env vars.
-- Usa `requests` + PostgREST (sin dependencias raras).
-- Re-ejecuta todas las consultas anteriores y vuelca un JSON idéntico.
+### 7. Logs de sincronización recientes
+Últimos 50 `sync_logs` con error (todas las orgs), incluyendo error_code y error_detail.
 
-Esto permite al usuario:
-- Tomar el JSON ya generado y pegarlo en Claude Code.
-- O ejecutar el script de nuevo cuando cambien los datos.
+## Script Python (`qbo_diagnostic_global.py`)
+
+- Standalone, sin dependencias externas (usa `urllib` como el script de Terranoa).
+- Recibe `SUPABASE_URL` y `SUPABASE_SERVICE_ROLE_KEY` por env vars.
+- **No requiere ORG_ID** — recorre todas las orgs activas automáticamente.
+- Replica todas las consultas y genera el JSON idéntico al snapshot.
+- Sanitiza: nunca incluye `access_token`, `refresh_token`, `client_secret`, `credentials.password`, etc. Solo metadatos (expires_at, account_email, is_active).
 
 ## Pasos de implementación
 
-1. Crear `/mnt/documents/qbo_diagnostic_terranoa.py` con el script standalone.
-2. Ejecutar las consultas SQL (vía supabase--read_query) y generar `/mnt/documents/qbo_diagnostic_terranoa.json` con todos los datos sanitizados (sin tokens).
-3. Adjuntar ambos artefactos al chat con `<presentation-artifact>` para que el usuario los descargue.
-
-## Hallazgos preliminares que el JSON dejará explícitos
-
-- **4 errores son todos por TaxCode faltante en QBO** (tarifas 13% y 4%). Es problema de configuración en QuickBooks, no del sistema. Hay que crear los TaxCode/TaxRate correspondientes en QBO antes de reintentar.
-- **3 facturas en review** son de proveedores sin regla (Electromecánica Artico CR SA, YANDOLIN DAYANA MORALES PEREZ ×2). Se resuelven asignándoles una cuenta default.
-- **7 vendor_defaults apuntan a cuentas de activo** (142, 143, 149, 150, 152, 173, 132) — por eso el P&L se ve incompleto en feb/mar/abr.
-- Token QBO expira hoy (auto-renew debería actuar; si no, queda registrado en el JSON).
+1. Crear el script `/mnt/documents/qbo_diagnostic_global.py`.
+2. Ejecutar todas las consultas vía `supabase--read_query` y armar el JSON sanitizado.
+3. Guardar `/mnt/documents/qbo_diagnostic_global.json`.
+4. Adjuntar ambos al chat con `<presentation-artifact>`.
 
 ## No modifica nada
 
-Solo lee datos. No cambia settings, no toca QBO, no edita facturas.
+Solo lectura. No cambia settings, no toca QBO, no edita facturas, no toca tokens.
+
+## Hallazgos que el JSON dejará explícitos (esperados)
+
+- Patrones de error compartidos entre orgs (TaxCodes faltantes, vendors mapeados a activo, tokens expirando).
+- Orgs huérfanas o mal configuradas (correo conectado pero sin facturas, QBO desconectado con backlog).
+- Settings inconsistentes (`dry_run=true` en algunas, IVA mode divergente).
