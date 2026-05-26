@@ -139,7 +139,7 @@ async function fetchEmailsViaIMAP(
 
     // Track execution time to exit early if approaching limit
     const functionStartTime = Date.now();
-    const MAX_EXECUTION_TIME_MS = 20000; // REDUCIDO: 20 seconds max (leave 10s buffer)
+    const MAX_EXECUTION_TIME_MS = 70000; // 70s para drenar el lote IMAP (BATCH_SIZE=40)
     // Fetch each message with early exit on timeout
     for (let i = 0; i < messagesToFetch.length; i++) {
       // Check if approaching timeout - check BEFORE and AFTER each message
