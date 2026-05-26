@@ -211,6 +211,7 @@ export function ImportHealthPanel() {
                   <TableHead className="text-right">Mes</TableHead>
                   <TableHead className="text-right">Pend. config</TableHead>
                   <TableHead className="text-right">Errores 7d</TableHead>
+                  <TableHead className="text-right">Acción</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -261,6 +262,19 @@ export function ImportHealthPanel() {
                       ) : (
                         <span className="text-muted-foreground">0</span>
                       )}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        disabled={!o.has_integration || drainingOrg === o.organization_id || drainingAll}
+                        onClick={() => drainOne(o.organization_id, o.organization_name)}
+                      >
+                        <Download
+                          className={`h-3.5 w-3.5 ${drainingOrg === o.organization_id ? "animate-pulse" : ""}`}
+                        />
+                        <span className="ml-1">Drenar</span>
+                      </Button>
                     </TableCell>
                   </TableRow>
                 ))}
