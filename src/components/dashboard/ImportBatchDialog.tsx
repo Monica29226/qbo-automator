@@ -176,7 +176,8 @@ export function ImportBatchDialog({ onSuccess }: ImportBatchDialogProps) {
         // ignore localStorage errors
       }
       let iteration = 0;
-      const maxIterations = 80; // Permite drenar buzones grandes (≈3200 correos con BATCH_SIZE=40)
+      const maxIterations = drainAll ? 1000 : 80;
+      let stagnantStreak = 0;
       let lastNextSkipCount: number | undefined;
       let lastTotalMessages: number | undefined;
 
