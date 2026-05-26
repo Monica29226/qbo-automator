@@ -1,32 +1,61 @@
 ## Objetivo
 
-El panel "Salud de Importación de Correo" en el Dashboard debe mostrar **únicamente** la información de la empresa activa (la seleccionada en el selector de empresa). Hoy, cuando el usuario es admin, mezcla todas las organizaciones en una sola tabla, lo cual viola el aislamiento por empresa.
+Generar un paquete de diagnóstico (`/mnt/documents/qbo_diagnostic_terranoa.json` + `/mnt/documents/qbo_diagnostic_terranoa.py`) con toda la configuración relevante de la org **Centro Medico Terranoa** y los errores actuales, para que Claude Code pueda analizarlo offline.
 
-## Cambios
+## Qué incluirá el JSON exportado
 
-### 1. `src/components/dashboard/ImportHealthPanel.tsx`
-- Forzar siempre el modo "una sola empresa" usando `activeOrganization`, sin importar si el usuario es admin.
-  - `useImportHealth({ allOrgs: false, organizationId: activeOrganization })`
-- Quitar el botón **"Drenar todas"** del header (era exclusivo admin y operaba global).
-- Convertir la tabla en una **vista de detalle de una sola empresa**:
-  - Encabezado con nombre de la empresa activa, badge de estado, badge de integración.
-  - Cards/grid con: Última sync, Backlog, Importadas hoy / 7d / mes, Pend. config, Errores 7d, últimos códigos de error.
-  - Un único botón **"Drenar correo de esta empresa"** que invoca `auto-sync-invoices` con `organization_id: activeOrganization`.
-- Si no hay empresa activa, mostrar mensaje "Selecciona una empresa".
-- Si la empresa no tiene integración, mostrar CTA "Ir a Integraciones".
+1. **Organization**
+   - id, name, tax_id, identification, qbo_realm_id, banderas de conexión (gmail/outlook/hostinger/bluehost/quickbooks), default_account_ref.
 
-### 2. Vista global para admins (separada)
-- Para no perder la visibilidad cross-org del admin, **NO** se elimina del producto: se mueve a `/admin/import-health` (página nueva), accesible solo desde el menú admin.
-- Esta página sí usa `allOrgs: true` y conserva la tabla multi-empresa y el botón "Drenar todas".
-- Archivo nuevo: `src/pages/AdminImportHealth.tsx` (reutiliza la lógica actual del panel, renombrada como `AdminImportHealthTable`).
-- Ruta añadida en `src/App.tsx` protegida por `isAdmin`.
-- Enlace en `DashboardSidebar.tsx` bajo la sección de Admin.
+2. **Integraciones activas** (`integration_accounts`)
+   - service_type, account_email, is_active, created_at, realm_id, expires_at del token (sin exponer access_token/refresh_token — solo metadatos).
 
-### 3. Sin cambios en backend
-- `import-health-summary` ya respeta `organization_id` y valida membresía: no requiere cambios.
-- `auto-sync-invoices` ya acepta `organization_id` puntual.
+3. **Settings** (`system_settings` de la org)
+   - Todos los pares key/value (dry_run, mail_provider, currency_fallback, duplicate_window_days, tax_handling_mode si existe, etc.).
 
-## Resultado
+4. **Vendor defaults** (35 reglas)
+   - vendor_name, default_account_ref, default_uses_tax. Marcar cuáles apuntan a cuentas de activo (rango 1xx) vs gasto (rango 6xx).
 
-- En `/dashboard` cada usuario (incluido admin con empresa activa) solo ve la salud de **su empresa activa**. Cero mezcla de datos entre clientes.
-- Los admins mantienen la vista consolidada multi-empresa, pero en una pantalla separada y explícita (`/admin/import-health`).
+5. **Resumen de facturas** (`processed_documents`)
+   - Conteo por status.
+   - Totales por mes y por moneda.
+   - Listado completo de **errores y review** con: id, supplier_name, doc_number, total, issue_date, default_account_ref, error_message, qbo_entity_id.
+
+6. **Tracking QBO** (`qbo_publish_tracking`)
+   - Últimos 20 registros con status != published para detectar limbo.
+
+7. **Logs de sincronización** (`sync_logs`)
+   - Últimos 10 corridos: status, error_detail, timestamps.
+
+8. **Diagnóstico precomputado**
+   - Lista de vendors mapeados a cuentas de activo (no aparecen en P&L).
+   - Lista de tarifas IVA bloqueadas que QBO no tiene configuradas (13%, 4% — ya detectadas).
+   - Vendors sin regla automática que están en review.
+
+## Script Python (`qbo_diagnostic_terranoa.py`)
+
+Será un script standalone que recibe:
+- `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` y `ORG_ID` por env vars.
+- Usa `requests` + PostgREST (sin dependencias raras).
+- Re-ejecuta todas las consultas anteriores y vuelca un JSON idéntico.
+
+Esto permite al usuario:
+- Tomar el JSON ya generado y pegarlo en Claude Code.
+- O ejecutar el script de nuevo cuando cambien los datos.
+
+## Pasos de implementación
+
+1. Crear `/mnt/documents/qbo_diagnostic_terranoa.py` con el script standalone.
+2. Ejecutar las consultas SQL (vía supabase--read_query) y generar `/mnt/documents/qbo_diagnostic_terranoa.json` con todos los datos sanitizados (sin tokens).
+3. Adjuntar ambos artefactos al chat con `<presentation-artifact>` para que el usuario los descargue.
+
+## Hallazgos preliminares que el JSON dejará explícitos
+
+- **4 errores son todos por TaxCode faltante en QBO** (tarifas 13% y 4%). Es problema de configuración en QuickBooks, no del sistema. Hay que crear los TaxCode/TaxRate correspondientes en QBO antes de reintentar.
+- **3 facturas en review** son de proveedores sin regla (Electromecánica Artico CR SA, YANDOLIN DAYANA MORALES PEREZ ×2). Se resuelven asignándoles una cuenta default.
+- **7 vendor_defaults apuntan a cuentas de activo** (142, 143, 149, 150, 152, 173, 132) — por eso el P&L se ve incompleto en feb/mar/abr.
+- Token QBO expira hoy (auto-renew debería actuar; si no, queda registrado en el JSON).
+
+## No modifica nada
+
+Solo lee datos. No cambia settings, no toca QBO, no edita facturas.
