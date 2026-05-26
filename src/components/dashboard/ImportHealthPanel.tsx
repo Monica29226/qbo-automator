@@ -16,6 +16,7 @@ import {
   Activity,
   AlertTriangle,
   CheckCircle2,
+  Download,
   Inbox,
   Mail,
   RefreshCw,
@@ -23,6 +24,9 @@ import {
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { es } from "date-fns/locale";
+import { useState } from "react";
+import { supabase } from "@/integrations/supabase/client";
+import { toast } from "sonner";
 
 function healthBadge(h: OrgHealth["health"]) {
   if (h === "ok")
@@ -60,6 +64,9 @@ export function ImportHealthPanel() {
     organizationId: activeOrganization,
   });
 
+  const [drainingAll, setDrainingAll] = useState(false);
+  const [drainingOrg, setDrainingOrg] = useState<string | null>(null);
+
   const orgs = data?.orgs ?? [];
   const summary = orgs.reduce(
     (acc, o) => {
@@ -70,6 +77,56 @@ export function ImportHealthPanel() {
     },
     { ok: 0, warning: 0, critical: 0, totalBacklog: 0, totalToday: 0 }
   );
+
+  const drainOne = async (orgId: string, orgName: string) => {
+    setDrainingOrg(orgId);
+    const t = toast.loading(`Drenando correo de ${orgName}...`);
+    try {
+      const { data: res, error } = await supabase.functions.invoke("auto-sync-invoices", {
+        body: { trigger: "manual_drain", organization_id: orgId },
+      });
+      if (error) throw error;
+      toast.success(`Drenado de ${orgName} disparado`, {
+        id: t,
+        description: res?.summary
+          ? `Procesadas: ${res.summary.processed ?? 0} · Errores: ${res.summary.errors ?? 0}`
+          : "Revisa el panel en unos minutos",
+      });
+      refetch();
+    } catch (e) {
+      toast.error(`Falló el drenado de ${orgName}`, {
+        id: t,
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setDrainingOrg(null);
+    }
+  };
+
+  const drainAll = async () => {
+    setDrainingAll(true);
+    const t = toast.loading(`Drenando ${orgs.length} organizaciones...`);
+    try {
+      const { data: res, error } = await supabase.functions.invoke("auto-sync-invoices", {
+        body: { trigger: "manual_drain_all" },
+      });
+      if (error) throw error;
+      toast.success("Drenado masivo completado", {
+        id: t,
+        description: res?.total
+          ? `${res.total.processed ?? 0} mensajes procesados en ${res.total.orgs ?? orgs.length} empresas`
+          : "Revisa el panel para ver el resultado",
+      });
+      refetch();
+    } catch (e) {
+      toast.error("Falló el drenado masivo", {
+        id: t,
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setDrainingAll(false);
+    }
+  };
 
   return (
     <Card className="mb-6">
@@ -85,10 +142,23 @@ export function ImportHealthPanel() {
               : "Estado de importación de tu organización"}
           </CardDescription>
         </div>
-        <Button variant="outline" size="sm" onClick={() => refetch()} disabled={isFetching}>
-          <RefreshCw className={`h-4 w-4 mr-2 ${isFetching ? "animate-spin" : ""}`} />
-          Actualizar
-        </Button>
+        <div className="flex gap-2">
+          {isAdmin && (
+            <Button
+              variant="default"
+              size="sm"
+              onClick={drainAll}
+              disabled={drainingAll || orgs.length === 0}
+            >
+              <Download className={`h-4 w-4 mr-2 ${drainingAll ? "animate-pulse" : ""}`} />
+              {drainingAll ? "Drenando..." : "Drenar todas"}
+            </Button>
+          )}
+          <Button variant="outline" size="sm" onClick={() => refetch()} disabled={isFetching}>
+            <RefreshCw className={`h-4 w-4 mr-2 ${isFetching ? "animate-spin" : ""}`} />
+            Actualizar
+          </Button>
+        </div>
       </CardHeader>
       <CardContent className="space-y-4">
         {/* Summary chips */}
@@ -141,6 +211,7 @@ export function ImportHealthPanel() {
                   <TableHead className="text-right">Mes</TableHead>
                   <TableHead className="text-right">Pend. config</TableHead>
                   <TableHead className="text-right">Errores 7d</TableHead>
+                  <TableHead className="text-right">Acción</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -191,6 +262,19 @@ export function ImportHealthPanel() {
                       ) : (
                         <span className="text-muted-foreground">0</span>
                       )}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        disabled={!o.has_integration || drainingOrg === o.organization_id || drainingAll}
+                        onClick={() => drainOne(o.organization_id, o.organization_name)}
+                      >
+                        <Download
+                          className={`h-3.5 w-3.5 ${drainingOrg === o.organization_id ? "animate-pulse" : ""}`}
+                        />
+                        <span className="ml-1">Drenar</span>
+                      </Button>
                     </TableCell>
                   </TableRow>
                 ))}

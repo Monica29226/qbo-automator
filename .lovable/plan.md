@@ -1,83 +1,78 @@
-# Problema
+# Garantizar que la importación capture TODAS las facturas, para TODAS las empresas
 
-Al usar **Importar Lote** con Jimena Cross o Centro Médico Terranoa, aparece el toast:
+## Estado actual (verificado en DB)
 
-> "Esta empresa no tiene integración de correo configurada. Ve a Integraciones para conectar una."
+Las 16 empresas activas tienen sus flags `*_connected` **sincronizados** con `integration_accounts`. El fix anterior (leer flags de `organizations`) ya funciona para todas. Las únicas dos sin correo son **Asociacion Horizonte Positivo** y **Sistemas de Desarrollo De Costa Rica** (no tienen integración — esperado).
 
-…aunque ambas empresas **sí están conectadas** (verificado en la base):
+Falta cubrir:
 
-- Jimena Cross → `gmail` activo
-- Centro Médico Terranoa → `hostinger` activo
+1. **Validación de cobertura**: confirmar visualmente, por empresa, que la integración detectada importa hasta vaciar el buzón.
+2. **Detección de drift futuro**: si alguien desactiva el flag sin desconectar la integración (o viceversa), volvemos al bug original.
+3. **Reconciliación contra fuente externa** (Hacienda/Siku) para certificar "tomó todas las facturas", no sólo "tomó todo el buzón".
 
-# Causa raíz
+## Plan
 
-`ImportBatchDialog.tsx` (línea 88-97) detecta el proveedor consultando la tabla `integration_accounts` desde el cliente:
+### 1. Función de auto-diagnóstico por empresa (`integration-self-check`)
 
-```ts
-const { data } = await supabase
-  .from("integration_accounts")
-  .select("service_type")
-  .eq("organization_id", orgId)
-  .eq("is_active", true)
-  ...
-```
+Nueva edge function (service role) que para un `organization_id` devuelve:
 
-Pero la tabla `integration_accounts` **no tiene policy de SELECT** (sólo INSERT/UPDATE/DELETE para admins). En el esquema está explícito:
+- Flag `organizations.*_connected` vs filas reales en `integration_accounts` (alerta si difieren).
+- Resultado de `noop login` IMAP/OAuth (sin descargar correos) para confirmar credenciales vigentes.
+- Conteo de mensajes pendientes en el buzón vs `processed_documents` del mes en curso.
+- Último `sync_logs` exitoso y backlog estimado.
 
-> *"Currently users can't do any of the following actions on the table integration_accounts: Can't SELECT records from the table"*
+Se invoca:
+- Manualmente desde un botón "Verificar conexión" junto a cada empresa en `/integrations`.
+- Automáticamente al abrir **Importar Lote** (antes de mostrar el toast de error).
 
-Esto es intencional porque la columna `credentials` (JSONB con tokens / passwords) **no debe** exponerse al frontend. Resultado: el query devuelve `[]` → `serviceType = null` → toast de error falso.
+### 2. Pantalla "Cobertura por empresa" en el Panel de Salud
 
-Esto explica por qué falla **en todas las organizaciones**, no sólo en esas dos. El bug se introdujo cuando `ImportBatchDialog` empezó a auto-detectar el proveedor en vez de recibirlo por parámetro.
+Ampliar `ImportHealthPanel` con una tabla, una fila por organización activa:
 
-# Solución propuesta
+| Empresa | Proveedor | Login OK | Buzón | Importadas mes | Faltantes vs Hacienda | Acción |
+|---|---|---|---|---|---|---|
+| Terranoa | hostinger | ✅ | 312 | 287 | 3 | [Drenar] |
+| Jimena Cross | gmail | ⚠️ token | 0 | 0 | n/d | [Reconectar] |
+| … | | | | | | |
 
-Reemplazar la consulta a `integration_accounts` por una fuente que el cliente **sí** pueda leer. Hay dos opciones limpias:
+Datos vienen de `integration-self-check` + `import-health-summary` (ya existe).
 
-### Opción A (recomendada) — Usar los flags de `organizations`
+### 3. Botón "Drenar todas las empresas" (operación de un click)
 
-La tabla `organizations` ya tiene los booleanos `gmail_connected`, `outlook_connected`, `hostinger_connected`, `bluehost_connected` (y RLS de SELECT para miembros). Refactorizar `getOrgIntegrationType` así:
+En el panel de salud, un solo botón que itera por cada empresa con `messages_remaining > 0` y dispara `hostinger-fetch-invoices` / `bluehost-fetch-invoices` / `gmail-fetch-invoices` con `drain=true` hasta que cada buzón devuelva 0 pendientes o 3 iteraciones estancadas (misma lógica del modo "Drenar todo el mes" que ya implementamos).
 
-```ts
-const { data: org } = await supabase
-  .from("organizations")
-  .select("gmail_connected, outlook_connected, hostinger_connected, bluehost_connected")
-  .eq("id", orgId).single();
+Concurrencia: 3 empresas en paralelo para no saturar Resend ni QBO.
 
-// Prioridad: hostinger > bluehost > outlook(imap) > gmail
-if (org?.hostinger_connected) return "hostinger";
-if (org?.bluehost_connected)  return "bluehost";
-if (org?.outlook_connected)   return "outlook_imap"; // o "outlook" según preferencia actual
-if (org?.gmail_connected)     return "gmail";
-return null;
-```
+### 4. Reconciliación obligatoria post-drenaje
 
-Ventajas: no toca RLS, no expone credenciales, datos ya cacheables.
+Tras el drenaje masivo, automáticamente:
 
-Riesgo: si un flag `*_connected` quedara desincronizado de `integration_accounts`, podría mentir. Mitigación → ya existe la edge function `check-system-health`; podemos llamarla como fallback antes de mostrar el toast (sólo cuando `null`).
+- Compara `processed_documents` del mes vs reporte oficial (Hacienda ATV o último Siku importado).
+- Lista los `doc_key` que están en Hacienda pero no en nuestra DB → **estos son los que el correo no trajo** (típicamente porque el emisor no envió, terminaron en spam, o cuenta equivocada).
+- Genera alerta en `alert_history` con `alert_type='missing_from_email'` y los detalles.
 
-### Opción B — Crear una RPC `get_org_email_provider(_org_id)`
+### 5. Trigger de drift para flags
 
-Función `SECURITY DEFINER` que retorne sólo `service_type` (sin `credentials`), accesible a miembros vía `is_organization_member`. Más estricta pero requiere migración.
+Migración con trigger en `integration_accounts` que mantenga `organizations.*_connected` siempre alineado en INSERT/UPDATE/DELETE. Elimina la posibilidad de regresar al bug original.
 
-**Recomiendo Opción A** por simplicidad y porque los flags ya se mantienen por las propias edge functions de conexión.
+### 6. Reporte diario reforzado
 
-# Cambios concretos
+Actualizar `daily-import-health-report` para que el correo de las 7 AM incluya:
 
-1. **`src/components/dashboard/ImportBatchDialog.tsx`**
-   - Reemplazar `getOrgIntegrationType` por la lectura de flags en `organizations`.
-   - Si el resultado es `null`, hacer un fallback que invoque la edge function `check-system-health` (que sí corre con service role) para confirmar antes de mostrar el toast — evita falsos negativos por flags desactualizados.
-   - Mostrar en el toast cuál fue el resultado del check para diagnóstico.
+- Empresas con login fallando.
+- Empresas con backlog > 0.
+- Total de "faltantes vs Hacienda" del día anterior.
 
-2. **`src/hooks/useImportHealth.ts`** y **`ImportHealthPanel`**
-   - Revisar si tienen el mismo bug (consultar `integration_accounts` desde cliente). Aplicar el mismo fix.
+## Archivos a tocar
 
-3. **(Opcional) Sincronización de flags**
-   - Verificar que `integrations-connect-*` y `integrations-disconnect-*` actualicen los booleanos en `organizations`. Si encontramos un proveedor activo en `integration_accounts` pero con flag en `false`, agregar un trigger o migración one-shot que reconcilie.
+- **Nuevo:** `supabase/functions/integration-self-check/index.ts`
+- **Edit:** `src/components/dashboard/ImportHealthPanel.tsx`, `src/hooks/useImportHealth.ts`, `src/pages/Integrations.tsx` (botón verificar), `supabase/functions/daily-import-health-report/index.ts`, `supabase/functions/import-health-summary/index.ts`
+- **Migración:** trigger `sync_org_connection_flags` sobre `integration_accounts`.
 
-# Verificación
+## Verificación
 
-1. Login como admin de Jimena Cross → abrir Importar Lote → debe detectar `gmail` y conectar.
-2. Login como admin de Centro Médico Terranoa → debe detectar `hostinger`.
-3. Probar con una org sin integración → toast correcto.
-4. Revisar logs de la edge function correspondiente para confirmar que recibe `organization_id` y procesa.
+1. Abrir Panel de Salud → tabla muestra las 16 orgs con su estado real.
+2. Click en "Drenar todas" → cada empresa procesa hasta `messages_remaining=0`.
+3. Revisar `alert_history` → 0 alertas `missing_from_email` para empresas al día.
+4. Forzar drift manual (UPDATE flag a false) → trigger lo restaura → query del cliente sigue funcionando.
+5. Recibir correo diario con resumen verde para todas las empresas conectadas.
