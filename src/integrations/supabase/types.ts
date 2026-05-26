@@ -73,6 +73,30 @@ export type Database = {
           },
         ]
       }
+      allowed_emails: {
+        Row: {
+          added_by: string | null
+          created_at: string
+          default_role: Database["public"]["Enums"]["app_role"]
+          email: string
+          note: string | null
+        }
+        Insert: {
+          added_by?: string | null
+          created_at?: string
+          default_role?: Database["public"]["Enums"]["app_role"]
+          email: string
+          note?: string | null
+        }
+        Update: {
+          added_by?: string | null
+          created_at?: string
+          default_role?: Database["public"]["Enums"]["app_role"]
+          email?: string
+          note?: string | null
+        }
+        Relationships: []
+      }
       audit_log: {
         Row: {
           action: string
