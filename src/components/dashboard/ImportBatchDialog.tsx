@@ -20,8 +20,9 @@ import {
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { toast } from "sonner";
-import { Download, Loader2, CheckCircle2, AlertCircle } from "lucide-react";
+import { Download, Loader2, CheckCircle2, AlertCircle, FileDown } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 
 interface ImportResult {
   emailsFound: number;
