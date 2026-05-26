@@ -29,13 +29,30 @@ const Auth = () => {
   const [resetEmail, setResetEmail] = useState("");
   const [isResetting, setIsResetting] = useState(false);
 
+  // Detect OAuth error in URL (e.g. email_not_allowed from handle_new_user)
+  useEffect(() => {
+    const hash = window.location.hash || "";
+    const search = window.location.search || "";
+    const params = new URLSearchParams(hash.startsWith("#") ? hash.slice(1) : hash);
+    const qs = new URLSearchParams(search);
+    const errDesc = params.get("error_description") || qs.get("error_description") || "";
+    const err = params.get("error") || qs.get("error") || "";
+    if (errDesc || err) {
+      if (/email_not_allowed/i.test(errDesc) || /email_not_allowed/i.test(err)) {
+        toast.error("Tu correo no está autorizado para acceder al sistema");
+      } else if (errDesc) {
+        toast.error(decodeURIComponent(errDesc.replace(/\+/g, " ")));
+      }
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+  }, []);
+
   // Check if user is already logged in
   useEffect(() => {
     const checkSession = async () => {
       try {
         const { data: { session } } = await supabase.auth.getSession();
         if (session) {
-          // Check if user has an active organization
           const { data: activeOrg } = await supabase
             .from("user_active_organization")
             .select("organization_id")
@@ -197,7 +214,12 @@ const Auth = () => {
                 extraParams: { hd: "aclcostarica.com", prompt: "select_account" },
               });
               if (result.error) {
-                toast.error("Error al iniciar sesión con Google");
+                const msg = (result.error as Error)?.message || String(result.error);
+                if (/email_not_allowed/i.test(msg)) {
+                  toast.error("Tu correo no está autorizado para acceder al sistema");
+                } else {
+                  toast.error("Error al iniciar sesión con Google");
+                }
                 return;
               }
               if (result.redirected) return;
