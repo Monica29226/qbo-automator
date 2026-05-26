@@ -16,6 +16,7 @@ import {
   Activity,
   AlertTriangle,
   CheckCircle2,
+  Download,
   Inbox,
   Mail,
   RefreshCw,
@@ -23,6 +24,9 @@ import {
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { es } from "date-fns/locale";
+import { useState } from "react";
+import { supabase } from "@/integrations/supabase/client";
+import { toast } from "sonner";
 
 function healthBadge(h: OrgHealth["health"]) {
   if (h === "ok")
