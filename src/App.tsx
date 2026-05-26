@@ -38,6 +38,7 @@ import AdminCleanupQuickActions from "./pages/AdminCleanupQuickActions";
 import AdminSharePointSetup from "./pages/AdminSharePointSetup";
 import AdminSharePointBulkUpload from "./pages/AdminSharePointBulkUpload";
 import AdminAccesos from "./pages/AdminAccesos";
+import AdminImportHealth from "./pages/AdminImportHealth";
 import BatchImportV2 from "./pages/BatchImportV2";
 import NotFound from "./pages/NotFound";
 import { ProtectedRoute } from "./components/ProtectedRoute";
