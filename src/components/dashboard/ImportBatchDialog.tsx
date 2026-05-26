@@ -278,6 +278,11 @@ export function ImportBatchDialog({ onSuccess }: ImportBatchDialogProps) {
         missingPdf: totalMissingPdf,
         failed: totalFailed,
         errorsDetail: allErrors,
+        skippedDetail: allSkipped,
+        partial: !finishedFully,
+        nextSkipCount: lastNextSkipCount,
+        totalMessagesInRange: lastTotalMessages,
+        processedThisSession: skipCount,
       };
       setResult(importResult);
 
