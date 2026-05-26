@@ -32,6 +32,11 @@ interface ImportResult {
   missingPdf: number;
   failed: number;
   errorsDetail: string[];
+  skippedDetail: Array<{ doc_key?: string; filename?: string; reason: string }>;
+  partial: boolean;
+  nextSkipCount?: number;
+  totalMessagesInRange?: number;
+  processedThisSession: number;
 }
 
 interface ImportBatchDialogProps {
@@ -117,6 +122,9 @@ export function ImportBatchDialog({ onSuccess }: ImportBatchDialogProps) {
       missingPdf: 0,
       failed: 0,
       errorsDetail: [],
+      skippedDetail: [],
+      partial: false,
+      processedThisSession: 0,
     });
     setProgress(10);
     setStatusMessage("Detectando integración de correo...");
@@ -148,10 +156,27 @@ export function ImportBatchDialog({ onSuccess }: ImportBatchDialogProps) {
       let totalExistingSkipped = 0;
       let totalMissingPdf = 0;
       const allErrors: string[] = [];
+      const allSkipped: Array<{ doc_key?: string; filename?: string; reason: string }> = [];
       let continueProcessing = true;
+      // Reanudar desde cursor persistido si el flujo previo quedó parcial (mismo org+proveedor+mes/año)
+      const cursorKey = `import_resume_${selectedOrg}_${serviceType}_${selectedYear}_${selectedMonth}`;
       let skipCount = 0;
+      try {
+        const saved = localStorage.getItem(cursorKey);
+        if (saved) {
+          const n = parseInt(saved, 10);
+          if (Number.isFinite(n) && n > 0) {
+            skipCount = n;
+            console.log(`[ImportBatch] Resuming from skip_count=${skipCount}`);
+          }
+        }
+      } catch {
+        // ignore localStorage errors
+      }
       let iteration = 0;
-      const maxIterations = 20;
+      const maxIterations = 80; // Permite drenar buzones grandes (≈3200 correos con BATCH_SIZE=40)
+      let lastNextSkipCount: number | undefined;
+      let lastTotalMessages: number | undefined;
 
       while (continueProcessing && iteration < maxIterations) {
         iteration++;
@@ -193,6 +218,18 @@ export function ImportBatchDialog({ onSuccess }: ImportBatchDialogProps) {
             allErrors.push(detail);
           }
         }
+        if (Array.isArray(data.skipped)) {
+          for (const s of data.skipped) {
+            allSkipped.push({
+              doc_key: s?.doc_key,
+              filename: s?.filename,
+              reason: typeof s?.reason === "string" ? s.reason : JSON.stringify(s),
+            });
+          }
+        }
+
+        lastNextSkipCount = typeof data.next_skip_count === "number" ? data.next_skip_count : undefined;
+        lastTotalMessages = Number(data.total_messages_in_range || data.messages_found || totalEmails);
 
         const updatedStats: ImportResult = {
           emailsFound: totalEmails,
@@ -203,17 +240,30 @@ export function ImportBatchDialog({ onSuccess }: ImportBatchDialogProps) {
           missingPdf: totalMissingPdf,
           failed: totalFailed,
           errorsDetail: allErrors,
+          skippedDetail: allSkipped,
+          partial: !!data.partial,
+          nextSkipCount: lastNextSkipCount,
+          totalMessagesInRange: lastTotalMessages,
+          processedThisSession: skipCount,
         };
         setLiveStats(updatedStats);
         setStatusMessage(
-          `Lote ${iteration}: ${totalProcessed} importadas, ${totalExistingSkipped} omitidas, ${totalFailed} con error`
+          `Lote ${iteration}: ${totalProcessed} importadas, ${totalExistingSkipped} omitidas, ${totalFailed} con error (correo ${skipCount}/${lastTotalMessages ?? "?"})`
         );
 
         if (data.partial && typeof data.next_skip_count === "number" && data.next_skip_count > skipCount) {
           skipCount = data.next_skip_count;
+          // Persistir cursor por si el usuario cierra/reabre el modal o el navegador
+          try { localStorage.setItem(cursorKey, String(skipCount)); } catch { /* ignore */ }
         } else {
           continueProcessing = false;
         }
+      }
+
+      // Si terminamos completamente (no parcial), limpiamos el cursor
+      const finishedFully = !continueProcessing && !(lastNextSkipCount && lastTotalMessages && lastNextSkipCount < lastTotalMessages);
+      if (finishedFully) {
+        try { localStorage.removeItem(cursorKey); } catch { /* ignore */ }
       }
 
       setProgress(100);
