@@ -68,19 +68,16 @@ export const PublishValidationDialog = ({
 
     try {
       console.log("⚡ Starting FAST validation...");
-      
-      // Ejecutar consultas básicas en PARALELO con timeout
+
+      // NOTA: integration_accounts tiene RLS que bloquea SELECT directo (credenciales sensibles).
+      // Usamos el RPC `has_active_integration` (SECURITY DEFINER) que devuelve true solo si existe
+      // una conexión activa con realm_id + refresh_token. La expiración del access_token se ignora
+      // aquí: la edge function publish-to-quickbooks la renueva con el refresh_token antes de publicar.
       const validationPromise = Promise.all([
-        // 1. Verificar conexión a QuickBooks
-        supabase
-          .from("integration_accounts")
-          .select("credentials, is_active")
-          .eq("organization_id", activeOrganization)
-          .eq("service_type", "quickbooks")
-          .eq("is_active", true)
-          .maybeSingle(),
-        
-        // 2. Contar documentos pendientes (query simple)
+        supabase.rpc("has_active_integration", {
+          _org_id: activeOrganization,
+          _service_type: "quickbooks",
+        }),
         (async () => {
           let query = supabase
             .from("processed_documents")
@@ -97,49 +94,24 @@ export const PublishValidationDialog = ({
         })(),
       ]);
 
-      const [qboAccountResult, pendingCountResult] = await Promise.race([
+      const [qboConnRes, pendingCountResult] = await Promise.race([
         validationPromise,
         timeoutPromise
       ]);
 
-      const qboAccount = qboAccountResult.data;
+      const qboConnected = !!qboConnRes.data;
       const pendingCount = pendingCountResult.count;
 
-      console.log("✓ Fast validation completed:", {
-        qboConnected: !!qboAccount?.is_active,
-        pendingCount
-      });
+      console.log("✓ Fast validation completed:", { qboConnected, pendingCount });
 
-      const qboConnected = !!qboAccount?.is_active;
-      
       if (!qboConnected) {
         errors.push("QuickBooks no está conectado");
         isValid = false;
       }
 
-      // Verificar expiración del token
-      let tokenExpired = false;
-      let tokenExpiresAt: string | undefined;
-      
-      if (qboAccount?.credentials) {
-        const credentials = qboAccount.credentials as any;
-        tokenExpiresAt = credentials.expires_at;
-        
-        if (tokenExpiresAt) {
-          const expiresDate = new Date(tokenExpiresAt);
-          const now = new Date();
-          tokenExpired = expiresDate < now;
-          
-          if (tokenExpired) {
-            warnings.push("El token de QuickBooks está expirado. Se intentará renovar automáticamente.");
-          } else {
-            const hoursUntilExpiry = (expiresDate.getTime() - now.getTime()) / (1000 * 60 * 60);
-            if (hoursUntilExpiry < 24) {
-              warnings.push(`El token de QuickBooks expirará en ${Math.round(hoursUntilExpiry)} horas.`);
-            }
-          }
-        }
-      }
+      // El access_token vencido NO bloquea: la edge function lo renueva con el refresh_token.
+      const tokenExpired = false;
+      const tokenExpiresAt: string | undefined = undefined;
 
       if (!pendingCount || pendingCount === 0) {
         warnings.push("No hay documentos para publicar");
