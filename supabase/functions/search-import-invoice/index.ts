@@ -134,12 +134,14 @@ serve(async (req) => {
       throw new Error("Invalid request body");
     }
     
-    const { organization_id, invoice_number, auto_publish, expected_vendor, validate_november_2025 } = requestBody;
-    
-    if (!organization_id) throw new Error("organization_id required");
-    if (!invoice_number) throw new Error("invoice_number required");
+    const { organization_id, invoice_number, auto_publish, expected_vendor, validate_november_2025, vendor_name, vendor_tax_id } = requestBody;
 
-    log(`🔍 Searching: ${invoice_number}`);
+    if (!organization_id) throw new Error("organization_id required");
+
+    const isVendorMode = !invoice_number && (vendor_name || vendor_tax_id);
+    if (!invoice_number && !isVendorMode) throw new Error("invoice_number or vendor_name required");
+
+    log(`🔍 Searching: ${invoice_number || `vendor="${vendor_name || ''}" taxId="${vendor_tax_id || ''}"`}`);
     if (expected_vendor) log(`   Vendor esperado: ${expected_vendor}`);
 
     // Helper function to check for existing invoice by doc_key (unique 50-char Clave) 
