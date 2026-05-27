@@ -20,6 +20,9 @@ interface SyncResult {
   found_and_processed: number;
   not_found: number;
   failed: number;
+  skipped_timeout?: number;
+  rows_skipped_no_id?: number;
+  detected_headers?: string[];
   details?: Array<{
     doc_number: string;
     emisor: string;
