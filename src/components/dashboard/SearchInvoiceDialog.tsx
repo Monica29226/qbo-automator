@@ -115,9 +115,16 @@ export function SearchInvoiceDialog() {
         return;
       }
 
-      const isStructuredInvoiceQuery = STRUCTURED_INVOICE_QUERY.test(searchTerm.trim().replace(/\D/g, ""));
+      const term = searchTerm.trim();
+      const digits = term.replace(/\D/g, "");
+      const isStructuredInvoiceQuery = STRUCTURED_INVOICE_QUERY.test(digits);
+      const isVendorTextQuery = !isStructuredInvoiceQuery && VENDOR_TEXT_QUERY.test(term);
       const supportsDeepAttachmentSearch = ["gmail", "hostinger", "bluehost"].includes(service);
-      const usesDeepSearch = isStructuredInvoiceQuery && supportsDeepAttachmentSearch;
+      // Vendor deep search is only implemented for Gmail today
+      const supportsVendorDeepSearch = service === "gmail";
+      const usesNumberDeepSearch = isStructuredInvoiceQuery && supportsDeepAttachmentSearch;
+      const usesVendorDeepSearch = isVendorTextQuery && supportsVendorDeepSearch;
+      const usesDeepSearch = usesNumberDeepSearch || usesVendorDeepSearch;
       const fallbackFunction = EMAIL_SEARCH_FUNCTION[service];
 
       if (!usesDeepSearch && !fallbackFunction) {
@@ -126,23 +133,23 @@ export function SearchInvoiceDialog() {
       }
 
       toast.info(
-        usesDeepSearch
-          ? `Buscando "${searchTerm}" dentro del XML/PDF del correo...`
-          : `Buscando "${searchTerm}" en ${service}...`
+        usesVendorDeepSearch
+          ? `Buscando facturas de "${term}" dentro de los adjuntos XML del correo (últimos 90 días)…`
+          : usesNumberDeepSearch
+          ? `Buscando "${term}" dentro del XML/PDF del correo...`
+          : `Buscando "${term}" en ${service}...`
       );
 
       const { data, error } = usesDeepSearch
         ? await supabase.functions.invoke<DeepSearchResponse>("search-import-invoice", {
-            body: {
-              organization_id: activeOrganization,
-              invoice_number: searchTerm.trim(),
-              auto_publish: false,
-            },
+            body: usesVendorDeepSearch
+              ? { organization_id: activeOrganization, vendor_name: term, auto_publish: false }
+              : { organization_id: activeOrganization, invoice_number: term, auto_publish: false },
           })
         : await supabase.functions.invoke(fallbackFunction!, {
             body: {
               organization_id: activeOrganization,
-              search_term: searchTerm.trim(),
+              search_term: term,
               search_days: 90,
             },
           });
