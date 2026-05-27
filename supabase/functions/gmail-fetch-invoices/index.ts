@@ -284,60 +284,78 @@ serve(async (req) => {
     const executionStartTime = Date.now();
     let wasTimeLimitReached = false;
 
-    // Buscar mensajes en Gmail con reintentos en caso de error de autenticación
-    // Reducido a 50 para evitar timeouts
-    const maxResults = force_resync ? 100 : 50;
-    let searchResponse = await fetch(
-      `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(mailQuery)}&maxResults=${maxResults}`,
-      {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      }
-    );
+    // Buscar mensajes en Gmail con paginación completa (nextPageToken) y reintentos en 401
+    // Cap global para evitar runaway en mailboxes enormes; configurable vía settings.gmail_global_cap
+    const perPage = 100; // máximo soportado por Gmail API
+    const globalCapSetting = parseInt(settings?.find(s => s.key === "gmail_global_cap")?.value || "", 10);
+    const GLOBAL_CAP = Number.isFinite(globalCapSetting) && globalCapSetting > 0
+      ? globalCapSetting
+      : (force_resync ? 2000 : 1000);
 
-    // Si falla con 401, intentar renovar el token y reintentar
-    if (!searchResponse.ok && searchResponse.status === 401) {
-      console.log("⚠️ Gmail API returned 401, attempting token refresh and retry...");
-      
-      try {
-        accessToken = await refreshGmailToken();
-        
-        // Reintentar la búsqueda con el nuevo token
-        searchResponse = await fetch(
-          `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(mailQuery)}&maxResults=${maxResults}`,
-          {
-            headers: { Authorization: `Bearer ${accessToken}` },
+    const fetchPage = async (pageToken?: string): Promise<Response> => {
+      const url = new URL("https://gmail.googleapis.com/gmail/v1/users/me/messages");
+      url.searchParams.set("q", mailQuery);
+      url.searchParams.set("maxResults", String(perPage));
+      if (pageToken) url.searchParams.set("pageToken", pageToken);
+      return fetch(url.toString(), { headers: { Authorization: `Bearer ${accessToken}` } });
+    };
+
+    let messages: any[] = [];
+    let nextPageToken: string | undefined = undefined;
+    let pageCount = 0;
+
+    do {
+      // Verificar límite de tiempo antes de pedir otra página
+      if (Date.now() - executionStartTime > MAX_EXECUTION_TIME_MS) {
+        wasTimeLimitReached = true;
+        console.log(`⏱️ Time limit reached during pagination after ${pageCount} pages, ${messages.length} messages collected`);
+        break;
+      }
+
+      let searchResponse: Response = await fetchPage(nextPageToken);
+
+      // Si falla con 401, intentar renovar el token y reintentar la MISMA página
+      if (!searchResponse.ok && searchResponse.status === 401) {
+        console.log("⚠️ Gmail API returned 401, attempting token refresh and retry...");
+        try {
+          accessToken = await refreshGmailToken();
+          searchResponse = await fetchPage(nextPageToken);
+          if (!searchResponse.ok) {
+            const errorBody = await searchResponse.text();
+            console.error("❌ Gmail API still failing after token refresh:", searchResponse.status, errorBody);
+            await markAccountAsDisconnected(`Gmail API error after refresh: ${searchResponse.status}`);
+            throw new Error("Gmail authentication failed after token refresh");
           }
-        );
-        
-        if (!searchResponse.ok) {
-          const errorBody = await searchResponse.text();
-          console.error("❌ Gmail API still failing after token refresh:", searchResponse.status, errorBody);
-          await markAccountAsDisconnected(`Gmail API error after refresh: ${searchResponse.status}`);
-          throw new Error("Gmail authentication failed after token refresh");
+          console.log("✅ Successfully recovered from 401 with token refresh");
+        } catch (refreshError) {
+          console.error("❌ Failed to refresh token after 401:", refreshError);
+          throw new Error("Gmail authentication failed - please reconnect Gmail");
         }
-        
-        console.log("✅ Successfully recovered from 401 with token refresh");
-      } catch (refreshError) {
-        console.error("❌ Failed to refresh token after 401:", refreshError);
-        // markAccountAsDisconnected ya fue llamado en refreshGmailToken si aplica
-        throw new Error("Gmail authentication failed - please reconnect Gmail");
+      } else if (!searchResponse.ok) {
+        const errorBody = await searchResponse.text();
+        console.error("❌ Gmail API error:", searchResponse.status, errorBody);
+        if (searchResponse.status === 403) {
+          await markAccountAsDisconnected(`Gmail API permission denied: ${errorBody}`);
+        }
+        throw new Error(`Gmail API error: ${searchResponse.status}`);
       }
-    } else if (!searchResponse.ok) {
-      const errorBody = await searchResponse.text();
-      console.error("❌ Gmail API error:", searchResponse.status, errorBody);
-      
-      // Si es un error de autenticación diferente, también desconectar
-      if (searchResponse.status === 403) {
-        await markAccountAsDisconnected(`Gmail API permission denied: ${errorBody}`);
-      }
-      
-      throw new Error(`Gmail API error: ${searchResponse.status}`);
-    }
 
-    const searchData = await searchResponse.json();
-    let messages = searchData.messages || [];
-    
-    console.log(`Found ${messages.length} messages matching query: ${mailQuery}`);
+      const searchData = await searchResponse.json();
+      const pageMessages = searchData.messages || [];
+      messages.push(...pageMessages);
+      nextPageToken = searchData.nextPageToken;
+      pageCount++;
+
+      console.log(`📄 Gmail page ${pageCount}: +${pageMessages.length} messages (total: ${messages.length}, nextPageToken: ${nextPageToken ? "yes" : "no"})`);
+
+      if (messages.length >= GLOBAL_CAP) {
+        console.log(`🛑 Global cap of ${GLOBAL_CAP} reached, stopping pagination`);
+        messages = messages.slice(0, GLOBAL_CAP);
+        break;
+      }
+    } while (nextPageToken);
+
+    console.log(`Found ${messages.length} messages across ${pageCount} page(s) matching query: ${mailQuery}`);
 
     // Fallback: si hay rango de fechas y 0 resultados, reintentar con búsquedas más amplias.
     // La validación final SIEMPRE se hará con la FechaEmision del XML para respetar la factura real.
