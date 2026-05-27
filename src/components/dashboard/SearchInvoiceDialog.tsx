@@ -57,6 +57,11 @@ interface DeepSearchResponse {
   alreadyPublished?: boolean;
   qbQueued?: boolean;
   needsConfig?: boolean;
+  imported?: number;
+  invoices?: Array<{ doc_number: string; supplier_name: string; clave: string }>;
+  vendor_mode?: boolean;
+  messages_scanned?: number;
+  xmls_scanned?: number;
 }
 
 export function SearchInvoiceDialog() {
