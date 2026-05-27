@@ -548,10 +548,15 @@ serve(async (req) => {
           throw new Error("IMAP login failed");
         }
 
-        // Search across multiple folders (INBOX, Junk, Spam)
-        const foldersToSearch = ["INBOX", "Junk", "SPAM", "Spam"];
+        const listResp = await cmd('LIST "" "*"');
+        const discoveredFolders = parseFolderList(listResp);
+        const foldersToSearch = discoveredFolders.length > 0
+          ? discoveredFolders
+          : ["INBOX", "Junk", "SPAM", "Spam"];
         let msgIds: number[] = [];
         let selectedFolder = "";
+        let broaderScanIds: number[] = [];
+        let broaderScanFolder = "";
 
         for (const folder of foldersToSearch) {
           checkTimeout();
@@ -579,7 +584,7 @@ serve(async (req) => {
           
           // If TEXT search found nothing, try a broader SINCE search and scan attachments
           // This catches cases where the invoice number is only inside the XML attachment
-          if (ids.length === 0 && folder === "INBOX") {
+          if (ids.length === 0 && !broaderScanIds.length) {
             log(`🔍 TEXT search empty, trying SINCE-based scan in ${folder}...`);
             const sinceDate = new Date();
             sinceDate.setDate(sinceDate.getDate() - 30);
@@ -593,13 +598,16 @@ serve(async (req) => {
               : [];
             
             if (sinceIds.length > 0) {
-              // Take last 50 messages to scan their attachments
-              msgIds = sinceIds.slice(-50);
-              selectedFolder = folder;
-              log(`📬 Broader scan: ${sinceIds.length} messages since ${sinceDateStr}, checking last ${msgIds.length}`);
-              break;
+              broaderScanIds = sinceIds.slice(-50);
+              broaderScanFolder = folder;
+              log(`📬 Broader scan candidate: ${sinceIds.length} messages since ${sinceDateStr}, checking last ${broaderScanIds.length} in ${folder}`);
             }
           }
+        }
+
+        if (msgIds.length === 0 && broaderScanIds.length > 0) {
+          msgIds = broaderScanIds;
+          selectedFolder = broaderScanFolder;
         }
         
         log(`📬 Final: ${msgIds.length} messages to check in ${selectedFolder || 'none'}`);
