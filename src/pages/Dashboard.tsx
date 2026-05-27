@@ -476,6 +476,12 @@ const Dashboard = () => {
               </CardContent>
             </Card>
 
+            <Suspense fallback={<LazyFallback />}>
+              <AuditPublishedVsQBO />
+            </Suspense>
+
+
+
             {/* Alerts after quick actions */}
             <Suspense fallback={<LazyFallback />}>
               <AICreditsMonitor organizationId={activeOrganization} />
