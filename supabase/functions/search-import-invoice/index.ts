@@ -79,6 +79,20 @@ function parseFolderList(listResp: string): string[] {
   });
 }
 
+// Aggressive vendor-name normalization for matching (same convention as the rest of the system)
+function normalizeVendor(s: string): string {
+  return (s || '')
+    .toLowerCase()
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/\b(s\.?a\.?|sociedad\s+anonima|s\.?r\.?l\.?|limitada|ltda|cia|y\s+cia)\b/g, " ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function normalizeTaxId(s: string): string {
+  return (s || '').replace(/[^0-9]/g, '');
+}
+
 // Helper function with aggressive timeout
 async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs = 5000): Promise<Response> {
   const controller = new AbortController();
