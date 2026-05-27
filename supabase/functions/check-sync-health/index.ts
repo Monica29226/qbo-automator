@@ -261,9 +261,11 @@ async function checkLastSuccessfulSync(
   if (!lastSync) {
     return {
       type: "critical",
+      code: "no_successful_sync",
       title: "No hay sincronizaciones exitosas",
       description: "No se han encontrado sincronizaciones exitosas en el historial",
       actionRequired: "Verificar conexiones de Gmail y QuickBooks",
+      action_link: "/integrations",
     };
   }
 
@@ -273,24 +275,25 @@ async function checkLastSuccessfulSync(
   if (hoursSinceSync > 24) {
     return {
       type: "critical",
+      code: "sync_no_24h",
       title: "Sin sincronizaciones en 24+ horas",
       description: `Última sincronización exitosa: ${new Date(
         lastSync.completed_at
       ).toLocaleString("es-ES")}`,
       actionRequired: "Revisar estado del sistema y ejecutar sincronización manual",
-      data: {
-        lastSyncAt: lastSync.completed_at,
-        hoursSince: Math.round(hoursSinceSync),
-      },
+      action_link: "/dashboard",
+      data: { lastSyncAt: lastSync.completed_at, hoursSince: Math.round(hoursSinceSync) },
     };
   }
 
   if (hoursSinceSync > 6) {
     return {
       type: "warning",
+      code: "sync_delayed",
       title: "Sincronización retrasada",
       description: `Han pasado ${Math.round(hoursSinceSync)} horas desde la última sincronización`,
       actionRequired: "Monitorear estado del cron job automático",
+      action_link: "/dashboard",
       data: { hoursSince: Math.round(hoursSinceSync) },
     };
   }
