@@ -231,6 +231,9 @@ export const SyncFromExcelDialog = () => {
                   ✅ Se buscaron <strong>{result.found_and_processed + result.not_found + result.failed}</strong> facturas en Hostinger, Bluehost, Gmail y Outlook.
                 </div>
               )}
+
+              {/* Details List */}
+              {result.details && result.details.length > 0 && (
                 <div className="mt-4">
                   <h4 className="text-sm font-medium mb-2">Detalles:</h4>
                   <div className="max-h-60 overflow-y-auto space-y-2 bg-secondary/30 rounded-lg p-3">
