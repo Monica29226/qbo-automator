@@ -618,7 +618,7 @@ serve(async (req) => {
     const errors: string[] = [];
     const skippedInvoices: Array<{ doc_key?: string; filename?: string; reason: string }> = [];
     const processingStartTime = Date.now();
-    const MAX_PROCESSING_TIME_MS = 40000; // 40s para drenar el lote completo de 40 correos
+    const MAX_PROCESSING_TIME_MS = 60000; // 60s para drenar el lote completo de 40 correos
 
     // Process each email with timeout protection
     for (const rawEmail of rawEmails) {
