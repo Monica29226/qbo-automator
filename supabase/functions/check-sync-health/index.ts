@@ -90,93 +90,134 @@ serve(async (req) => {
 
         console.log(`Found ${criticalIssues.length} critical and ${warnings.length} warning issues for ${org.name}`);
 
-        // Check if we sent an alert recently (anti-spam: 2 hours)
-        const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
-        const { data: recentAlert } = await supabase
+        // Upsert alerts: dedup by code within unresolved rows for this org.
+        const { data: unresolved } = await supabase
           .from("alert_history")
-          .select("id")
+          .select("id, issues_data")
           .eq("organization_id", org.id)
-          .eq("alert_type", "critical")
-          .gte("sent_at", twoHoursAgo)
-          .maybeSingle();
+          .eq("resolved", false);
 
-        // Only send alert if there are critical issues and no recent alert
-        if (criticalIssues.length > 0 && !recentAlert) {
-          // Get alert settings
-          const { data: settings } = await supabase
-            .from("system_settings")
-            .select("key, value")
-            .eq("organization_id", org.id)
-            .in("key", ["alert_enabled", "alert_email"]);
-
-          const settingsMap = settings?.reduce((acc, s) => {
-            acc[s.key] = s.value;
-            return acc;
-          }, {} as Record<string, string>) || {};
-
-          const alertEnabled = settingsMap.alert_enabled !== "false";
-          const alertEmail = settingsMap.alert_email || org.email;
-
-          if (alertEnabled && alertEmail) {
-            try {
-              // Send alert email
-              const emailId = await sendAlertEmail(
-                { ...org, alertEmail },
-                criticalIssues,
-                warnings
-              );
-
-              // Save to alert history
-              await supabase.from("alert_history").insert({
-                organization_id: org.id,
-                alert_type: "critical",
-                issues_count: issues.length,
-                issues_data: issues,
-                email_id: emailId,
-              });
-
-              alertResults.push({
-                organization: org.name,
-                alertSent: true,
-                emailSentTo: alertEmail,
-                criticalIssues: criticalIssues.length,
-                warnings: warnings.length,
-              });
-
-              console.log(`Alert email sent to ${alertEmail} for ${org.name}`);
-            } catch (emailError) {
-              console.error(`Failed to send alert email for ${org.name}:`, emailError);
-              
-              // Save alert even if email failed
-              await supabase.from("alert_history").insert({
-                organization_id: org.id,
-                alert_type: "critical",
-                issues_count: issues.length,
-                issues_data: issues,
-                email_id: null,
-              });
-            }
-          } else {
-            console.log(`Alerts disabled or no email configured for ${org.name}`);
+        const byCode = new Map<string, string>(); // code -> row id
+        for (const r of unresolved || []) {
+          const items = Array.isArray(r.issues_data) ? r.issues_data : [r.issues_data];
+          for (const it of items) {
+            if (it?.code) byCode.set(it.code, r.id);
           }
-        } else if (warnings.length > 0) {
-          // Save warnings to history without sending email
-          await supabase.from("alert_history").insert({
-            organization_id: org.id,
-            alert_type: "warning",
-            issues_count: warnings.length,
-            issues_data: warnings,
-          });
-
-          alertResults.push({
-            organization: org.name,
-            alertSent: false,
-            criticalIssues: 0,
-            warnings: warnings.length,
-          });
         }
+
+        const activeCodes = new Set(issues.map((i) => i.code));
+        const nowIso = new Date().toISOString();
+
+        for (const issue of issues) {
+          const payload = [{
+            type: issue.type,
+            code: issue.code,
+            title: issue.title,
+            description: issue.description,
+            actionRequired: issue.actionRequired,
+            action_link: issue.action_link,
+            data: issue.data,
+          }];
+
+          const existingId = byCode.get(issue.code);
+          if (existingId) {
+            await supabase
+              .from("alert_history")
+              .update({ issues_data: payload, sent_at: nowIso, alert_type: issue.type })
+              .eq("id", existingId);
+          } else {
+            await supabase.from("alert_history").insert({
+              organization_id: org.id,
+              alert_type: issue.type,
+              issues_count: 1,
+              issues_data: payload,
+            });
+          }
+        }
+
+        // Auto-resolve previously-open alerts whose condition no longer holds.
+        const staleIds: string[] = [];
+        for (const r of unresolved || []) {
+          const items = Array.isArray(r.issues_data) ? r.issues_data : [r.issues_data];
+          const codes = items.map((i: any) => i?.code).filter(Boolean);
+          // Auto-resolve only known codes that are no longer in activeCodes.
+          if (codes.length > 0 && codes.every((c: string) => KNOWN_CODES.includes(c) && !activeCodes.has(c))) {
+            staleIds.push(r.id);
+          }
+        }
+        if (staleIds.length > 0) {
+          await supabase
+            .from("alert_history")
+            .update({ resolved: true, resolved_at: nowIso })
+            .in("id", staleIds);
+        }
+
+        // Optional: send critical email (anti-spam 2h) — kept as before.
+        const criticalIssues = issues.filter((i) => i.type === "critical");
+        if (criticalIssues.length > 0) {
+          const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+          const { data: recentEmailAlert } = await supabase
+            .from("alert_history")
+            .select("id")
+            .eq("organization_id", org.id)
+            .not("email_id", "is", null)
+            .gte("sent_at", twoHoursAgo)
+            .maybeSingle();
+
+          if (!recentEmailAlert) {
+            const { data: settings } = await supabase
+              .from("system_settings")
+              .select("key, value")
+              .eq("organization_id", org.id)
+              .in("key", ["alert_enabled", "alert_email"]);
+            const settingsMap = (settings || []).reduce((acc: any, s: any) => {
+              acc[s.key] = s.value;
+              return acc;
+            }, {});
+            const alertEnabled = settingsMap.alert_enabled !== "false";
+            const alertEmail = settingsMap.alert_email || org.email;
+            if (alertEnabled && alertEmail) {
+              try {
+                const emailId = await sendAlertEmail(
+                  { ...org, alertEmail },
+                  criticalIssues,
+                  issues.filter((i) => i.type === "warning")
+                );
+                // Attach email_id to the most recent critical row for this org.
+                const { data: lastRow } = await supabase
+                  .from("alert_history")
+                  .select("id")
+                  .eq("organization_id", org.id)
+                  .eq("alert_type", "critical")
+                  .order("sent_at", { ascending: false })
+                  .limit(1)
+                  .maybeSingle();
+                if (lastRow?.id) {
+                  await supabase
+                    .from("alert_history")
+                    .update({ email_id: emailId })
+                    .eq("id", lastRow.id);
+                }
+              } catch (emailError) {
+                console.error(`Email send failed for ${org.name}:`, emailError);
+              }
+            }
+          }
+        }
+
+        alertResults.push({
+          organization: org.name,
+          activeCodes: Array.from(activeCodes),
+          autoResolved: staleIds.length,
+        });
       } else {
-        console.log(`No issues found for ${org.name}`);
+        // No issues — auto-resolve all open alerts for this org.
+        await supabase
+          .from("alert_history")
+          .update({ resolved: true, resolved_at: new Date().toISOString() })
+          .eq("organization_id", org.id)
+          .eq("resolved", false);
+        console.log(`No issues found for ${org.name}, cleared open alerts`);
       }
     }
 
