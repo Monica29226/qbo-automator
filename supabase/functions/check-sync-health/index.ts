@@ -386,9 +386,11 @@ async function checkAICredits(
   if (creditErrors > 10) {
     return {
       type: "critical",
+      code: "ai_credits_exhausted",
       title: "Créditos de IA agotados",
       description: `${creditErrors} facturas bloqueadas por falta de créditos de IA`,
-      actionRequired: "Agregar créditos en https://docs.lovable.dev/features/ai",
+      actionRequired: "Agregar créditos en Settings > AI",
+      action_link: "/settings",
       data: { creditErrorCount: creditErrors },
     };
   }
@@ -404,18 +406,22 @@ function checkConnections(org: Organization): HealthIssue | null {
   if (!hasAnyMail) {
     return {
       type: "critical",
+      code: "no_mail_channel",
       title: "Sin canal de correo conectado",
       description: "No hay ninguna cuenta de correo activa (Gmail, Outlook, Hostinger o Bluehost)",
       actionRequired: "Conectar al menos un proveedor de correo en Configuración > Integraciones",
+      action_link: "/integrations",
     };
   }
 
   if (!org.quickbooks_connected) {
     return {
       type: "critical",
+      code: "qbo_disconnected",
       title: "QuickBooks desconectado",
       description: "La cuenta de QuickBooks no está conectada",
       actionRequired: "Reconectar QuickBooks en Configuración > Integraciones",
+      action_link: "/integrations",
     };
   }
 
@@ -440,9 +446,11 @@ async function checkStuckInvoices(
   if (count > 10) {
     return {
       type: "warning",
+      code: "stuck_review",
       title: "Facturas pendientes de revisión",
       description: `${count} facturas llevan más de 3 días en estado "review"`,
       actionRequired: 'Clasificar vendors pendientes en "Cola de Revisión"',
+      action_link: "/review-queue",
       data: { stuckInvoices: count },
     };
   }
