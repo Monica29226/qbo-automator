@@ -1,44 +1,62 @@
 ## Objetivo
 
-Aplicar los mismos arreglos del buscador manual al **sync automático diario** de Hostinger y Bluehost, para que las facturas entren solas sin tener que buscarlas una por una por clave.
+Crear una herramienta masiva de **auditoría y republicación** que detecte facturas marcadas como publicadas en nuestro sistema pero **borradas o inexistentes en QuickBooks**, y permita republicarlas de forma controlada.
 
-## Problema actual
+## Cómo funcionará
 
-El cron de `email-sync` (Hostinger/Bluehost) no captura ciertos correos con XML adjunto porque:
+### 1. Nueva Edge Function: `audit-qbo-published-vs-actual`
 
-1. **Filtro IMAP muy estrecho** — busca por palabras clave en SUBJECT/BODY (ej. "factura", "comprobante"). Correos cuyo asunto no contiene esas palabras quedan fuera, aunque traigan el XML adjunto.
-2. **Parser de adjuntos frágil** — el `BODYSTRUCTURE` no detecta XML cuando viene con nombres en formato IMAP `("name" "file.xml")`, anidado en `multipart/mixed` profundo, o dentro de un ZIP.
-3. **Extracción base64 con basura** — caracteres no-base64 mezclados hacen fallar `atob()`, descartando silenciosamente el adjunto.
-4. **Re-selección de carpeta** — al recorrer INBOX + Junk, no re-selecciona la carpeta original antes del FETCH, perdiendo mensajes.
+Recorre `processed_documents` con `status = 'published'` y `qbo_entity_id` no nulo para la organización activa. Para cada una:
 
-Estos son los mismos 4 bugs que ya arreglamos en `search-import-invoice`. Falta portarlos al sync automático.
+1. Consulta QBO: `GET /v3/company/{realm}/{entityType}/{entityId}`
+2. Clasifica el resultado:
+   - **Existe y activo** → OK, no hacer nada
+   - **404 / no existe / `status = "Deleted"`** → marcar como "huérfana QBO" (borrada manualmente)
+   - **Error de token / red** → marcar como "no verificable" (no tocar)
+3. Devuelve la lista de huérfanas con: `doc_number`, `supplier_name`, `total_amount`, `issue_date`, `qbo_entity_id`, motivo.
+4. Procesa en lotes (15 concurrentes, 25s timeout) y soporta paginación por `offset` para evitar timeouts en orgs grandes.
 
-## Cambios
+### 2. Nueva Edge Function: `republish-deleted-from-qbo`
 
-### 1. `supabase/functions/email-sync-hostinger/index.ts`
-- Reemplazar el filtro IMAP SEARCH actual por una estrategia ampliada: en lugar de solo buscar por keywords del asunto, hacer `SEARCH SINCE <fecha>` y luego pre-filtrar por `BODYSTRUCTURE` para quedarse solo con mensajes que tengan adjuntos `.xml` o `.zip`.
-- Portar el parser robusto de `BODYSTRUCTURE` desde `search-import-invoice` (maneja formato `("name" "file.xml")`, hasta 40 adjuntos candidatos, profundidad MIME hasta 10).
-- Portar la extracción base64 limpia (usar marker de tamaño IMAP `{size}\r\n`, filtrar caracteres no-base64 antes de `atob()`).
-- Asegurar re-selección de carpeta antes de cada FETCH al alternar INBOX/Junk.
+Recibe un array de `document_ids` confirmados como huérfanos. Para cada uno:
 
-### 2. `supabase/functions/email-sync-bluehost/index.ts`
-- Aplicar exactamente los mismos 4 arreglos. El código IMAP es prácticamente idéntico al de Hostinger.
+1. **Limpia el rastro previo**:
+   - `DELETE FROM qbo_publish_tracking WHERE document_id = ?`
+   - `UPDATE processed_documents SET qbo_entity_id = NULL, qbo_entity_type = NULL, status = 'pending', error_message = NULL, retry_count = 0`
+2. Invoca `publish-to-quickbooks` con esos `document_ids`.
+3. Registra la operación en `audit_log` con acción `republish_after_qbo_delete`.
 
-### 3. Extraer helpers compartidos (opcional pero recomendado)
-- Mover `parseBodyStructure()`, `extractBase64Attachment()` y `selectFolderAndFetch()` a `supabase/functions/_shared/imap-utils.ts` para que `email-sync-hostinger`, `email-sync-bluehost` y `search-import-invoice` los compartan. Evita que el bug se repita en una de las 3 funciones.
+### 3. Nuevo panel UI: `AuditPublishedVsQBO.tsx` (en Dashboard)
 
-### 4. Sin cambios en
-- Lógica de cursor / `skip_count` en `system_settings` (sigue igual).
-- Límite de 50 mensajes y timeout de 25s por corrida (sigue igual — el cron drena lote por lote).
-- Gmail / Outlook (rutas distintas, no afectadas por este bug IMAP).
-- Esquema de BD, RLS, frontend.
+Tarjeta nueva en quick actions con flujo en 3 pasos:
 
-## Verificación post-deploy
+1. **Botón "Auditar publicadas en QBO"** → invoca la función de auditoría, muestra barra de progreso (paginación).
+2. **Tabla de resultados** con las huérfanas detectadas: checkbox por fila, "Seleccionar todo", columnas (fecha, proveedor, número, monto, QBO ID).
+3. **Botón "Republicar seleccionadas"** → confirma con diálogo y dispara la función de republicación. Toast de progreso con conteos de éxito/error.
 
-1. Revisar `sync_logs` de las próximas 2-3 corridas de Terranoa y comparar `gmail_fetched` vs corridas previas — debería subir.
-2. Confirmar que el proveedor `3101338733` (los 4 claves que faltaban) aparece en `processed_documents` sin haber usado el buscador manual.
-3. Revisar 2-3 organizaciones adicionales (ej. Centro Médico Terranoa, Café Luna América) buscando huecos consecutivos en `qbo_publish_tracking` y confirmar que se cierran solos en las siguientes corridas.
+Aplica globalmente (todas las organizaciones via `organization_id` activo). Admins pueden ejecutarlo.
 
-## Alcance global
+### Detalles técnicos
 
-Aplica a **todas las organizaciones** con integración Hostinger o Bluehost activa. No hay lógica condicional por org. Gmail/Outlook quedan fuera (no tienen este bug).
+- **QBO query batching:** 15 concurrentes con `Promise.allSettled`, respeta rate limits (500/min).
+- **Detección de "borrado":** QBO devuelve 404 con `code = "610"` (Object Not Found) o el entity puede venir con `status = "Deleted"` en operaciones de query. Manejar ambos.
+- **Token expirado:** si falla auth, abortar auditoría con mensaje claro y botón de reconexión QBO (no marcar todo como huérfano por error de token).
+- **Seguridad:** ambas funciones validan JWT, verifican membresía admin de la org, usan `service_role` solo para escritura tras validación.
+- **Sin duplicados:** después de limpiar `qbo_publish_tracking`, `publish-to-quickbooks` puede crear el Bill nuevo sin chocar con la restricción `org_id + doc_key`.
+
+### Archivos
+
+**Nuevos:**
+- `supabase/functions/audit-qbo-published-vs-actual/index.ts`
+- `supabase/functions/republish-deleted-from-qbo/index.ts`
+- `src/components/dashboard/AuditPublishedVsQBO.tsx`
+
+**Modificados:**
+- `src/pages/Dashboard.tsx` — montar el nuevo panel en la sección de quick actions
+- `mem://index.md` + nueva memoria `mem://features/audit-republish-deleted-qbo`
+
+### No se toca
+
+- Lógica de publicación (`publish-to-quickbooks` se reutiliza tal cual)
+- Estructura de BD (no hay migración — solo lectura/escritura sobre tablas existentes)
+- Sync de emails, importación, otros flujos
