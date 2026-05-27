@@ -121,7 +121,7 @@ export const SyncFromExcelDialog = () => {
               </div>
               <Progress value={undefined} className="w-full" />
               <p className="text-center text-sm text-muted-foreground">
-                Buscando documentos en Gmail y procesándolos...
+                Buscando documentos en todos los correos conectados (Hostinger, Bluehost, Gmail, Outlook) y procesándolos...
               </p>
             </div>
           )}
