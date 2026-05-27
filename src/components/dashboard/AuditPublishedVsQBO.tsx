@@ -3,7 +3,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
-import { AlertTriangle, Loader2, RefreshCw, ShieldCheck } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { AlertTriangle, Loader2, RefreshCw, ShieldCheck, Send } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { toast } from "sonner";
@@ -40,6 +41,50 @@ export const AuditPublishedVsQBO = () => {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [progress, setProgress] = useState<{ checked: number; total: number } | null>(null);
   const [ran, setRan] = useState(false);
+  const [quickQuery, setQuickQuery] = useState("");
+  const [quickRepublishing, setQuickRepublishing] = useState(false);
+
+  const republishByNumber = async () => {
+    const q = quickQuery.trim();
+    if (!activeOrganization || !q) return;
+    setQuickRepublishing(true);
+    try {
+      const { data: docs, error: findErr } = await supabase
+        .from("processed_documents")
+        .select("id, doc_number, doc_key, supplier_name, status, qbo_entity_id")
+        .eq("organization_id", activeOrganization)
+        .or(`doc_number.eq.${q},doc_key.eq.${q}`)
+        .limit(5);
+      if (findErr) throw findErr;
+      if (!docs || docs.length === 0) {
+        toast.error("No se encontró ninguna factura con ese número/clave en esta organización");
+        return;
+      }
+      if (docs.length > 1) {
+        toast.error(`Se encontraron ${docs.length} coincidencias; usa la clave completa para precisar`);
+        return;
+      }
+      const doc = docs[0];
+      const { data, error } = await supabase.functions.invoke("republish-deleted-from-qbo", {
+        body: { organization_id: activeOrganization, document_ids: [doc.id] },
+      });
+      if (error) throw error;
+      if (!data?.success) throw new Error(data?.error || "Error al republicar");
+      const published = data?.publish_result?.published ?? 1;
+      const errors = data?.publish_result?.errors?.length ?? 0;
+      if (errors > 0) {
+        toast.warning(`Encolada con avisos. Publicadas: ${published}, errores: ${errors}`);
+      } else {
+        toast.success(`✅ ${doc.supplier_name} ${doc.doc_number} republicada`);
+      }
+      setQuickQuery("");
+      setOrphans((prev) => prev.filter((o) => o.id !== doc.id));
+    } catch (err: any) {
+      toast.error(`Error: ${err.message}`);
+    } finally {
+      setQuickRepublishing(false);
+    }
+  };
 
   const runAudit = async () => {
     if (!activeOrganization) {
@@ -135,6 +180,33 @@ export const AuditPublishedVsQBO = () => {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
+        <div className="p-3 border rounded space-y-2 bg-muted/30">
+          <div className="text-sm font-medium">Republicar una factura específica</div>
+          <div className="text-xs text-muted-foreground">
+            Pega el número de documento (20 dígitos) o la clave electrónica (50 dígitos) si ya sabes que fue borrada de QuickBooks.
+          </div>
+          <div className="flex items-center gap-2">
+            <Input
+              placeholder="00100001010000000828 o clave 50…"
+              value={quickQuery}
+              onChange={(e) => setQuickQuery(e.target.value)}
+              disabled={quickRepublishing}
+              className="font-mono text-xs"
+            />
+            <Button
+              onClick={republishByNumber}
+              disabled={quickRepublishing || !quickQuery.trim() || !activeOrganization}
+              size="sm"
+            >
+              {quickRepublishing ? (
+                <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Republicando…</>
+              ) : (
+                <><Send className="h-4 w-4 mr-2" /> Republicar</>
+              )}
+            </Button>
+          </div>
+        </div>
+
         <div className="flex items-center gap-2">
           <Button onClick={runAudit} disabled={auditing || !activeOrganization}>
             {auditing ? (
@@ -149,6 +221,7 @@ export const AuditPublishedVsQBO = () => {
             </span>
           )}
         </div>
+
 
         {ran && orphans.length === 0 && !auditing && (
           <div className="text-sm text-muted-foreground flex items-center gap-2 p-3 bg-muted rounded">
