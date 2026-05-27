@@ -825,9 +825,29 @@ serve(async (req) => {
           log(`🔍 IMAP SEARCH ${folder}: ${searchResp.substring(0, 200)}`);
 
           const searchLine = searchResp.split("\r\n").find(l => l.startsWith("* SEARCH"));
-          const ids = searchLine && searchLine.trim() !== "* SEARCH" 
+          let ids = searchLine && searchLine.trim() !== "* SEARCH" 
             ? searchLine.replace("* SEARCH ", "").trim().split(" ").map(Number).filter(n => n > 0)
             : [];
+
+          // If clave (50 digits), also try by cedula del emisor (positions 4-13)
+          // and by NumeroConsecutivo (positions 21-40). These often appear in body/subject.
+          if (ids.length === 0 && /^\d{50}$/.test(invoice_number)) {
+            const cedulaEmisor = invoice_number.substring(3, 13).replace(/^0+/, "");
+            const consecutivo = invoice_number.substring(21, 41);
+            for (const term of [consecutivo, cedulaEmisor]) {
+              if (!term || term.length < 6) continue;
+              const altResp = await cmd(`SEARCH TEXT "${term}"`);
+              const altLine = altResp.split("\r\n").find(l => l.startsWith("* SEARCH"));
+              const altIds = altLine && altLine.trim() !== "* SEARCH"
+                ? altLine.replace("* SEARCH ", "").trim().split(" ").map(Number).filter(n => n > 0)
+                : [];
+              if (altIds.length > 0 && altIds.length < 200) {
+                ids = altIds;
+                log(`🔍 Alt SEARCH "${term}" en ${folder}: ${altIds.length} candidatos`);
+                break;
+              }
+            }
+          }
           
           if (ids.length > 0) {
             msgIds = ids;
@@ -852,7 +872,8 @@ serve(async (req) => {
               : [];
             
             if (sinceIds.length > 0) {
-              broaderScanIds = sinceIds.slice(-50);
+              // Take last 150 (most recent) — we'll filter for multipart quickly
+              broaderScanIds = sinceIds.slice(-150);
               broaderScanFolder = folder;
               log(`📬 Broader scan candidate: ${sinceIds.length} messages since ${sinceDateStr}, checking last ${broaderScanIds.length} in ${folder}`);
             }
