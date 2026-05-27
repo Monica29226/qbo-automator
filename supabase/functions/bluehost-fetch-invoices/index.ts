@@ -100,15 +100,25 @@ function parseMimeParts(body: string): Array<{ filename: string; content: string
 }
 
 function decodePartContent(content: string, encoding: string): Uint8Array {
-  const cleanB64 = content.replace(/[\r\n\s]/g, "");
   if (encoding === "base64") {
+    // Strict base64: drop any char outside the base64 alphabet (handles stray
+    // IMAP tags, quoted-printable bleed-through, or transport-level junk).
+    let cleanB64 = content.replace(/[^A-Za-z0-9+/=]/g, "");
+    while (cleanB64.length % 4) cleanB64 += "=";
     const binaryStr = atob(cleanB64);
     const bytes = new Uint8Array(binaryStr.length);
     for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
     return bytes;
   }
+  if (encoding === "quoted-printable") {
+    const decoded = content
+      .replace(/=\r?\n/g, "")
+      .replace(/=([0-9A-Fa-f]{2})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
+    return new TextEncoder().encode(decoded);
+  }
   return new TextEncoder().encode(content);
 }
+
 
 // Parse IMAP LIST response into folder names.
 // Excludes Trash/Sent/Drafts and unselectable folders. INBOX first if present.

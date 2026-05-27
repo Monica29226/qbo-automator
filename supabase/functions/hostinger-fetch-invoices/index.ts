@@ -6,6 +6,105 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
+// ============================================================
+// MIME / IMAP helpers (portados desde bluehost-fetch-invoices)
+// Soportan multipart anidado (profundidad 10), base64 estricto,
+// nombres en formato MIME y IMAP.
+// ============================================================
+
+function parseMimeParts(body: string): Array<{ filename: string; content: string; contentType: string; encoding: string }> {
+  const parts: Array<{ filename: string; content: string; contentType: string; encoding: string }> = [];
+  const MAX_DEPTH = 10;
+
+  function extractParts(section: string, depth: number = 0) {
+    if (depth > MAX_DEPTH) {
+      console.warn(`[Hostinger MIME] Max recursion depth (${MAX_DEPTH}) reached, skipping nested parts`);
+      return;
+    }
+    const boundaryMatch = section.match(/boundary="?([^\s";]+)"?/i);
+    if (!boundaryMatch) {
+      extractSinglePart(section);
+      return;
+    }
+    const boundary = boundaryMatch[1];
+    const segments = section.split(`--${boundary}`);
+    for (const seg of segments) {
+      if (seg.startsWith("--") || seg.trim() === "") continue;
+      if (seg.match(/Content-Type:\s*multipart\//i)) {
+        extractParts(seg, depth + 1);
+      } else {
+        extractSinglePart(seg);
+      }
+    }
+  }
+
+  function extractSinglePart(seg: string) {
+    const headerBodySplit = seg.indexOf("\r\n\r\n");
+    if (headerBodySplit < 0) return;
+    const headers = seg.substring(0, headerBodySplit);
+    const body = seg.substring(headerBodySplit + 4).trim();
+    if (body.length < 20) return;
+
+    const ctMatch = headers.match(/Content-Type:\s*([^\s;]+)/i);
+    const contentType = ctMatch ? ctMatch[1].toLowerCase() : "";
+    const encMatch = headers.match(/Content-Transfer-Encoding:\s*(\S+)/i);
+    const encoding = encMatch ? encMatch[1].toLowerCase() : "7bit";
+
+    let filename = "";
+    const dispMatch = headers.match(/filename\*?=(?:utf-8''|UTF-8'')?\"?([^"\r\n;]+)\"?/i);
+    if (dispMatch) {
+      try { filename = decodeURIComponent(dispMatch[1].trim()); } catch { filename = dispMatch[1].trim(); }
+    }
+    if (!filename) {
+      const nameMatch = headers.match(/name\*?=(?:utf-8''|UTF-8'')?\"?([^"\r\n;]+)\"?/i);
+      if (nameMatch) {
+        try { filename = decodeURIComponent(nameMatch[1].trim()); } catch { filename = nameMatch[1].trim(); }
+      }
+    }
+    if (!filename) {
+      const contParts: string[] = [];
+      const contRegex = /filename\*(\d+)\*?=(?:utf-8''|UTF-8'')?\"?([^"\r\n;]+)\"?/gi;
+      let m;
+      while ((m = contRegex.exec(headers)) !== null) {
+        contParts[parseInt(m[1])] = m[2];
+      }
+      if (contParts.length > 0) {
+        try { filename = decodeURIComponent(contParts.join("")); } catch { filename = contParts.join(""); }
+      }
+    }
+
+    const fnameLower = filename.toLowerCase();
+    const isXml = fnameLower.endsWith(".xml") || contentType.includes("xml");
+    const isPdf = fnameLower.endsWith(".pdf") || contentType === "application/pdf";
+
+    if (isXml || isPdf || (filename && (contentType.includes("octet-stream") || contentType.includes("application/")))) {
+      parts.push({ filename, content: body, contentType, encoding });
+    }
+  }
+
+  extractParts(body, 0);
+  return parts;
+}
+
+function decodePartContent(content: string, encoding: string): Uint8Array {
+  if (encoding === "base64") {
+    // Strict base64: remove any char that is not part of the base64 alphabet
+    let cleanB64 = content.replace(/[^A-Za-z0-9+/=]/g, "");
+    while (cleanB64.length % 4) cleanB64 += "=";
+    const binaryStr = atob(cleanB64);
+    const bytes = new Uint8Array(binaryStr.length);
+    for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
+    return bytes;
+  }
+  if (encoding === "quoted-printable") {
+    const decoded = content
+      .replace(/=\r?\n/g, "")
+      .replace(/=([0-9A-Fa-f]{2})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
+    return new TextEncoder().encode(decoded);
+  }
+  return new TextEncoder().encode(content);
+}
+
 // Parse IMAP LIST response into folder names.
 // Excludes Trash/Sent/Drafts and unselectable folders. INBOX first if present.
 function parseFolderList(listResp: string): string[] {
@@ -40,6 +139,7 @@ function parseFolderList(listResp: string): string[] {
   });
   return folders;
 }
+
 
 // Simple IMAP client using Deno's native TCP connection
 async function fetchEmailsViaIMAP(
@@ -197,9 +297,20 @@ async function fetchEmailsViaIMAP(
             await new Promise(r => setTimeout(r, 50));
           }
           const lowerStructResp = structResp.toLowerCase();
-          const hasXml = lowerStructResp.includes('"xml"') || lowerStructResp.includes('application/xml') || lowerStructResp.includes('.xml');
-          const hasPdf = lowerStructResp.includes('"pdf"') || lowerStructResp.includes('application/pdf') || lowerStructResp.includes('.pdf');
-          if (!hasXml && !hasPdf) continue;
+          // Lenient attachment detection — matches the proven Bluehost strategy.
+          // Includes octet-stream, attachment dispositions, and multipart/mixed wrappers so
+          // we don't drop emails where the XML/PDF is nested or has a generic content-type.
+          const hasAttachment =
+            lowerStructResp.includes('"xml"') || lowerStructResp.includes('application/xml') ||
+            lowerStructResp.includes('text/xml') || lowerStructResp.includes('.xml') ||
+            lowerStructResp.includes('"pdf"') || lowerStructResp.includes('application/pdf') ||
+            lowerStructResp.includes('.pdf') ||
+            lowerStructResp.includes('attachment') || lowerStructResp.includes('octet-stream') ||
+            lowerStructResp.includes('multipart/mixed') || lowerStructResp.includes('message/rfc822');
+          // Fallback: if BODYSTRUCTURE was truncated/unreadable, still try to fetch the body.
+          if (!hasAttachment && lowerStructResp.length > 200 && !lowerStructResp.includes('multipart')) {
+            continue;
+          }
 
           const fetchCmd = `AB${fIdx}_${i} FETCH ${msgId} BODY[]`;
           await conn.write(encoder.encode(fetchCmd + "\r\n"));
@@ -215,7 +326,18 @@ async function fetchEmailsViaIMAP(
             fetchAttempts++;
             if (Date.now() - functionStartTime > MAX_EXECUTION_TIME_MS) break;
           }
-          if (emailContent.length > 0) rawEmails.push(emailContent);
+          if (emailContent.length > 0) {
+            // Extract raw email payload using the IMAP literal size marker `{N}\r\n`
+            // so we trim IMAP wrappers before MIME parsing.
+            const litMatch = emailContent.match(/\{(\d+)\}\r\n/);
+            if (litMatch) {
+              const start = emailContent.indexOf(litMatch[0]) + litMatch[0].length;
+              const size = parseInt(litMatch[1]);
+              emailContent = emailContent.substring(start, start + size);
+            }
+            rawEmails.push(emailContent);
+          }
+
         } catch (msgErr) {
           console.error(`[Hostinger IMAP] Error fetching message ${msgId}:`, msgErr);
         }
@@ -268,136 +390,53 @@ function isHaciendaResponse(filename: string, content: string): boolean {
 }
 
 // Function to extract XML attachments from raw email
+// Extract XML attachments using the recursive MIME parser.
+// Handles nested multipart/* (mixed/related/alternative) and strict base64.
 function extractXmlAttachments(rawEmail: string): Array<{ filename: string; content: string }> {
   const attachments: Array<{ filename: string; content: string }> = [];
-  
-  const boundaryMatch = rawEmail.match(/boundary="?([^"\r\n;]+)"?/i);
-  if (!boundaryMatch) {
-    return attachments;
-  }
-
-  const boundary = boundaryMatch[1];
-  const parts = rawEmail.split("--" + boundary);
-
-  for (const part of parts) {
-    const filenameMatch = part.match(/filename="?([^"\r\n]+\.xml)"?/i);
-    if (!filenameMatch) continue;
-
-    const filename = filenameMatch[1].trim();
-
-    const encodingMatch = part.match(/Content-Transfer-Encoding:\s*(\S+)/i);
-    const encoding = encodingMatch ? encodingMatch[1].toUpperCase() : "7BIT";
-
-    const contentStart = part.indexOf("\r\n\r\n");
-    if (contentStart === -1) continue;
-
-    let content = part.substring(contentStart + 4);
-    
-    const endIdx = content.indexOf("--" + boundary);
-    if (endIdx !== -1) {
-      content = content.substring(0, endIdx);
-    }
-    content = content.trim();
-
-    let decodedContent: string;
-    
-    if (encoding === "BASE64") {
-      try {
-        const cleanBase64 = content.replace(/[\r\n\s]/g, "");
-        // Decodificar base64 correctamente para UTF-8
-        const binaryData = Uint8Array.from(atob(cleanBase64), c => c.charCodeAt(0));
-        // Usar TextDecoder con UTF-8 para manejar tildes correctamente
-        decodedContent = new TextDecoder("utf-8").decode(binaryData);
-      } catch (e) {
-        console.error(`[Hostinger] Error decoding base64 for ${filename}:`, e);
+  const mimeParts = parseMimeParts(rawEmail);
+  for (const part of mimeParts) {
+    const fnameLower = part.filename.toLowerCase();
+    const looksLikeXml = fnameLower.endsWith(".xml") || part.contentType.includes("xml");
+    const looksLikeOctet = part.contentType.includes("octet-stream") && fnameLower.endsWith(".xml");
+    if (!looksLikeXml && !looksLikeOctet) continue;
+    try {
+      const bytes = decodePartContent(part.content, part.encoding);
+      const decodedContent = new TextDecoder("utf-8").decode(bytes);
+      if (isHaciendaResponse(part.filename, decodedContent)) {
+        console.log(`[Hostinger] Skipping Hacienda response/message: ${part.filename}`);
         continue;
       }
-    } else if (encoding === "QUOTED-PRINTABLE") {
-      decodedContent = content
-        .replace(/=\r?\n/g, "")
-        .replace(/=([0-9A-Fa-f]{2})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
-    } else {
-      decodedContent = content;
-    }
-
-    if (isHaciendaResponse(filename, decodedContent)) {
-      console.log(`[Hostinger] Skipping Hacienda response/message: ${filename}`);
-      continue;
-    }
-
-    if (decodedContent.includes("<Clave>")) {
-      console.log(`[Hostinger] ✓ Valid invoice XML found: ${filename}`);
-      attachments.push({ filename, content: decodedContent });
-    } else {
-      console.log(`[Hostinger] Skipping XML without Clave: ${filename}`);
+      if (decodedContent.includes("<Clave>")) {
+        console.log(`[Hostinger] ✓ Valid invoice XML found: ${part.filename}`);
+        attachments.push({ filename: part.filename, content: decodedContent });
+      }
+    } catch (e) {
+      console.error(`[Hostinger] Error decoding XML ${part.filename}:`, e);
     }
   }
-
   return attachments;
 }
 
-// Function to extract PDF attachments from raw email
+// Extract PDF attachments using the recursive MIME parser.
 function extractPdfAttachments(rawEmail: string): Array<{ filename: string; content: Uint8Array }> {
   const attachments: Array<{ filename: string; content: Uint8Array }> = [];
-  
-  const boundaryMatch = rawEmail.match(/boundary="?([^"\r\n;]+)"?/i);
-  if (!boundaryMatch) {
-    return attachments;
-  }
-
-  const boundary = boundaryMatch[1];
-  const parts = rawEmail.split("--" + boundary);
-
-  for (const part of parts) {
-    const filenameMatch = part.match(/filename="?([^"\r\n]+\.pdf)"?/i);
-    if (!filenameMatch) continue;
-
-    const filename = filenameMatch[1].trim();
-
-    const encodingMatch = part.match(/Content-Transfer-Encoding:\s*(\S+)/i);
-    const encoding = encodingMatch ? encodingMatch[1].toUpperCase() : "7BIT";
-
-    const contentStart = part.indexOf("\r\n\r\n");
-    if (contentStart === -1) continue;
-
-    let content = part.substring(contentStart + 4);
-    
-    const endIdx = content.indexOf("--" + boundary);
-    if (endIdx !== -1) {
-      content = content.substring(0, endIdx);
-    }
-    content = content.trim();
-
-    let decodedContent: Uint8Array;
-    
-    if (encoding === "BASE64") {
-      try {
-        const cleanBase64 = content.replace(/[\r\n\s]/g, "");
-        const binaryStr = atob(cleanBase64);
-        decodedContent = new Uint8Array(binaryStr.length);
-        for (let i = 0; i < binaryStr.length; i++) {
-          decodedContent[i] = binaryStr.charCodeAt(i);
-        }
-      } catch (e) {
-        console.error(`[Hostinger] Error decoding PDF base64 for ${filename}:`, e);
-        continue;
+  const mimeParts = parseMimeParts(rawEmail);
+  for (const part of mimeParts) {
+    const fnameLower = part.filename.toLowerCase();
+    const looksLikePdf = fnameLower.endsWith(".pdf") || part.contentType === "application/pdf";
+    const looksLikeOctet = part.contentType.includes("octet-stream") && fnameLower.endsWith(".pdf");
+    if (!looksLikePdf && !looksLikeOctet) continue;
+    try {
+      const bytes = decodePartContent(part.content, part.encoding);
+      if (bytes.length > 4 && String.fromCharCode(bytes[0], bytes[1], bytes[2], bytes[3]) === "%PDF") {
+        console.log(`[Hostinger] ✓ Valid PDF found: ${part.filename} (${bytes.length} bytes)`);
+        attachments.push({ filename: part.filename, content: bytes });
       }
-    } else {
-      const encoder = new TextEncoder();
-      decodedContent = encoder.encode(content);
-    }
-
-    if (decodedContent.length > 4) {
-      const header = String.fromCharCode(...decodedContent.slice(0, 4));
-      if (header === "%PDF") {
-        console.log(`[Hostinger] ✓ Valid PDF found: ${filename} (${decodedContent.length} bytes)`);
-        attachments.push({ filename, content: decodedContent });
-      } else {
-        console.log(`[Hostinger] Skipping invalid PDF (wrong header): ${filename}`);
-      }
+    } catch (e) {
+      console.error(`[Hostinger] Error decoding PDF ${part.filename}:`, e);
     }
   }
-
   return attachments;
 }
 
@@ -407,21 +446,20 @@ function matchPdfToXml(
   pdfAttachments: Array<{ filename: string; content: Uint8Array }>
 ): Map<string, { filename: string; content: Uint8Array } | null> {
   const matches = new Map<string, { filename: string; content: Uint8Array } | null>();
-  
+
   for (const xml of xmlAttachments) {
     const claveMatch = xml.content.match(/<Clave>(\d{50})<\/Clave>/);
     const clave = claveMatch ? claveMatch[1] : "";
-    
+
     const numConsecMatch = xml.content.match(/<NumeroConsecutivo>(\d+)<\/NumeroConsecutivo>/);
     const numConsec = numConsecMatch ? numConsecMatch[1] : "";
-    
+
     const xmlBaseName = xml.filename.replace(/\.xml$/i, "").toLowerCase();
-    
+
     let matchedPdf: { filename: string; content: Uint8Array } | null = null;
-    
+
     for (const pdf of pdfAttachments) {
       const pdfBaseName = pdf.filename.replace(/\.pdf$/i, "").toLowerCase();
-      
       if (pdfBaseName === xmlBaseName ||
           (clave && pdf.filename.includes(clave)) ||
           (numConsec && pdf.filename.includes(numConsec)) ||
@@ -431,12 +469,19 @@ function matchPdfToXml(
         break;
       }
     }
-    
+
+    // Fallback: if there's exactly one XML and one PDF in the email, pair them.
+    if (!matchedPdf && xmlAttachments.length === 1 && pdfAttachments.length === 1) {
+      matchedPdf = pdfAttachments[0];
+      console.log(`[Hostinger] ✓ Paired single PDF/XML in email: ${pdfAttachments[0].filename} <-> ${xml.filename}`);
+    }
+
     matches.set(xml.filename, matchedPdf);
   }
-  
+
   return matches;
 }
+
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
