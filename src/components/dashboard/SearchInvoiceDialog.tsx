@@ -25,6 +25,10 @@ import { useAuth } from "@/hooks/useAuth";
 import { toast } from "sonner";
 import { Search, Loader2, FileText, Mail } from "lucide-react";
 
+const FALLBACK_EMAIL_SEARCH_FUNCTION: Partial<Record<string, string>> = {
+  outlook: "outlook-fetch-invoices",
+};
+
 interface SearchResult {
   id: string;
   doc_number: string;
@@ -85,30 +89,63 @@ export function SearchInvoiceDialog() {
     setIsSearchingEmail(true);
     setEmailSearchMessage(null);
     try {
-      toast.info(`Buscando "${searchTerm}" dentro del XML/PDF del correo...`);
+      const { data: integrations } = await supabase
+        .from("integration_accounts")
+        .select("service_type")
+        .eq("organization_id", activeOrganization)
+        .eq("is_active", true)
+        .in("service_type", ["gmail", "hostinger", "bluehost", "outlook", "outlook_imap"])
+        .limit(1);
 
-      const { data, error } = await supabase.functions.invoke<DeepSearchResponse>("search-import-invoice", {
-        body: {
-          organization_id: activeOrganization,
-          invoice_number: searchTerm.trim(),
-          auto_publish: false,
-        },
-      });
+      const service = integrations?.[0]?.service_type;
+      if (!service) {
+        toast.error("No tenés correo conectado. Conectalo en Integraciones.");
+        return;
+      }
+
+      const usesFallbackSearch = Boolean(FALLBACK_EMAIL_SEARCH_FUNCTION[service]);
+      toast.info(
+        usesFallbackSearch
+          ? `Buscando "${searchTerm}" en ${service}...`
+          : `Buscando "${searchTerm}" dentro del XML/PDF del correo...`
+      );
+
+      const { data, error } = usesFallbackSearch
+        ? await supabase.functions.invoke(FALLBACK_EMAIL_SEARCH_FUNCTION[service]!, {
+            body: {
+              organization_id: activeOrganization,
+              search_term: searchTerm.trim(),
+              search_days: 90,
+            },
+          })
+        : await supabase.functions.invoke<DeepSearchResponse>("search-import-invoice", {
+            body: {
+              organization_id: activeOrganization,
+              invoice_number: searchTerm.trim(),
+              auto_publish: false,
+            },
+          });
 
       if (error) throw error;
 
-      const responseMessage = data?.message || "Búsqueda en correo completada";
+      const fallbackFound = (data as any)?.invoices_processed ?? (data as any)?.processed ?? 0;
+      const responseMessage = usesFallbackSearch
+        ? (fallbackFound > 0
+            ? `Se encontraron ${fallbackFound} factura(s) nueva(s)`
+            : "No se encontraron facturas con ese criterio en el correo")
+        : ((data as DeepSearchResponse | null)?.message || "Búsqueda en correo completada");
       setEmailSearchMessage(responseMessage);
       setEmailSearched(true);
 
-      if (data?.success) {
+      if (usesFallbackSearch ? fallbackFound > 0 : (data as DeepSearchResponse | null)?.success) {
         toast.success(responseMessage);
 
         const refreshed = await runLocalSearch();
         setResults(refreshed);
 
-        if (refreshed.length === 0 && (data?.existing || data?.document)) {
-          const syntheticResult = (data.existing || data.document) as SearchResult;
+        const deepData = data as DeepSearchResponse | null;
+        if (!usesFallbackSearch && refreshed.length === 0 && (deepData?.existing || deepData?.document)) {
+          const syntheticResult = (deepData.existing || deepData.document) as SearchResult;
           setResults(syntheticResult ? [syntheticResult] : refreshed);
         }
       } else {
