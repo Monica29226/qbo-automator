@@ -338,24 +338,23 @@ async function checkFailureRate(
   if (failureRate > 50 && totalFailed > 5) {
     return {
       type: "critical",
+      code: "high_failure_rate",
       title: "Alta tasa de fallos en procesamiento",
       description: `${Math.round(failureRate)}% de facturas fallaron (${totalFailed} de ${totalProcessed + totalFailed}) en las últimas 24h`,
       actionRequired: 'Revisar errores en la página "Documentos con Error"',
-      data: {
-        totalProcessed,
-        totalFailed,
-        qboFailed,
-        failureRate: Math.round(failureRate),
-      },
+      action_link: "/error-documents",
+      data: { totalProcessed, totalFailed, qboFailed, failureRate: Math.round(failureRate) },
     };
   }
 
   if (qboFailed > 5) {
     return {
       type: "warning",
+      code: "qbo_failed",
       title: "Múltiples errores de QuickBooks",
       description: `${qboFailed} facturas no se pudieron publicar a QuickBooks`,
       actionRequired: "Verificar conexión de QuickBooks y configuración de cuentas",
+      action_link: "/error-documents",
       data: { qboFailed },
     };
   }
