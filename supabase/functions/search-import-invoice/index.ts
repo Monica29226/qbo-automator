@@ -912,13 +912,27 @@ serve(async (req) => {
         let pdfBase64 = "";
         let pdfFilename = "";
 
-        // Only fetch the last few matches (most recent)
-        for (const msgId of msgIds.slice(-3)) {
+        // Scan candidates newest-first. Skip non-multipart messages quickly.
+        const candidates = [...msgIds].reverse();
+        let scannedAttachments = 0;
+        const MAX_ATTACHMENT_SCANS = 40;
+        for (const msgId of candidates) {
+          if (xmlContent) break;
+          if (scannedAttachments >= MAX_ATTACHMENT_SCANS) {
+            log(`⏹️ Reached scan limit (${MAX_ATTACHMENT_SCANS} attachment scans)`);
+            break;
+          }
           checkTimeout();
           log(`📩 Fetching BODYSTRUCTURE for msg ${msgId}...`);
           
           // Step 1: Get BODYSTRUCTURE to find attachment part numbers
           const structResp = await cmd(`FETCH ${msgId} BODYSTRUCTURE`);
+          // Quick skip: if no "multipart" and no filename hints, it's text-only — no attachments
+          const structLowerQuick = structResp.toLowerCase();
+          if (!structLowerQuick.includes("multipart") && !structLowerQuick.includes("filename") && !structLowerQuick.includes(".xml")) {
+            continue;
+          }
+          scannedAttachments++;
           log(`📋 BODYSTRUCTURE (first 300): ${structResp.substring(0, 300)}`);
           
           // Parse part numbers for XML and PDF attachments
