@@ -6,6 +6,105 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
+// ============================================================
+// MIME / IMAP helpers (portados desde bluehost-fetch-invoices)
+// Soportan multipart anidado (profundidad 10), base64 estricto,
+// nombres en formato MIME y IMAP.
+// ============================================================
+
+function parseMimeParts(body: string): Array<{ filename: string; content: string; contentType: string; encoding: string }> {
+  const parts: Array<{ filename: string; content: string; contentType: string; encoding: string }> = [];
+  const MAX_DEPTH = 10;
+
+  function extractParts(section: string, depth: number = 0) {
+    if (depth > MAX_DEPTH) {
+      console.warn(`[Hostinger MIME] Max recursion depth (${MAX_DEPTH}) reached, skipping nested parts`);
+      return;
+    }
+    const boundaryMatch = section.match(/boundary="?([^\s";]+)"?/i);
+    if (!boundaryMatch) {
+      extractSinglePart(section);
+      return;
+    }
+    const boundary = boundaryMatch[1];
+    const segments = section.split(`--${boundary}`);
+    for (const seg of segments) {
+      if (seg.startsWith("--") || seg.trim() === "") continue;
+      if (seg.match(/Content-Type:\s*multipart\//i)) {
+        extractParts(seg, depth + 1);
+      } else {
+        extractSinglePart(seg);
+      }
+    }
+  }
+
+  function extractSinglePart(seg: string) {
+    const headerBodySplit = seg.indexOf("\r\n\r\n");
+    if (headerBodySplit < 0) return;
+    const headers = seg.substring(0, headerBodySplit);
+    const body = seg.substring(headerBodySplit + 4).trim();
+    if (body.length < 20) return;
+
+    const ctMatch = headers.match(/Content-Type:\s*([^\s;]+)/i);
+    const contentType = ctMatch ? ctMatch[1].toLowerCase() : "";
+    const encMatch = headers.match(/Content-Transfer-Encoding:\s*(\S+)/i);
+    const encoding = encMatch ? encMatch[1].toLowerCase() : "7bit";
+
+    let filename = "";
+    const dispMatch = headers.match(/filename\*?=(?:utf-8''|UTF-8'')?\"?([^"\r\n;]+)\"?/i);
+    if (dispMatch) {
+      try { filename = decodeURIComponent(dispMatch[1].trim()); } catch { filename = dispMatch[1].trim(); }
+    }
+    if (!filename) {
+      const nameMatch = headers.match(/name\*?=(?:utf-8''|UTF-8'')?\"?([^"\r\n;]+)\"?/i);
+      if (nameMatch) {
+        try { filename = decodeURIComponent(nameMatch[1].trim()); } catch { filename = nameMatch[1].trim(); }
+      }
+    }
+    if (!filename) {
+      const contParts: string[] = [];
+      const contRegex = /filename\*(\d+)\*?=(?:utf-8''|UTF-8'')?\"?([^"\r\n;]+)\"?/gi;
+      let m;
+      while ((m = contRegex.exec(headers)) !== null) {
+        contParts[parseInt(m[1])] = m[2];
+      }
+      if (contParts.length > 0) {
+        try { filename = decodeURIComponent(contParts.join("")); } catch { filename = contParts.join(""); }
+      }
+    }
+
+    const fnameLower = filename.toLowerCase();
+    const isXml = fnameLower.endsWith(".xml") || contentType.includes("xml");
+    const isPdf = fnameLower.endsWith(".pdf") || contentType === "application/pdf";
+
+    if (isXml || isPdf || (filename && (contentType.includes("octet-stream") || contentType.includes("application/")))) {
+      parts.push({ filename, content: body, contentType, encoding });
+    }
+  }
+
+  extractParts(body, 0);
+  return parts;
+}
+
+function decodePartContent(content: string, encoding: string): Uint8Array {
+  if (encoding === "base64") {
+    // Strict base64: remove any char that is not part of the base64 alphabet
+    let cleanB64 = content.replace(/[^A-Za-z0-9+/=]/g, "");
+    while (cleanB64.length % 4) cleanB64 += "=";
+    const binaryStr = atob(cleanB64);
+    const bytes = new Uint8Array(binaryStr.length);
+    for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
+    return bytes;
+  }
+  if (encoding === "quoted-printable") {
+    const decoded = content
+      .replace(/=\r?\n/g, "")
+      .replace(/=([0-9A-Fa-f]{2})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
+    return new TextEncoder().encode(decoded);
+  }
+  return new TextEncoder().encode(content);
+}
+
 // Parse IMAP LIST response into folder names.
 // Excludes Trash/Sent/Drafts and unselectable folders. INBOX first if present.
 function parseFolderList(listResp: string): string[] {
@@ -40,6 +139,7 @@ function parseFolderList(listResp: string): string[] {
   });
   return folders;
 }
+
 
 // Simple IMAP client using Deno's native TCP connection
 async function fetchEmailsViaIMAP(
