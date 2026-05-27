@@ -602,6 +602,7 @@ const Dashboard = () => {
         <div className="mb-4 flex justify-end gap-2 flex-wrap">
           <RecoverBacklogButton />
           <SyncEmailNowButton />
+          <SyncFromExcelDialog />
         </div>
         <Suspense fallback={<LazyFallback />}>
           <CronMonitor />
