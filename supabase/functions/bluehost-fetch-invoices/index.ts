@@ -275,7 +275,12 @@ async function fetchEmailsViaIMAP(
     console.log(`[IMAP] ✅ Login successful for ${email}`);
 
     // Search folders - try primary first, then junk/spam
-    const foldersToSearch = ['"INBOX"', '"Junk"', '"Spam"', '"INBOX.Junk"', '"INBOX.Spam"'];
+    const listResp = await cmd(`LIST "" "*"`);
+    const discoveredFolders = parseFolderList(listResp);
+    const foldersToSearch = discoveredFolders.length > 0
+      ? discoveredFolders.map(f => `"${f.replace(/"/g, '\\"')}"`)
+      : ['"INBOX"', '"Junk"', '"Spam"'];
+    console.log(`[IMAP] Will scan ${foldersToSearch.length} folder(s): ${foldersToSearch.join(", ")}`);
     let totalCandidatesFetched = 0;
     let totalMessagesInRange = 0;
     let emailsWithXml = 0;
