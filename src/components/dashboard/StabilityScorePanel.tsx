@@ -72,7 +72,8 @@ export const StabilityScorePanel = ({ organizationId }: Props) => {
       return { configured: hasTaxPublished && taxErrors === 0, taxErrors };
     },
     enabled: !!organizationId,
-    staleTime: 5 * 60_000,
+    staleTime: 30_000,
+    refetchInterval: 60_000,
   });
 
   const qboConnected = !!connections?.quickbooks;
