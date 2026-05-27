@@ -825,9 +825,29 @@ serve(async (req) => {
           log(`🔍 IMAP SEARCH ${folder}: ${searchResp.substring(0, 200)}`);
 
           const searchLine = searchResp.split("\r\n").find(l => l.startsWith("* SEARCH"));
-          const ids = searchLine && searchLine.trim() !== "* SEARCH" 
+          let ids = searchLine && searchLine.trim() !== "* SEARCH" 
             ? searchLine.replace("* SEARCH ", "").trim().split(" ").map(Number).filter(n => n > 0)
             : [];
+
+          // If clave (50 digits), also try by cedula del emisor (positions 4-13)
+          // and by NumeroConsecutivo (positions 21-40). These often appear in body/subject.
+          if (ids.length === 0 && /^\d{50}$/.test(invoice_number)) {
+            const cedulaEmisor = invoice_number.substring(3, 13).replace(/^0+/, "");
+            const consecutivo = invoice_number.substring(21, 41);
+            for (const term of [consecutivo, cedulaEmisor]) {
+              if (!term || term.length < 6) continue;
+              const altResp = await cmd(`SEARCH TEXT "${term}"`);
+              const altLine = altResp.split("\r\n").find(l => l.startsWith("* SEARCH"));
+              const altIds = altLine && altLine.trim() !== "* SEARCH"
+                ? altLine.replace("* SEARCH ", "").trim().split(" ").map(Number).filter(n => n > 0)
+                : [];
+              if (altIds.length > 0 && altIds.length < 200) {
+                ids = altIds;
+                log(`🔍 Alt SEARCH "${term}" en ${folder}: ${altIds.length} candidatos`);
+                break;
+              }
+            }
+          }
           
           if (ids.length > 0) {
             msgIds = ids;
@@ -852,7 +872,8 @@ serve(async (req) => {
               : [];
             
             if (sinceIds.length > 0) {
-              broaderScanIds = sinceIds.slice(-50);
+              // Take last 150 (most recent) — we'll filter for multipart quickly
+              broaderScanIds = sinceIds.slice(-150);
               broaderScanFolder = folder;
               log(`📬 Broader scan candidate: ${sinceIds.length} messages since ${sinceDateStr}, checking last ${broaderScanIds.length} in ${folder}`);
             }
@@ -879,17 +900,39 @@ serve(async (req) => {
           );
         }
 
+        // CRITICAL: Re-SELECT the folder where the msgIds came from.
+        // The folder loop above may have SELECTed other folders after finding the IDs,
+        // which makes subsequent FETCH commands fail with "Invalid messageset".
+        if (selectedFolder) {
+          const reselectResp = await cmd(`SELECT "${selectedFolder}"`);
+          log(`🔄 Re-selected folder ${selectedFolder} before FETCH: ${reselectResp.substring(0, 100)}`);
+        }
+
         let xmlContent = "";
         let pdfBase64 = "";
         let pdfFilename = "";
 
-        // Only fetch the last few matches (most recent)
-        for (const msgId of msgIds.slice(-3)) {
+        // Scan candidates newest-first. Skip non-multipart messages quickly.
+        const candidates = [...msgIds].reverse();
+        let scannedAttachments = 0;
+        const MAX_ATTACHMENT_SCANS = 40;
+        for (const msgId of candidates) {
+          if (xmlContent) break;
+          if (scannedAttachments >= MAX_ATTACHMENT_SCANS) {
+            log(`⏹️ Reached scan limit (${MAX_ATTACHMENT_SCANS} attachment scans)`);
+            break;
+          }
           checkTimeout();
           log(`📩 Fetching BODYSTRUCTURE for msg ${msgId}...`);
           
           // Step 1: Get BODYSTRUCTURE to find attachment part numbers
           const structResp = await cmd(`FETCH ${msgId} BODYSTRUCTURE`);
+          // Quick skip: if no "multipart" and no filename hints, it's text-only — no attachments
+          const structLowerQuick = structResp.toLowerCase();
+          if (!structLowerQuick.includes("multipart") && !structLowerQuick.includes("filename") && !structLowerQuick.includes(".xml")) {
+            continue;
+          }
+          scannedAttachments++;
           log(`📋 BODYSTRUCTURE (first 300): ${structResp.substring(0, 300)}`);
           
           // Parse part numbers for XML and PDF attachments
@@ -903,32 +946,25 @@ serve(async (req) => {
           // Simple heuristic: count opening parens to determine part numbers
           // For typical emails with attachments, parts are numbered 1, 2, 3, etc.
           // We'll extract filenames and map them to sequential part numbers
-          const filenameRegex = /filename[*]?(?:="([^"]+)"|=([^\s\)]+)|[*]0[*]?="?([^";\s\)]+)"?|[*]1[*]?="?([^";\s\)]+)"?)/gi;
-          let fnMatch;
-          let partCounter = 0;
-          
-          // Split by major sections to count parts
-          // Each attachment typically appears as a separate MIME part
-          const sections = structResp.split(/\)\s*\(/);
-          
-          for (let si = 0; si < sections.length; si++) {
-            const section = sections[si].toLowerCase();
-            // Check if this section has a filename
-            const fnRegex = /filename[*]?(?:="([^"]+)"|=([^\s\)]+))/i;
-            const fnM = sections[si].match(fnRegex);
-            
-            if (fnM) {
-              partCounter++;
-              const fname = (fnM[1] || fnM[2] || "").trim();
-              const partNum = String(partCounter + 1); // Part 1 is usually text/html, attachments start at 2+
-              
-              if (fname.toLowerCase().endsWith(".xml") && !fname.toLowerCase().includes("ahc-") && !fname.toLowerCase().includes("mensaje")) {
-                xmlParts.push({ partNum, filename: fname });
-                log(`📎 XML attachment: ${fname} -> part ${partNum}`);
-              } else if (fname.toLowerCase().endsWith(".pdf")) {
-                pdfParts.push({ partNum, filename: fname });
-                log(`📎 PDF attachment: ${fname} -> part ${partNum}`);
-              }
+          // Match both IMAP-style ("name" "x.xml") and MIME-style filename="x.xml"
+          const nameMatches: string[] = [];
+          for (const m of structResp.matchAll(/"name"\s+"([^"]+)"/gi)) nameMatches.push(m[1]);
+          for (const m of structResp.matchAll(/filename[*]?\s*=\s*"([^"]+)"/gi)) nameMatches.push(m[1]);
+          const seenF = new Set<string>();
+          let attachmentIdx = 0;
+          for (const fnameRaw of nameMatches) {
+            const fname = fnameRaw.trim();
+            if (!fname || seenF.has(fname)) continue;
+            seenF.add(fname);
+            attachmentIdx++;
+            const partNum = String(attachmentIdx + 1);
+            const fLower = fname.toLowerCase();
+            if (fLower.endsWith(".xml") && !fLower.includes("ahc-") && !fLower.includes("mensajereceptor") && !fLower.includes("mensaje-receptor")) {
+              xmlParts.push({ partNum, filename: fname });
+              log(`📎 XML attachment: ${fname} -> part ${partNum}`);
+            } else if (fLower.endsWith(".pdf")) {
+              pdfParts.push({ partNum, filename: fname });
+              log(`📎 PDF attachment: ${fname} -> part ${partNum}`);
             }
           }
           
@@ -977,13 +1013,20 @@ serve(async (req) => {
               log(`📥 Fetching XML part ${xp.partNum}...`);
               const partResp = await cmd(`FETCH ${msgId} BODY[${xp.partNum}]`);
               
-              // Extract base64 data
-              const dataStart = partResp.indexOf("\r\n");
-              if (dataStart < 0) continue;
-              const dataEnd = partResp.lastIndexOf(`\r\n`);
-              let b64Data = partResp.substring(dataStart + 2, dataEnd).replace(/[\r\n\s]/g, "");
-              b64Data = b64Data.replace(/T\d+\s+OK.*$/i, "").replace(/\)$/,"");
-              
+              // Extract base64 data - IMAP response format: * N FETCH (BODY[X] {size}\r\n<data>\r\n)\r\nTAG OK ...
+              // Strip everything before the literal size marker, and keep only valid base64 chars.
+              let body = partResp;
+              const litMatch = body.match(/\{(\d+)\}\r\n/);
+              if (litMatch) body = body.substring(body.indexOf(litMatch[0]) + litMatch[0].length);
+              else {
+                const ds = body.indexOf("\r\n");
+                if (ds >= 0) body = body.substring(ds + 2);
+              }
+              // Remove trailing IMAP tag/close paren
+              body = body.replace(/\)\r?\n[A-Z]?T?\d+\s+OK[\s\S]*$/i, "").replace(/\)\s*$/, "");
+              let b64Data = body.replace(/[^A-Za-z0-9+/=]/g, "");
+              // Pad to multiple of 4
+              while (b64Data.length % 4) b64Data += "=";
               if (b64Data.length < 50) continue;
               
               try {
@@ -1009,16 +1052,20 @@ serve(async (req) => {
               log(`📥 Fetching PDF part ${pp.partNum}...`);
               try {
                 const partResp = await cmd(`FETCH ${msgId} BODY[${pp.partNum}]`);
-                const dataStart = partResp.indexOf("\r\n");
-                if (dataStart >= 0) {
-                  const dataEnd = partResp.lastIndexOf(`\r\n`);
-                  let b64Data = partResp.substring(dataStart + 2, dataEnd).replace(/[\r\n\s]/g, "");
-                  b64Data = b64Data.replace(/T\d+\s+OK.*$/i, "").replace(/\)$/,"");
-                  if (b64Data.length > 100) {
-                    pdfBase64 = b64Data;
-                    pdfFilename = pp.filename;
-                    log(`📄 PDF fetched: ${pp.filename}`);
-                  }
+                let body = partResp;
+                const litMatch = body.match(/\{(\d+)\}\r\n/);
+                if (litMatch) body = body.substring(body.indexOf(litMatch[0]) + litMatch[0].length);
+                else {
+                  const ds = body.indexOf("\r\n");
+                  if (ds >= 0) body = body.substring(ds + 2);
+                }
+                body = body.replace(/\)\r?\n[A-Z]?T?\d+\s+OK[\s\S]*$/i, "").replace(/\)\s*$/, "");
+                let b64Data = body.replace(/[^A-Za-z0-9+/=]/g, "");
+                while (b64Data.length % 4) b64Data += "=";
+                if (b64Data.length > 100) {
+                  pdfBase64 = b64Data;
+                  pdfFilename = pp.filename;
+                  log(`📄 PDF fetched: ${pp.filename}`);
                 }
               } catch (e) {
                 log(`⚠️ PDF fetch error: ${e}`);
