@@ -1052,16 +1052,20 @@ serve(async (req) => {
               log(`📥 Fetching PDF part ${pp.partNum}...`);
               try {
                 const partResp = await cmd(`FETCH ${msgId} BODY[${pp.partNum}]`);
-                const dataStart = partResp.indexOf("\r\n");
-                if (dataStart >= 0) {
-                  const dataEnd = partResp.lastIndexOf(`\r\n`);
-                  let b64Data = partResp.substring(dataStart + 2, dataEnd).replace(/[\r\n\s]/g, "");
-                  b64Data = b64Data.replace(/T\d+\s+OK.*$/i, "").replace(/\)$/,"");
-                  if (b64Data.length > 100) {
-                    pdfBase64 = b64Data;
-                    pdfFilename = pp.filename;
-                    log(`📄 PDF fetched: ${pp.filename}`);
-                  }
+                let body = partResp;
+                const litMatch = body.match(/\{(\d+)\}\r\n/);
+                if (litMatch) body = body.substring(body.indexOf(litMatch[0]) + litMatch[0].length);
+                else {
+                  const ds = body.indexOf("\r\n");
+                  if (ds >= 0) body = body.substring(ds + 2);
+                }
+                body = body.replace(/\)\r?\n[A-Z]?T?\d+\s+OK[\s\S]*$/i, "").replace(/\)\s*$/, "");
+                let b64Data = body.replace(/[^A-Za-z0-9+/=]/g, "");
+                while (b64Data.length % 4) b64Data += "=";
+                if (b64Data.length > 100) {
+                  pdfBase64 = b64Data;
+                  pdfFilename = pp.filename;
+                  log(`📄 PDF fetched: ${pp.filename}`);
                 }
               } catch (e) {
                 log(`⚠️ PDF fetch error: ${e}`);
