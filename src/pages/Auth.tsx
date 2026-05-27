@@ -149,9 +149,9 @@ const Auth = () => {
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
           <div className="mb-6 flex justify-center">
-            <img src={calderonLogo} alt="Calderón Logo" className="h-20 w-auto" />
+            <img src={calderonLogo} alt="ACL Calderón" className="h-20 w-auto" />
           </div>
-          <h1 className="text-2xl font-bold text-foreground mb-2">FacturaFlow CR</h1>
+          <h1 className="text-2xl font-bold text-foreground mb-2">ACL Invoice</h1>
           <p className="text-muted-foreground">
             Sistema de Gestión de Facturas Multi-Empresa
           </p>
