@@ -129,8 +129,8 @@ async function fetchEmailsViaIMAP(
     }
     console.log(`[Hostinger IMAP] Will scan ${folders.length} folder(s): ${folders.join(", ")}`);
 
-    const BATCH_SIZE = 60;
-    const MAX_EXECUTION_TIME_MS = 90000;
+    const BATCH_SIZE = 50;
+    const MAX_EXECUTION_TIME_MS = 50000;
     const functionStartTime = Date.now();
     let totalMessagesFoundGlobal = 0;
     let totalMessagesProcessedGlobal = 0;
@@ -618,7 +618,7 @@ serve(async (req) => {
     const errors: string[] = [];
     const skippedInvoices: Array<{ doc_key?: string; filename?: string; reason: string }> = [];
     const processingStartTime = Date.now();
-    const MAX_PROCESSING_TIME_MS = 60000; // 60s para drenar el lote completo de 40 correos
+    const MAX_PROCESSING_TIME_MS = 40000; // 40s para drenar el lote bajo el límite duro de edge
 
     // Process each email with timeout protection
     for (const rawEmail of rawEmails) {
