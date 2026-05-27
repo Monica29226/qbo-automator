@@ -1,49 +1,36 @@
-# Republicar factura borrada en QuickBooks
+# Cambios al correo de invitación
 
-## Diagnóstico
+## Problema detectado
 
-Factura encontrada en el sistema:
-- **Proveedor:** JORGE MARIN RAMIREZ
-- **Número:** 00100001010000000828
-- **Clave:** 50618012600060374005100100001010000000828197160363
-- **Monto:** ₡1,251,583.42
-- **Estado interno:** `published` (Bill #56 en QBO, publicada 15-may-2026)
-- **Estado real:** No existe en QuickBooks (borrada manualmente)
+1. **Nombre del producto**: los correos usan "InvoiceFlow", debe ser **"ACL Invoice"**.
+2. **Link de acceso**: el botón "Iniciar Sesión" sí existe en el HTML, pero la URL se construye con `req.headers.get("origin")`. Cuando la función es invocada desde el frontend mediante `supabase.functions.invoke`, el header `origin` apunta al dominio desde el que se llamó (puede ser preview de Lovable) o queda en blanco y cae al fallback `http://localhost:5173`. Resultado: el correo llega con un botón que apunta a una URL no usable o el cliente de correo lo oculta por seguridad.
 
-Es un caso clásico de "huérfana": el sistema cree que está publicada porque guarda el `qbo_entity_id`, pero el Bill fue eliminado en QBO. Por eso no aparece en duplicados ni se vuelve a publicar.
+## Solución
 
-## Opción recomendada: usar la herramienta existente
+### 1. Reemplazar marca "InvoiceFlow" → "ACL Invoice"
+Archivos a actualizar (solo strings visibles al usuario, sin tocar lógica):
+- `supabase/functions/create-user/index.ts` (asunto, encabezado HTML, remitente)
+- `supabase/functions/send-invitation/index.ts` (plantilla HTML, asunto, remitente)
+- `supabase/functions/send-bulk-welcome/index.ts` (plantilla HTML, asunto, remitente)
+- `supabase/functions/batch-import-finalize/index.ts` (remitente)
+- `supabase/functions/check-sync-health/index.ts` (remitente de alertas y firma)
+- `supabase/functions/create-organization/index.ts` (default `email_sender_address`)
 
-Ya existe en el Dashboard la sección **"Auditar publicadas vs QuickBooks"** (`AuditPublishedVsQBO`) que hace exactamente esto:
+Remitente unificado: `"ACL Invoice <noreply@aureoncr.com>"`.
 
-1. Recorre todas las facturas con `status=published` y verifica si el `qbo_entity_id` existe realmente en QBO.
-2. Lista las huérfanas (borradas o inexistentes).
-3. Permite seleccionarlas y republicarlas: limpia `qbo_publish_tracking`, resetea `processed_documents` a `pending` y dispara `publish-to-quickbooks`.
+### 2. URL de acceso confiable
+- Hardcodear el dominio de producción como base: `https://aclcostarica.com` (custom domain del proyecto).
+- Usar `req.headers.get("origin")` solo si empieza con `https://` y no es `localhost`; en caso contrario, usar el dominio de producción.
+- `loginUrl = ${baseUrl}/auth`.
+- Aplicar en `create-user`, `send-invitation`, `send-bulk-welcome`.
 
-**Acción para ti (sin tocar código):**
-- Ve al Dashboard → tarjeta "Auditar publicadas vs QuickBooks" → "Iniciar auditoría".
-- Cuando aparezca la fila de JORGE MARIN RAMIREZ 00100001010000000828, selecciónala y dale "Republicar".
+### 3. Mejora de visibilidad del link en el correo
+En `create-user` (y replicar el patrón en `send-invitation` / `send-bulk-welcome`):
+- Mantener el botón "Iniciar Sesión".
+- Añadir debajo un texto en plano: `Si el botón no funciona, copia este enlace: <a>https://aclcostarica.com/auth</a>` — así el usuario siempre ve y puede usar el link aunque el cliente de correo bloquee el botón.
 
-## Si prefieres que lo haga directo (un solo clic, sin auditar todo)
+## Fuera de alcance
+- No se modifica la lógica de creación de usuario, RLS, ni el flujo de cambio de contraseña.
+- No se forza cambio de contraseña en primer login (queda como recomendación).
 
-Puedo añadir un pequeño cambio en build mode para resolver este caso específico sin esperar la auditoría completa:
-
-### Cambios propuestos
-
-1. **`src/components/dashboard/AuditPublishedVsQBO.tsx`**
-   - Añadir un input "Republicar por número de factura" + botón.
-   - Al confirmar, busca el `processed_documents` por `doc_number` o `doc_key` dentro de la organización activa y llama directamente a `republish-deleted-from-qbo` con ese `id`.
-   - Mensaje de éxito/error con toast.
-
-2. **No requiere edge functions nuevas** ni cambios de schema; reutiliza `republish-deleted-from-qbo` que ya limpia tracking y republica.
-
-### Alcance fuera
-
-- No tocar lógica de QBO ni de detección de duplicados.
-- No cambiar la auditoría masiva existente.
-
-## Recomendación
-
-Probar primero la **herramienta existente** (es un solo clic más). Si te resulta lento auditar las miles de publicadas, implemento el atajo "Republicar por número" en build mode.
-
-¿Procedo con el atajo o lo resuelves desde la auditoría existente?
+¿Procedo con la implementación?

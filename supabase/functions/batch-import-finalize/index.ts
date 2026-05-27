@@ -71,7 +71,7 @@ Deno.serve(async (req) => {
             Authorization: `Bearer ${RESEND_API_KEY}`,
           },
           body: JSON.stringify({
-            from: "InvoiceFlow <noreply@aureoncr.com>",
+            from: "ACL Invoice <noreply@aureoncr.com>",
             to: [user.email],
             subject: `Importación por lote completada — ${counts.total_files} archivos`,
             html: `

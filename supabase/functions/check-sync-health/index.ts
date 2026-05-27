@@ -507,7 +507,7 @@ async function sendAlertEmail(
       Authorization: `Bearer ${RESEND_API_KEY}`,
     },
     body: JSON.stringify({
-      from: "InvoiceFlow Alerts <alerts@resend.dev>",
+      from: "ACL Invoice Alerts <alerts@resend.dev>",
       to: [org.alertEmail],
       subject: `🚨 Alerta: Problemas en ${org.name} - ${criticalIssues.length} críticos`,
       html: `
@@ -550,7 +550,7 @@ async function sendAlertEmail(
             </div>
             
             <p style="color: #6b7280; font-size: 12px; margin-top: 24px; padding-top: 24px; border-top: 1px solid #e5e7eb;">
-              Esta es una alerta automática del sistema InvoiceFlow.<br>
+              Esta es una alerta automática del sistema ACL Invoice.<br>
               Para gestionar estas alertas, ve a Configuración > Notificaciones en tu dashboard.
             </p>
           </div>

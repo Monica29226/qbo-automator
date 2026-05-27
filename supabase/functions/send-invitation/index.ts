@@ -338,12 +338,16 @@ const handler = async (req: Request): Promise<Response> => {
       expires_at: expiresAt.toISOString(),
     });
 
-    // Construir URL de login
-    const baseUrl = req.headers.get("origin") || "https://facturas.aureoncr.com";
+    // Construir URL de login (priorizar dominio de producción)
+    const PROD_URL = "https://aclcostarica.com";
+    const origin = req.headers.get("origin") || "";
+    const baseUrl = origin.startsWith("https://") && !origin.includes("localhost")
+      ? origin
+      : PROD_URL;
     const loginUrl = `${baseUrl}/auth`;
 
     // Enviar email profesional con Resend
-    const fromAddress = "ACL Facturación <noreply@calderon.cr>";
+    const fromAddress = "ACL Invoice <noreply@calderon.cr>";
     
     const emailHtml = buildInvitationHtml({
       orgName: org.name,
