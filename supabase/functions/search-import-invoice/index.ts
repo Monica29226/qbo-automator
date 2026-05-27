@@ -36,6 +36,49 @@ function parseNumeroConsecutivo(xml: string): string {
   return directValue || '';
 }
 
+function parseFolderList(listResp: string): string[] {
+  const folders: string[] = [];
+  const lines = listResp.split("\r\n");
+
+  for (const line of lines) {
+    if (!line.startsWith("* LIST ")) continue;
+
+    const flagsMatch = line.match(/^\* LIST \(([^)]*)\) /);
+    if (!flagsMatch) continue;
+    const flags = flagsMatch[1].toLowerCase();
+    if (flags.includes("\\noselect")) continue;
+    if (flags.includes("\\trash") || flags.includes("\\sent") || flags.includes("\\drafts")) continue;
+
+    const nameMatch = line.match(/\) (?:"[^"]*"|NIL) (?:"([^"]+)"|(\S+))\s*$/);
+    if (!nameMatch) continue;
+
+    const folderName = (nameMatch[1] || nameMatch[2] || "").trim();
+    if (!folderName) continue;
+
+    const nameLower = folderName.toLowerCase();
+    if (
+      nameLower.includes("trash") ||
+      nameLower.includes("papelera") ||
+      nameLower.includes("deleted") ||
+      nameLower.includes("eliminados") ||
+      nameLower.includes("draft") ||
+      nameLower.includes("borrador") ||
+      nameLower.includes("sent") ||
+      nameLower.includes("enviados")
+    ) {
+      continue;
+    }
+
+    folders.push(folderName);
+  }
+
+  return [...new Set(folders)].sort((a, b) => {
+    if (a.toUpperCase() === "INBOX") return -1;
+    if (b.toUpperCase() === "INBOX") return 1;
+    return 0;
+  });
+}
+
 // Helper function with aggressive timeout
 async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs = 5000): Promise<Response> {
   const controller = new AbortController();
