@@ -79,6 +79,20 @@ function parseFolderList(listResp: string): string[] {
   });
 }
 
+// Aggressive vendor-name normalization for matching (same convention as the rest of the system)
+function normalizeVendor(s: string): string {
+  return (s || '')
+    .toLowerCase()
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/\b(s\.?a\.?|sociedad\s+anonima|s\.?r\.?l\.?|limitada|ltda|cia|y\s+cia)\b/g, " ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function normalizeTaxId(s: string): string {
+  return (s || '').replace(/[^0-9]/g, '');
+}
+
 // Helper function with aggressive timeout
 async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs = 5000): Promise<Response> {
   const controller = new AbortController();
@@ -134,12 +148,14 @@ serve(async (req) => {
       throw new Error("Invalid request body");
     }
     
-    const { organization_id, invoice_number, auto_publish, expected_vendor, validate_november_2025 } = requestBody;
-    
-    if (!organization_id) throw new Error("organization_id required");
-    if (!invoice_number) throw new Error("invoice_number required");
+    const { organization_id, invoice_number, auto_publish, expected_vendor, validate_november_2025, vendor_name, vendor_tax_id } = requestBody;
 
-    log(`🔍 Searching: ${invoice_number}`);
+    if (!organization_id) throw new Error("organization_id required");
+
+    const isVendorMode = !invoice_number && (vendor_name || vendor_tax_id);
+    if (!invoice_number && !isVendorMode) throw new Error("invoice_number or vendor_name required");
+
+    log(`🔍 Searching: ${invoice_number || `vendor="${vendor_name || ''}" taxId="${vendor_tax_id || ''}"`}`);
     if (expected_vendor) log(`   Vendor esperado: ${expected_vendor}`);
 
     // Helper function to check for existing invoice by doc_key (unique 50-char Clave) 
@@ -209,6 +225,244 @@ serve(async (req) => {
 
     let foundMessage: { id: string; xmlContent: string } | null = null;
     let foundPdfPart: any = null;
+
+    // ==================== VENDOR-NAME SEARCH MODE ====================
+    // Triggered when user searches by supplier name / tax id (not by invoice number).
+    // Scans recent email attachments, parses every XML, and imports all whose <NombreEmisor>
+    // (or <NumeroCedulaEmisor>) matches the normalized needle.
+    if (isVendorMode) {
+      const needleName = normalizeVendor(vendor_name || '');
+      const needleTax = normalizeTaxId(vendor_tax_id || '');
+      log(`🔎 Vendor mode — needle name: "${needleName}", tax: "${needleTax}"`);
+
+      const imported: Array<{ doc_number: string; supplier_name: string; clave: string }> = [];
+      const skippedDuplicates: string[] = [];
+      let messagesScanned = 0;
+      let xmlsScanned = 0;
+
+      const matchesNeedle = (xml: string): { ok: boolean; emisorName: string; emisorTax: string } => {
+        const emisorBlock = xml.match(/<Emisor[^>]*>([\s\S]*?)<\/Emisor>/i)?.[1] || "";
+        const emisorName = parseXMLValue(emisorBlock, 'Nombre') || parseXMLValue(xml, 'NombreEmisor') || '';
+        const emisorTax = parseXMLValue(emisorBlock, 'Numero')
+          || parseXMLValue(emisorBlock, 'NumeroIdentificacion')
+          || parseXMLValue(xml, 'NumeroCedulaEmisor') || '';
+        const nName = normalizeVendor(emisorName);
+        const nTax = normalizeTaxId(emisorTax);
+        let ok = false;
+        if (needleTax && nTax && nTax === needleTax) ok = true;
+        if (!ok && needleName && nName && (nName.includes(needleName) || needleName.includes(nName))) ok = true;
+        return { ok, emisorName, emisorTax };
+      };
+
+      const importXml = async (xmlContent: string, pdfPath: string | null) => {
+        xmlsScanned++;
+        const m = matchesNeedle(xmlContent);
+        if (!m.ok) return;
+        const clave = parseXMLValue(xmlContent, 'Clave');
+        const docNum = parseNumeroConsecutivo(xmlContent);
+        log(`✓ match vendor en clave ${clave?.substring(0, 20)}… (${m.emisorName})`);
+
+        // Skip if already in DB
+        const existing = await checkExistingInvoice(docNum, m.emisorTax, m.emisorName, clave);
+        if (existing) {
+          skippedDuplicates.push(`${docNum} (ya existe)`);
+          return;
+        }
+
+        try {
+          const resp = await fetchWithTimeout(
+            `${supabaseUrl}/functions/v1/process-document-xml`,
+            {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${supabaseKey}`,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                organization_id,
+                xml_content: xmlContent,
+                pdf_attachment_url: pdfPath,
+              }),
+            },
+            15000
+          );
+          const result = await resp.json();
+          if (result?.success) {
+            imported.push({ doc_number: docNum, supplier_name: m.emisorName, clave });
+            const documentId = result.documentId || result.doc_id;
+            if (auto_publish && documentId) {
+              fetch(`${supabaseUrl}/functions/v1/publish-to-quickbooks`, {
+                method: "POST",
+                headers: { Authorization: `Bearer ${supabaseKey}`, "Content-Type": "application/json" },
+                body: JSON.stringify({ organization_id, document_ids: [documentId] }),
+              }).catch(() => {});
+            }
+          } else {
+            log(`⚠️ process-document-xml failed for ${docNum}: ${result?.message}`);
+          }
+        } catch (e: any) {
+          log(`⚠️ Import error: ${e?.message || e}`);
+        }
+      };
+
+      // ---------------- Gmail path ----------------
+      if (emailProvider === "gmail") {
+        const credentials = emailAccount.credentials as any;
+        let accessToken = credentials?.access_token;
+        if (!accessToken) throw new Error("No access token para Gmail");
+
+        // Refresh token if needed
+        const expiresAt = typeof credentials.expires_at === 'string'
+          ? new Date(credentials.expires_at).getTime()
+          : credentials.expires_at;
+        if (expiresAt && (expiresAt - Date.now()) < 2 * 60 * 60 * 1000) {
+          const GOOGLE_CLIENT_ID = Deno.env.get("GOOGLE_CLIENT_ID");
+          const GOOGLE_CLIENT_SECRET = Deno.env.get("GOOGLE_CLIENT_SECRET");
+          if (credentials.refresh_token && GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET) {
+            try {
+              const r = await fetchWithTimeout("https://oauth2.googleapis.com/token", {
+                method: "POST",
+                headers: { "Content-Type": "application/x-www-form-urlencoded" },
+                body: new URLSearchParams({
+                  client_id: GOOGLE_CLIENT_ID,
+                  client_secret: GOOGLE_CLIENT_SECRET,
+                  refresh_token: credentials.refresh_token,
+                  grant_type: "refresh_token",
+                }),
+              }, 5000);
+              if (r.ok) {
+                const j = await r.json();
+                accessToken = j.access_token;
+                await supabase.from("integration_accounts").update({
+                  credentials: { ...credentials, access_token: j.access_token, expires_at: Date.now() + (j.expires_in * 1000) },
+                  updated_at: new Date().toISOString(),
+                }).eq("id", emailAccount.id);
+              }
+            } catch (e) { log(`⚠️ Token refresh failed: ${e}`); }
+          }
+        }
+
+        const term = (vendor_name || vendor_tax_id || '').replace(/"/g, '').trim();
+        const queries = [
+          `has:attachment filename:xml "${term}" newer_than:90d`,
+          `has:attachment "${term}" newer_than:90d`,
+        ];
+        const seen = new Set<string>();
+        const msgIds: string[] = [];
+        for (const q of queries) {
+          try {
+            const r = await fetchWithTimeout(
+              `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(q)}&maxResults=25`,
+              { headers: { Authorization: `Bearer ${accessToken}` } },
+              7000
+            );
+            if (r.ok) {
+              const j = await r.json();
+              for (const m of (j.messages || [])) {
+                if (!seen.has(m.id)) { seen.add(m.id); msgIds.push(m.id); }
+              }
+            }
+          } catch (e) { log(`⚠️ Gmail query error: ${e}`); }
+        }
+        log(`📬 Gmail: ${msgIds.length} mensajes candidatos`);
+
+        function findAllParts(part: any, result: any[] = []): any[] {
+          if (!part) return result;
+          if (part.filename && part.filename.length > 0) result.push(part);
+          if (part.parts && Array.isArray(part.parts)) for (const sp of part.parts) findAllParts(sp, result);
+          return result;
+        }
+
+        for (const id of msgIds.slice(0, 20)) {
+          try { checkTimeout(); } catch { break; }
+          messagesScanned++;
+          try {
+            const r = await fetchWithTimeout(
+              `https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}`,
+              { headers: { Authorization: `Bearer ${accessToken}` } },
+              5000
+            );
+            if (!r.ok) continue;
+            const md = await r.json();
+            const allParts = findAllParts(md.payload);
+            const xmlParts = allParts.filter((p: any) => p.filename?.toLowerCase().endsWith(".xml"));
+            const pdfPart = allParts.find((p: any) => p.filename?.toLowerCase().endsWith(".pdf"));
+
+            // Save PDF (if present) so importXml can attach it
+            let savedPdfPath: string | null = null;
+            if (pdfPart?.body?.attachmentId) {
+              try {
+                const pr = await fetchWithTimeout(
+                  `https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}/attachments/${pdfPart.body.attachmentId}`,
+                  { headers: { Authorization: `Bearer ${accessToken}` } },
+                  4000
+                );
+                if (pr.ok) {
+                  const pj = await pr.json();
+                  const b64 = pj.data.replace(/-/g, "+").replace(/_/g, "/");
+                  const bin = atob(b64);
+                  const bytes = new Uint8Array(bin.length);
+                  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+                  const pdfPath = `${organization_id}/${pdfPart.filename || `vendor_${Date.now()}.pdf`}`;
+                  await supabase.storage.from("company-documents").upload(pdfPath, bytes, { contentType: "application/pdf", upsert: true });
+                  savedPdfPath = pdfPath;
+                }
+              } catch (e) { log(`⚠️ PDF save error: ${e}`); }
+            }
+
+            for (const xp of xmlParts.slice(0, 3)) {
+              if (!xp?.body?.attachmentId) continue;
+              try {
+                const xr = await fetchWithTimeout(
+                  `https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}/attachments/${xp.body.attachmentId}`,
+                  { headers: { Authorization: `Bearer ${accessToken}` } },
+                  3000
+                );
+                if (!xr.ok) continue;
+                const xj = await xr.json();
+                const b64 = xj.data.replace(/-/g, "+").replace(/_/g, "/");
+                const bin = atob(b64);
+                const bytes = new Uint8Array(bin.length);
+                for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+                const xml = new TextDecoder('utf-8').decode(bytes);
+                if (xml.includes('<MensajeHacienda') || xml.includes('mensajeHacienda')) continue;
+                const isInv = xml.includes('<FacturaElectronica') || xml.includes('<NotaCreditoElectronica')
+                  || xml.includes('<NotaDebitoElectronica') || xml.includes('<TiqueteElectronico');
+                if (!isInv) continue;
+                await importXml(xml, savedPdfPath);
+              } catch (e) { log(`⚠️ XML decode error: ${e}`); }
+            }
+          } catch (e) { log(`⚠️ Msg ${id} error: ${e}`); }
+        }
+      }
+      // ---------------- IMAP path (hostinger/bluehost/outlook_imap) ----------------
+      else {
+        // Defer to fallback fetch functions for IMAP — they already scan attachments by date range.
+        // We just need to tell the user we don't support deep vendor scan for IMAP yet.
+        return new Response(JSON.stringify({
+          success: false,
+          message: `Búsqueda profunda por proveedor solo disponible en Gmail por ahora. Usá el sync automático para ${emailProvider}.`,
+          provider: emailProvider,
+        }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      const summary = imported.length > 0
+        ? `Se importaron ${imported.length} factura(s) de "${vendor_name || vendor_tax_id}". Escaneados ${messagesScanned} correos, ${xmlsScanned} XML.`
+        : `No se encontraron facturas nuevas de "${vendor_name || vendor_tax_id}" en los últimos 90 días. Escaneados ${messagesScanned} correos, ${xmlsScanned} XML${skippedDuplicates.length ? `, ${skippedDuplicates.length} duplicados ignorados` : ''}.`;
+      log(`✅ Vendor mode done in ${Date.now() - startTime}ms — imported ${imported.length}, scanned ${xmlsScanned} XML`);
+
+      return new Response(JSON.stringify({
+        success: imported.length > 0,
+        message: summary,
+        imported: imported.length,
+        invoices: imported,
+        skipped_duplicates: skippedDuplicates.length,
+        messages_scanned: messagesScanned,
+        xmls_scanned: xmlsScanned,
+        vendor_mode: true,
+      }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
 
     // ==================== GMAIL SEARCH ====================
     if (emailProvider === "gmail") {
