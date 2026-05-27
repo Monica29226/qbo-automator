@@ -297,9 +297,20 @@ async function fetchEmailsViaIMAP(
             await new Promise(r => setTimeout(r, 50));
           }
           const lowerStructResp = structResp.toLowerCase();
-          const hasXml = lowerStructResp.includes('"xml"') || lowerStructResp.includes('application/xml') || lowerStructResp.includes('.xml');
-          const hasPdf = lowerStructResp.includes('"pdf"') || lowerStructResp.includes('application/pdf') || lowerStructResp.includes('.pdf');
-          if (!hasXml && !hasPdf) continue;
+          // Lenient attachment detection — matches the proven Bluehost strategy.
+          // Includes octet-stream, attachment dispositions, and multipart/mixed wrappers so
+          // we don't drop emails where the XML/PDF is nested or has a generic content-type.
+          const hasAttachment =
+            lowerStructResp.includes('"xml"') || lowerStructResp.includes('application/xml') ||
+            lowerStructResp.includes('text/xml') || lowerStructResp.includes('.xml') ||
+            lowerStructResp.includes('"pdf"') || lowerStructResp.includes('application/pdf') ||
+            lowerStructResp.includes('.pdf') ||
+            lowerStructResp.includes('attachment') || lowerStructResp.includes('octet-stream') ||
+            lowerStructResp.includes('multipart/mixed') || lowerStructResp.includes('message/rfc822');
+          // Fallback: if BODYSTRUCTURE was truncated/unreadable, still try to fetch the body.
+          if (!hasAttachment && lowerStructResp.length > 200 && !lowerStructResp.includes('multipart')) {
+            continue;
+          }
 
           const fetchCmd = `AB${fIdx}_${i} FETCH ${msgId} BODY[]`;
           await conn.write(encoder.encode(fetchCmd + "\r\n"));
@@ -315,7 +326,18 @@ async function fetchEmailsViaIMAP(
             fetchAttempts++;
             if (Date.now() - functionStartTime > MAX_EXECUTION_TIME_MS) break;
           }
-          if (emailContent.length > 0) rawEmails.push(emailContent);
+          if (emailContent.length > 0) {
+            // Extract raw email payload using the IMAP literal size marker `{N}\r\n`
+            // so we trim IMAP wrappers before MIME parsing.
+            const litMatch = emailContent.match(/\{(\d+)\}\r\n/);
+            if (litMatch) {
+              const start = emailContent.indexOf(litMatch[0]) + litMatch[0].length;
+              const size = parseInt(litMatch[1]);
+              emailContent = emailContent.substring(start, start + size);
+            }
+            rawEmails.push(emailContent);
+          }
+
         } catch (msgErr) {
           console.error(`[Hostinger IMAP] Error fetching message ${msgId}:`, msgErr);
         }
