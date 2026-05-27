@@ -34,6 +34,7 @@ const EMAIL_SEARCH_FUNCTION: Partial<Record<string, string>> = {
 };
 
 const STRUCTURED_INVOICE_QUERY = /^\d{8,}$/;
+const VENDOR_TEXT_QUERY = /[a-záéíóúñ]{4,}/i;
 
 interface SearchResult {
   id: string;
