@@ -20,6 +20,9 @@ interface SyncResult {
   found_and_processed: number;
   not_found: number;
   failed: number;
+  skipped_timeout?: number;
+  rows_skipped_no_id?: number;
+  detected_headers?: string[];
   details?: Array<{
     doc_number: string;
     emisor: string;
@@ -128,66 +131,106 @@ export const SyncFromExcelDialog = () => {
 
           {!isProcessing && result && (
             <div className="space-y-4 py-4">
-              {/* Summary Cards */}
+              {/* Diagnóstico cuando ninguna fila tenía Clave/Consecutivo */}
+              {(result.rows_skipped_no_id ?? 0) > 0 && (result.rows_skipped_no_id ?? 0) === result.total && (
+                <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-4 text-sm">
+                  <p className="font-semibold text-red-700 mb-2">
+                    ⚠️ No se reconoció la columna de Clave/Consecutivo en el Excel
+                  </p>
+                  <p className="text-muted-foreground mb-2">
+                    El sistema NO buscó facturas en el correo porque ninguna fila tenía un identificador válido.
+                    Renombrá la columna a <strong>"Clave"</strong> o <strong>"Consecutivo Documento"</strong>.
+                  </p>
+                  {result.detected_headers && result.detected_headers.length > 0 && (
+                    <p className="text-xs text-muted-foreground">
+                      <strong>Headers detectados:</strong> {result.detected_headers.join(", ")}
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* Summary Cards - siempre visibles */}
               <div className="grid grid-cols-2 gap-3">
                 <div className="bg-secondary/50 rounded-lg p-3 border">
                   <div className="flex items-center gap-2 mb-1">
                     <FileText className="h-4 w-4 text-muted-foreground" />
-                    <span className="text-sm font-medium">Total</span>
+                    <span className="text-sm font-medium">Total filas Excel</span>
                   </div>
                   <p className="text-2xl font-bold">{result.total}</p>
                 </div>
 
-                {result.found_and_processed > 0 && (
-                  <div className="bg-green-500/10 rounded-lg p-3 border border-green-500/20">
-                    <div className="flex items-center gap-2 mb-1">
-                      <CheckCircle2 className="h-4 w-4 text-green-600" />
-                      <span className="text-sm font-medium">Procesados</span>
-                    </div>
-                    <p className="text-2xl font-bold text-green-600">{result.found_and_processed}</p>
+                <div className="bg-green-500/10 rounded-lg p-3 border border-green-500/20">
+                  <div className="flex items-center gap-2 mb-1">
+                    <CheckCircle2 className="h-4 w-4 text-green-600" />
+                    <span className="text-sm font-medium">Procesados y publicados</span>
                   </div>
-                )}
+                  <p className="text-2xl font-bold text-green-600">{result.found_and_processed}</p>
+                </div>
 
-                {result.already_in_qbo > 0 && (
-                  <div className="bg-blue-500/10 rounded-lg p-3 border border-blue-500/20">
-                    <div className="flex items-center gap-2 mb-1">
-                      <CheckCircle2 className="h-4 w-4 text-blue-600" />
-                      <span className="text-sm font-medium">Ya en QuickBooks</span>
-                    </div>
-                    <p className="text-2xl font-bold text-blue-600">{result.already_in_qbo}</p>
+                <div className="bg-blue-500/10 rounded-lg p-3 border border-blue-500/20">
+                  <div className="flex items-center gap-2 mb-1">
+                    <CheckCircle2 className="h-4 w-4 text-blue-600" />
+                    <span className="text-sm font-medium">Ya en QuickBooks</span>
                   </div>
-                )}
+                  <p className="text-2xl font-bold text-blue-600">{result.already_in_qbo}</p>
+                </div>
 
-                {result.already_in_db > 0 && (
-                  <div className="bg-yellow-500/10 rounded-lg p-3 border border-yellow-500/20">
-                    <div className="flex items-center gap-2 mb-1">
-                      <AlertCircle className="h-4 w-4 text-yellow-600" />
-                      <span className="text-sm font-medium">Ya en Base de Datos</span>
-                    </div>
-                    <p className="text-2xl font-bold text-yellow-600">{result.already_in_db}</p>
+                <div className="bg-yellow-500/10 rounded-lg p-3 border border-yellow-500/20">
+                  <div className="flex items-center gap-2 mb-1">
+                    <AlertCircle className="h-4 w-4 text-yellow-600" />
+                    <span className="text-sm font-medium">Ya en Base de Datos</span>
                   </div>
-                )}
+                  <p className="text-2xl font-bold text-yellow-600">{result.already_in_db}</p>
+                </div>
 
-                {result.not_found > 0 && (
-                  <div className="bg-orange-500/10 rounded-lg p-3 border border-orange-500/20">
-                    <div className="flex items-center gap-2 mb-1">
-                      <AlertCircle className="h-4 w-4 text-orange-600" />
-                      <span className="text-sm font-medium">No encontrados</span>
-                    </div>
-                    <p className="text-2xl font-bold text-orange-600">{result.not_found}</p>
+                <div className="bg-orange-500/10 rounded-lg p-3 border border-orange-500/20">
+                  <div className="flex items-center gap-2 mb-1">
+                    <AlertCircle className="h-4 w-4 text-orange-600" />
+                    <span className="text-sm font-medium">No encontrados en correo</span>
                   </div>
-                )}
+                  <p className="text-2xl font-bold text-orange-600">{result.not_found}</p>
+                </div>
 
-                {result.failed > 0 && (
+                <div className="bg-red-500/10 rounded-lg p-3 border border-red-500/20">
+                  <div className="flex items-center gap-2 mb-1">
+                    <XCircle className="h-4 w-4 text-red-600" />
+                    <span className="text-sm font-medium">Fallidos</span>
+                  </div>
+                  <p className="text-2xl font-bold text-red-600">{result.failed}</p>
+                </div>
+
+                {(result.rows_skipped_no_id ?? 0) > 0 && (
                   <div className="bg-red-500/10 rounded-lg p-3 border border-red-500/20">
                     <div className="flex items-center gap-2 mb-1">
                       <XCircle className="h-4 w-4 text-red-600" />
-                      <span className="text-sm font-medium">Fallidos</span>
+                      <span className="text-sm font-medium">Saltadas sin ID</span>
                     </div>
-                    <p className="text-2xl font-bold text-red-600">{result.failed}</p>
+                    <p className="text-2xl font-bold text-red-600">{result.rows_skipped_no_id}</p>
+                  </div>
+                )}
+
+                {(result.skipped_timeout ?? 0) > 0 && (
+                  <div className="bg-purple-500/10 rounded-lg p-3 border border-purple-500/20">
+                    <div className="flex items-center gap-2 mb-1">
+                      <AlertCircle className="h-4 w-4 text-purple-600" />
+                      <span className="text-sm font-medium">Pendientes (timeout)</span>
+                    </div>
+                    <p className="text-2xl font-bold text-purple-600">{result.skipped_timeout}</p>
                   </div>
                 )}
               </div>
+
+              {/* Indicador claro de búsqueda en correo */}
+              {result.found_and_processed + result.not_found + result.failed === 0 && (result.rows_skipped_no_id ?? 0) === 0 && result.total > 0 && (
+                <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-3 text-sm text-muted-foreground">
+                  Todas las facturas del Excel ya estaban en el sistema. No fue necesario buscar en el correo.
+                </div>
+              )}
+              {result.found_and_processed + result.not_found + result.failed > 0 && (
+                <div className="bg-green-500/10 border border-green-500/20 rounded-lg p-3 text-sm">
+                  ✅ Se buscaron <strong>{result.found_and_processed + result.not_found + result.failed}</strong> facturas en Hostinger, Bluehost, Gmail y Outlook.
+                </div>
+              )}
 
               {/* Details List */}
               {result.details && result.details.length > 0 && (

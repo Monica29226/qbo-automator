@@ -6,8 +6,38 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-// 50s wall to stay under edge function platform limit
 const MAX_EXECUTION_MS = 50_000;
+
+const norm = (s: string) =>
+  String(s ?? "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]/g, "");
+
+function pickField(row: Record<string, any>, candidates: string[]): string {
+  const normalizedRow: Record<string, any> = {};
+  for (const k of Object.keys(row)) normalizedRow[norm(k)] = row[k];
+  for (const c of candidates) {
+    const v = normalizedRow[norm(c)];
+    if (v !== undefined && v !== null && String(v).trim() !== "") return String(v).trim();
+  }
+  return "";
+}
+
+const CLAVE_CANDIDATES = [
+  "clave", "clavenumerica", "clavecomprobante", "claveelectronica",
+  "numeroclave", "clavedoc", "clavedocumento", "claveelec",
+];
+const CONSEC_CANDIDATES = [
+  "consecutivodocumento", "numeroconsecutivo", "consecutivo",
+  "numerodocumento", "numerofactura", "numero", "documento", "ndocumento",
+  "nrodocumento", "nfactura",
+];
+const EMISOR_CANDIDATES = [
+  "nombreemisor", "emisor", "nombre", "proveedor", "razonsocial",
+  "nombreproveedor", "nombrerazonsocial",
+];
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -43,6 +73,9 @@ Deno.serve(async (req) => {
     const rows = XLSX.utils.sheet_to_json(firstSheet) as any[];
     log(`📋 ${rows.length} rows`);
 
+    const detected_headers = rows.length > 0 ? Object.keys(rows[0]) : [];
+    log(`🔎 Headers detectados: ${JSON.stringify(detected_headers)}`);
+
     const results = {
       total: rows.length,
       already_in_db: 0,
@@ -51,25 +84,42 @@ Deno.serve(async (req) => {
       not_found: 0,
       failed: 0,
       skipped_timeout: 0,
+      rows_skipped_no_id: 0,
+      detected_headers,
       details: [] as any[],
     };
+
+    let skippedSamples = 0;
 
     for (const row of rows) {
       if (Date.now() - startTime > MAX_EXECUTION_MS) {
         results.skipped_timeout = results.total -
-          (results.already_in_db + results.already_in_qbo + results.found_and_processed + results.not_found + results.failed);
+          (results.already_in_db + results.already_in_qbo + results.found_and_processed +
+           results.not_found + results.failed + results.rows_skipped_no_id);
         log(`⏰ Timeout, skipping remaining ${results.skipped_timeout}`);
         break;
       }
 
-      const docNumber = String(row["Consecutivo Documento"] ?? row["Consecutivo"] ?? row["NumeroConsecutivo"] ?? "").trim();
-      const emisor = row["Nombre Emisor"] ?? row["Emisor"] ?? "";
-      const clave = String(row["Clave"] ?? row["Clave Numerica"] ?? "").trim();
+      const clave = pickField(row, CLAVE_CANDIDATES);
+      const docNumber = pickField(row, CONSEC_CANDIDATES);
+      const emisor = pickField(row, EMISOR_CANDIDATES);
 
-      if (!docNumber && !clave) continue;
+      if (!docNumber && !clave) {
+        results.rows_skipped_no_id++;
+        if (skippedSamples < 3) {
+          results.details.push({
+            doc_number: "(sin id)",
+            emisor: emisor || "(sin emisor)",
+            status: "skipped_no_id",
+            error: `No se encontró Clave ni Consecutivo. Headers de esta fila: ${JSON.stringify(Object.keys(row))}`,
+          });
+          skippedSamples++;
+        }
+        continue;
+      }
+
       const searchKey = clave && clave.length === 50 ? clave : docNumber;
 
-      // Check DB first (by clave preferred, else doc_number)
       let existing: any = null;
       if (clave && clave.length === 50) {
         const { data } = await supabase
@@ -101,7 +151,6 @@ Deno.serve(async (req) => {
         continue;
       }
 
-      // Delegate to search-import-invoice (multi-provider: Gmail, Outlook, Hostinger, Bluehost)
       try {
         log(`🔎 Searching providers for ${searchKey}`);
         const { data: searchData, error: searchErr } = await supabase.functions.invoke(
@@ -152,7 +201,7 @@ Deno.serve(async (req) => {
       await new Promise((r) => setTimeout(r, 200));
     }
 
-    log(`✅ Summary: processed=${results.found_and_processed} alreadyQBO=${results.already_in_qbo} alreadyDB=${results.already_in_db} notFound=${results.not_found} failed=${results.failed} skipped=${results.skipped_timeout}`);
+    log(`✅ Summary: processed=${results.found_and_processed} alreadyQBO=${results.already_in_qbo} alreadyDB=${results.already_in_db} notFound=${results.not_found} failed=${results.failed} skippedNoId=${results.rows_skipped_no_id} skippedTimeout=${results.skipped_timeout}`);
 
     return new Response(JSON.stringify(results), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
