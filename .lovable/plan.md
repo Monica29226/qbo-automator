@@ -1,64 +1,49 @@
-
-# Arreglar Alertas del Sistema
+# Republicar factura borrada en QuickBooks
 
 ## Diagnóstico
 
-1. **Bug de render**: `SystemAlertsPanel.tsx` lee `issues_data` como objeto, pero la BD lo guarda como **array** `[{title, description, action_link, ...}]`. Por eso todas las tarjetas muestran solo "Alerta" sin contenido.
-2. **Acumulación**: Los crons (`check-system-health`, `check-sync-health`, `refresh-integration-tokens`, etc.) insertan una fila nueva cada hora sin verificar si ya existe la misma alerta sin resolver y sin auto-resolver cuando la condición desaparece. Resultado: **2,179 alertas activas** (1,374 críticas + 805 warnings) repetidas.
-3. **Valor real**: Los contenidos sí son útiles (token QBO expirando, sync atrasado, alta tasa de fallos, divisa incompatible, facturas atascadas en review).
+Factura encontrada en el sistema:
+- **Proveedor:** JORGE MARIN RAMIREZ
+- **Número:** 00100001010000000828
+- **Clave:** 50618012600060374005100100001010000000828197160363
+- **Monto:** ₡1,251,583.42
+- **Estado interno:** `published` (Bill #56 en QBO, publicada 15-may-2026)
+- **Estado real:** No existe en QuickBooks (borrada manualmente)
 
-## Cambios
+Es un caso clásico de "huérfana": el sistema cree que está publicada porque guarda el `qbo_entity_id`, pero el Bill fue eliminado en QBO. Por eso no aparece en duplicados ni se vuelve a publicar.
 
-### 1. Arreglar render — `src/components/dashboard/SystemAlertsPanel.tsx`
+## Opción recomendada: usar la herramienta existente
 
-- Normalizar `issues_data`: si viene como array, expandir cada item como sub-alerta dentro de la misma fila (mostrar título, descripción, `action_link` y `actionRequired`). Si viene como objeto, mantener comportamiento actual.
-- Agrupar visualmente por `alert_type` y deduplicar por `code`/`title` en cliente (solo mostrar la más reciente de cada tipo).
-- Colapsar a sección compacta cuando hay >5 alertas: chip con conteo por severidad + botón "Ver detalle" para expandir.
+Ya existe en el Dashboard la sección **"Auditar publicadas vs QuickBooks"** (`AuditPublishedVsQBO`) que hace exactamente esto:
 
-### 2. Migración SQL — auto-resolver viejas + clave para dedup
+1. Recorre todas las facturas con `status=published` y verifica si el `qbo_entity_id` existe realmente en QBO.
+2. Lista las huérfanas (borradas o inexistentes).
+3. Permite seleccionarlas y republicarlas: limpia `qbo_publish_tracking`, resetea `processed_documents` a `pending` y dispara `publish-to-quickbooks`.
 
-```sql
--- Resolver todas las alertas existentes para empezar limpio
-UPDATE public.alert_history
-SET resolved = true,
-    resolved_at = now()
-WHERE resolved = false;
+**Acción para ti (sin tocar código):**
+- Ve al Dashboard → tarjeta "Auditar publicadas vs QuickBooks" → "Iniciar auditoría".
+- Cuando aparezca la fila de JORGE MARIN RAMIREZ 00100001010000000828, selecciónala y dale "Republicar".
 
--- Índice para acelerar dedup por (org, código de alerta) sin resolver
-CREATE INDEX IF NOT EXISTS idx_alert_history_org_unresolved
-  ON public.alert_history (organization_id, alert_type, resolved)
-  WHERE resolved = false;
-```
+## Si prefieres que lo haga directo (un solo clic, sin auditar todo)
 
-### 3. Dedup + auto-resolución en edge functions
+Puedo añadir un pequeño cambio en build mode para resolver este caso específico sin esperar la auditoría completa:
 
-En `check-system-health/index.ts` y `check-sync-health/index.ts`:
+### Cambios propuestos
 
-- Antes de insertar, hacer `SELECT id FROM alert_history WHERE organization_id=$1 AND resolved=false AND issues_data::text ILIKE '%<code/title>%'`. Si existe, hacer `UPDATE` (refrescar `sent_at` y `issues_data`) en lugar de `INSERT` nuevo.
-- Al final del check, para cada `code` que **ya no aplica** (ej. token renovado, sync al día, sin fallos en 24h), ejecutar `UPDATE alert_history SET resolved=true, resolved_at=now() WHERE organization_id=$1 AND resolved=false AND issues_data::text ILIKE '%<code>%'`.
+1. **`src/components/dashboard/AuditPublishedVsQBO.tsx`**
+   - Añadir un input "Republicar por número de factura" + botón.
+   - Al confirmar, busca el `processed_documents` por `doc_number` o `doc_key` dentro de la organización activa y llama directamente a `republish-deleted-from-qbo` con ese `id`.
+   - Mensaje de éxito/error con toast.
 
-Códigos a auto-resolver:
-- `qbo_token_expiring` → cuando token vigente >2h
-- `sync_delayed` → cuando última sync <6h
-- `stuck_review` → cuando count facturas en review >3 días = 0
-- `high_failure_rate` → cuando tasa fallos 24h <20%
-- `currency_mismatch` → cuando count facturas con esta condición = 0
+2. **No requiere edge functions nuevas** ni cambios de schema; reutiliza `republish-deleted-from-qbo` que ya limpia tracking y republica.
 
-### 4. Memory
+### Alcance fuera
 
-Actualizar `mem://features/system-alerts-dedup-and-auto-resolve` con la regla de dedup + auto-resolución por código.
+- No tocar lógica de QBO ni de detección de duplicados.
+- No cambiar la auditoría masiva existente.
 
-## Archivos modificados
+## Recomendación
 
-- `src/components/dashboard/SystemAlertsPanel.tsx` (render arreglado, agrupación, colapso)
-- `supabase/functions/check-system-health/index.ts` (upsert + auto-resolve)
-- `supabase/functions/check-sync-health/index.ts` (upsert + auto-resolve)
-- Nueva migración SQL (reset + índice)
-- `mem://features/system-alerts-dedup-and-auto-resolve` (nuevo)
-- `mem://index.md` (referencia)
+Probar primero la **herramienta existente** (es un solo clic más). Si te resulta lento auditar las miles de publicadas, implemento el atajo "Republicar por número" en build mode.
 
-## No se toca
-
-- Schema de `alert_history` (solo índice nuevo)
-- RLS policies
-- Lógica de publicación QBO ni cron schedules
+¿Procedo con el atajo o lo resuelves desde la auditoría existente?
