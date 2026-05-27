@@ -192,25 +192,22 @@ const Vendors = () => {
     setQboNotConnected(false);
     
     try {
-      // Check if QuickBooks is connected first
-      console.log("🔍 Verificando integración de QuickBooks...");
-      const { data: qbIntegration, error: qbError } = await supabase
-        .from("integration_accounts")
-        .select("id, is_active, credentials")
-        .eq("organization_id", activeOrganization)
-        .eq("service_type", "quickbooks")
-        .eq("is_active", true)
-        .maybeSingle();
+      // RLS bloquea SELECT directo a integration_accounts. Usamos el RPC SECURITY DEFINER
+      // que confirma presencia de conexión activa con realm_id + refresh_token.
+      console.log("🔍 Verificando integración de QuickBooks (RPC)...");
+      const { data: isConnected, error: qbError } = await supabase.rpc("has_active_integration", {
+        _org_id: activeOrganization,
+        _service_type: "quickbooks",
+      });
 
-      console.log("📊 qbIntegration:", qbIntegration);
-      console.log("📊 qbError:", qbError);
+      console.log("📊 has_active_integration:", isConnected, "error:", qbError);
 
       if (qbError) {
         console.error("❌ Error al verificar integración:", qbError);
         throw new Error("Error al verificar integración de QuickBooks");
       }
 
-      if (!qbIntegration) {
+      if (!isConnected) {
         console.log("⚠️ QuickBooks no está conectado para esta organización");
         setQboNotConnected(true);
         setIsLoadingAccounts(false);
