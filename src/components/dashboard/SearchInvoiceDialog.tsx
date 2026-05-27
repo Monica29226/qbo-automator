@@ -38,13 +38,15 @@ interface SearchResult {
   doc_type: string;
 }
 
-const SERVICE_TO_FUNCTION: Record<string, string> = {
-  gmail: "gmail-fetch-invoices",
-  hostinger: "hostinger-fetch-invoices",
-  bluehost: "bluehost-fetch-invoices",
-  outlook: "outlook-fetch-invoices",
-  outlook_imap: "outlook-imap-fetch-invoices",
-};
+interface DeepSearchResponse {
+  success: boolean;
+  message?: string;
+  existing?: SearchResult;
+  document?: SearchResult;
+  alreadyPublished?: boolean;
+  qbQueued?: boolean;
+  needsConfig?: boolean;
+}
 
 export function SearchInvoiceDialog() {
   const { activeOrganization } = useAuth();
@@ -56,6 +58,7 @@ export function SearchInvoiceDialog() {
   const [isSearchingEmail, setIsSearchingEmail] = useState(false);
   const [results, setResults] = useState<SearchResult[] | null>(null);
   const [emailSearched, setEmailSearched] = useState(false);
+  const [emailSearchMessage, setEmailSearchMessage] = useState<string | null>(null);
 
   const runLocalSearch = async (): Promise<SearchResult[]> => {
     let query = supabase
@@ -80,52 +83,44 @@ export function SearchInvoiceDialog() {
   const searchInEmail = async () => {
     if (!activeOrganization || !searchTerm.trim()) return;
     setIsSearchingEmail(true);
+    setEmailSearchMessage(null);
     try {
-      // Find active email integration
-      const { data: integrations } = await supabase
-        .from("integration_accounts")
-        .select("service_type")
-        .eq("organization_id", activeOrganization)
-        .eq("is_active", true)
-        .in("service_type", ["gmail", "hostinger", "bluehost", "outlook", "outlook_imap"]);
+      toast.info(`Buscando "${searchTerm}" dentro del XML/PDF del correo...`);
 
-      if (!integrations || integrations.length === 0) {
-        toast.error("No tenés correo conectado. Conectalo en Integraciones.");
-        return;
-      }
-
-      const service = integrations[0].service_type;
-      const fnName = SERVICE_TO_FUNCTION[service];
-      if (!fnName) {
-        toast.error(`Servicio no soportado: ${service}`);
-        return;
-      }
-
-      toast.info(`Buscando "${searchTerm}" en ${service}...`);
-
-      const { data, error } = await supabase.functions.invoke(fnName, {
+      const { data, error } = await supabase.functions.invoke<DeepSearchResponse>("search-import-invoice", {
         body: {
           organization_id: activeOrganization,
-          search_term: searchTerm.trim(),
-          search_days: 90,
+          invoice_number: searchTerm.trim(),
+          auto_publish: false,
         },
       });
 
       if (error) throw error;
 
-      const found = data?.invoices_processed ?? data?.processed ?? 0;
-      if (found > 0) {
-        toast.success(`Se encontraron ${found} factura(s) nueva(s)`);
-        // Re-run local search to surface newly-imported invoices
+      const responseMessage = data?.message || "Búsqueda en correo completada";
+      setEmailSearchMessage(responseMessage);
+      setEmailSearched(true);
+
+      if (data?.success) {
+        toast.success(responseMessage);
+
         const refreshed = await runLocalSearch();
         setResults(refreshed);
+
+        if (refreshed.length === 0 && (data?.existing || data?.document)) {
+          const syntheticResult = (data.existing || data.document) as SearchResult;
+          setResults(syntheticResult ? [syntheticResult] : refreshed);
+        }
       } else {
-        toast.info("No se encontraron facturas con ese criterio en el correo");
+        toast.info(responseMessage);
+        const refreshed = await runLocalSearch();
+        setResults(refreshed);
       }
-      setEmailSearched(true);
     } catch (err: unknown) {
       console.error("Email search error:", err);
       const msg = err instanceof Error ? err.message : "Error al buscar en correo";
+      setEmailSearchMessage(msg);
+      setEmailSearched(true);
       toast.error(msg);
     } finally {
       setIsSearchingEmail(false);
@@ -182,6 +177,7 @@ export function SearchInvoiceDialog() {
     setDateFrom("");
     setDateTo("");
     setEmailSearched(false);
+    setEmailSearchMessage(null);
   };
 
   return (
@@ -260,8 +256,8 @@ export function SearchInvoiceDialog() {
               </h3>
               <p className="text-sm text-muted-foreground max-w-md mx-auto">
                 {emailSearched
-                  ? "No encontramos esta factura en el correo de los últimos 90 días."
-                  : "No tenemos esta factura importada. Podemos buscarla en tu correo conectado por remitente o asunto."}
+                    ? (emailSearchMessage || "No encontramos esta factura en el correo.")
+                    : "No tenemos esta factura importada. Podemos buscarla dentro de los adjuntos XML/PDF de tu correo conectado."}
               </p>
               {!emailSearched && searchTerm.trim() && (
                 <Button
