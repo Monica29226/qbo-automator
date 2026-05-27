@@ -25,9 +25,15 @@ import { useAuth } from "@/hooks/useAuth";
 import { toast } from "sonner";
 import { Search, Loader2, FileText, Mail } from "lucide-react";
 
-const FALLBACK_EMAIL_SEARCH_FUNCTION: Partial<Record<string, string>> = {
+const EMAIL_SEARCH_FUNCTION: Partial<Record<string, string>> = {
+  gmail: "gmail-fetch-invoices",
+  hostinger: "hostinger-fetch-invoices",
+  bluehost: "bluehost-fetch-invoices",
   outlook: "outlook-fetch-invoices",
+  outlook_imap: "outlook-imap-fetch-invoices",
 };
+
+const STRUCTURED_INVOICE_QUERY = /^\d{8,}$/;
 
 interface SearchResult {
   id: string;
@@ -103,48 +109,58 @@ export function SearchInvoiceDialog() {
         return;
       }
 
-      const usesFallbackSearch = Boolean(FALLBACK_EMAIL_SEARCH_FUNCTION[service]);
+      const isStructuredInvoiceQuery = STRUCTURED_INVOICE_QUERY.test(searchTerm.trim().replace(/\D/g, ""));
+      const supportsDeepAttachmentSearch = ["gmail", "hostinger", "bluehost"].includes(service);
+      const usesDeepSearch = isStructuredInvoiceQuery && supportsDeepAttachmentSearch;
+      const fallbackFunction = EMAIL_SEARCH_FUNCTION[service];
+
+      if (!usesDeepSearch && !fallbackFunction) {
+        toast.error(`Servicio no soportado: ${service}`);
+        return;
+      }
+
       toast.info(
-        usesFallbackSearch
-          ? `Buscando "${searchTerm}" en ${service}...`
-          : `Buscando "${searchTerm}" dentro del XML/PDF del correo...`
+        usesDeepSearch
+          ? `Buscando "${searchTerm}" dentro del XML/PDF del correo...`
+          : `Buscando "${searchTerm}" en ${service}...`
       );
 
-      const { data, error } = usesFallbackSearch
-        ? await supabase.functions.invoke(FALLBACK_EMAIL_SEARCH_FUNCTION[service]!, {
-            body: {
-              organization_id: activeOrganization,
-              search_term: searchTerm.trim(),
-              search_days: 90,
-            },
-          })
-        : await supabase.functions.invoke<DeepSearchResponse>("search-import-invoice", {
+      const { data, error } = usesDeepSearch
+        ? await supabase.functions.invoke<DeepSearchResponse>("search-import-invoice", {
             body: {
               organization_id: activeOrganization,
               invoice_number: searchTerm.trim(),
               auto_publish: false,
+            },
+          })
+        : await supabase.functions.invoke(fallbackFunction!, {
+            body: {
+              organization_id: activeOrganization,
+              search_term: searchTerm.trim(),
+              search_days: 90,
             },
           });
 
       if (error) throw error;
 
       const fallbackFound = (data as any)?.invoices_processed ?? (data as any)?.processed ?? 0;
-      const responseMessage = usesFallbackSearch
-        ? (fallbackFound > 0
+      const responseMessage = usesDeepSearch
+          ? `Buscando "${searchTerm}" en ${service}...`
+          ? ((data as DeepSearchResponse | null)?.message || "Búsqueda en correo completada")
+          : (fallbackFound > 0
             ? `Se encontraron ${fallbackFound} factura(s) nueva(s)`
-            : "No se encontraron facturas con ese criterio en el correo")
-        : ((data as DeepSearchResponse | null)?.message || "Búsqueda en correo completada");
+            : "No se encontraron facturas con ese criterio en el correo");
       setEmailSearchMessage(responseMessage);
       setEmailSearched(true);
 
-      if (usesFallbackSearch ? fallbackFound > 0 : (data as DeepSearchResponse | null)?.success) {
+      if (usesDeepSearch ? (data as DeepSearchResponse | null)?.success : fallbackFound > 0) {
         toast.success(responseMessage);
 
         const refreshed = await runLocalSearch();
         setResults(refreshed);
 
         const deepData = data as DeepSearchResponse | null;
-        if (!usesFallbackSearch && refreshed.length === 0 && (deepData?.existing || deepData?.document)) {
+        if (usesDeepSearch && refreshed.length === 0 && (deepData?.existing || deepData?.document)) {
           const syntheticResult = (deepData.existing || deepData.document) as SearchResult;
           setResults(syntheticResult ? [syntheticResult] : refreshed);
         }
