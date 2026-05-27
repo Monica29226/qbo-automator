@@ -1,62 +1,64 @@
-## Objetivo
 
-Crear una herramienta masiva de **auditoría y republicación** que detecte facturas marcadas como publicadas en nuestro sistema pero **borradas o inexistentes en QuickBooks**, y permita republicarlas de forma controlada.
+# Arreglar Alertas del Sistema
 
-## Cómo funcionará
+## Diagnóstico
 
-### 1. Nueva Edge Function: `audit-qbo-published-vs-actual`
+1. **Bug de render**: `SystemAlertsPanel.tsx` lee `issues_data` como objeto, pero la BD lo guarda como **array** `[{title, description, action_link, ...}]`. Por eso todas las tarjetas muestran solo "Alerta" sin contenido.
+2. **Acumulación**: Los crons (`check-system-health`, `check-sync-health`, `refresh-integration-tokens`, etc.) insertan una fila nueva cada hora sin verificar si ya existe la misma alerta sin resolver y sin auto-resolver cuando la condición desaparece. Resultado: **2,179 alertas activas** (1,374 críticas + 805 warnings) repetidas.
+3. **Valor real**: Los contenidos sí son útiles (token QBO expirando, sync atrasado, alta tasa de fallos, divisa incompatible, facturas atascadas en review).
 
-Recorre `processed_documents` con `status = 'published'` y `qbo_entity_id` no nulo para la organización activa. Para cada una:
+## Cambios
 
-1. Consulta QBO: `GET /v3/company/{realm}/{entityType}/{entityId}`
-2. Clasifica el resultado:
-   - **Existe y activo** → OK, no hacer nada
-   - **404 / no existe / `status = "Deleted"`** → marcar como "huérfana QBO" (borrada manualmente)
-   - **Error de token / red** → marcar como "no verificable" (no tocar)
-3. Devuelve la lista de huérfanas con: `doc_number`, `supplier_name`, `total_amount`, `issue_date`, `qbo_entity_id`, motivo.
-4. Procesa en lotes (15 concurrentes, 25s timeout) y soporta paginación por `offset` para evitar timeouts en orgs grandes.
+### 1. Arreglar render — `src/components/dashboard/SystemAlertsPanel.tsx`
 
-### 2. Nueva Edge Function: `republish-deleted-from-qbo`
+- Normalizar `issues_data`: si viene como array, expandir cada item como sub-alerta dentro de la misma fila (mostrar título, descripción, `action_link` y `actionRequired`). Si viene como objeto, mantener comportamiento actual.
+- Agrupar visualmente por `alert_type` y deduplicar por `code`/`title` en cliente (solo mostrar la más reciente de cada tipo).
+- Colapsar a sección compacta cuando hay >5 alertas: chip con conteo por severidad + botón "Ver detalle" para expandir.
 
-Recibe un array de `document_ids` confirmados como huérfanos. Para cada uno:
+### 2. Migración SQL — auto-resolver viejas + clave para dedup
 
-1. **Limpia el rastro previo**:
-   - `DELETE FROM qbo_publish_tracking WHERE document_id = ?`
-   - `UPDATE processed_documents SET qbo_entity_id = NULL, qbo_entity_type = NULL, status = 'pending', error_message = NULL, retry_count = 0`
-2. Invoca `publish-to-quickbooks` con esos `document_ids`.
-3. Registra la operación en `audit_log` con acción `republish_after_qbo_delete`.
+```sql
+-- Resolver todas las alertas existentes para empezar limpio
+UPDATE public.alert_history
+SET resolved = true,
+    resolved_at = now()
+WHERE resolved = false;
 
-### 3. Nuevo panel UI: `AuditPublishedVsQBO.tsx` (en Dashboard)
+-- Índice para acelerar dedup por (org, código de alerta) sin resolver
+CREATE INDEX IF NOT EXISTS idx_alert_history_org_unresolved
+  ON public.alert_history (organization_id, alert_type, resolved)
+  WHERE resolved = false;
+```
 
-Tarjeta nueva en quick actions con flujo en 3 pasos:
+### 3. Dedup + auto-resolución en edge functions
 
-1. **Botón "Auditar publicadas en QBO"** → invoca la función de auditoría, muestra barra de progreso (paginación).
-2. **Tabla de resultados** con las huérfanas detectadas: checkbox por fila, "Seleccionar todo", columnas (fecha, proveedor, número, monto, QBO ID).
-3. **Botón "Republicar seleccionadas"** → confirma con diálogo y dispara la función de republicación. Toast de progreso con conteos de éxito/error.
+En `check-system-health/index.ts` y `check-sync-health/index.ts`:
 
-Aplica globalmente (todas las organizaciones via `organization_id` activo). Admins pueden ejecutarlo.
+- Antes de insertar, hacer `SELECT id FROM alert_history WHERE organization_id=$1 AND resolved=false AND issues_data::text ILIKE '%<code/title>%'`. Si existe, hacer `UPDATE` (refrescar `sent_at` y `issues_data`) en lugar de `INSERT` nuevo.
+- Al final del check, para cada `code` que **ya no aplica** (ej. token renovado, sync al día, sin fallos en 24h), ejecutar `UPDATE alert_history SET resolved=true, resolved_at=now() WHERE organization_id=$1 AND resolved=false AND issues_data::text ILIKE '%<code>%'`.
 
-### Detalles técnicos
+Códigos a auto-resolver:
+- `qbo_token_expiring` → cuando token vigente >2h
+- `sync_delayed` → cuando última sync <6h
+- `stuck_review` → cuando count facturas en review >3 días = 0
+- `high_failure_rate` → cuando tasa fallos 24h <20%
+- `currency_mismatch` → cuando count facturas con esta condición = 0
 
-- **QBO query batching:** 15 concurrentes con `Promise.allSettled`, respeta rate limits (500/min).
-- **Detección de "borrado":** QBO devuelve 404 con `code = "610"` (Object Not Found) o el entity puede venir con `status = "Deleted"` en operaciones de query. Manejar ambos.
-- **Token expirado:** si falla auth, abortar auditoría con mensaje claro y botón de reconexión QBO (no marcar todo como huérfano por error de token).
-- **Seguridad:** ambas funciones validan JWT, verifican membresía admin de la org, usan `service_role` solo para escritura tras validación.
-- **Sin duplicados:** después de limpiar `qbo_publish_tracking`, `publish-to-quickbooks` puede crear el Bill nuevo sin chocar con la restricción `org_id + doc_key`.
+### 4. Memory
 
-### Archivos
+Actualizar `mem://features/system-alerts-dedup-and-auto-resolve` con la regla de dedup + auto-resolución por código.
 
-**Nuevos:**
-- `supabase/functions/audit-qbo-published-vs-actual/index.ts`
-- `supabase/functions/republish-deleted-from-qbo/index.ts`
-- `src/components/dashboard/AuditPublishedVsQBO.tsx`
+## Archivos modificados
 
-**Modificados:**
-- `src/pages/Dashboard.tsx` — montar el nuevo panel en la sección de quick actions
-- `mem://index.md` + nueva memoria `mem://features/audit-republish-deleted-qbo`
+- `src/components/dashboard/SystemAlertsPanel.tsx` (render arreglado, agrupación, colapso)
+- `supabase/functions/check-system-health/index.ts` (upsert + auto-resolve)
+- `supabase/functions/check-sync-health/index.ts` (upsert + auto-resolve)
+- Nueva migración SQL (reset + índice)
+- `mem://features/system-alerts-dedup-and-auto-resolve` (nuevo)
+- `mem://index.md` (referencia)
 
-### No se toca
+## No se toca
 
-- Lógica de publicación (`publish-to-quickbooks` se reutiliza tal cual)
-- Estructura de BD (no hay migración — solo lectura/escritura sobre tablas existentes)
-- Sync de emails, importación, otros flujos
+- Schema de `alert_history` (solo índice nuevo)
+- RLS policies
+- Lógica de publicación QBO ni cron schedules
