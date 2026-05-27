@@ -180,6 +180,33 @@ export const AuditPublishedVsQBO = () => {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
+        <div className="p-3 border rounded space-y-2 bg-muted/30">
+          <div className="text-sm font-medium">Republicar una factura específica</div>
+          <div className="text-xs text-muted-foreground">
+            Pega el número de documento (20 dígitos) o la clave electrónica (50 dígitos) si ya sabes que fue borrada de QuickBooks.
+          </div>
+          <div className="flex items-center gap-2">
+            <Input
+              placeholder="00100001010000000828 o clave 50…"
+              value={quickQuery}
+              onChange={(e) => setQuickQuery(e.target.value)}
+              disabled={quickRepublishing}
+              className="font-mono text-xs"
+            />
+            <Button
+              onClick={republishByNumber}
+              disabled={quickRepublishing || !quickQuery.trim() || !activeOrganization}
+              size="sm"
+            >
+              {quickRepublishing ? (
+                <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Republicando…</>
+              ) : (
+                <><Send className="h-4 w-4 mr-2" /> Republicar</>
+              )}
+            </Button>
+          </div>
+        </div>
+
         <div className="flex items-center gap-2">
           <Button onClick={runAudit} disabled={auditing || !activeOrganization}>
             {auditing ? (
@@ -194,6 +221,7 @@ export const AuditPublishedVsQBO = () => {
             </span>
           )}
         </div>
+
 
         {ran && orphans.length === 0 && !auditing && (
           <div className="text-sm text-muted-foreground flex items-center gap-2 p-3 bg-muted rounded">
