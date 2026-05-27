@@ -247,33 +247,111 @@ serve(async (req) => {
       return data.value || [];
     };
 
-    // Fetch from Inbox + JunkEmail
+    // Descubrimiento dinámico de carpetas vía Microsoft Graph
+    // Itera todas las mailFolders (incluyendo child folders) excluyendo Sent/Drafts/Deleted
+    const EXCLUDED_WELL_KNOWN = new Set([
+      "sentitems", "drafts", "deleteditems", "outbox",
+      "recoverableitemsdeletions", "conversationhistory", "scheduled",
+    ]);
+    const EXCLUDED_NAME_PATTERNS = [
+      /^sent/i, /enviad/i,
+      /^draft/i, /borrador/i,
+      /^delet/i, /trash/i, /papelera/i, /elimina/i,
+      /^outbox/i, /bandeja de salida/i,
+      /^archive deleted/i,
+    ];
+
+    const isExcludedFolder = (folder: any): boolean => {
+      const wk = (folder.wellKnownName || "").toLowerCase();
+      if (wk && EXCLUDED_WELL_KNOWN.has(wk)) return true;
+      const name = folder.displayName || "";
+      return EXCLUDED_NAME_PATTERNS.some((rx) => rx.test(name));
+    };
+
+    const discoverFolders = async (): Promise<Array<{ id: string; name: string }>> => {
+      const collected: Array<{ id: string; name: string; parent?: string }> = [];
+
+      const fetchLevel = async (url: string, parentName?: string) => {
+        let next: string | null = url;
+        while (next) {
+          let resp = await fetch(next, { headers: { Authorization: `Bearer ${accessToken}` } });
+          if (!resp.ok && resp.status === 401) {
+            accessToken = await refreshOutlookToken();
+            resp = await fetch(next, { headers: { Authorization: `Bearer ${accessToken}` } });
+          }
+          if (!resp.ok) {
+            const body = await resp.text();
+            console.error(`❌ mailFolders discovery error ${resp.status}: ${body.substring(0, 200)}`);
+            return;
+          }
+          const data: any = await resp.json();
+          const folders = data.value || [];
+          for (const f of folders) {
+            if (isExcludedFolder(f)) {
+              console.log(`⏭️ Skipping excluded folder: ${f.displayName} (wellKnown: ${f.wellKnownName || "-"})`);
+              continue;
+            }
+            const fullName = parentName ? `${parentName}/${f.displayName}` : f.displayName;
+            collected.push({ id: f.id, name: fullName });
+            if ((f.childFolderCount || 0) > 0) {
+              await fetchLevel(
+                `https://graph.microsoft.com/v1.0/me/mailFolders/${f.id}/childFolders?$top=100&$select=id,displayName,wellKnownName,childFolderCount`,
+                fullName,
+              );
+            }
+          }
+          next = data["@odata.nextLink"] || null;
+        }
+      };
+
+      await fetchLevel(
+        "https://graph.microsoft.com/v1.0/me/mailFolders?$top=100&$select=id,displayName,wellKnownName,childFolderCount&includeHiddenFolders=true",
+      );
+      return collected.map(({ id, name }) => ({ id, name }));
+    };
+
     let messages: any[] = [];
+    const seenIds = new Set<string>();
+
+    let folders: Array<{ id: string; name: string }> = [];
     try {
-      const inboxMessages = await fetchMessagesFromFolder("messages");
-      messages = [...inboxMessages];
-      console.log(`📥 Inbox: ${inboxMessages.length} messages`);
-    } catch (inboxError) {
-      throw inboxError;
+      folders = await discoverFolders();
+      console.log(`📂 Discovered ${folders.length} folder(s) after exclusions: ${folders.map((f) => f.name).join(", ")}`);
+    } catch (discErr) {
+      console.error("⚠️ Folder discovery failed, falling back to Inbox + JunkEmail:", discErr);
     }
 
-    try {
-      const junkMessages = await fetchMessagesFromFolder("mailFolders/JunkEmail/messages");
-      if (junkMessages.length > 0) {
-        console.log(`📥 JunkEmail: ${junkMessages.length} messages`);
-        // Deduplicate by message id
-        const existingIds = new Set(messages.map((m: any) => m.id));
-        for (const msg of junkMessages) {
-          if (!existingIds.has(msg.id)) {
+    if (folders.length === 0) {
+      // Fallback: comportamiento previo
+      folders = [
+        { id: "inbox", name: "Inbox" },
+        { id: "junkemail", name: "JunkEmail" },
+      ];
+    }
+
+    for (const folder of folders) {
+      if (Date.now() - executionStartTime > MAX_EXECUTION_TIME_MS) {
+        console.log(`⏱️ Time limit reached during folder iteration at ${folder.name}`);
+        wasTimeLimitReached = true;
+        break;
+      }
+      try {
+        const folderMessages = await fetchMessagesFromFolder(`mailFolders/${folder.id}/messages`);
+        let added = 0;
+        for (const msg of folderMessages) {
+          if (!seenIds.has(msg.id)) {
+            seenIds.add(msg.id);
             messages.push(msg);
+            added++;
           }
         }
+        console.log(`📥 ${folder.name}: ${folderMessages.length} found, +${added} new`);
+      } catch (folderErr) {
+        console.log(`⚠️ Could not fetch folder ${folder.name}:`, folderErr);
       }
-    } catch (junkError) {
-      console.log("⚠️ Could not fetch JunkEmail folder:", junkError);
     }
 
-    console.log(`Found ${messages.length} total messages with attachments`);
+    console.log(`Found ${messages.length} total messages with attachments across ${folders.length} folder(s)`);
 
     const processedInvoices: any[] = [];
     const skippedInvoices: any[] = [];
