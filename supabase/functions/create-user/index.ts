@@ -261,7 +261,11 @@ Deno.serve(async (req) => {
 
     // Send welcome email
     if (shouldSendEmail) {
-      const baseUrl = req.headers.get("origin") || "http://localhost:5173";
+      const PROD_URL = "https://aclcostarica.com";
+      const origin = req.headers.get("origin") || "";
+      const baseUrl = origin.startsWith("https://") && !origin.includes("localhost")
+        ? origin
+        : PROD_URL;
       const loginUrl = `${baseUrl}/auth`;
 
       const emailResponse = await fetch("https://api.resend.com/emails", {
@@ -271,12 +275,12 @@ Deno.serve(async (req) => {
           "Authorization": `Bearer ${RESEND_API_KEY}`,
         },
         body: JSON.stringify({
-          from: "InvoiceFlow <noreply@aureoncr.com>",
+          from: "ACL Invoice <noreply@aureoncr.com>",
           to: [email],
-          subject: `Bienvenido a InvoiceFlow${orgName ? ` - ${orgName}` : ''}`,
+          subject: `Bienvenido a ACL Invoice${orgName ? ` - ${orgName}` : ''}`,
           html: `
             <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-              <h1 style="color: #333;">¡Bienvenido a InvoiceFlow!</h1>
+              <h1 style="color: #333;">¡Bienvenido a ACL Invoice!</h1>
               ${orgName ? `<p>Se ha creado tu cuenta para acceder a <strong>${orgName}</strong>.</p>` : '<p>Se ha creado tu cuenta.</p>'}
               <div style="background-color: #f5f5f5; padding: 20px; border-radius: 8px; margin: 20px 0;">
                 <h2 style="color: #333; margin-top: 0;">Tus credenciales de acceso:</h2>
@@ -284,7 +288,13 @@ Deno.serve(async (req) => {
                 <p><strong>Contraseña temporal:</strong> <code style="background-color: #e0e0e0; padding: 4px 8px; border-radius: 4px;">${password}</code></p>
               </div>
               <p style="color: #d32f2f; font-size: 14px;"><strong>Importante:</strong> Cambia tu contraseña después del primer inicio de sesión.</p>
-              <a href="${loginUrl}" style="display: inline-block; background-color: #0070f3; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; margin: 20px 0;">Iniciar Sesión</a>
+              <div style="text-align: center; margin: 24px 0;">
+                <a href="${loginUrl}" style="display: inline-block; background-color: #1a365d; color: white; padding: 14px 32px; text-decoration: none; border-radius: 6px; font-weight: bold; font-size: 16px;">Ingresar a la Plataforma</a>
+              </div>
+              <p style="color: #666; font-size: 13px; line-height: 1.5; margin-top: 16px;">
+                Si el botón no funciona, copia y pega este enlace en tu navegador:<br>
+                <a href="${loginUrl}" style="color: #1a365d; word-break: break-all;">${loginUrl}</a>
+              </p>
             </div>
           `,
         }),

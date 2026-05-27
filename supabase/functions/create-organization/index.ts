@@ -172,7 +172,7 @@ Deno.serve(async (req) => {
       { key: "currency_fallback", value: "CRC", description: "Moneda por defecto si falta en XML", organization_id: orgId },
       { key: "duplicate_window_days", value: "120", description: "Ventana anti-duplicados en días", organization_id: orgId },
       { key: "dry_run", value: "true", description: "Modo prueba (no publica en QBO)", organization_id: orgId },
-      { key: "email_sender_address", value: "InvoiceFlow <onboarding@resend.dev>", description: "Dirección del remitente para emails de invitación", organization_id: orgId },
+      { key: "email_sender_address", value: "ACL Invoice <onboarding@resend.dev>", description: "Dirección del remitente para emails de invitación", organization_id: orgId },
     ];
 
     const { error: settingsError } = await supabaseAdmin

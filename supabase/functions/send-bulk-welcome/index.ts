@@ -83,7 +83,11 @@ const handler = async (req: Request): Promise<Response> => {
     console.log(`Sending welcome emails to ${users.length} users`);
 
     // Get the base URL from the request
-    const baseUrl = req.headers.get("origin") || "https://qbo-automator.lovable.app";
+    const PROD_URL = "https://aclcostarica.com";
+    const origin = req.headers.get("origin") || "";
+    const baseUrl = origin.startsWith("https://") && !origin.includes("localhost")
+      ? origin
+      : PROD_URL;
     const loginUrl = `${baseUrl}/auth`;
 
     let successCount = 0;
@@ -99,19 +103,19 @@ const handler = async (req: Request): Promise<Response> => {
             "Authorization": `Bearer ${RESEND_API_KEY}`,
           },
           body: JSON.stringify({
-            from: "ACL Sistema de Facturas <onboarding@resend.dev>",
+            from: "ACL Invoice <onboarding@resend.dev>",
             to: [user.email],
-            subject: "Bienvenido al Sistema de Facturas ACL",
+            subject: "Bienvenido a ACL Invoice",
             html: `
               <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
                 <div style="text-align: center; margin-bottom: 30px;">
-                  <h1 style="color: #1a365d; margin: 0;">Sistema de Facturas ACL</h1>
+                  <h1 style="color: #1a365d; margin: 0;">ACL Invoice</h1>
                 </div>
                 
                 <h2 style="color: #333;">¡Hola${user.full_name ? ` ${user.full_name}` : ''}!</h2>
                 
                 <p style="color: #555; line-height: 1.6;">
-                  Te damos la bienvenida al <strong>Sistema de Facturas de ACL</strong>. 
+                  Te damos la bienvenida a <strong>ACL Invoice</strong>. 
                   Esta plataforma te permite gestionar y procesar facturas electrónicas de manera eficiente.
                 </p>
                 
@@ -130,9 +134,14 @@ const handler = async (req: Request): Promise<Response> => {
                      style="display: inline-block; background-color: #1a365d; color: white; 
                             padding: 14px 30px; text-decoration: none; border-radius: 6px;
                             font-weight: bold; font-size: 16px;">
-                    Iniciar Sesión
+                    Ingresar a la Plataforma
                   </a>
                 </div>
+
+                <p style="color: #666; font-size: 13px; line-height: 1.5;">
+                  Si el botón no funciona, copia y pega este enlace en tu navegador:<br>
+                  <a href="${loginUrl}" style="color: #1a365d; word-break: break-all;">${loginUrl}</a>
+                </p>
                 
                 <p style="color: #888; font-size: 14px; margin-top: 30px;">
                   Si tienes alguna pregunta, contacta al administrador del sistema.
@@ -141,7 +150,7 @@ const handler = async (req: Request): Promise<Response> => {
                 <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
                 
                 <p style="color: #999; font-size: 12px; text-align: center;">
-                  Este correo fue enviado automáticamente desde el Sistema ACL.
+                  Este correo fue enviado automáticamente desde ACL Invoice.
                 </p>
               </div>
             `,
