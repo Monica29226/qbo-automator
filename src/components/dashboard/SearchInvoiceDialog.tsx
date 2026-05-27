@@ -145,11 +145,10 @@ export function SearchInvoiceDialog() {
 
       const fallbackFound = (data as any)?.invoices_processed ?? (data as any)?.processed ?? 0;
       const responseMessage = usesDeepSearch
-          ? `Buscando "${searchTerm}" en ${service}...`
-          ? ((data as DeepSearchResponse | null)?.message || "Búsqueda en correo completada")
-          : (fallbackFound > 0
-            ? `Se encontraron ${fallbackFound} factura(s) nueva(s)`
-            : "No se encontraron facturas con ese criterio en el correo");
+        ? ((data as DeepSearchResponse | null)?.message || "Búsqueda en correo completada")
+        : (fallbackFound > 0
+          ? `Se encontraron ${fallbackFound} factura(s) nueva(s)`
+          : "No se encontraron facturas con ese criterio en el correo");
       setEmailSearchMessage(responseMessage);
       setEmailSearched(true);
 
