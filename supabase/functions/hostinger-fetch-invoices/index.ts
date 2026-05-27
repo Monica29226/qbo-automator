@@ -129,8 +129,8 @@ async function fetchEmailsViaIMAP(
     }
     console.log(`[Hostinger IMAP] Will scan ${folders.length} folder(s): ${folders.join(", ")}`);
 
-    const BATCH_SIZE = 60;
-    const MAX_EXECUTION_TIME_MS = 90000;
+    const BATCH_SIZE = 50;
+    const MAX_EXECUTION_TIME_MS = 50000;
     const functionStartTime = Date.now();
     let totalMessagesFoundGlobal = 0;
     let totalMessagesProcessedGlobal = 0;
