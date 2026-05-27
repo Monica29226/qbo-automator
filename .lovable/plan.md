@@ -1,78 +1,71 @@
-## Objetivo
+# Por qué la sincronización dijo "Total 332" y nada más
 
-Reemplazar el diagnóstico específico de Terranoa por un **paquete de diagnóstico global** que cubra **todas las organizaciones activas** del sistema, para pegárselo a Claude Code y que pueda detectar errores transversales (no solo de una empresa).
+Los logs de `sync-from-excel` confirman:
 
-## Archivos a generar
+```
+📋 332 rows
+✅ Summary: processed=0 alreadyQBO=0 alreadyDB=0 notFound=0 failed=0 skipped=0
+```
 
-1. `/mnt/documents/qbo_diagnostic_global.json` — snapshot completo del sistema (sin tokens ni secretos).
-2. `/mnt/documents/qbo_diagnostic_global.py` — script standalone re-ejecutable contra cualquier ambiente.
+Tomó **1.1 segundos**. Eso quiere decir que el loop iteró las 332 filas y todas cayeron en `if (!docNumber && !clave) continue;` — **nunca llamó a `search-import-invoice`**, nunca tocó Hostinger/Gmail/Bluehost/Outlook.
 
-Mantengo los archivos de Terranoa como están (no los borro) por si los necesitas de referencia.
+Causa: el código busca headers exactos `"Consecutivo Documento" | "Consecutivo" | "NumeroConsecutivo"` y `"Clave" | "Clave Numerica"`, pero el Excel de Siku usa otros nombres (probablemente con tildes, mayúsculas distintas, espacios extra, o nombres como `"Número Consecutivo"`, `"Clave Numérica"`, `"Clave Comprobante"`, etc.).
 
-## Contenido del JSON global
+# Plan de fix (3 cambios mínimos)
 
-### 1. Metadatos del sistema
-- Fecha de generación, versión de schema, conteo total de orgs activas/inactivas.
+## 1. `supabase/functions/sync-from-excel/index.ts` — detección robusta de headers
 
-### 2. Resumen por organización (una fila por org)
-Para **cada** organización activa:
-- `id`, `name`, `tax_id`, `qbo_realm_id`
-- Flags de conexión: gmail / outlook / hostinger / bluehost / quickbooks / sharepoint
-- `default_account_ref`
-- Conteos de `processed_documents` por status (pending, processed, review, error, currency_mismatch, published)
-- Última fecha de factura recibida / publicada
-- Conteo de `vendor_defaults` y cuántos apuntan a cuentas de activo (1xx) vs gasto (6xx)
-- Estado del token QBO (expires_at, sin exponer access/refresh tokens)
-- Última corrida de `sync_logs` (status, error_code)
+- Al recibir las filas, tomar `Object.keys(rows[0])` y loguearlas una vez: `log("Headers detectados: ...")` para que en logs siempre veamos qué viene.
+- Reemplazar el lookup directo por una función `pickField(row, candidates)` que:
+  - Normaliza ambos lados (lowercase, sin tildes, sin espacios extra, sin signos de puntuación)
+  - Prueba candidatos para clave: `clave`, `clavenumerica`, `clavecomprobante`, `claveelectronica`, `numeroclave`
+  - Prueba candidatos para consecutivo: `consecutivo`, `consecutivodocumento`, `numeroconsecutivo`, `numerodocumento`, `numero`, `documento`
+  - Prueba candidatos para emisor: `nombreemisor`, `emisor`, `nombre`, `proveedor`, `razonsocial`
+- Si en una fila no encuentra ni clave ni consecutivo, incrementar un contador nuevo `rows_skipped_no_id` y guardar `{row_index, available_keys}` en `details` (solo las primeras 3) para diagnóstico.
+- Devolver siempre todos los contadores en el response, incluyendo `skipped_timeout` y `rows_skipped_no_id`, aunque sean 0.
+- Agregar en el response `detected_headers: string[]` (las columnas que vino en el Excel) para que la UI las muestre cuando todo sea 0.
 
-### 3. Diagnóstico agregado (cross-org)
-- **Orgs sin QBO conectado** pero con facturas pendientes.
-- **Tokens QBO expirados o por expirar** (<24h).
-- **Orgs con backlog > X horas** (procesadas sin publicar).
-- **Errores recurrentes** agrupados por `error_message` con conteo y orgs afectadas (p.ej. "TaxCode 13% no existe" aparece en N orgs).
-- **Vendors mapeados a cuentas de activo** — lista global con org + vendor + cuenta.
-- **Tarifas IVA bloqueadas** detectadas en errores de QBO (13%, 4%, etc.) con conteo por org.
-- **Inconsistencias** entre `organizations.{provider}_connected` y `integration_accounts.is_active`.
-- **Orgs sin facturas en los últimos 7 días** con correo activo (posible backlog de correo).
-- **Settings divergentes** entre orgs (p.ej. quién tiene `dry_run=true`).
+## 2. `src/components/SyncFromExcelDialog.tsx` — mostrar diagnóstico
 
-### 4. Configuración global
-- `system_settings` por org agrupados por key (para detectar valores raros).
-- `bank_import_configs` activos.
-- `sharepoint_admin_account` (solo metadatos: email, drive_id, is_active).
-- Conteo de `alert_history` no resueltas por org y por código.
+- Cambiar `SyncResult` para incluir `skipped_timeout?`, `rows_skipped_no_id?`, `detected_headers?`.
+- Renderizar **siempre** todas las tarjetas (Procesados, Ya en QB, Ya en BD, No encontrados, Fallidos, Saltados sin ID) aunque el valor sea 0, para que el usuario vea explícitamente que "No encontrados = 0" y entienda que no se buscó nada.
+- Si `rows_skipped_no_id === total` (caso actual), mostrar un alert rojo:
+  > "No se reconoció la columna de Clave/Consecutivo en el Excel. Headers detectados: `[lista]`. Renombrá la columna a 'Clave' o 'Consecutivo Documento', o avisanos para agregar el header."
+- Mostrar el toast `"Buscando en Hostinger/Bluehost/Gmail/Outlook"` solo si realmente hay filas con ID; si no, mostrar el alert de diagnóstico.
 
-### 5. Errores actuales detallados (top 50 globales)
-De `processed_documents` con status in ('error','review','currency_mismatch'):
-- org_name, supplier_name, doc_number, total, currency, issue_date, default_account_ref, error_message, qbo_entity_id.
+## 3. Verificación
 
-### 6. Tracking QBO en limbo
-Últimos 50 `qbo_publish_tracking` con status != 'published' agrupados por org.
+- Después del fix, re-subir el mismo Excel de Siku de Terranoa.
+- Confirmar en logs de `sync-from-excel`:
+  - `Headers detectados: [...]`
+  - `rows_skipped_no_id` baja de 332 a ~0
+  - Empiezan a aparecer llamadas a `search-import-invoice`
+- En la UI, el diálogo debe mostrar conteos no-cero en "No encontrados" y/o "Procesados", confirmando que sí fue al correo.
 
-### 7. Logs de sincronización recientes
-Últimos 50 `sync_logs` con error (todas las orgs), incluyendo error_code y error_detail.
+# Lo que NO se va a tocar
 
-## Script Python (`qbo_diagnostic_global.py`)
+- `search-import-invoice`, `hostinger-fetch-invoices`, `bluehost-fetch-invoices`, `gmail-fetch-invoices`, `outlook-imap-fetch-invoices`: ya funcionan, el problema está antes de llamarlos.
+- Lógica de publicación a QuickBooks.
+- Score de estabilidad.
 
-- Standalone, sin dependencias externas (usa `urllib` como el script de Terranoa).
-- Recibe `SUPABASE_URL` y `SUPABASE_SERVICE_ROLE_KEY` por env vars.
-- **No requiere ORG_ID** — recorre todas las orgs activas automáticamente.
-- Replica todas las consultas y genera el JSON idéntico al snapshot.
-- Sanitiza: nunca incluye `access_token`, `refresh_token`, `client_secret`, `credentials.password`, etc. Solo metadatos (expires_at, account_email, is_active).
+# Detalles técnicos (para implementación)
 
-## Pasos de implementación
+```ts
+// normalizador
+const norm = (s: string) =>
+  s.toLowerCase()
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]/g, "");
 
-1. Crear el script `/mnt/documents/qbo_diagnostic_global.py`.
-2. Ejecutar todas las consultas vía `supabase--read_query` y armar el JSON sanitizado.
-3. Guardar `/mnt/documents/qbo_diagnostic_global.json`.
-4. Adjuntar ambos al chat con `<presentation-artifact>`.
+function pickField(row: Record<string, any>, candidates: string[]): string {
+  const normalizedRow: Record<string, any> = {};
+  for (const k of Object.keys(row)) normalizedRow[norm(k)] = row[k];
+  for (const c of candidates) {
+    const v = normalizedRow[norm(c)];
+    if (v !== undefined && v !== null && String(v).trim() !== "") return String(v).trim();
+  }
+  return "";
+}
+```
 
-## No modifica nada
-
-Solo lectura. No cambia settings, no toca QBO, no edita facturas, no toca tokens.
-
-## Hallazgos que el JSON dejará explícitos (esperados)
-
-- Patrones de error compartidos entre orgs (TaxCodes faltantes, vendors mapeados a activo, tokens expirando).
-- Orgs huérfanas o mal configuradas (correo conectado pero sin facturas, QBO desconectado con backlog).
-- Settings inconsistentes (`dry_run=true` en algunas, IVA mode divergente).
+Esto resuelve el bug de fondo: la sincronización **sí ejecuta el flujo Excel → BD → IMAP → QBO**, pero solo si el Excel tiene una columna que matchee. El fix lo hace tolerante a variantes de nombre y le da al usuario feedback claro cuando no matchea.
