@@ -36,6 +36,49 @@ function parseNumeroConsecutivo(xml: string): string {
   return directValue || '';
 }
 
+function parseFolderList(listResp: string): string[] {
+  const folders: string[] = [];
+  const lines = listResp.split("\r\n");
+
+  for (const line of lines) {
+    if (!line.startsWith("* LIST ")) continue;
+
+    const flagsMatch = line.match(/^\* LIST \(([^)]*)\) /);
+    if (!flagsMatch) continue;
+    const flags = flagsMatch[1].toLowerCase();
+    if (flags.includes("\\noselect")) continue;
+    if (flags.includes("\\trash") || flags.includes("\\sent") || flags.includes("\\drafts")) continue;
+
+    const nameMatch = line.match(/\) (?:"[^"]*"|NIL) (?:"([^"]+)"|(\S+))\s*$/);
+    if (!nameMatch) continue;
+
+    const folderName = (nameMatch[1] || nameMatch[2] || "").trim();
+    if (!folderName) continue;
+
+    const nameLower = folderName.toLowerCase();
+    if (
+      nameLower.includes("trash") ||
+      nameLower.includes("papelera") ||
+      nameLower.includes("deleted") ||
+      nameLower.includes("eliminados") ||
+      nameLower.includes("draft") ||
+      nameLower.includes("borrador") ||
+      nameLower.includes("sent") ||
+      nameLower.includes("enviados")
+    ) {
+      continue;
+    }
+
+    folders.push(folderName);
+  }
+
+  return [...new Set(folders)].sort((a, b) => {
+    if (a.toUpperCase() === "INBOX") return -1;
+    if (b.toUpperCase() === "INBOX") return 1;
+    return 0;
+  });
+}
+
 // Helper function with aggressive timeout
 async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs = 5000): Promise<Response> {
   const controller = new AbortController();
@@ -505,10 +548,15 @@ serve(async (req) => {
           throw new Error("IMAP login failed");
         }
 
-        // Search across multiple folders (INBOX, Junk, Spam)
-        const foldersToSearch = ["INBOX", "Junk", "SPAM", "Spam"];
+        const listResp = await cmd('LIST "" "*"');
+        const discoveredFolders = parseFolderList(listResp);
+        const foldersToSearch = discoveredFolders.length > 0
+          ? discoveredFolders
+          : ["INBOX", "Junk", "SPAM", "Spam"];
         let msgIds: number[] = [];
         let selectedFolder = "";
+        let broaderScanIds: number[] = [];
+        let broaderScanFolder = "";
 
         for (const folder of foldersToSearch) {
           checkTimeout();
@@ -536,7 +584,7 @@ serve(async (req) => {
           
           // If TEXT search found nothing, try a broader SINCE search and scan attachments
           // This catches cases where the invoice number is only inside the XML attachment
-          if (ids.length === 0 && folder === "INBOX") {
+          if (ids.length === 0 && !broaderScanIds.length) {
             log(`🔍 TEXT search empty, trying SINCE-based scan in ${folder}...`);
             const sinceDate = new Date();
             sinceDate.setDate(sinceDate.getDate() - 30);
@@ -550,13 +598,16 @@ serve(async (req) => {
               : [];
             
             if (sinceIds.length > 0) {
-              // Take last 50 messages to scan their attachments
-              msgIds = sinceIds.slice(-50);
-              selectedFolder = folder;
-              log(`📬 Broader scan: ${sinceIds.length} messages since ${sinceDateStr}, checking last ${msgIds.length}`);
-              break;
+              broaderScanIds = sinceIds.slice(-50);
+              broaderScanFolder = folder;
+              log(`📬 Broader scan candidate: ${sinceIds.length} messages since ${sinceDateStr}, checking last ${broaderScanIds.length} in ${folder}`);
             }
           }
+        }
+
+        if (msgIds.length === 0 && broaderScanIds.length > 0) {
+          msgIds = broaderScanIds;
+          selectedFolder = broaderScanFolder;
         }
         
         log(`📬 Final: ${msgIds.length} messages to check in ${selectedFolder || 'none'}`);
