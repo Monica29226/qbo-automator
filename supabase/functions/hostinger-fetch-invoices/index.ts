@@ -6,6 +6,41 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
+// Parse IMAP LIST response into folder names.
+// Excludes Trash/Sent/Drafts and unselectable folders. INBOX first if present.
+function parseFolderList(listResp: string): string[] {
+  const folders: string[] = [];
+  const lines = listResp.split("\r\n");
+  for (const line of lines) {
+    if (!line.startsWith("* LIST ")) continue;
+    const flagsMatch = line.match(/^\* LIST \(([^)]*)\) /);
+    if (!flagsMatch) continue;
+    const flags = flagsMatch[1].toLowerCase();
+    if (flags.includes("\\noselect")) continue;
+    if (flags.includes("\\trash") || flags.includes("\\sent") ||
+        flags.includes("\\drafts") || flags.includes("\\all") ||
+        flags.includes("\\flagged") || flags.includes("\\important") ||
+        flags.includes("\\archive")) continue;
+    const nameMatch = line.match(/\) (?:"[^"]*"|NIL) (?:"([^"]+)"|(\S+))\s*$/);
+    if (!nameMatch) continue;
+    const folderName = (nameMatch[1] || nameMatch[2] || "").trim();
+    if (!folderName) continue;
+    const nameLower = folderName.toLowerCase();
+    if (nameLower === "trash" || nameLower.includes("papelera") ||
+        nameLower.includes("deleted") || nameLower.includes("eliminados") ||
+        nameLower === "sent" || nameLower.includes("sent items") ||
+        nameLower.includes("enviados") || nameLower === "drafts" ||
+        nameLower.includes("borrador") || nameLower.includes("notes")) continue;
+    folders.push(folderName);
+  }
+  folders.sort((a, b) => {
+    if (a.toUpperCase() === "INBOX") return -1;
+    if (b.toUpperCase() === "INBOX") return 1;
+    return 0;
+  });
+  return folders;
+}
+
 // Simple IMAP client using Deno's native TCP connection
 async function fetchEmailsViaIMAP(
   host: string,
