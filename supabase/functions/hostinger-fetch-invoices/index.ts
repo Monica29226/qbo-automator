@@ -119,145 +119,117 @@ async function fetchEmailsViaIMAP(
       return { rawEmails: [], error: "Login failed: " + loginResp.substring(0, 200) };
     }
 
-    // Select INBOX
-    const selectResp = await sendCommand("A002", "SELECT INBOX");
-    console.log("[Hostinger IMAP] SELECT response:", selectResp.substring(0, 200));
-
-    // Extract message count
-    const existsMatch = selectResp.match(/\* (\d+) EXISTS/);
-    const totalMessages = existsMatch ? parseInt(existsMatch[1]) : 0;
-    console.log(`[Hostinger IMAP] INBOX has ${totalMessages} messages`);
-
-    if (totalMessages === 0) {
-      await sendCommand("A999", "LOGOUT");
-      conn.close();
-      return { rawEmails: [] };
+    // Discover all folders via LIST. Reading only INBOX would miss invoices
+    // filtered to custom folders ("Facturas", "Proveedores", "Hacienda", etc.).
+    const listResp = await sendCommand("A002", `LIST "" "*"`);
+    let folders = parseFolderList(listResp);
+    if (folders.length === 0) {
+      console.log(`[Hostinger IMAP] LIST returned no folders, falling back to INBOX`);
+      folders = ["INBOX"];
     }
+    console.log(`[Hostinger IMAP] Will scan ${folders.length} folder(s): ${folders.join(", ")}`);
 
-    // Search by date - IMAP format: DD-Mon-YYYY
-    // Use SINCE and optionally BEFORE for month-specific searches
-    let searchCmd = `SEARCH SINCE ${sinceDateStr}`;
-    if (beforeDateStr) {
-      searchCmd = `SEARCH SINCE ${sinceDateStr} BEFORE ${beforeDateStr}`;
-    }
-    if (searchTerm) {
-      // Sanitize: strip quotes/backslashes to keep IMAP literal valid
-      const safe = searchTerm.replace(/["\\]/g, "").trim();
-      if (safe) {
-        // IMAP search keys are AND'd; "OR FROM x SUBJECT x" matches either field
-        searchCmd = `${searchCmd} OR FROM "${safe}" SUBJECT "${safe}"`;
-      }
-    }
-    const searchResp = await sendCommand("A003", searchCmd);
-    console.log("[Hostinger IMAP] SEARCH response:", searchResp.substring(0, 300));
-
-    // Extract UIDs from response
-    const searchLine = searchResp.split("\r\n").find(l => l.startsWith("* SEARCH"));
-    if (!searchLine || searchLine.trim() === "* SEARCH") {
-      console.log("[Hostinger IMAP] No messages found");
-      await sendCommand("A999", "LOGOUT");
-      conn.close();
-      return { rawEmails: [], totalFound: 0, processedCount: 0 };
-    }
-
-    const messageIds = searchLine.replace("* SEARCH ", "").trim().split(" ").map(Number).filter(n => n > 0);
-    console.log(`[Hostinger IMAP] Found ${messageIds.length} messages in date range`);
-
-    // Si hay skipCount, saltar esos mensajes (para paginación)
-    const startIdx = skipCount || 0;
-    const availableMessages = messageIds.slice(startIdx);
-    
-    // Procesar hasta 40 mensajes por ejecución (con corte por tiempo más abajo)
-    const BATCH_SIZE = 40;
-    const messagesToFetch = availableMessages.slice(0, BATCH_SIZE);
-    console.log(`[Hostinger IMAP] Processing messages ${startIdx + 1} to ${startIdx + messagesToFetch.length} of ${messageIds.length} total (batch size: ${BATCH_SIZE})`);
-
-    // Track execution time to exit early if approaching limit
+    const BATCH_SIZE = 60;
+    const MAX_EXECUTION_TIME_MS = 90000;
     const functionStartTime = Date.now();
-    const MAX_EXECUTION_TIME_MS = 70000; // 70s para drenar el lote IMAP (BATCH_SIZE=40)
-    // Fetch each message with early exit on timeout
-    for (let i = 0; i < messagesToFetch.length; i++) {
-      // Check if approaching timeout - check BEFORE and AFTER each message
+    let totalMessagesFoundGlobal = 0;
+    let totalMessagesProcessedGlobal = 0;
+    let globalSkipRemaining = skipCount || 0;
+
+    folderLoop: for (let fIdx = 0; fIdx < folders.length; fIdx++) {
       const elapsedMs = Date.now() - functionStartTime;
       if (elapsedMs > MAX_EXECUTION_TIME_MS) {
-        console.log(`[Hostinger IMAP] ⚠️ Approaching timeout (${elapsedMs}ms), stopping after ${i} messages`);
+        console.log(`[Hostinger IMAP] ⚠️ Time limit reached at folder ${fIdx}, stopping`);
         break;
       }
-      
-      const msgId = messagesToFetch[i];
-      
-      try {
-        // Fetch body structure first to check for XML or PDF attachments
-        const structCmd = `A1${i}0 FETCH ${msgId} BODYSTRUCTURE`;
-        await conn.write(encoder.encode(structCmd + "\r\n"));
-        
-        let structResp = "";
-        let structAttempts = 0;
-        while (structAttempts < 20) {
-          const n = await conn.read(buffer);
-          if (n === null) break;
-          structResp += decoder.decode(buffer.subarray(0, n));
-          if (structResp.includes(`A1${i}0 OK`)) break;
-          structAttempts++;
-          await new Promise(r => setTimeout(r, 50));
-        }
-
-        // Check for XML or PDF attachments
-        const lowerStructResp = structResp.toLowerCase();
-        const hasXml = lowerStructResp.includes('"xml"') || 
-                       lowerStructResp.includes('application/xml') ||
-                       lowerStructResp.includes('.xml');
-        const hasPdf = lowerStructResp.includes('"pdf"') ||
-                       lowerStructResp.includes('application/pdf') ||
-                       lowerStructResp.includes('.pdf');
-
-        if (!hasXml && !hasPdf) {
-          continue;
-        }
-
-        console.log(`[Hostinger IMAP] Message ${msgId} has attachments (XML: ${hasXml}, PDF: ${hasPdf}), fetching full...`);
-
-        // Fetch full message
-        const fetchCmd = `A1${i}1 FETCH ${msgId} BODY[]`;
-        await conn.write(encoder.encode(fetchCmd + "\r\n"));
-        
-        let emailContent = "";
-        let fetchAttempts = 0;
-        const maxFetchTime = Date.now() + 8000; // REDUCIDO: 8 seconds max per message
-        
-        while (Date.now() < maxFetchTime && fetchAttempts < 200) {
-          const n = await conn.read(buffer);
-          if (n === null) break;
-          emailContent += decoder.decode(buffer.subarray(0, n));
-          
-          if (emailContent.includes(`A1${i}1 OK`)) break;
-          if (emailContent.includes(`A1${i}1 NO`) || emailContent.includes(`A1${i}1 BAD`)) break;
-          
-          fetchAttempts++;
-          
-          // Check global timeout during fetch
-          if (Date.now() - functionStartTime > MAX_EXECUTION_TIME_MS) {
-            console.log(`[Hostinger IMAP] ⚠️ Global timeout during message fetch, stopping`);
-            break;
-          }
-        }
-
-        if (emailContent.length > 0) {
-          rawEmails.push(emailContent);
-        }
-      } catch (msgErr) {
-        console.error(`[Hostinger IMAP] Error fetching message ${msgId}:`, msgErr);
+      if (totalMessagesProcessedGlobal >= BATCH_SIZE) {
+        console.log(`[Hostinger IMAP] Batch size reached, stopping folder iteration`);
+        break;
       }
+
+      const folder = folders[fIdx];
+      const folderQuoted = `"${folder.replace(/"/g, '\\"')}"`;
+      const selectResp = await sendCommand(`AS${fIdx}`, `SELECT ${folderQuoted}`);
+      if (!selectResp.includes("OK")) {
+        console.log(`[Hostinger IMAP] Cannot SELECT folder "${folder}", skipping`);
+        continue;
+      }
+      const existsMatch = selectResp.match(/\* (\d+) EXISTS/);
+      const folderTotal = existsMatch ? parseInt(existsMatch[1]) : 0;
+      if (folderTotal === 0) continue;
+
+      let searchCmd = `SEARCH SINCE ${sinceDateStr}`;
+      if (beforeDateStr) searchCmd = `SEARCH SINCE ${sinceDateStr} BEFORE ${beforeDateStr}`;
+      if (searchTerm) {
+        const safe = searchTerm.replace(/["\\]/g, "").trim();
+        if (safe) searchCmd = `${searchCmd} OR FROM "${safe}" SUBJECT "${safe}"`;
+      }
+      const searchResp = await sendCommand(`AH${fIdx}`, searchCmd);
+      const searchLine = searchResp.split("\r\n").find(l => l.startsWith("* SEARCH"));
+      if (!searchLine || searchLine.trim() === "* SEARCH") continue;
+
+      const messageIds = searchLine.replace("* SEARCH ", "").trim().split(" ").map(Number).filter(n => n > 0);
+      totalMessagesFoundGlobal += messageIds.length;
+      console.log(`[Hostinger IMAP] Folder "${folder}": ${messageIds.length} messages in range`);
+
+      const skipInThisFolder = Math.min(globalSkipRemaining, messageIds.length);
+      globalSkipRemaining -= skipInThisFolder;
+      const messagesAfterSkip = messageIds.slice(skipInThisFolder);
+      const remainingBatch = BATCH_SIZE - totalMessagesProcessedGlobal;
+      const messagesToFetch = messagesAfterSkip.slice(0, remainingBatch);
+
+      for (let i = 0; i < messagesToFetch.length; i++) {
+        if (Date.now() - functionStartTime > MAX_EXECUTION_TIME_MS) {
+          break folderLoop;
+        }
+        const msgId = messagesToFetch[i];
+        try {
+          const structCmd = `AT${fIdx}_${i} FETCH ${msgId} BODYSTRUCTURE`;
+          await conn.write(encoder.encode(structCmd + "\r\n"));
+          let structResp = "";
+          let structAttempts = 0;
+          while (structAttempts < 20) {
+            const n = await conn.read(buffer);
+            if (n === null) break;
+            structResp += decoder.decode(buffer.subarray(0, n));
+            if (structResp.includes(`AT${fIdx}_${i} OK`)) break;
+            structAttempts++;
+            await new Promise(r => setTimeout(r, 50));
+          }
+          const lowerStructResp = structResp.toLowerCase();
+          const hasXml = lowerStructResp.includes('"xml"') || lowerStructResp.includes('application/xml') || lowerStructResp.includes('.xml');
+          const hasPdf = lowerStructResp.includes('"pdf"') || lowerStructResp.includes('application/pdf') || lowerStructResp.includes('.pdf');
+          if (!hasXml && !hasPdf) continue;
+
+          const fetchCmd = `AB${fIdx}_${i} FETCH ${msgId} BODY[]`;
+          await conn.write(encoder.encode(fetchCmd + "\r\n"));
+          let emailContent = "";
+          let fetchAttempts = 0;
+          const maxFetchTime = Date.now() + 8000;
+          while (Date.now() < maxFetchTime && fetchAttempts < 200) {
+            const n = await conn.read(buffer);
+            if (n === null) break;
+            emailContent += decoder.decode(buffer.subarray(0, n));
+            if (emailContent.includes(`AB${fIdx}_${i} OK`)) break;
+            if (emailContent.includes(`AB${fIdx}_${i} NO`) || emailContent.includes(`AB${fIdx}_${i} BAD`)) break;
+            fetchAttempts++;
+            if (Date.now() - functionStartTime > MAX_EXECUTION_TIME_MS) break;
+          }
+          if (emailContent.length > 0) rawEmails.push(emailContent);
+        } catch (msgErr) {
+          console.error(`[Hostinger IMAP] Error fetching message ${msgId}:`, msgErr);
+        }
+      }
+      totalMessagesProcessedGlobal += messagesToFetch.length;
     }
 
-    // Logout
     await sendCommand("A999", "LOGOUT");
     conn.close();
 
-    return { 
-      rawEmails, 
-      totalFound: messageIds.length,
-      processedCount: messagesToFetch.length
+    return {
+      rawEmails,
+      totalFound: totalMessagesFoundGlobal,
+      processedCount: totalMessagesProcessedGlobal
     };
   } catch (error) {
     console.error("[Hostinger IMAP] Connection error:", error);
