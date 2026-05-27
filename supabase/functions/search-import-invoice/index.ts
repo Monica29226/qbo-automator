@@ -1013,13 +1013,20 @@ serve(async (req) => {
               log(`📥 Fetching XML part ${xp.partNum}...`);
               const partResp = await cmd(`FETCH ${msgId} BODY[${xp.partNum}]`);
               
-              // Extract base64 data
-              const dataStart = partResp.indexOf("\r\n");
-              if (dataStart < 0) continue;
-              const dataEnd = partResp.lastIndexOf(`\r\n`);
-              let b64Data = partResp.substring(dataStart + 2, dataEnd).replace(/[\r\n\s]/g, "");
-              b64Data = b64Data.replace(/T\d+\s+OK.*$/i, "").replace(/\)$/,"");
-              
+              // Extract base64 data - IMAP response format: * N FETCH (BODY[X] {size}\r\n<data>\r\n)\r\nTAG OK ...
+              // Strip everything before the literal size marker, and keep only valid base64 chars.
+              let body = partResp;
+              const litMatch = body.match(/\{(\d+)\}\r\n/);
+              if (litMatch) body = body.substring(body.indexOf(litMatch[0]) + litMatch[0].length);
+              else {
+                const ds = body.indexOf("\r\n");
+                if (ds >= 0) body = body.substring(ds + 2);
+              }
+              // Remove trailing IMAP tag/close paren
+              body = body.replace(/\)\r?\n[A-Z]?T?\d+\s+OK[\s\S]*$/i, "").replace(/\)\s*$/, "");
+              let b64Data = body.replace(/[^A-Za-z0-9+/=]/g, "");
+              // Pad to multiple of 4
+              while (b64Data.length % 4) b64Data += "=";
               if (b64Data.length < 50) continue;
               
               try {
