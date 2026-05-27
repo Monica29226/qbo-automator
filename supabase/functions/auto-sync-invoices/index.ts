@@ -254,7 +254,7 @@ async function processOrganization(
     let iteration = 0;
     const maxIterations = 15;
     const dispatcherStartTime = Date.now();
-    const MAX_DISPATCHER_TIME_MS = 90_000;
+    const MAX_DISPATCHER_TIME_MS = 120_000;
 
     while (continueFetching && iteration < maxIterations) {
       iteration += 1;
