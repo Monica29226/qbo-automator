@@ -946,32 +946,25 @@ serve(async (req) => {
           // Simple heuristic: count opening parens to determine part numbers
           // For typical emails with attachments, parts are numbered 1, 2, 3, etc.
           // We'll extract filenames and map them to sequential part numbers
-          const filenameRegex = /filename[*]?(?:="([^"]+)"|=([^\s\)]+)|[*]0[*]?="?([^";\s\)]+)"?|[*]1[*]?="?([^";\s\)]+)"?)/gi;
-          let fnMatch;
-          let partCounter = 0;
-          
-          // Split by major sections to count parts
-          // Each attachment typically appears as a separate MIME part
-          const sections = structResp.split(/\)\s*\(/);
-          
-          for (let si = 0; si < sections.length; si++) {
-            const section = sections[si].toLowerCase();
-            // Check if this section has a filename
-            const fnRegex = /filename[*]?(?:="([^"]+)"|=([^\s\)]+))/i;
-            const fnM = sections[si].match(fnRegex);
-            
-            if (fnM) {
-              partCounter++;
-              const fname = (fnM[1] || fnM[2] || "").trim();
-              const partNum = String(partCounter + 1); // Part 1 is usually text/html, attachments start at 2+
-              
-              if (fname.toLowerCase().endsWith(".xml") && !fname.toLowerCase().includes("ahc-") && !fname.toLowerCase().includes("mensaje")) {
-                xmlParts.push({ partNum, filename: fname });
-                log(`📎 XML attachment: ${fname} -> part ${partNum}`);
-              } else if (fname.toLowerCase().endsWith(".pdf")) {
-                pdfParts.push({ partNum, filename: fname });
-                log(`📎 PDF attachment: ${fname} -> part ${partNum}`);
-              }
+          // Match both IMAP-style ("name" "x.xml") and MIME-style filename="x.xml"
+          const nameMatches: string[] = [];
+          for (const m of structResp.matchAll(/"name"\s+"([^"]+)"/gi)) nameMatches.push(m[1]);
+          for (const m of structResp.matchAll(/filename[*]?\s*=\s*"([^"]+)"/gi)) nameMatches.push(m[1]);
+          const seenF = new Set<string>();
+          let attachmentIdx = 0;
+          for (const fnameRaw of nameMatches) {
+            const fname = fnameRaw.trim();
+            if (!fname || seenF.has(fname)) continue;
+            seenF.add(fname);
+            attachmentIdx++;
+            const partNum = String(attachmentIdx + 1);
+            const fLower = fname.toLowerCase();
+            if (fLower.endsWith(".xml") && !fLower.includes("ahc-") && !fLower.includes("mensajereceptor") && !fLower.includes("mensaje-receptor")) {
+              xmlParts.push({ partNum, filename: fname });
+              log(`📎 XML attachment: ${fname} -> part ${partNum}`);
+            } else if (fLower.endsWith(".pdf")) {
+              pdfParts.push({ partNum, filename: fname });
+              log(`📎 PDF attachment: ${fname} -> part ${partNum}`);
             }
           }
           
