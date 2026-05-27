@@ -8,11 +8,26 @@ const corsHeaders = {
 
 interface HealthIssue {
   type: "critical" | "warning" | "info";
+  code: string;
   title: string;
   description: string;
   actionRequired: string;
+  action_link?: string;
   data?: any;
 }
+
+// Known alert codes — used for dedup and auto-resolve.
+const KNOWN_CODES = [
+  "no_successful_sync",
+  "sync_no_24h",
+  "sync_delayed",
+  "high_failure_rate",
+  "qbo_failed",
+  "ai_credits_exhausted",
+  "no_mail_channel",
+  "qbo_disconnected",
+  "stuck_review",
+];
 
 interface Organization {
   id: string;
