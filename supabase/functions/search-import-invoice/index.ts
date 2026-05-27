@@ -879,6 +879,14 @@ serve(async (req) => {
           );
         }
 
+        // CRITICAL: Re-SELECT the folder where the msgIds came from.
+        // The folder loop above may have SELECTed other folders after finding the IDs,
+        // which makes subsequent FETCH commands fail with "Invalid messageset".
+        if (selectedFolder) {
+          const reselectResp = await cmd(`SELECT "${selectedFolder}"`);
+          log(`🔄 Re-selected folder ${selectedFolder} before FETCH: ${reselectResp.substring(0, 100)}`);
+        }
+
         let xmlContent = "";
         let pdfBase64 = "";
         let pdfFilename = "";
