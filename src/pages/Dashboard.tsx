@@ -18,6 +18,7 @@ import { useDashboardStats, useOrganizationConnections } from "@/hooks/useDashbo
 import { ImportBatchDialog } from "@/components/dashboard/ImportBatchDialog";
 import { SearchInvoiceDialog } from "@/components/dashboard/SearchInvoiceDialog";
 import { ReconcileXmlQboButton } from "@/components/dashboard/ReconcileXmlQboButton";
+const AuditPublishedVsQBO = lazy(() => import("@/components/dashboard/AuditPublishedVsQBO").then(m => ({ default: m.AuditPublishedVsQBO })));
 import { ImportHealthPanel } from "@/components/dashboard/ImportHealthPanel";
 
 // Lazy load componentes pesados
@@ -474,6 +475,12 @@ const Dashboard = () => {
                 </div>
               </CardContent>
             </Card>
+
+            <Suspense fallback={<LazyFallback />}>
+              <AuditPublishedVsQBO />
+            </Suspense>
+
+
 
             {/* Alerts after quick actions */}
             <Suspense fallback={<LazyFallback />}>
