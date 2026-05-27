@@ -390,136 +390,53 @@ function isHaciendaResponse(filename: string, content: string): boolean {
 }
 
 // Function to extract XML attachments from raw email
+// Extract XML attachments using the recursive MIME parser.
+// Handles nested multipart/* (mixed/related/alternative) and strict base64.
 function extractXmlAttachments(rawEmail: string): Array<{ filename: string; content: string }> {
   const attachments: Array<{ filename: string; content: string }> = [];
-  
-  const boundaryMatch = rawEmail.match(/boundary="?([^"\r\n;]+)"?/i);
-  if (!boundaryMatch) {
-    return attachments;
-  }
-
-  const boundary = boundaryMatch[1];
-  const parts = rawEmail.split("--" + boundary);
-
-  for (const part of parts) {
-    const filenameMatch = part.match(/filename="?([^"\r\n]+\.xml)"?/i);
-    if (!filenameMatch) continue;
-
-    const filename = filenameMatch[1].trim();
-
-    const encodingMatch = part.match(/Content-Transfer-Encoding:\s*(\S+)/i);
-    const encoding = encodingMatch ? encodingMatch[1].toUpperCase() : "7BIT";
-
-    const contentStart = part.indexOf("\r\n\r\n");
-    if (contentStart === -1) continue;
-
-    let content = part.substring(contentStart + 4);
-    
-    const endIdx = content.indexOf("--" + boundary);
-    if (endIdx !== -1) {
-      content = content.substring(0, endIdx);
-    }
-    content = content.trim();
-
-    let decodedContent: string;
-    
-    if (encoding === "BASE64") {
-      try {
-        const cleanBase64 = content.replace(/[\r\n\s]/g, "");
-        // Decodificar base64 correctamente para UTF-8
-        const binaryData = Uint8Array.from(atob(cleanBase64), c => c.charCodeAt(0));
-        // Usar TextDecoder con UTF-8 para manejar tildes correctamente
-        decodedContent = new TextDecoder("utf-8").decode(binaryData);
-      } catch (e) {
-        console.error(`[Hostinger] Error decoding base64 for ${filename}:`, e);
+  const mimeParts = parseMimeParts(rawEmail);
+  for (const part of mimeParts) {
+    const fnameLower = part.filename.toLowerCase();
+    const looksLikeXml = fnameLower.endsWith(".xml") || part.contentType.includes("xml");
+    const looksLikeOctet = part.contentType.includes("octet-stream") && fnameLower.endsWith(".xml");
+    if (!looksLikeXml && !looksLikeOctet) continue;
+    try {
+      const bytes = decodePartContent(part.content, part.encoding);
+      const decodedContent = new TextDecoder("utf-8").decode(bytes);
+      if (isHaciendaResponse(part.filename, decodedContent)) {
+        console.log(`[Hostinger] Skipping Hacienda response/message: ${part.filename}`);
         continue;
       }
-    } else if (encoding === "QUOTED-PRINTABLE") {
-      decodedContent = content
-        .replace(/=\r?\n/g, "")
-        .replace(/=([0-9A-Fa-f]{2})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
-    } else {
-      decodedContent = content;
-    }
-
-    if (isHaciendaResponse(filename, decodedContent)) {
-      console.log(`[Hostinger] Skipping Hacienda response/message: ${filename}`);
-      continue;
-    }
-
-    if (decodedContent.includes("<Clave>")) {
-      console.log(`[Hostinger] ✓ Valid invoice XML found: ${filename}`);
-      attachments.push({ filename, content: decodedContent });
-    } else {
-      console.log(`[Hostinger] Skipping XML without Clave: ${filename}`);
+      if (decodedContent.includes("<Clave>")) {
+        console.log(`[Hostinger] ✓ Valid invoice XML found: ${part.filename}`);
+        attachments.push({ filename: part.filename, content: decodedContent });
+      }
+    } catch (e) {
+      console.error(`[Hostinger] Error decoding XML ${part.filename}:`, e);
     }
   }
-
   return attachments;
 }
 
-// Function to extract PDF attachments from raw email
+// Extract PDF attachments using the recursive MIME parser.
 function extractPdfAttachments(rawEmail: string): Array<{ filename: string; content: Uint8Array }> {
   const attachments: Array<{ filename: string; content: Uint8Array }> = [];
-  
-  const boundaryMatch = rawEmail.match(/boundary="?([^"\r\n;]+)"?/i);
-  if (!boundaryMatch) {
-    return attachments;
-  }
-
-  const boundary = boundaryMatch[1];
-  const parts = rawEmail.split("--" + boundary);
-
-  for (const part of parts) {
-    const filenameMatch = part.match(/filename="?([^"\r\n]+\.pdf)"?/i);
-    if (!filenameMatch) continue;
-
-    const filename = filenameMatch[1].trim();
-
-    const encodingMatch = part.match(/Content-Transfer-Encoding:\s*(\S+)/i);
-    const encoding = encodingMatch ? encodingMatch[1].toUpperCase() : "7BIT";
-
-    const contentStart = part.indexOf("\r\n\r\n");
-    if (contentStart === -1) continue;
-
-    let content = part.substring(contentStart + 4);
-    
-    const endIdx = content.indexOf("--" + boundary);
-    if (endIdx !== -1) {
-      content = content.substring(0, endIdx);
-    }
-    content = content.trim();
-
-    let decodedContent: Uint8Array;
-    
-    if (encoding === "BASE64") {
-      try {
-        const cleanBase64 = content.replace(/[\r\n\s]/g, "");
-        const binaryStr = atob(cleanBase64);
-        decodedContent = new Uint8Array(binaryStr.length);
-        for (let i = 0; i < binaryStr.length; i++) {
-          decodedContent[i] = binaryStr.charCodeAt(i);
-        }
-      } catch (e) {
-        console.error(`[Hostinger] Error decoding PDF base64 for ${filename}:`, e);
-        continue;
+  const mimeParts = parseMimeParts(rawEmail);
+  for (const part of mimeParts) {
+    const fnameLower = part.filename.toLowerCase();
+    const looksLikePdf = fnameLower.endsWith(".pdf") || part.contentType === "application/pdf";
+    const looksLikeOctet = part.contentType.includes("octet-stream") && fnameLower.endsWith(".pdf");
+    if (!looksLikePdf && !looksLikeOctet) continue;
+    try {
+      const bytes = decodePartContent(part.content, part.encoding);
+      if (bytes.length > 4 && String.fromCharCode(bytes[0], bytes[1], bytes[2], bytes[3]) === "%PDF") {
+        console.log(`[Hostinger] ✓ Valid PDF found: ${part.filename} (${bytes.length} bytes)`);
+        attachments.push({ filename: part.filename, content: bytes });
       }
-    } else {
-      const encoder = new TextEncoder();
-      decodedContent = encoder.encode(content);
-    }
-
-    if (decodedContent.length > 4) {
-      const header = String.fromCharCode(...decodedContent.slice(0, 4));
-      if (header === "%PDF") {
-        console.log(`[Hostinger] ✓ Valid PDF found: ${filename} (${decodedContent.length} bytes)`);
-        attachments.push({ filename, content: decodedContent });
-      } else {
-        console.log(`[Hostinger] Skipping invalid PDF (wrong header): ${filename}`);
-      }
+    } catch (e) {
+      console.error(`[Hostinger] Error decoding PDF ${part.filename}:`, e);
     }
   }
-
   return attachments;
 }
 
@@ -529,21 +446,20 @@ function matchPdfToXml(
   pdfAttachments: Array<{ filename: string; content: Uint8Array }>
 ): Map<string, { filename: string; content: Uint8Array } | null> {
   const matches = new Map<string, { filename: string; content: Uint8Array } | null>();
-  
+
   for (const xml of xmlAttachments) {
     const claveMatch = xml.content.match(/<Clave>(\d{50})<\/Clave>/);
     const clave = claveMatch ? claveMatch[1] : "";
-    
+
     const numConsecMatch = xml.content.match(/<NumeroConsecutivo>(\d+)<\/NumeroConsecutivo>/);
     const numConsec = numConsecMatch ? numConsecMatch[1] : "";
-    
+
     const xmlBaseName = xml.filename.replace(/\.xml$/i, "").toLowerCase();
-    
+
     let matchedPdf: { filename: string; content: Uint8Array } | null = null;
-    
+
     for (const pdf of pdfAttachments) {
       const pdfBaseName = pdf.filename.replace(/\.pdf$/i, "").toLowerCase();
-      
       if (pdfBaseName === xmlBaseName ||
           (clave && pdf.filename.includes(clave)) ||
           (numConsec && pdf.filename.includes(numConsec)) ||
@@ -553,12 +469,19 @@ function matchPdfToXml(
         break;
       }
     }
-    
+
+    // Fallback: if there's exactly one XML and one PDF in the email, pair them.
+    if (!matchedPdf && xmlAttachments.length === 1 && pdfAttachments.length === 1) {
+      matchedPdf = pdfAttachments[0];
+      console.log(`[Hostinger] ✓ Paired single PDF/XML in email: ${pdfAttachments[0].filename} <-> ${xml.filename}`);
+    }
+
     matches.set(xml.filename, matchedPdf);
   }
-  
+
   return matches;
 }
+
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
