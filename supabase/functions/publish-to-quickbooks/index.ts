@@ -2937,15 +2937,42 @@ Deno.serve(async (req) => {
           entityId = billData.Bill.Id;
           entityType = "Bill";
           
-          // POST-CREATION VERIFICATION: Compare QBO TotalAmt with expected total (log only, no delete/recreate)
-          // We trust the XML amounts - if QBO calculated differently, we log it but keep the bill
+          // POST-CREATION VERIFICATION: Compare QBO TotalAmt + TotalTax vs XML
           const qboTotalAmt = parseFloat(billData.Bill.TotalAmt || '0');
+          const qboTotalTax = parseFloat(billData.Bill?.TxnTaxDetail?.TotalTax || '0');
           const expectedTotal = Math.abs(doc.total_amount);
+          const expectedTax = Math.abs(doc.total_tax || 0);
           const totalDiscrepancy = Math.abs(qboTotalAmt - expectedTotal);
-          
-          if (totalDiscrepancy > 1.0) {
-            logInfo(`⚠️ ${doc.doc_number}: DISCREPANCIA: QBO Total=${qboTotalAmt}, XML Total=${expectedTotal}, Diff=${totalDiscrepancy.toFixed(2)} - Se mantiene el Bill como está (montos del XML son fieles)${earlyIsTaxExempt ? ' [Impuesto asumido: QBO total incluye tax que XML no suma]' : ''}`);
+          const taxDiscrepancy = Math.abs(qboTotalTax - expectedTax);
+
+          if (totalDiscrepancy > 1.0 || taxDiscrepancy > 1.0) {
+            const issue = {
+              code: 'qbo_total_mismatch',
+              doc_number: doc.doc_number,
+              doc_key: doc.doc_key,
+              qbo_entity_id: entityId,
+              supplier: doc.supplier_name,
+              qbo_total: qboTotalAmt,
+              xml_total: expectedTotal,
+              total_diff: Number(totalDiscrepancy.toFixed(2)),
+              qbo_tax: qboTotalTax,
+              xml_tax: expectedTax,
+              tax_diff: Number(taxDiscrepancy.toFixed(2)),
+              detected_at: new Date().toISOString(),
+            };
+            logInfo(`⚠️ ${doc.doc_number}: DISCREPANCIA POST-PUBLICACIÓN ${JSON.stringify(issue)}`);
+            try {
+              await supabase.from('alert_history').insert({
+                organization_id: doc.organization_id,
+                alert_type: 'qbo_total_mismatch',
+                issues_count: 1,
+                issues_data: [issue],
+              });
+            } catch (alertErr: any) {
+              logError(`Failed to record qbo_total_mismatch alert: ${alertErr?.message || alertErr}`);
+            }
           }
+
         }
         
         logInfo(`✅ ${doc.doc_number}: ${entityType} created (ID: ${entityId})`);
