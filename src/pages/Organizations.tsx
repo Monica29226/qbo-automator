@@ -146,19 +146,17 @@ const Organizations = () => {
       toast.error("Error al cargar miembros");
       console.error(membersError);
     } else if (membersData && membersData.length > 0) {
-      // Fetch profiles separately since there's no FK relationship
-      const userIds = membersData.map(m => m.user_id);
+      // Use secure RPC that returns only safe columns (no phone/address/cedula)
       const { data: profilesData } = await supabase
-        .from("profiles")
-        .select("id, email, full_name")
-        .in("id", userIds);
+        .rpc("get_organization_member_profiles", { _org_id: activeOrganization });
 
       // Combine members with their profiles
       const membersWithProfiles = membersData.map(member => ({
         ...member,
-        profiles: profilesData?.find(p => p.id === member.user_id) || { email: "", full_name: "" }
+        profiles: profilesData?.find((p: any) => p.id === member.user_id) || { email: "", full_name: "" }
       }));
       setMembers(membersWithProfiles as any);
+
     } else {
       setMembers([]);
     }
