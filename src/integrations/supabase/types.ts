@@ -1962,6 +1962,15 @@ export type Database = {
           service_type: string
         }[]
       }
+      get_organization_member_profiles: {
+        Args: { _org_id: string }
+        Returns: {
+          avatar_url: string
+          email: string
+          full_name: string
+          id: string
+        }[]
+      }
       get_user_active_organization: {
         Args: { _user_id: string }
         Returns: string
