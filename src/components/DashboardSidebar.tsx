@@ -137,6 +137,21 @@ export function DashboardSidebar({ isAdmin, reviewCount, onSignOut }: DashboardS
     },
   ], [isAdmin]);
 
+  const adminPaymentsItems = useMemo(() => [
+    {
+      title: "Cuentas por Pagar",
+      icon: Wallet,
+      path: "/admin-payments/pending",
+      show: true,
+    },
+    {
+      title: "Pagadas",
+      icon: CheckCircle2,
+      path: "/admin-payments/paid",
+      show: true,
+    },
+  ], []);
+
   const rulesItems = useMemo(() => [
     {
       title: "Reglas Proveedores",
