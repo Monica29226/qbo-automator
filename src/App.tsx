@@ -273,6 +273,23 @@ const App = () => (
                 }
               />
               <Route
+                path="/admin-payments"
+                element={
+                  <ProtectedRoute>
+                    <AdminPayments />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/admin-payments/:tab"
+                element={
+                  <ProtectedRoute>
+                    <AdminPayments />
+                  </ProtectedRoute>
+                }
+              />
+
+              <Route
                 path="/admin/cleanup-quick-actions"
                 element={
                   <ProtectedRoute requireAdmin>
