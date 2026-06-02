@@ -228,6 +228,14 @@ export function DashboardSidebar({ isAdmin, reviewCount, onSignOut }: DashboardS
           </SidebarGroupContent>
         </SidebarGroup>
 
+        {/* Administrativo */}
+        <SidebarGroup className="text-sidebar-foreground">
+          <SidebarGroupLabel className="text-sidebar-foreground/60">Administrativo</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>{renderMenuItems(adminPaymentsItems)}</SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+
         {/* Management */}
         {isAdmin && (
           <SidebarGroup className="text-sidebar-foreground">
@@ -237,6 +245,7 @@ export function DashboardSidebar({ isAdmin, reviewCount, onSignOut }: DashboardS
             </SidebarGroupContent>
           </SidebarGroup>
         )}
+
 
         {/* Rules */}
         {isAdmin && (
