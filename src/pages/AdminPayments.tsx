@@ -57,6 +57,10 @@ export default function AdminPayments() {
   const [invoices, setInvoices] = useState<InvoiceRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [supplierFilter, setSupplierFilter] = useState("");
+  const [docNumberFilter, setDocNumberFilter] = useState("");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [selected, setSelected] = useState<InvoiceRow | null>(null);
   const [loadingProofId, setLoadingProofId] = useState<string | null>(null);
