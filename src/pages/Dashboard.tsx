@@ -561,6 +561,7 @@ const Dashboard = () => {
             variant="primary"
           />
           <SharePointKpiCard organizationId={activeOrganization} />
+          <AccountsPayableCard organizationId={activeOrganization} />
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
