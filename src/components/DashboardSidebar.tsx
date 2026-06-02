@@ -15,6 +15,8 @@ import {
   Users,
   TrendingUp,
   Activity,
+  Wallet,
+  CheckCircle2,
 } from "lucide-react";
 import calderonLogo from "@/assets/acl-logo-new.png";
 import {
