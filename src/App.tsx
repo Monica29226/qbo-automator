@@ -40,6 +40,7 @@ import AdminSharePointBulkUpload from "./pages/AdminSharePointBulkUpload";
 import AdminAccesos from "./pages/AdminAccesos";
 import AdminImportHealth from "./pages/AdminImportHealth";
 import BatchImportV2 from "./pages/BatchImportV2";
+import AdminPayments from "./pages/AdminPayments";
 import NotFound from "./pages/NotFound";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import { AppErrorBoundary } from "./components/AppErrorBoundary";
