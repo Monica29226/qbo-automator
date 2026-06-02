@@ -110,32 +110,61 @@ export default function AdminPayments() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeOrganization, tab]);
 
+  const suppliers = useMemo(() => {
+    const set = new Set<string>();
+    for (const i of invoices) if (i.supplier_name) set.add(i.supplier_name);
+    return Array.from(set).sort((a, b) => a.localeCompare(b, "es"));
+  }, [invoices]);
+
   const filtered = useMemo(() => {
     const q = search.toLowerCase().trim();
-    if (!q) return invoices;
-    return invoices.filter(
-      (i) =>
-        i.supplier_name?.toLowerCase().includes(q) ||
-        i.doc_number?.toLowerCase().includes(q) ||
-        i.doc_key?.toLowerCase().includes(q) ||
-        i.payment_reference?.toLowerCase().includes(q)
-    );
-  }, [invoices, search]);
+    const doc = docNumberFilter.toLowerCase().trim();
+    const fromTs = dateFrom ? new Date(dateFrom + "T00:00:00").getTime() : null;
+    const toTs = dateTo ? new Date(dateTo + "T23:59:59").getTime() : null;
+    return invoices.filter((i) => {
+      if (supplierFilter && i.supplier_name !== supplierFilter) return false;
+      if (doc && !i.doc_number?.toLowerCase().includes(doc)) return false;
+      if (fromTs || toTs) {
+        const t = i.issue_date ? new Date(i.issue_date).getTime() : 0;
+        if (fromTs && t < fromTs) return false;
+        if (toTs && t > toTs) return false;
+      }
+      if (q) {
+        return (
+          i.supplier_name?.toLowerCase().includes(q) ||
+          i.doc_number?.toLowerCase().includes(q) ||
+          i.doc_key?.toLowerCase().includes(q) ||
+          i.payment_reference?.toLowerCase().includes(q)
+        );
+      }
+      return true;
+    });
+  }, [invoices, search, supplierFilter, docNumberFilter, dateFrom, dateTo]);
+
+  const clearFilters = () => {
+    setSearch("");
+    setDateFrom("");
+    setDateTo("");
+    setSupplierFilter("");
+    setDocNumberFilter("");
+  };
+
+  const hasFilters = !!(search || dateFrom || dateTo || supplierFilter || docNumberFilter);
 
   const totals = useMemo(() => {
-    const crc = invoices
+    const crc = filtered
       .filter((i) => i.currency === "CRC")
       .reduce((s, i) => s + Number(i.total_amount || 0), 0);
-    const usd = invoices
+    const usd = filtered
       .filter((i) => i.currency === "USD")
       .reduce((s, i) => s + Number(i.total_amount || 0), 0);
-    const overdue = invoices.filter((i) => {
+    const overdue = filtered.filter((i) => {
       if (tab !== "pending") return false;
       const days = (Date.now() - new Date(i.issue_date).getTime()) / 86400000;
       return days > 30;
     }).length;
-    return { crc, usd, overdue, count: invoices.length };
-  }, [invoices, tab]);
+    return { crc, usd, overdue, count: filtered.length };
+  }, [filtered, tab]);
 
   const fmt = (amount: number, currency: string) =>
     new Intl.NumberFormat("es-CR", {
