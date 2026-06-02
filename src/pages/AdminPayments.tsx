@@ -23,6 +23,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { PayInvoiceDialog } from "@/components/admin/PayInvoiceDialog";
@@ -57,6 +58,10 @@ export default function AdminPayments() {
   const [invoices, setInvoices] = useState<InvoiceRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [supplierFilter, setSupplierFilter] = useState("");
+  const [docNumberFilter, setDocNumberFilter] = useState("");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [selected, setSelected] = useState<InvoiceRow | null>(null);
   const [loadingProofId, setLoadingProofId] = useState<string | null>(null);
@@ -106,32 +111,61 @@ export default function AdminPayments() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeOrganization, tab]);
 
+  const suppliers = useMemo(() => {
+    const set = new Set<string>();
+    for (const i of invoices) if (i.supplier_name) set.add(i.supplier_name);
+    return Array.from(set).sort((a, b) => a.localeCompare(b, "es"));
+  }, [invoices]);
+
   const filtered = useMemo(() => {
     const q = search.toLowerCase().trim();
-    if (!q) return invoices;
-    return invoices.filter(
-      (i) =>
-        i.supplier_name?.toLowerCase().includes(q) ||
-        i.doc_number?.toLowerCase().includes(q) ||
-        i.doc_key?.toLowerCase().includes(q) ||
-        i.payment_reference?.toLowerCase().includes(q)
-    );
-  }, [invoices, search]);
+    const doc = docNumberFilter.toLowerCase().trim();
+    const fromTs = dateFrom ? new Date(dateFrom + "T00:00:00").getTime() : null;
+    const toTs = dateTo ? new Date(dateTo + "T23:59:59").getTime() : null;
+    return invoices.filter((i) => {
+      if (supplierFilter && i.supplier_name !== supplierFilter) return false;
+      if (doc && !i.doc_number?.toLowerCase().includes(doc)) return false;
+      if (fromTs || toTs) {
+        const t = i.issue_date ? new Date(i.issue_date).getTime() : 0;
+        if (fromTs && t < fromTs) return false;
+        if (toTs && t > toTs) return false;
+      }
+      if (q) {
+        return (
+          i.supplier_name?.toLowerCase().includes(q) ||
+          i.doc_number?.toLowerCase().includes(q) ||
+          i.doc_key?.toLowerCase().includes(q) ||
+          i.payment_reference?.toLowerCase().includes(q)
+        );
+      }
+      return true;
+    });
+  }, [invoices, search, supplierFilter, docNumberFilter, dateFrom, dateTo]);
+
+  const clearFilters = () => {
+    setSearch("");
+    setDateFrom("");
+    setDateTo("");
+    setSupplierFilter("");
+    setDocNumberFilter("");
+  };
+
+  const hasFilters = !!(search || dateFrom || dateTo || supplierFilter || docNumberFilter);
 
   const totals = useMemo(() => {
-    const crc = invoices
+    const crc = filtered
       .filter((i) => i.currency === "CRC")
       .reduce((s, i) => s + Number(i.total_amount || 0), 0);
-    const usd = invoices
+    const usd = filtered
       .filter((i) => i.currency === "USD")
       .reduce((s, i) => s + Number(i.total_amount || 0), 0);
-    const overdue = invoices.filter((i) => {
+    const overdue = filtered.filter((i) => {
       if (tab !== "pending") return false;
       const days = (Date.now() - new Date(i.issue_date).getTime()) / 86400000;
       return days > 30;
     }).length;
-    return { crc, usd, overdue, count: invoices.length };
-  }, [invoices, tab]);
+    return { crc, usd, overdue, count: filtered.length };
+  }, [filtered, tab]);
 
   const fmt = (amount: number, currency: string) =>
     new Intl.NumberFormat("es-CR", {
@@ -240,15 +274,60 @@ export default function AdminPayments() {
         </div>
 
         <Card>
-          <CardHeader>
-            <div className="flex items-center gap-2 max-w-md">
+          <CardHeader className="space-y-3">
+            <div className="flex items-center gap-2">
               <Search className="h-4 w-4 text-muted-foreground" />
               <Input
-                placeholder="Buscar proveedor, # factura, clave o referencia..."
+                placeholder="Buscar (clave, referencia, etc.)"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
+                className="max-w-md"
               />
             </div>
+            <div className="grid grid-cols-1 md:grid-cols-5 gap-2">
+              <div>
+                <label className="text-xs text-muted-foreground">Desde</label>
+                <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground">Hasta</label>
+                <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+              </div>
+              <div className="md:col-span-2">
+                <label className="text-xs text-muted-foreground">Proveedor</label>
+                <Select
+                  value={supplierFilter || "__all__"}
+                  onValueChange={(v) => setSupplierFilter(v === "__all__" ? "" : v)}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Todos" />
+                  </SelectTrigger>
+                  <SelectContent className="max-h-72">
+                    <SelectItem value="__all__">Todos los proveedores</SelectItem>
+                    {suppliers.map((s) => (
+                      <SelectItem key={s} value={s}>
+                        {s}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground"># Factura</label>
+                <Input
+                  placeholder="Ej. 0010001..."
+                  value={docNumberFilter}
+                  onChange={(e) => setDocNumberFilter(e.target.value)}
+                />
+              </div>
+            </div>
+            {hasFilters && (
+              <div className="flex justify-end">
+                <Button variant="ghost" size="sm" onClick={clearFilters}>
+                  Limpiar filtros
+                </Button>
+              </div>
+            )}
           </CardHeader>
           <CardContent>
             {loading ? (
