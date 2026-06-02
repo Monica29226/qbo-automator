@@ -15,6 +15,8 @@ import {
   Users,
   TrendingUp,
   Activity,
+  Wallet,
+  CheckCircle2,
 } from "lucide-react";
 import calderonLogo from "@/assets/acl-logo-new.png";
 import {
@@ -135,6 +137,21 @@ export function DashboardSidebar({ isAdmin, reviewCount, onSignOut }: DashboardS
     },
   ], [isAdmin]);
 
+  const adminPaymentsItems = useMemo(() => [
+    {
+      title: "Cuentas por Pagar",
+      icon: Wallet,
+      path: "/admin-payments/pending",
+      show: true,
+    },
+    {
+      title: "Pagadas",
+      icon: CheckCircle2,
+      path: "/admin-payments/paid",
+      show: true,
+    },
+  ], []);
+
   const rulesItems = useMemo(() => [
     {
       title: "Reglas Proveedores",
@@ -211,6 +228,14 @@ export function DashboardSidebar({ isAdmin, reviewCount, onSignOut }: DashboardS
           </SidebarGroupContent>
         </SidebarGroup>
 
+        {/* Administrativo */}
+        <SidebarGroup className="text-sidebar-foreground">
+          <SidebarGroupLabel className="text-sidebar-foreground/60">Administrativo</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>{renderMenuItems(adminPaymentsItems)}</SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+
         {/* Management */}
         {isAdmin && (
           <SidebarGroup className="text-sidebar-foreground">
@@ -220,6 +245,7 @@ export function DashboardSidebar({ isAdmin, reviewCount, onSignOut }: DashboardS
             </SidebarGroupContent>
           </SidebarGroup>
         )}
+
 
         {/* Rules */}
         {isAdmin && (

@@ -151,6 +151,37 @@ async function uploadFileToDrive(
   return await response.json();
 }
 
+// Sanitize a filename component: remove characters illegal in filesystems and Drive,
+// collapse whitespace, preserve accents and case.
+function sanitizeNamePart(input: string): string {
+  return (input || "")
+    .replace(/[\/\\?%*:|"<>\x00-\x1F]/g, "-")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+// Format an amount for the filename: e.g. ₡125,000 or $1,250.50
+function formatAmountForName(amount: number | string | null | undefined, currency: string | null | undefined): string {
+  const n = typeof amount === "number" ? amount : parseFloat(String(amount || "0"));
+  if (!isFinite(n)) return "0";
+  const cur = (currency || "CRC").toUpperCase();
+  const symbol = cur === "USD" ? "$" : cur === "EUR" ? "€" : "₡";
+  const decimals = cur === "CRC" ? 0 : 2;
+  const formatted = n.toLocaleString("en-US", {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+  });
+  return `${symbol}${formatted}`;
+}
+
+// Build the canonical filename basename: "Proveedor - FE-123 - ₡125,000"
+function buildInvoiceBasename(doc: any): string {
+  const vendor = sanitizeNamePart(doc.supplier_name || "Proveedor");
+  const number = sanitizeNamePart(doc.doc_number || "SN");
+  const amount = formatAmountForName(doc.total_amount, doc.currency);
+  return `${vendor} - ${number} - ${amount}`;
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -161,7 +192,15 @@ serve(async (req) => {
     const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-    const { document_id, organization_id } = await req.json();
+    const body = await req.json();
+    const {
+      document_id,
+      organization_id,
+      mode = "invoice", // "invoice" | "payment_proof"
+      payment_proof_storage_path, // required when mode === "payment_proof"
+      payment_proof_mime = "application/pdf",
+      payment_proof_extension = "pdf",
+    } = body;
 
     if (!document_id || !organization_id) {
       throw new Error("Missing document_id or organization_id");
@@ -175,7 +214,11 @@ serve(async (req) => {
       .single();
 
     if (!org || !org.google_drive_enabled || !org.google_drive_folder_id) {
-      throw new Error("Google Drive not configured for this organization");
+      // Silent skip: don't block if Drive is not configured
+      return new Response(
+        JSON.stringify({ success: false, skipped: true, reason: "drive_not_configured" }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 200 }
+      );
     }
 
     // Get document data
@@ -191,26 +234,59 @@ serve(async (req) => {
 
     const accessToken = await getAccessToken(supabase, organization_id);
 
-    // Create year/month folder structure
+    // Build year/month folder path
     const issueDate = new Date(document.issue_date);
     const year = issueDate.getFullYear().toString();
     const monthName = MONTH_NAMES[issueDate.getMonth()];
-
     const yearFolderId = await findOrCreateFolder(accessToken, org.google_drive_folder_id, year);
     const monthFolderId = await findOrCreateFolder(accessToken, yearFolderId, monthName);
 
-    // Generate filename: Proveedor_NumeroFactura_Fecha
-    const dateStr = issueDate.toISOString().split('T')[0];
-    const vendorName = document.supplier_name.replace(/[/\\?%*:|"<>]/g, '-');
-    const baseFileName = `${vendorName}_${document.doc_number}_${dateStr}`;
+    const baseFileName = buildInvoiceBasename(document);
+    const uploadedFiles: any[] = [];
 
-    const uploadedFiles = [];
+    if (mode === "payment_proof") {
+      if (!payment_proof_storage_path) {
+        throw new Error("Missing payment_proof_storage_path for payment_proof mode");
+      }
+      // Upload payment proof to /Pagos subfolder
+      const paymentsFolderId = await findOrCreateFolder(accessToken, monthFolderId, "Pagos");
 
-    // Upload PDF if exists
+      const { data: proofBlob, error: proofErr } = await supabase.storage
+        .from("payment-proofs")
+        .download(payment_proof_storage_path);
+
+      if (proofErr || !proofBlob) {
+        throw new Error(`Failed to download payment proof: ${proofErr?.message || "not found"}`);
+      }
+
+      const proofContent = new Uint8Array(await proofBlob.arrayBuffer());
+      const proofResult = await uploadFileToDrive(
+        accessToken,
+        paymentsFolderId,
+        `${baseFileName} - COMPROBANTE.${payment_proof_extension}`,
+        proofContent,
+        payment_proof_mime
+      );
+      uploadedFiles.push({ type: "payment_proof", id: proofResult.id, name: proofResult.name });
+
+      if (proofResult.id) {
+        await supabase
+          .from("processed_documents")
+          .update({ payment_proof_drive_id: proofResult.id })
+          .eq("id", document_id);
+      }
+
+      return new Response(
+        JSON.stringify({ success: true, uploadedFiles, folderPath: `${year}/${monthName}/Pagos` }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 200 }
+      );
+    }
+
+    // Default mode: upload PDF + XML of the invoice itself
     if (document.pdf_attachment_url) {
-      const pdfPath = document.pdf_attachment_url.replace('company-documents/', '');
+      const pdfPath = document.pdf_attachment_url.replace("company-documents/", "");
       const { data: pdfBlob } = await supabase.storage
-        .from('company-documents')
+        .from("company-documents")
         .download(pdfPath);
 
       if (pdfBlob) {
@@ -222,15 +298,14 @@ serve(async (req) => {
           pdfContent,
           "application/pdf"
         );
-        uploadedFiles.push({ type: 'pdf', id: pdfResult.id, name: pdfResult.name });
+        uploadedFiles.push({ type: "pdf", id: pdfResult.id, name: pdfResult.name });
       }
     }
 
-    // Upload XML if exists
     if (document.xml_attachment_url) {
-      const xmlPath = document.xml_attachment_url.replace('company-documents/', '');
+      const xmlPath = document.xml_attachment_url.replace("company-documents/", "");
       const { data: xmlBlob } = await supabase.storage
-        .from('company-documents')
+        .from("company-documents")
         .download(xmlPath);
 
       if (xmlBlob) {
@@ -242,26 +317,19 @@ serve(async (req) => {
           xmlContent,
           "application/xml"
         );
-        uploadedFiles.push({ type: 'xml', id: xmlResult.id, name: xmlResult.name });
+        uploadedFiles.push({ type: "xml", id: xmlResult.id, name: xmlResult.name });
       }
     }
 
     console.log(`Uploaded ${uploadedFiles.length} files to Google Drive for document ${document_id}`);
 
-    // Update document with Google Drive file IDs
     const updateData: any = {
       google_drive_uploaded_at: new Date().toISOString(),
     };
-
-    const pdfFile = uploadedFiles.find(f => f.type === 'pdf');
-    const xmlFile = uploadedFiles.find(f => f.type === 'xml');
-
-    if (pdfFile) {
-      updateData.google_drive_pdf_id = pdfFile.id;
-    }
-    if (xmlFile) {
-      updateData.google_drive_xml_id = xmlFile.id;
-    }
+    const pdfFile = uploadedFiles.find((f) => f.type === "pdf");
+    const xmlFile = uploadedFiles.find((f) => f.type === "xml");
+    if (pdfFile) updateData.google_drive_pdf_id = pdfFile.id;
+    if (xmlFile) updateData.google_drive_xml_id = xmlFile.id;
 
     const { error: updateError } = await supabase
       .from("processed_documents")
@@ -273,15 +341,8 @@ serve(async (req) => {
     }
 
     return new Response(
-      JSON.stringify({ 
-        success: true, 
-        uploadedFiles,
-        folderPath: `${year}/${monthName}`
-      }),
-      {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-        status: 200,
-      }
+      JSON.stringify({ success: true, uploadedFiles, folderPath: `${year}/${monthName}` }),
+      { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 200 }
     );
   } catch (error) {
     console.error("Error uploading to Google Drive:", error);
@@ -295,3 +356,4 @@ serve(async (req) => {
     );
   }
 });
+
