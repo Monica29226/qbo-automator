@@ -1185,6 +1185,13 @@ export type Database = {
           id: string
           issue_date: string
           organization_id: string | null
+          paid_at: string | null
+          paid_by: string | null
+          payment_method: string | null
+          payment_proof_drive_id: string | null
+          payment_proof_url: string | null
+          payment_reference: string | null
+          payment_status: string
           pdf_attachment_url: string | null
           processed_at: string | null
           processed_by: string | null
@@ -1227,6 +1234,13 @@ export type Database = {
           id?: string
           issue_date: string
           organization_id?: string | null
+          paid_at?: string | null
+          paid_by?: string | null
+          payment_method?: string | null
+          payment_proof_drive_id?: string | null
+          payment_proof_url?: string | null
+          payment_reference?: string | null
+          payment_status?: string
           pdf_attachment_url?: string | null
           processed_at?: string | null
           processed_by?: string | null
@@ -1269,6 +1283,13 @@ export type Database = {
           id?: string
           issue_date?: string
           organization_id?: string | null
+          paid_at?: string | null
+          paid_by?: string | null
+          payment_method?: string | null
+          payment_proof_drive_id?: string | null
+          payment_proof_url?: string | null
+          payment_reference?: string | null
+          payment_status?: string
           pdf_attachment_url?: string | null
           processed_at?: string | null
           processed_by?: string | null
