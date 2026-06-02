@@ -30,7 +30,7 @@ import { RecoverBacklogButton } from "@/components/dashboard/RecoverBacklogButto
 import { SystemAlertsPanel } from "@/components/dashboard/SystemAlertsPanel";
 import WaitingForQboPanel from "@/components/dashboard/WaitingForQboPanel";
 import CurrencyMismatchPanel from "@/components/dashboard/CurrencyMismatchPanel";
-import { StabilityScorePanel } from "@/components/dashboard/StabilityScorePanel";
+
 import { SharePointKpiCard } from "@/components/dashboard/SharePointKpiCard";
 import { AccountsPayableCard } from "@/components/dashboard/AccountsPayableCard";
 import { OnboardingBanner } from "@/components/onboarding/OnboardingBanner";
