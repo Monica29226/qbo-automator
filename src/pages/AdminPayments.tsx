@@ -273,15 +273,60 @@ export default function AdminPayments() {
         </div>
 
         <Card>
-          <CardHeader>
-            <div className="flex items-center gap-2 max-w-md">
+          <CardHeader className="space-y-3">
+            <div className="flex items-center gap-2">
               <Search className="h-4 w-4 text-muted-foreground" />
               <Input
-                placeholder="Buscar proveedor, # factura, clave o referencia..."
+                placeholder="Buscar (clave, referencia, etc.)"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
+                className="max-w-md"
               />
             </div>
+            <div className="grid grid-cols-1 md:grid-cols-5 gap-2">
+              <div>
+                <label className="text-xs text-muted-foreground">Desde</label>
+                <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground">Hasta</label>
+                <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+              </div>
+              <div className="md:col-span-2">
+                <label className="text-xs text-muted-foreground">Proveedor</label>
+                <Select
+                  value={supplierFilter || "__all__"}
+                  onValueChange={(v) => setSupplierFilter(v === "__all__" ? "" : v)}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Todos" />
+                  </SelectTrigger>
+                  <SelectContent className="max-h-72">
+                    <SelectItem value="__all__">Todos los proveedores</SelectItem>
+                    {suppliers.map((s) => (
+                      <SelectItem key={s} value={s}>
+                        {s}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground"># Factura</label>
+                <Input
+                  placeholder="Ej. 0010001..."
+                  value={docNumberFilter}
+                  onChange={(e) => setDocNumberFilter(e.target.value)}
+                />
+              </div>
+            </div>
+            {hasFilters && (
+              <div className="flex justify-end">
+                <Button variant="ghost" size="sm" onClick={clearFilters}>
+                  Limpiar filtros
+                </Button>
+              </div>
+            )}
           </CardHeader>
           <CardContent>
             {loading ? (
