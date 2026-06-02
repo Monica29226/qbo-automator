@@ -615,11 +615,6 @@ const Dashboard = () => {
           <CronMonitor />
         </Suspense>
 
-        <div className="mb-8">
-          <Suspense fallback={<LazyFallback />}>
-            <TotalsValidationTest />
-          </Suspense>
-        </div>
 
         </main>
 
