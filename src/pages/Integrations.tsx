@@ -722,7 +722,7 @@ const Integrations = () => {
       icon: HardDrive,
       connected: orgData?.google_drive_connected || false,
       accounts: accounts.filter((a) => a.service_type === "google_drive"),
-      description: "Almacenar documentos en la nube",
+      description: "Conectá el Google/Gmail dueño del Drive de esta empresa (no uses uno personal). Las facturas se guardan en una carpeta «Facturas FacturaFlow» organizada por año y mes dentro de ese Drive.",
     },
   ];
 
