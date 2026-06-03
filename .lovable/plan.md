@@ -1,34 +1,41 @@
-## Folder ID recibido
+# Arreglar error "Safari Can't Open the Page" al conectar Google Drive
 
-- Carpeta destino: `1qrDYnfhzXaiPzvk3kesQ52BlrAxGYtgj`
-- Organización: Agricola Lloronal (`9f878da2-ef1f-4375-b355-0c9eb1b7cf76`)
+## Diagnóstico
+El error que ves es Google rechazando la solicitud OAuth antes de mostrar el consentimiento. El mensaje de COOP de Safari es solo el síntoma visual de su página de error interna. El `client_id` usado es:
 
-## ⚠️ Falta conectar OAuth
+```
+132562544528-mdkq1fdp5o01f26d4emq69f1a51sjkb3.apps.googleusercontent.com
+```
 
-Verifiqué la base: **todavía no hay cuenta `google_drive` activa** en `integration_accounts` para esta organización. Hasta que conectes el OAuth desde `/integrations`, aunque guardemos el folder ID, la edge function `upload-to-google-drive` no tiene tokens para subir nada.
+No es un bug del código — la función `google-drive-oauth-init` genera la URL correctamente. El problema está en **Google Cloud Console**.
 
-## Pasos a ejecutar
+## Pasos (no requieren cambios de código)
 
-1. **Guardar folder ID** (lo hago ahora con un UPDATE a `organizations`):
-   ```sql
-   UPDATE organizations
-   SET google_drive_folder_id = '1qrDYnfhzXaiPzvk3kesQ52BlrAxGYtgj',
-       google_drive_enabled = true,
-       updated_at = now()
-   WHERE id = '9f878da2-ef1f-4375-b355-0c9eb1b7cf76';
-   ```
+### 1. Verificar Redirect URI autorizado
+En [Google Cloud Console → Credentials](https://console.cloud.google.com/apis/credentials), abrir el OAuth Client ID `132562544528-mdkq1...` y confirmar que esta URL **exacta** está en "Authorized redirect URIs":
 
-2. **Vos:** abrir `/integrations` con Agricola Lloronal activa → clic en "Conectar Google Drive" → login con la cuenta dueña de la carpeta `1qrD...` → aceptar permisos.
+```
+https://lqirqvvkjpunhtsvebot.supabase.co/functions/v1/google-drive-oauth-callback
+```
 
-   **Importante:** la cuenta que conectes debe tener acceso de **edición** a esa carpeta (la URL muestra `/u/6/` lo que sugiere que es la 7ª cuenta logueada en tu navegador — asegurate de elegir esa misma cuenta en el flujo OAuth).
+Sin `/` al final, sin diferencias de mayúsculas.
 
-3. **Verificación:** una vez conectes, vuelvo a consultar `integration_accounts` y, si todo OK, una factura publicada nueva debería aparecer en:
-   ```
-   [tu carpeta]/2026/Junio/Proveedor - FE-... - ₡monto.pdf + .xml
-   ```
+### 2. Verificar OAuth Consent Screen
+En [OAuth consent screen](https://console.cloud.google.com/apis/credentials/consent):
 
-## Resultado
+- Si el estado es **"Testing"**: agregar la cuenta de Google que estás usando (la del `/u/6/` que tiene acceso a la carpeta `1qrDYnf...`) en "Test users".
+- O mejor: publicar la app en modo "In production" (el scope `drive.file` no es sensible y no requiere verificación adicional).
 
-Con el folder ID guardado y el OAuth conectado, cada factura publicada en QuickBooks se sube automáticamente al Drive, organizada por año/mes y con el nombre `Proveedor - Factura - Monto`.
+### 3. Verificar que la Google Drive API esté habilitada
+En [API Library](https://console.cloud.google.com/apis/library/drive.googleapis.com), confirmar que "Google Drive API" está **Enabled** en el mismo proyecto donde está el client ID.
 
-Si después querés que dispare el backfill desde el 1 de junio para las facturas ya publicadas, lo agrego como paso extra.
+### 4. Reintentar
+Después de aplicar lo anterior, en `/integrations` con Agricola Lloronal activa → "Conectar Google Drive" → seleccionar la cuenta que tiene acceso a la carpeta.
+
+## Si después de esto sigue fallando
+Decime el resultado y reviso logs de la edge function `google-drive-oauth-callback` para ver qué error específico devuelve Google al intercambiar el código.
+
+## Sin cambios de código en esta tarea
+No se modificará nada del repo. Si tras verificar los 3 puntos sigues bloqueada, la siguiente iteración puede:
+- Agregar logging extra al callback para capturar el error específico de Google.
+- O cambiar el flujo de popup a redirect completo (evita la página de error visible de Safari).
