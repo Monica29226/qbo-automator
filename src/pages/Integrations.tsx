@@ -295,103 +295,74 @@ const Integrations = () => {
 
   const handleGmailOAuth = async () => {
     console.log("handleGmailOAuth called");
-    
-    if (isConnecting) {
-      console.log("Already connecting, ignoring click");
-      return;
-    }
-    
+
+    if (isConnecting) return;
     if (!activeOrganization) {
-      console.error("No active organization");
       toast.error("No hay organización activa");
       return;
     }
 
-    setIsConnecting(true);
-    
+    // CRITICAL: open popup SYNCHRONOUSLY in the click handler to preserve user gesture.
+    // Any await before window.open causes browsers to block the popup.
+    const width = 500;
+    const height = 600;
+    const left = window.screen.width / 2 - width / 2;
+    const top = window.screen.height / 2 - height / 2;
+    const popup = window.open(
+      "about:blank",
+      "Gmail OAuth",
+      `width=${width},height=${height},left=${left},top=${top}`
+    );
+
+    if (!popup) {
+      toast.error("Bloqueador de ventanas emergentes detectado. Por favor permite ventanas emergentes.");
+      return;
+    }
+
     try {
-      console.log("Getting current user...");
-      // Get current user
+      popup.document.write("<p style='font-family:sans-serif;padding:20px'>Cargando autorización de Gmail…</p>");
+    } catch {}
+
+    setIsConnecting(true);
+    toast.info("Iniciando conexión con Gmail...");
+
+    try {
       const { data: { user }, error: userError } = await supabase.auth.getUser();
-      
-      if (userError) {
-        console.error("Error getting user:", userError);
-        toast.error("Error de autenticación");
-        return;
-      }
-      
-      if (!user) {
-        console.error("No user found");
+      if (userError || !user) {
+        popup.close();
         toast.error("Usuario no autenticado");
         return;
       }
 
-      console.log("User found:", user.email);
-      toast.info("Iniciando conexión con Gmail...");
-
-      // Create state with organization and user info
       const state = btoa(JSON.stringify({
         organization_id: activeOrganization,
         user_id: user.id,
       }));
 
-      console.log("Calling gmail-oauth-init function...");
-      // Call init function to get OAuth URL
       const { data, error } = await supabase.functions.invoke("gmail-oauth-init", {
         body: { state },
       });
 
-      console.log("Response from gmail-oauth-init:", { data, error });
-
-      if (error) {
-        console.error("Error from gmail-oauth-init:", error);
-        toast.error(`Error de función: ${JSON.stringify(error)}`);
-        throw error;
-      }
-
-      if (!data?.authUrl) {
-        console.error("No authUrl in response:", data);
-        throw new Error("No se recibió URL de autenticación");
-      }
-
-      console.log("Opening OAuth popup with URL:", data.authUrl);
-      // Open OAuth window
-      const width = 500;
-      const height = 600;
-      const left = window.screen.width / 2 - width / 2;
-      const top = window.screen.height / 2 - height / 2;
-
-      const popup = window.open(
-        data.authUrl,
-        "Gmail OAuth",
-        `width=${width},height=${height},left=${left},top=${top}`
-      );
-
-      if (!popup) {
-        console.error("Popup blocked");
-        toast.error("Bloqueador de ventanas emergentes detectado. Por favor permite ventanas emergentes.");
+      if (error || !data?.authUrl) {
+        popup.close();
+        toast.error(`Error de función: ${error ? JSON.stringify(error) : "sin authUrl"}`);
         return;
       }
 
-      console.log("Popup opened successfully");
+      popup.location.href = data.authUrl;
 
-      // Listen for OAuth completion
       const messageHandler = (event: MessageEvent) => {
-        console.log("Message received:", event.data);
-        if (event.data.type === "gmail-connected") {
+        if (event.data?.type === "gmail-connected") {
           toast.success(`Gmail conectado: ${event.data.email}`);
           setIsDialogOpen(false);
           fetchData();
           window.removeEventListener("message", messageHandler);
         }
       };
-
       window.addEventListener("message", messageHandler);
 
-      // Check if popup was closed
       const checkPopup = setInterval(() => {
-        if (popup?.closed) {
-          console.log("Popup closed");
+        if (popup.closed) {
           clearInterval(checkPopup);
           window.removeEventListener("message", messageHandler);
           setIsConnecting(false);
@@ -399,9 +370,9 @@ const Integrations = () => {
       }, 500);
     } catch (error) {
       console.error("Error starting OAuth:", error);
+      popup.close();
       toast.error("Error al iniciar conexión con Gmail: " + (error instanceof Error ? error.message : "Error desconocido"));
     } finally {
-      // Solo reseteamos si no abrimos popup
       setTimeout(() => setIsConnecting(false), 1000);
     }
   };
