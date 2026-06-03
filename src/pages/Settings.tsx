@@ -122,19 +122,15 @@ const Settings = () => {
       organization_id: activeOrganization,
     }));
 
-    for (const update of updates) {
-      const { error } = await supabase
-        .from("system_settings")
-        .update({ value: update.value })
-        .eq("key", update.key)
-        .eq("organization_id", update.organization_id);
+    const { error } = await supabase
+      .from("system_settings")
+      .upsert(updates, { onConflict: "key,organization_id" });
 
-      if (error) {
-        toast.error(`Error al actualizar ${update.key}`);
-        console.error(error);
-        setIsSaving(false);
-        return;
-      }
+    if (error) {
+      toast.error(`Error al guardar configuración: ${error.message}`);
+      console.error(error);
+      setIsSaving(false);
+      return;
     }
 
     toast.success("Configuración guardada exitosamente");
