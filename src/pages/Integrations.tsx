@@ -462,90 +462,76 @@ const Integrations = () => {
   };
 
   const handleGoogleDriveOAuth = async () => {
-    console.log("handleGoogleDriveOAuth called");
-    
     if (!activeOrganization) {
-      console.error("No active organization");
       toast.error("No hay organización activa");
       return;
     }
 
+    const width = 500;
+    const height = 600;
+    const left = window.screen.width / 2 - width / 2;
+    const top = window.screen.height / 2 - height / 2;
+    const popup = window.open(
+      "about:blank",
+      "Google Drive OAuth",
+      `width=${width},height=${height},left=${left},top=${top}`
+    );
+
+    if (!popup) {
+      toast.error("Bloqueador de ventanas emergentes detectado. Por favor permite ventanas emergentes.");
+      return;
+    }
+
     try {
-      console.log("Getting current user...");
+      popup.document.write("<p style='font-family:sans-serif;padding:20px'>Cargando autorización de Google Drive…</p>");
+    } catch {}
+
+    toast.info("Iniciando conexión con Google Drive...");
+
+    try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) {
-        console.error("No user found");
+        popup.close();
         toast.error("Usuario no autenticado");
         return;
       }
-
-      console.log("User found, showing toast...");
-      toast.info("Iniciando conexión con Google Drive...");
 
       const state = btoa(JSON.stringify({
         organization_id: activeOrganization,
         user_id: user.id,
       }));
 
-      console.log("Calling google-drive-oauth-init function...");
       const { data, error } = await supabase.functions.invoke("google-drive-oauth-init", {
         body: { state },
       });
 
-      console.log("Response from google-drive-oauth-init:", { data, error });
-
-      if (error) {
-        console.error("Error from google-drive-oauth-init:", error);
-        toast.error(`Error de función: ${JSON.stringify(error)}`);
-        throw error;
-      }
-
-      if (!data?.authUrl) {
-        console.error("No authUrl in response:", data);
-        throw new Error("No se recibió URL de autenticación");
-      }
-
-      console.log("Opening OAuth popup with URL:", data.authUrl);
-      const width = 500;
-      const height = 600;
-      const left = window.screen.width / 2 - width / 2;
-      const top = window.screen.height / 2 - height / 2;
-
-      const popup = window.open(
-        data.authUrl,
-        "Google Drive OAuth",
-        `width=${width},height=${height},left=${left},top=${top}`
-      );
-
-      if (!popup) {
-        console.error("Popup blocked");
-        toast.error("Bloqueador de ventanas emergentes detectado. Por favor permite ventanas emergentes.");
+      if (error || !data?.authUrl) {
+        popup.close();
+        toast.error(`Error de función: ${error ? JSON.stringify(error) : "sin authUrl"}`);
         return;
       }
 
-      console.log("Popup opened successfully");
+      popup.location.href = data.authUrl;
 
       const messageHandler = (event: MessageEvent) => {
-        console.log("Message received:", event.data);
-        if (event.data.type === "google-drive-connected") {
+        if (event.data?.type === "google-drive-connected") {
           toast.success(`Google Drive conectado: ${event.data.email}`);
           setIsDialogOpen(false);
           fetchData();
           window.removeEventListener("message", messageHandler);
         }
       };
-
       window.addEventListener("message", messageHandler);
 
       const checkPopup = setInterval(() => {
-        if (popup?.closed) {
-          console.log("Popup closed");
+        if (popup.closed) {
           clearInterval(checkPopup);
           window.removeEventListener("message", messageHandler);
         }
       }, 500);
     } catch (error) {
       console.error("Error starting Google Drive OAuth:", error);
+      popup.close();
       toast.error("Error al iniciar conexión con Google Drive: " + (error instanceof Error ? error.message : "Error desconocido"));
     }
   };
