@@ -537,101 +537,71 @@ const Integrations = () => {
   };
 
   const handleQuickBooksOAuth = async () => {
-    console.log("handleQuickBooksOAuth called");
-    
-    if (isConnecting) {
-      console.log("Already connecting, ignoring click");
-      return;
-    }
-    
+    if (isConnecting) return;
     if (!activeOrganization) {
-      console.error("No active organization");
       toast.error("No hay organización activa");
       return;
     }
 
-    setIsConnecting(true);
+    const width = 800;
+    const height = 700;
+    const left = window.screen.width / 2 - width / 2;
+    const top = window.screen.height / 2 - height / 2;
+    const popup = window.open(
+      "about:blank",
+      "QuickBooks OAuth",
+      `width=${width},height=${height},left=${left},top=${top}`
+    );
+
+    if (!popup) {
+      toast.error("Bloqueador de ventanas emergentes detectado. Por favor permite ventanas emergentes.");
+      return;
+    }
 
     try {
-      console.log("Getting current user...");
-      const { data: { user }, error: userError } = await supabase.auth.getUser();
-      
-      if (userError) {
-        console.error("Error getting user:", userError);
-        toast.error("Error de autenticación");
-        setIsConnecting(false);
-        return;
-      }
-      
-      if (!user) {
-        console.error("No user found");
-        toast.error("Usuario no autenticado");
-        setIsConnecting(false);
-        return;
-      }
+      popup.document.write("<p style='font-family:sans-serif;padding:20px'>Cargando autorización de QuickBooks…</p>");
+    } catch {}
 
-      console.log("User found:", user.email);
-      toast.info("Iniciando conexión con QuickBooks...");
+    setIsConnecting(true);
+    toast.info("Iniciando conexión con QuickBooks...");
+
+    try {
+      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      if (userError || !user) {
+        popup.close();
+        toast.error("Usuario no autenticado");
+        return;
+      }
 
       const state = btoa(JSON.stringify({
         organization_id: activeOrganization,
         user_id: user.id,
       }));
 
-      console.log("Calling quickbooks-oauth-init function...");
       const { data, error } = await supabase.functions.invoke("quickbooks-oauth-init", {
         body: { state },
       });
 
-      console.log("Response from quickbooks-oauth-init:", { data, error });
-
-      if (error) {
-        console.error("Error from quickbooks-oauth-init:", error);
-        toast.error(`Error de función: ${JSON.stringify(error)}`);
-        throw error;
-      }
-
-      if (!data?.authUrl) {
-        console.error("No authUrl in response:", data);
-        throw new Error("No se recibió URL de autenticación");
-      }
-
-      console.log("Opening OAuth popup with URL:", data.authUrl);
-      const width = 800;
-      const height = 700;
-      const left = window.screen.width / 2 - width / 2;
-      const top = window.screen.height / 2 - height / 2;
-
-      const popup = window.open(
-        data.authUrl,
-        "QuickBooks OAuth",
-        `width=${width},height=${height},left=${left},top=${top}`
-      );
-
-      if (!popup) {
-        console.error("Popup blocked");
-        toast.error("Bloqueador de ventanas emergentes detectado. Por favor permite ventanas emergentes.");
+      if (error || !data?.authUrl) {
+        popup.close();
+        toast.error(`Error de función: ${error ? JSON.stringify(error) : "sin authUrl"}`);
         return;
       }
 
-      console.log("Popup opened successfully");
+      popup.location.href = data.authUrl;
 
       const messageHandler = (event: MessageEvent) => {
-        console.log("🟢 Message received from popup:", event.data);
-        if (event.data.type === "quickbooks-connected") {
-          console.log("✅ QuickBooks connection confirmed!");
+        if (event.data?.type === "quickbooks-connected") {
           toast.success(`QuickBooks conectado: Realm ${event.data.realmId}`);
           setIsDialogOpen(false);
           fetchData();
           window.removeEventListener("message", messageHandler);
         }
       };
-
       window.addEventListener("message", messageHandler);
 
       const checkPopup = setInterval(() => {
-        if (popup?.closed) {
-          console.log("Popup closed - refreshing data");
+        if (popup.closed) {
           clearInterval(checkPopup);
           window.removeEventListener("message", messageHandler);
           setIsConnecting(false);
@@ -643,6 +613,7 @@ const Integrations = () => {
       }, 500);
     } catch (error) {
       console.error("Error starting QuickBooks OAuth:", error);
+      popup.close();
       toast.error("Error al iniciar conexión con QuickBooks: " + (error instanceof Error ? error.message : "Error desconocido"));
     } finally {
       setTimeout(() => setIsConnecting(false), 1000);
