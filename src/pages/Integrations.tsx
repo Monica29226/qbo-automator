@@ -295,103 +295,74 @@ const Integrations = () => {
 
   const handleGmailOAuth = async () => {
     console.log("handleGmailOAuth called");
-    
-    if (isConnecting) {
-      console.log("Already connecting, ignoring click");
-      return;
-    }
-    
+
+    if (isConnecting) return;
     if (!activeOrganization) {
-      console.error("No active organization");
       toast.error("No hay organización activa");
       return;
     }
 
-    setIsConnecting(true);
-    
+    // CRITICAL: open popup SYNCHRONOUSLY in the click handler to preserve user gesture.
+    // Any await before window.open causes browsers to block the popup.
+    const width = 500;
+    const height = 600;
+    const left = window.screen.width / 2 - width / 2;
+    const top = window.screen.height / 2 - height / 2;
+    const popup = window.open(
+      "about:blank",
+      "Gmail OAuth",
+      `width=${width},height=${height},left=${left},top=${top}`
+    );
+
+    if (!popup) {
+      toast.error("Bloqueador de ventanas emergentes detectado. Por favor permite ventanas emergentes.");
+      return;
+    }
+
     try {
-      console.log("Getting current user...");
-      // Get current user
+      popup.document.write("<p style='font-family:sans-serif;padding:20px'>Cargando autorización de Gmail…</p>");
+    } catch {}
+
+    setIsConnecting(true);
+    toast.info("Iniciando conexión con Gmail...");
+
+    try {
       const { data: { user }, error: userError } = await supabase.auth.getUser();
-      
-      if (userError) {
-        console.error("Error getting user:", userError);
-        toast.error("Error de autenticación");
-        return;
-      }
-      
-      if (!user) {
-        console.error("No user found");
+      if (userError || !user) {
+        popup.close();
         toast.error("Usuario no autenticado");
         return;
       }
 
-      console.log("User found:", user.email);
-      toast.info("Iniciando conexión con Gmail...");
-
-      // Create state with organization and user info
       const state = btoa(JSON.stringify({
         organization_id: activeOrganization,
         user_id: user.id,
       }));
 
-      console.log("Calling gmail-oauth-init function...");
-      // Call init function to get OAuth URL
       const { data, error } = await supabase.functions.invoke("gmail-oauth-init", {
         body: { state },
       });
 
-      console.log("Response from gmail-oauth-init:", { data, error });
-
-      if (error) {
-        console.error("Error from gmail-oauth-init:", error);
-        toast.error(`Error de función: ${JSON.stringify(error)}`);
-        throw error;
-      }
-
-      if (!data?.authUrl) {
-        console.error("No authUrl in response:", data);
-        throw new Error("No se recibió URL de autenticación");
-      }
-
-      console.log("Opening OAuth popup with URL:", data.authUrl);
-      // Open OAuth window
-      const width = 500;
-      const height = 600;
-      const left = window.screen.width / 2 - width / 2;
-      const top = window.screen.height / 2 - height / 2;
-
-      const popup = window.open(
-        data.authUrl,
-        "Gmail OAuth",
-        `width=${width},height=${height},left=${left},top=${top}`
-      );
-
-      if (!popup) {
-        console.error("Popup blocked");
-        toast.error("Bloqueador de ventanas emergentes detectado. Por favor permite ventanas emergentes.");
+      if (error || !data?.authUrl) {
+        popup.close();
+        toast.error(`Error de función: ${error ? JSON.stringify(error) : "sin authUrl"}`);
         return;
       }
 
-      console.log("Popup opened successfully");
+      popup.location.href = data.authUrl;
 
-      // Listen for OAuth completion
       const messageHandler = (event: MessageEvent) => {
-        console.log("Message received:", event.data);
-        if (event.data.type === "gmail-connected") {
+        if (event.data?.type === "gmail-connected") {
           toast.success(`Gmail conectado: ${event.data.email}`);
           setIsDialogOpen(false);
           fetchData();
           window.removeEventListener("message", messageHandler);
         }
       };
-
       window.addEventListener("message", messageHandler);
 
-      // Check if popup was closed
       const checkPopup = setInterval(() => {
-        if (popup?.closed) {
-          console.log("Popup closed");
+        if (popup.closed) {
           clearInterval(checkPopup);
           window.removeEventListener("message", messageHandler);
           setIsConnecting(false);
@@ -399,79 +370,66 @@ const Integrations = () => {
       }, 500);
     } catch (error) {
       console.error("Error starting OAuth:", error);
+      popup.close();
       toast.error("Error al iniciar conexión con Gmail: " + (error instanceof Error ? error.message : "Error desconocido"));
     } finally {
-      // Solo reseteamos si no abrimos popup
       setTimeout(() => setIsConnecting(false), 1000);
     }
   };
 
   const handleOutlookOAuth = async () => {
-    console.log("handleOutlookOAuth called");
-    
     if (!activeOrganization) {
-      console.error("No active organization");
       toast.error("No hay organización activa");
       return;
     }
 
+    const width = 500;
+    const height = 600;
+    const left = window.screen.width / 2 - width / 2;
+    const top = window.screen.height / 2 - height / 2;
+    const popup = window.open(
+      "about:blank",
+      "Outlook OAuth",
+      `width=${width},height=${height},left=${left},top=${top}`
+    );
+
+    if (!popup) {
+      toast.error("Bloqueador de ventanas emergentes detectado. Por favor permite ventanas emergentes.");
+      return;
+    }
+
     try {
-      console.log("Getting current user...");
+      popup.document.write("<p style='font-family:sans-serif;padding:20px'>Cargando autorización de Outlook…</p>");
+    } catch {}
+
+    toast.info("Iniciando conexión con Outlook...");
+
+    try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) {
-        console.error("No user found");
+        popup.close();
         toast.error("Usuario no autenticado");
         return;
       }
-
-      console.log("User found, showing toast...");
-      toast.info("Iniciando conexión con Outlook...");
 
       const state = btoa(JSON.stringify({
         organization_id: activeOrganization,
         user_id: user.id,
       }));
 
-      console.log("Calling outlook-oauth-init function...");
       const { data, error } = await supabase.functions.invoke("outlook-oauth-init", {
         body: { state },
       });
 
-      console.log("Response from outlook-oauth-init:", { data, error });
-
-      if (error) {
-        console.error("Error from outlook-oauth-init:", error);
-        toast.error(`Error de función: ${JSON.stringify(error)}`);
-        throw error;
-      }
-
-      if (!data?.authUrl) {
-        console.error("No authUrl in response:", data);
-        throw new Error("No se recibió URL de autenticación");
-      }
-
-      console.log("Opening OAuth popup with URL:", data.authUrl);
-      const width = 500;
-      const height = 600;
-      const left = window.screen.width / 2 - width / 2;
-      const top = window.screen.height / 2 - height / 2;
-
-      const popup = window.open(
-        data.authUrl,
-        "Outlook OAuth",
-        `width=${width},height=${height},left=${left},top=${top}`
-      );
-
-      if (!popup) {
-        console.error("Popup blocked");
-        toast.error("Bloqueador de ventanas emergentes detectado. Por favor permite ventanas emergentes.");
+      if (error || !data?.authUrl) {
+        popup.close();
+        toast.error(`Error de función: ${error ? JSON.stringify(error) : "sin authUrl"}`);
         return;
       }
 
-      console.log("Popup opened successfully");
+      popup.location.href = data.authUrl;
 
       const messageHandler = (event: MessageEvent) => {
-        console.log("Message received:", event.data);
         if (event.data?.type === "outlook-connected") {
           setOutlookError(null);
           toast.success(`Outlook conectado: ${event.data.email}`);
@@ -484,12 +442,10 @@ const Integrations = () => {
           window.removeEventListener("message", messageHandler);
         }
       };
-
       window.addEventListener("message", messageHandler);
 
       const checkPopup = setInterval(() => {
-        if (popup?.closed) {
-          console.log("Popup closed");
+        if (popup.closed) {
           clearInterval(checkPopup);
           window.removeEventListener("message", messageHandler);
           setTimeout(() => {
@@ -500,195 +456,152 @@ const Integrations = () => {
       }, 500);
     } catch (error) {
       console.error("Error starting Outlook OAuth:", error);
+      popup.close();
       toast.error("Error al iniciar conexión con Outlook: " + (error instanceof Error ? error.message : "Error desconocido"));
     }
   };
 
   const handleGoogleDriveOAuth = async () => {
-    console.log("handleGoogleDriveOAuth called");
-    
     if (!activeOrganization) {
-      console.error("No active organization");
       toast.error("No hay organización activa");
       return;
     }
 
+    const width = 500;
+    const height = 600;
+    const left = window.screen.width / 2 - width / 2;
+    const top = window.screen.height / 2 - height / 2;
+    const popup = window.open(
+      "about:blank",
+      "Google Drive OAuth",
+      `width=${width},height=${height},left=${left},top=${top}`
+    );
+
+    if (!popup) {
+      toast.error("Bloqueador de ventanas emergentes detectado. Por favor permite ventanas emergentes.");
+      return;
+    }
+
     try {
-      console.log("Getting current user...");
+      popup.document.write("<p style='font-family:sans-serif;padding:20px'>Cargando autorización de Google Drive…</p>");
+    } catch {}
+
+    toast.info("Iniciando conexión con Google Drive...");
+
+    try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) {
-        console.error("No user found");
+        popup.close();
         toast.error("Usuario no autenticado");
         return;
       }
-
-      console.log("User found, showing toast...");
-      toast.info("Iniciando conexión con Google Drive...");
 
       const state = btoa(JSON.stringify({
         organization_id: activeOrganization,
         user_id: user.id,
       }));
 
-      console.log("Calling google-drive-oauth-init function...");
       const { data, error } = await supabase.functions.invoke("google-drive-oauth-init", {
         body: { state },
       });
 
-      console.log("Response from google-drive-oauth-init:", { data, error });
-
-      if (error) {
-        console.error("Error from google-drive-oauth-init:", error);
-        toast.error(`Error de función: ${JSON.stringify(error)}`);
-        throw error;
-      }
-
-      if (!data?.authUrl) {
-        console.error("No authUrl in response:", data);
-        throw new Error("No se recibió URL de autenticación");
-      }
-
-      console.log("Opening OAuth popup with URL:", data.authUrl);
-      const width = 500;
-      const height = 600;
-      const left = window.screen.width / 2 - width / 2;
-      const top = window.screen.height / 2 - height / 2;
-
-      const popup = window.open(
-        data.authUrl,
-        "Google Drive OAuth",
-        `width=${width},height=${height},left=${left},top=${top}`
-      );
-
-      if (!popup) {
-        console.error("Popup blocked");
-        toast.error("Bloqueador de ventanas emergentes detectado. Por favor permite ventanas emergentes.");
+      if (error || !data?.authUrl) {
+        popup.close();
+        toast.error(`Error de función: ${error ? JSON.stringify(error) : "sin authUrl"}`);
         return;
       }
 
-      console.log("Popup opened successfully");
+      popup.location.href = data.authUrl;
 
       const messageHandler = (event: MessageEvent) => {
-        console.log("Message received:", event.data);
-        if (event.data.type === "google-drive-connected") {
+        if (event.data?.type === "google-drive-connected") {
           toast.success(`Google Drive conectado: ${event.data.email}`);
           setIsDialogOpen(false);
           fetchData();
           window.removeEventListener("message", messageHandler);
         }
       };
-
       window.addEventListener("message", messageHandler);
 
       const checkPopup = setInterval(() => {
-        if (popup?.closed) {
-          console.log("Popup closed");
+        if (popup.closed) {
           clearInterval(checkPopup);
           window.removeEventListener("message", messageHandler);
         }
       }, 500);
     } catch (error) {
       console.error("Error starting Google Drive OAuth:", error);
+      popup.close();
       toast.error("Error al iniciar conexión con Google Drive: " + (error instanceof Error ? error.message : "Error desconocido"));
     }
   };
 
   const handleQuickBooksOAuth = async () => {
-    console.log("handleQuickBooksOAuth called");
-    
-    if (isConnecting) {
-      console.log("Already connecting, ignoring click");
-      return;
-    }
-    
+    if (isConnecting) return;
     if (!activeOrganization) {
-      console.error("No active organization");
       toast.error("No hay organización activa");
       return;
     }
 
-    setIsConnecting(true);
+    const width = 800;
+    const height = 700;
+    const left = window.screen.width / 2 - width / 2;
+    const top = window.screen.height / 2 - height / 2;
+    const popup = window.open(
+      "about:blank",
+      "QuickBooks OAuth",
+      `width=${width},height=${height},left=${left},top=${top}`
+    );
+
+    if (!popup) {
+      toast.error("Bloqueador de ventanas emergentes detectado. Por favor permite ventanas emergentes.");
+      return;
+    }
 
     try {
-      console.log("Getting current user...");
-      const { data: { user }, error: userError } = await supabase.auth.getUser();
-      
-      if (userError) {
-        console.error("Error getting user:", userError);
-        toast.error("Error de autenticación");
-        setIsConnecting(false);
-        return;
-      }
-      
-      if (!user) {
-        console.error("No user found");
-        toast.error("Usuario no autenticado");
-        setIsConnecting(false);
-        return;
-      }
+      popup.document.write("<p style='font-family:sans-serif;padding:20px'>Cargando autorización de QuickBooks…</p>");
+    } catch {}
 
-      console.log("User found:", user.email);
-      toast.info("Iniciando conexión con QuickBooks...");
+    setIsConnecting(true);
+    toast.info("Iniciando conexión con QuickBooks...");
+
+    try {
+      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      if (userError || !user) {
+        popup.close();
+        toast.error("Usuario no autenticado");
+        return;
+      }
 
       const state = btoa(JSON.stringify({
         organization_id: activeOrganization,
         user_id: user.id,
       }));
 
-      console.log("Calling quickbooks-oauth-init function...");
       const { data, error } = await supabase.functions.invoke("quickbooks-oauth-init", {
         body: { state },
       });
 
-      console.log("Response from quickbooks-oauth-init:", { data, error });
-
-      if (error) {
-        console.error("Error from quickbooks-oauth-init:", error);
-        toast.error(`Error de función: ${JSON.stringify(error)}`);
-        throw error;
-      }
-
-      if (!data?.authUrl) {
-        console.error("No authUrl in response:", data);
-        throw new Error("No se recibió URL de autenticación");
-      }
-
-      console.log("Opening OAuth popup with URL:", data.authUrl);
-      const width = 800;
-      const height = 700;
-      const left = window.screen.width / 2 - width / 2;
-      const top = window.screen.height / 2 - height / 2;
-
-      const popup = window.open(
-        data.authUrl,
-        "QuickBooks OAuth",
-        `width=${width},height=${height},left=${left},top=${top}`
-      );
-
-      if (!popup) {
-        console.error("Popup blocked");
-        toast.error("Bloqueador de ventanas emergentes detectado. Por favor permite ventanas emergentes.");
+      if (error || !data?.authUrl) {
+        popup.close();
+        toast.error(`Error de función: ${error ? JSON.stringify(error) : "sin authUrl"}`);
         return;
       }
 
-      console.log("Popup opened successfully");
+      popup.location.href = data.authUrl;
 
       const messageHandler = (event: MessageEvent) => {
-        console.log("🟢 Message received from popup:", event.data);
-        if (event.data.type === "quickbooks-connected") {
-          console.log("✅ QuickBooks connection confirmed!");
+        if (event.data?.type === "quickbooks-connected") {
           toast.success(`QuickBooks conectado: Realm ${event.data.realmId}`);
           setIsDialogOpen(false);
           fetchData();
           window.removeEventListener("message", messageHandler);
         }
       };
-
       window.addEventListener("message", messageHandler);
 
       const checkPopup = setInterval(() => {
-        if (popup?.closed) {
-          console.log("Popup closed - refreshing data");
+        if (popup.closed) {
           clearInterval(checkPopup);
           window.removeEventListener("message", messageHandler);
           setIsConnecting(false);
@@ -700,6 +613,7 @@ const Integrations = () => {
       }, 500);
     } catch (error) {
       console.error("Error starting QuickBooks OAuth:", error);
+      popup.close();
       toast.error("Error al iniciar conexión con QuickBooks: " + (error instanceof Error ? error.message : "Error desconocido"));
     } finally {
       setTimeout(() => setIsConnecting(false), 1000);
