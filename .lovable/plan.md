@@ -1,45 +1,34 @@
-# Arreglar falso "Gmail desconectado" + refresco lento
+## Correo de bienvenida rediseñado con marca ACL
 
-## Causa raíz
+### 1. URL fija a `https://facturas.aclcostarica.com/auth`
+Reemplazar la lógica de `origin`/`PROD_URL` por URL fija en `supabase/functions/create-user/index.ts`.
 
-`GmailTokenAlert` lee `integration_accounts` directamente desde el cliente para verificar credenciales. Por política de seguridad esa tabla **no tiene SELECT para usuarios** (sólo `service_role`), por lo que RLS devuelve `null` y la alerta se dispara aunque la conexión esté sana. Verificado en DB para `ASADA DE TARBACA`: `gmail_connected=true`, `integration_accounts.is_active=true`, `refresh_token` y `access_token` presentes.
+### 2. Logo en bucket público
+Subir `src/assets/acl-logo-new.png` → `email-assets/acl-logo.png` (URL pública embebible).
 
-Además, el chequeo refresca cada 10 minutos y no escucha cambios de organización ni eventos de reconexión, así que tras reconectar la alerta puede tardar mucho en desaparecer.
+### 3. Plantilla HTML rediseñada
+Reemplazar el HTML actual del correo con un diseño profesional optimizado para clientes de email (tablas anidadas, max-width 600px, mobile-friendly):
 
-## Cambios
+- **Header** con fondo primary `#26314D` y logo ACL centrado
+- **Saludo personalizado** con nombre del usuario y nombre de la empresa en negrita primary
+- **Tarjeta de credenciales** con borde lateral primary, fondo crema `#f8f6f0`, correo y contraseña en estilo monospace
+- **Banner amarillo de seguridad**: "Cambia tu contraseña al ingresar"
+- **CTA grande** primary "Ingresar a ACL Facturas →" enlazando a `https://facturas.aclcostarica.com/auth`
+- **Fallback de enlace** debajo del botón
+- **Footer** con marca ACL Costa Rica, año dinámico y aviso legal
+- **Asunto:** `Bienvenido a ACL Facturas — Tus credenciales de acceso`
+- **Remitente:** `ACL Costa Rica <noreply@aureoncr.com>` (dominio actualmente verificado en Resend)
 
-### 1. Nueva RPC `get_email_provider_health(_org_id uuid)` — SECURITY DEFINER
+### Paleta usada (de `src/index.css`)
+- Primary `hsl(235 42% 26%)` = `#26314D`
+- Primary-foreground `hsl(44 31% 91%)` = `#EDE6D3`
+- Crema de fondo: `#f8f6f0`
 
-Devuelve por proveedor si está activo y si las credenciales están completas, sin exponer las credenciales en sí:
+### Archivos
+- `supabase/functions/create-user/index.ts` — URL + plantilla HTML
+- Subida de logo al bucket `email-assets`
 
-```sql
-RETURNS TABLE(
-  service_type text,
-  is_active boolean,
-  has_credentials boolean  -- refresh_token (OAuth) o password+imap_host (IMAP)
-)
-```
-
-Validar que el caller es miembro de la org (`is_organization_member(auth.uid(), _org_id)`).
-`GRANT EXECUTE ... TO authenticated`.
-
-### 2. `src/components/dashboard/GmailTokenAlert.tsx`
-
-- Eliminar el `select` directo a `integration_accounts`.
-- Usar la nueva RPC `get_email_provider_health` para validar el proveedor activo.
-- Conservar la lógica de prioridad gmail → outlook → bluehost → hostinger.
-- Bajar el intervalo de polling a 60 s.
-- Escuchar el evento custom `dashboard:refresh` (ya disparado por `SyncEmailNowButton` y otros) y volver a chequear al recibirlo.
-- Disparar `window.dispatchEvent(new CustomEvent("dashboard:refresh"))` al final de la reconexión exitosa de Gmail/Outlook en `Integrations.tsx` para que la alerta se limpie inmediatamente.
-- Re-chequear también cuando la pestaña vuelve a foco (`visibilitychange`).
-
-### 3. Memoria de seguridad
-
-Reafirmar que ningún componente cliente debe `SELECT` sobre `integration_accounts`; siempre vía RPC SECURITY DEFINER. Añadir esta regla al índice si no existe.
-
-## Validación
-
-1. En el dashboard de ASADA DE TARBACA la alerta "Gmail desconectado" desaparece sin necesidad de reconectar.
-2. Desconectar Gmail manualmente (poner `is_active=false`) → alerta aparece dentro de ≤60 s o al cambiar de pestaña/org.
-3. Reconectar desde Integraciones → alerta desaparece de inmediato (vía evento `dashboard:refresh`).
-4. Cambiar de organización → la alerta refleja la nueva org sin esperar 10 min.
+### Fuera de alcance
+- Cambio de remitente a `@aclcostarica.com` (requiere verificar dominio en Resend, paso aparte).
+- Configuración de Lovable Emails con dominio propio (paso aparte).
+- Cambios de feedback en `UsersManagement.tsx` (paso aparte).
