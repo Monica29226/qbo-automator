@@ -65,7 +65,7 @@ export default function AuditIvaMode() {
   const [filter, setFilter] = useState<"all" | "issues">("issues");
 
   const runAudit = async () => {
-    if (!activeOrganization?.id) {
+    if (!activeOrganization) {
       toast.error("Selecciona una organización");
       return;
     }
