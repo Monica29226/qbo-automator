@@ -1,53 +1,86 @@
-# Bug: facturas de Tree of Life rechazadas con error QBO 6000
 
-## Causa raíz
+## Diagnóstico de los errores de Tree of Life
 
-Tree of Life está configurada como:
-- `system_settings.default_uses_tax = false` → IVA al gasto
-- `organizations.settings.tax_handling = 'included_in_line_items'` → IVA dentro de cada línea
+Hay **32 facturas en error** (no 12 — el dashboard puede estar filtrando por fecha o tipo). El detalle:
 
-Eso activa `includeTaxInLines = true` en `publish-to-quickbooks/index.ts`, así que cada línea se envía con `Amount = subtotal + IVA`. **Pero el código sigue asignándole a esa línea el `TaxCodeRef` de la tarifa real (13%, 4%, 1%…)** y el payload del Bill se manda con `GlobalTaxCalculation: "TaxExcluded"` y sin `TxnTaxDetail` (porque `effectiveUsesTax = false`).
+| Tipo de error | Cantidad |
+|---|---|
+| QBO 6000 "Todos los artículos necesitan una tasa impositiva" | 31 |
+| `Cannot read properties of undefined (reading 'Id')` (vendor) | 1 |
 
-Para QBO eso significa: "estas líneas tienen una tasa impositiva 13%, pero no me das el detalle de impuesto" → QBO intenta recalcular tax sobre líneas que ya tienen el IVA incluido, lo que dispara dos problemas:
+### Causa raíz del error 6000 (31 facturas)
 
-1. **Error 6000 — "Todos los artículos necesitan una tasa impositiva. Agregue uno donde falta."**
-   Si alguna línea tiene `tasaImpuesto = 0` y `getTaxCodeRef(0)` no encuentra un código exento en QBO, la línea se queda **sin** `TaxCodeRef`. Con la cuenta de QBO en modo Automated Sales Tax, QBO rechaza el Bill completo porque exige tax code en todas las líneas.
+Tree of Life tiene en `system_settings`:
+- `default_uses_tax = false` ✅ (IVA al gasto — correcto)
+- `tax_handling` = **NO está configurado** → cae al default `'standard'`
 
-2. **Cuando sí publica, el total infla el IVA dos veces**
-   Líneas con IVA incluido + `TaxCodeRef = 13%` + `TaxExcluded` → QBO calcula tax aparte sobre el subtotal de la línea y lo suma al total. Por eso ves facturas donde "el monto no es el correcto" y "está sumando el impuesto que debería ir al gasto".
+En `publish-to-quickbooks/index.ts` (línea 2186):
+```ts
+const includeTaxInLines = taxHandling === 'included_in_line_items';
+```
 
-Esta combinación nunca debió quedar así: en modo "IVA como gasto" las líneas deben llevar **TaxCodeRef exento/NON** (no la tarifa real) y el Bill debe ir con `GlobalTaxCalculation: "NotApplicable"` sin `TxnTaxDetail`.
+Como `tax_handling='standard'`, `includeTaxInLines = false`. Esto provoca:
 
-## Plan de cambios
+1. Las líneas se construyen SIN sumar el IVA al subtotal → **el total de la factura en QBO queda inflado** cuando QBO recalcula impuesto.
+2. A cada línea se le intenta asignar el `TaxCodeRef` de la tarifa real (13 %, 4 %, 1 %, 2 %, 0.5 %). Cuando la tarifa no existe en el mapeo de QBO, no se asigna ningún `TaxCodeRef` → **QBO devuelve error 6000**.
+3. La corrección previa (forzar `TaxCodeRef` exento + `GlobalTaxCalculation: NotApplicable`) **solo se activa cuando `tax_handling='included_in_line_items'`**, así que nunca aplicó para Tree of Life.
 
-### 1. `supabase/functions/publish-to-quickbooks/index.ts` — modo "IVA como gasto"
+### Resultado esperado
 
-Cuando `includeTaxInLines === true` (o más en general, cuando `effectiveUsesTax === false` porque el IVA va al gasto):
+Activando `tax_handling='included_in_line_items'` para Tree of Life:
+- Cada línea = subtotal + IVA → el total del Bill respeta el XML.
+- Todas las líneas reciben TaxCode **exento** → QBO no recalcula.
+- `GlobalTaxCalculation: NotApplicable` → sin `TxnTaxDetail`.
+- Las 31 facturas deberían publicarse en el reintento.
 
-- **Forzar `TaxCodeRef` exento en cada línea**: llamar siempre a `getTaxCodeRef(0)` en vez de `getTaxCodeRef(tasaImpuesto)`. La línea ya lleva IVA dentro de `Amount`, no debe declarar tarifa.
-- **Si no existe ningún código exento** en QBO: registrar el documento como `pending_config` con un mensaje claro ("Falta TaxCode exento/NON/Out of Scope en QuickBooks para publicar con IVA al gasto"), en vez de mandar la línea sin `TaxCodeRef` y reventar con error 6000.
-- **No setear `GlobalTaxCalculation: "TaxExcluded"`** en este modo. Usar `"NotApplicable"` y **no enviar** `TxnTaxDetail`. Aplica a Bill y a VendorCredit.
-- Aplicar el mismo trato a las líneas de OtrosCargos y a la línea fallback.
+## Plan
 
-### 2. Validación previa
+### 1. Configurar `tax_handling` para Tree of Life
 
-En la validación pre-publicación (líneas ~2540-2588), cuando estamos en modo IVA al gasto, comparar `linesTotalAmount` directamente contra `xmlTotalComprobante` (sin sumar IVA). Hoy ya lo hace porque `ivaForTxnTaxDetail = 0`, pero conviene agregar un log explícito "IVA al gasto: total = suma de líneas" para que la auditoría sea legible.
+Insertar en `system_settings`:
+```sql
+INSERT INTO system_settings (organization_id, key, value, description)
+VALUES (
+  '<org-id-tree-of-life>',
+  'tax_handling',
+  'included_in_line_items',
+  'IVA al gasto: se incluye dentro del monto de cada línea'
+)
+ON CONFLICT (organization_id, key) DO UPDATE SET value = EXCLUDED.value;
+```
 
-### 3. Reproceso de Tree of Life
+### 2. Reintentar las 31 facturas con error 6000
 
-No tocamos config. Los usuarios usan la página existente `/audit-iva-mode` (ya creada) para republicar las facturas que se hayan quedado en `error` o publicadas con tax separado. Con el fix, los reintentos pasarán.
+Resetear a `pending` y encolar a `publish-to-quickbooks` (la función ya está parchada para `includeTaxInLines`):
 
-### 4. QA
+```sql
+UPDATE processed_documents
+SET status='pending', error_message=NULL, retry_count=0, processed_at=NULL
+WHERE organization_id = '<org-id-tree-of-life>'
+  AND status='error'
+  AND error_message LIKE '%6000%';
+```
 
-- Desplegar la función.
-- En `/error-documents` para Tree of Life, darle "Reintentar" a un par de facturas con error 6000 y verificar:
-  - El Bill se crea en QBO.
-  - El total del Bill = total del XML (sin IVA aparte).
-  - Todas las líneas tienen el TaxCode exento.
-- Revisar logs de la función para confirmar el mensaje nuevo "IVA al gasto" en cada línea.
+Luego invocar `publish-to-quickbooks` con los `document_ids` afectados.
 
-## Lo que NO toca este plan
+### 3. Investigar el error de vendor (1 factura)
 
-- No cambia la lógica para organizaciones con `default_uses_tax = true` (IVA recuperable).
-- No cambia la página de Settings ni la auditoría existente.
-- No modifica datos en la base; solo cambia cómo se construye el payload hacia QBO.
+Factura `00100001010000039377` — vendor **FABRICA NACIONAL DE TROFEOS S.A.** falla con `Cannot read properties of undefined (reading 'Id')`. Probablemente la búsqueda/creación de vendor en QBO devolvió un cuerpo inesperado. Revisar logs de `publish-to-quickbooks` para ese `doc_id` y, si aplica, crear el vendor manualmente o reintentar tras la corrección.
+
+### 4. Validar
+
+Después del reintento:
+- Confirmar 0 facturas en `status='error'` para Tree of Life.
+- Verificar en QuickBooks que el **total del Bill = total del XML** y que las líneas muestran TaxCode exento.
+- Revisar `/audit-iva-mode` — debería marcar todo como `ok`.
+
+### 5. Considerar globalizar (opcional)
+
+Cualquier otra organización con `default_uses_tax=false` está expuesta al mismo bug. Como mejora futura: hacer que el código fuerce `includeTaxInLines=true` cuando `default_uses_tax=false`, sin requerir la setting separada. (No incluida en este plan, requiere confirmación.)
+
+## Archivos / acciones
+
+- **Migración**: insertar/actualizar `system_settings.tax_handling` para Tree of Life.
+- **Edge function `publish-to-quickbooks`**: sin cambios (ya parchado en turno anterior).
+- **Acción operativa**: reset SQL + invocación de `publish-to-quickbooks` con los 31 doc_ids.
+- **Manual**: 1 factura del vendor (revisión separada).
