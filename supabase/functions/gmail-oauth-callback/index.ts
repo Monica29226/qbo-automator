@@ -125,7 +125,11 @@ serve(async (req) => {
     console.log("Gmail account connected successfully");
 
     const escapedEmail = escapeHtml(userInfo.email);
-    const allowedOrigin = new URL(SUPABASE_URL).origin;
+    // Use opener origin from state; fallback to '*' so the parent always receives the message
+    const openerOrigin = typeof stateData?.origin === "string" && /^https?:\/\//.test(stateData.origin)
+      ? stateData.origin
+      : "*";
+    const escapedTarget = escapeHtml(openerOrigin);
     
     const successHtml = `<!DOCTYPE html>
       <html>
