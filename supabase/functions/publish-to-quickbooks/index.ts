@@ -2621,9 +2621,9 @@ Deno.serve(async (req) => {
             DocNumber: qboDocNumber,
             Line: lines,
             PrivateNote: `Nota de Crédito - Clave: ${claveHacienda}\nProveedor: ${doc.supplier_name}`,
-            // CRITICAL: Use TaxExcluded - lines contain subtotal only, tax is passed manually
-            // TxnTaxDetail.TotalTax = TotalImpuesto from XML (exact, never recalculated)
-            GlobalTaxCalculation: "TaxExcluded",
+            // IVA-as-expense: lines already include IVA → NotApplicable (no tax recalc).
+            // Otherwise TaxExcluded so we can pass TxnTaxDetail manually.
+            GlobalTaxCalculation: includeTaxInLines ? "NotApplicable" : "TaxExcluded",
           };
           
           // Always set CurrencyRef; include ExchangeRate if differs from QBO home currency
