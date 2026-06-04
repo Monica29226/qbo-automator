@@ -261,12 +261,146 @@ Deno.serve(async (req) => {
 
     // Send welcome email
     if (shouldSendEmail) {
-      const PROD_URL = "https://aclcostarica.com";
-      const origin = req.headers.get("origin") || "";
-      const baseUrl = origin.startsWith("https://") && !origin.includes("localhost")
-        ? origin
-        : PROD_URL;
-      const loginUrl = `${baseUrl}/auth`;
+      const loginUrl = "https://facturas.aclcostarica.com/auth";
+      const logoUrl = "https://lqirqvvkjpunhtsvebot.supabase.co/storage/v1/object/public/email-assets/acl-logo.png";
+      const displayName = full_name || email.split('@')[0];
+      const year = new Date().getFullYear();
+
+      const emailResponse = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${RESEND_API_KEY}`,
+        },
+        body: JSON.stringify({
+          from: "ACL Costa Rica <noreply@aureoncr.com>",
+          to: [email],
+          subject: `Bienvenido a ACL Facturas — Tus credenciales de acceso`,
+          html: `<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Bienvenido a ACL Facturas</title>
+</head>
+<body style="margin:0; padding:0; background-color:#f4f5f8; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color:#1a1f36;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f4f5f8; padding:32px 16px;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="max-width:600px; width:100%; background-color:#ffffff; border-radius:12px; overflow:hidden; box-shadow:0 4px 16px rgba(38,49,77,0.08);">
+          <tr>
+            <td style="background-color:#26314D; padding:32px 24px; text-align:center;">
+              <img src="${logoUrl}" alt="ACL Costa Rica" width="140" style="display:block; margin:0 auto; max-width:140px; height:auto;" />
+              <p style="color:#EDE6D3; margin:16px 0 0; font-size:14px; letter-spacing:1px; text-transform:uppercase;">Sistema de Facturación Electrónica</p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:40px 40px 16px;">
+              <h1 style="margin:0 0 12px; color:#26314D; font-size:24px; font-weight:700; line-height:1.3;">¡Bienvenido(a), ${displayName}!</h1>
+              <p style="margin:0; color:#4a5165; font-size:15px; line-height:1.6;">
+                Se ha creado tu cuenta para acceder al sistema de facturación electrónica de
+                ${orgName ? `<strong style="color:#26314D;">${orgName}</strong>` : '<strong style="color:#26314D;">ACL Costa Rica</strong>'}.
+              </p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:8px 40px 24px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f8f6f0; border-left:4px solid #26314D; border-radius:6px;">
+                <tr>
+                  <td style="padding:24px;">
+                    <p style="margin:0 0 16px; color:#26314D; font-size:13px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px;">Tus Credenciales de Acceso</p>
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                      <tr>
+                        <td style="padding:6px 0; color:#6b7280; font-size:13px; width:110px;">Correo:</td>
+                        <td style="padding:6px 0; color:#1a1f36; font-size:14px; font-family:'Courier New', monospace;"><strong>${email}</strong></td>
+                      </tr>
+                      <tr>
+                        <td style="padding:6px 0; color:#6b7280; font-size:13px;">Contraseña:</td>
+                        <td style="padding:6px 0;">
+                          <code style="background-color:#ffffff; border:1px solid #e5e7eb; padding:6px 10px; border-radius:4px; font-size:14px; color:#26314D; font-weight:700; display:inline-block;">${password}</code>
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:0 40px 24px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#fef7e6; border:1px solid #f5d97d; border-radius:6px;">
+                <tr>
+                  <td style="padding:14px 16px; color:#7a5d00; font-size:13px; line-height:1.5;">
+                    <strong>🔒 Importante:</strong> Por seguridad, cambia tu contraseña la primera vez que ingreses.
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          <tr>
+            <td align="center" style="padding:8px 40px 40px;">
+              <table role="presentation" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td style="background-color:#26314D; border-radius:8px;">
+                    <a href="${loginUrl}" target="_blank" style="display:inline-block; padding:16px 40px; color:#EDE6D3; font-size:16px; font-weight:700; text-decoration:none; letter-spacing:0.3px;">
+                      Ingresar a ACL Facturas →
+                    </a>
+                  </td>
+                </tr>
+              </table>
+              <p style="margin:20px 0 0; color:#6b7280; font-size:12px; line-height:1.5;">
+                Si el botón no funciona, copia este enlace en tu navegador:<br/>
+                <a href="${loginUrl}" style="color:#26314D; word-break:break-all;">${loginUrl}</a>
+              </p>
+            </td>
+          </tr>
+          <tr>
+            <td style="background-color:#f8f6f0; padding:24px 40px; text-align:center; border-top:1px solid #ede6d3;">
+              <p style="margin:0 0 6px; color:#26314D; font-size:13px; font-weight:700;">ACL Costa Rica</p>
+              <p style="margin:0; color:#8b91a1; font-size:12px; line-height:1.5;">
+                Este correo fue enviado automáticamente. Si no esperabas recibirlo, por favor ignóralo.<br/>
+                © ${year} ACL Costa Rica · Todos los derechos reservados
+              </p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`,
+        }),
+      });
+
+      if (!emailResponse.ok) {
+        const errorData = await emailResponse.json();
+        console.error("Error sending welcome email:", errorData);
+      } else {
+        console.log("✅ Welcome email sent successfully");
+      }
+    }
+
+    return new Response(
+      JSON.stringify({ 
+        success: true, 
+        userId: userId!,
+        isNewUser,
+        organizationAdded: !!organization_id,
+        message: isNewUser 
+          ? `Usuario ${email} creado exitosamente.`
+          : `Usuario ${email} agregado a ${orgName || 'la organización'}.`
+      }),
+      { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 }
+    );
+
+  } catch (error) {
+    console.error('Error in create-user function:', error);
+    return new Response(
+      JSON.stringify({ success: false, error: error instanceof Error ? error.message : 'Unknown error' }),
+      { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
+    );
+  }
+});
 
       const emailResponse = await fetch("https://api.resend.com/emails", {
         method: "POST",
