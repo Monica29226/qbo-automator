@@ -144,7 +144,7 @@ serve(async (req) => {
           <script>
             console.log('Sending Gmail postMessage to opener');
             if (window.opener) {
-              window.opener.postMessage({ type: 'gmail-connected', email: '${escapedEmail}' }, '${allowedOrigin}');
+              window.opener.postMessage({ type: 'gmail-connected', email: '${escapedEmail}' }, '${escapedTarget}');
               console.log('Gmail message sent');
             } else {
               console.error('No window.opener found');
