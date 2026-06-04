@@ -202,6 +202,15 @@ const App = () => (
                 }
               />
               <Route
+                path="/audit-iva-mode"
+                element={
+                  <ProtectedRoute>
+                    <AuditIvaMode />
+                  </ProtectedRoute>
+                }
+              />
+
+              <Route
                 path="/xml-debug"
                 element={
                   <ProtectedRoute>
