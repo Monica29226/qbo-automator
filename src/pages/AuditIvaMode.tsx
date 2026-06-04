@@ -158,7 +158,7 @@ export default function AuditIvaMode() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `auditoria-iva-${activeOrganization?.name || "org"}-${today}.csv`;
+    a.download = `auditoria-iva-${today}.csv`;
     a.click();
     URL.revokeObjectURL(url);
   };
