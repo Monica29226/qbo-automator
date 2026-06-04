@@ -337,6 +337,7 @@ const Integrations = () => {
       const state = btoa(JSON.stringify({
         organization_id: activeOrganization,
         user_id: user.id,
+        origin: window.location.origin,
       }));
 
       const { data, error } = await supabase.functions.invoke("gmail-oauth-init", {
