@@ -339,30 +339,39 @@ const UsersManagement = () => {
       
       const orgsToAdd = newOrgIds.filter(id => !currentOrgIds.includes(id));
       const orgsToRemove = currentOrgIds.filter(id => !newOrgIds.includes(id));
-      
+
+      const failures: { orgId: string; action: string; message: string }[] = [];
+
       for (const orgId of orgsToRemove) {
-        await supabase
+        const { error } = await supabase
           .from("organization_members")
           .update({ is_active: false })
           .eq("user_id", editingUser.id)
           .eq("organization_id", orgId);
+        if (error) failures.push({ orgId, action: "remove", message: error.message });
       }
       
       for (const orgId of orgsToAdd) {
-        const { data: existing } = await supabase
+        const { data: existing, error: selErr } = await supabase
           .from("organization_members")
           .select("id, is_active")
           .eq("user_id", editingUser.id)
           .eq("organization_id", orgId)
           .maybeSingle();
+
+        if (selErr) {
+          failures.push({ orgId, action: "lookup", message: selErr.message });
+          continue;
+        }
           
         if (existing) {
-          await supabase
+          const { error } = await supabase
             .from("organization_members")
             .update({ is_active: true })
             .eq("id", existing.id);
+          if (error) failures.push({ orgId, action: "reactivate", message: error.message });
         } else {
-          await supabase
+          const { error } = await supabase
             .from("organization_members")
             .insert({
               user_id: editingUser.id,
@@ -370,12 +379,23 @@ const UsersManagement = () => {
               role: "member",
               is_active: true
             });
+          if (error) failures.push({ orgId, action: "add", message: error.message });
         }
       }
-      
-      toast.success("Empresas actualizadas correctamente");
-      setIsEditOrgsDialogOpen(false);
-      setEditingUser(null);
+
+      const successCount = (orgsToAdd.length + orgsToRemove.length) - failures.length;
+
+      if (failures.length === 0) {
+        toast.success(`Empresas actualizadas correctamente (${successCount} cambios)`);
+        setIsEditOrgsDialogOpen(false);
+        setEditingUser(null);
+      } else {
+        console.error("Fallos al actualizar empresas:", failures);
+        const firstMsg = failures[0]?.message || "desconocido";
+        toast.error(
+          `${failures.length} empresa(s) no se pudieron asignar (${successCount} OK). Motivo: ${firstMsg}`
+        );
+      }
       invalidate();
     } catch (error: any) {
       toast.error(`Error al actualizar: ${error.message}`);
