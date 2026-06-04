@@ -19,6 +19,7 @@ import ErrorDocuments from "./pages/ErrorDocuments";
 import PublishedDocuments from "./pages/PublishedDocuments";
 import AcceptInvitation from "./pages/AcceptInvitation";
 import AuditReport from "./pages/AuditReport";
+import AuditIvaMode from "./pages/AuditIvaMode";
 import VendorCategories from "./pages/VendorCategories";
 import MultiTenantDocs from "./pages/MultiTenantDocs";
 import InvoicesPendingLog from "./pages/InvoicesPendingLog";
@@ -200,6 +201,15 @@ const App = () => (
                   </ProtectedRoute>
                 }
               />
+              <Route
+                path="/audit-iva-mode"
+                element={
+                  <ProtectedRoute>
+                    <AuditIvaMode />
+                  </ProtectedRoute>
+                }
+              />
+
               <Route
                 path="/xml-debug"
                 element={
