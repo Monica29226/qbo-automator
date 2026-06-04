@@ -19,6 +19,7 @@ import ErrorDocuments from "./pages/ErrorDocuments";
 import PublishedDocuments from "./pages/PublishedDocuments";
 import AcceptInvitation from "./pages/AcceptInvitation";
 import AuditReport from "./pages/AuditReport";
+import AuditIvaMode from "./pages/AuditIvaMode";
 import VendorCategories from "./pages/VendorCategories";
 import MultiTenantDocs from "./pages/MultiTenantDocs";
 import InvoicesPendingLog from "./pages/InvoicesPendingLog";
