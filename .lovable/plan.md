@@ -1,58 +1,53 @@
-## Objetivo
+# Bug: facturas de Tree of Life rechazadas con error QBO 6000
 
-Auditar las facturas de **Tree of Life** publicadas en QuickBooks para detectar dos problemas concretos:
+## Causa raíz
 
-1. Facturas donde el IVA se separó como impuesto en QBO en vez de ir al gasto (la organización tiene `default_uses_tax = false`, así que TODO el IVA debe incluirse en el gasto).
-2. Facturas donde el monto total en QBO no coincide con el `TotalComprobante` del XML.
+Tree of Life está configurada como:
+- `system_settings.default_uses_tax = false` → IVA al gasto
+- `organizations.settings.tax_handling = 'included_in_line_items'` → IVA dentro de cada línea
 
-## Hallazgos previos relevantes
+Eso activa `includeTaxInLines = true` en `publish-to-quickbooks/index.ts`, así que cada línea se envía con `Amount = subtotal + IVA`. **Pero el código sigue asignándole a esa línea el `TaxCodeRef` de la tarifa real (13%, 4%, 1%…)** y el payload del Bill se manda con `GlobalTaxCalculation: "TaxExcluded"` y sin `TxnTaxDetail` (porque `effectiveUsesTax = false`).
 
-- Config actual de Tree of Life: `default_uses_tax = false` → todo el IVA debe ir al gasto.
-- Ya existe la edge function `reconcile-xml-vs-qbo` que compara XML vs QBO campo por campo (Total, Impuesto, Subtotal, Modo Impuesto, Fecha, Moneda, Líneas) — pero está pensada para reconciliación general, no para detectar específicamente "IVA mal separado cuando debería ser gasto".
+Para QBO eso significa: "estas líneas tienen una tasa impositiva 13%, pero no me das el detalle de impuesto" → QBO intenta recalcular tax sobre líneas que ya tienen el IVA incluido, lo que dispara dos problemas:
 
-## Plan
+1. **Error 6000 — "Todos los artículos necesitan una tasa impositiva. Agregue uno donde falta."**
+   Si alguna línea tiene `tasaImpuesto = 0` y `getTaxCodeRef(0)` no encuentra un código exento en QBO, la línea se queda **sin** `TaxCodeRef`. Con la cuenta de QBO en modo Automated Sales Tax, QBO rechaza el Bill completo porque exige tax code en todas las líneas.
 
-### 1. Nueva página de auditoría "Auditoría Tree of Life / IVA como Gasto"
+2. **Cuando sí publica, el total infla el IVA dos veces**
+   Líneas con IVA incluido + `TaxCodeRef = 13%` + `TaxExcluded` → QBO calcula tax aparte sobre el subtotal de la línea y lo suma al total. Por eso ves facturas donde "el monto no es el correcto" y "está sumando el impuesto que debería ir al gasto".
 
-Ruta: `/audit/iva-mode` (o reutilizar `/audit-report`). Filtra por organización activa y rango de fechas (por defecto últimos 30 días).
+Esta combinación nunca debió quedar así: en modo "IVA como gasto" las líneas deben llevar **TaxCodeRef exento/NON** (no la tarifa real) y el Bill debe ir con `GlobalTaxCalculation: "NotApplicable"` sin `TxnTaxDetail`.
 
-La página llama a una nueva edge function `audit-iva-mode-vs-qbo` que para cada factura `published` de Tree of Life:
+## Plan de cambios
 
-- Lee el XML (`xml_data` / `extracted_data`) y obtiene `TotalComprobante`, `TotalImpuesto`.
-- Consulta el Bill correspondiente en QBO (`qbo_entity_id`).
-- Compara y clasifica cada factura en una de estas categorías:
+### 1. `supabase/functions/publish-to-quickbooks/index.ts` — modo "IVA como gasto"
 
-  | Estado | Criterio |
-  |---|---|
-  | ✅ OK | `GlobalTaxCalculation = NotApplicable` (o `TaxExcluded` con Tax = 0), líneas suman = TotalComprobante XML, sin impuesto separado |
-  | ⚠️ IVA separado | QBO tiene `TxnTaxDetail.TotalTax > 0` o `GlobalTaxCalculation = TaxExcluded` con tax ≠ 0 — viola la regla "IVA al gasto" |
-  | ❌ Total no cuadra | `Bill.TotalAmt` difiere de `TotalComprobante` del XML en más de ₡1 |
-  | 🔴 Error | No se puede leer el Bill o el XML |
+Cuando `includeTaxInLines === true` (o más en general, cuando `effectiveUsesTax === false` porque el IVA va al gasto):
 
-### 2. UI de resultados
+- **Forzar `TaxCodeRef` exento en cada línea**: llamar siempre a `getTaxCodeRef(0)` en vez de `getTaxCodeRef(tasaImpuesto)`. La línea ya lleva IVA dentro de `Amount`, no debe declarar tarifa.
+- **Si no existe ningún código exento** en QBO: registrar el documento como `pending_config` con un mensaje claro ("Falta TaxCode exento/NON/Out of Scope en QuickBooks para publicar con IVA al gasto"), en vez de mandar la línea sin `TaxCodeRef` y reventar con error 6000.
+- **No setear `GlobalTaxCalculation: "TaxExcluded"`** en este modo. Usar `"NotApplicable"` y **no enviar** `TxnTaxDetail`. Aplica a Bill y a VendorCredit.
+- Aplicar el mismo trato a las líneas de OtrosCargos y a la línea fallback.
 
-Tabla con: fecha, proveedor, nº factura, total XML, total QBO, IVA XML, IVA QBO, modo QBO, estado, link al PDF y link al Bill en QBO.
+### 2. Validación previa
 
-Botones por fila:
-- **Republicar al gasto** — borra el Bill en QBO y lo vuelve a crear con el IVA incluido en el subtotal (usa el flujo existente `republish-from-extracted-data` con `uses_tax=false` forzado).
-- **Ver detalle** — abre modal con el desglose de líneas XML vs líneas QBO.
+En la validación pre-publicación (líneas ~2540-2588), cuando estamos en modo IVA al gasto, comparar `linesTotalAmount` directamente contra `xmlTotalComprobante` (sin sumar IVA). Hoy ya lo hace porque `ivaForTxnTaxDetail = 0`, pero conviene agregar un log explícito "IVA al gasto: total = suma de líneas" para que la auditoría sea legible.
 
-Botón global: **Republicar todas las marcadas** (procesa en background, 1 a la vez para no saturar QBO).
+### 3. Reproceso de Tree of Life
 
-### 3. Reporte exportable
+No tocamos config. Los usuarios usan la página existente `/audit-iva-mode` (ya creada) para republicar las facturas que se hayan quedado en `error` o publicadas con tax separado. Con el fix, los reintentos pasarán.
 
-Botón "Descargar CSV" con todas las filas y su clasificación, para que puedas revisarlo offline.
+### 4. QA
 
-## Detalles técnicos
+- Desplegar la función.
+- En `/error-documents` para Tree of Life, darle "Reintentar" a un par de facturas con error 6000 y verificar:
+  - El Bill se crea en QBO.
+  - El total del Bill = total del XML (sin IVA aparte).
+  - Todas las líneas tienen el TaxCode exento.
+- Revisar logs de la función para confirmar el mensaje nuevo "IVA al gasto" en cada línea.
 
-- Edge function nueva: `supabase/functions/audit-iva-mode-vs-qbo/index.ts` — basada en `reconcile-xml-vs-qbo` pero con la lógica de clasificación específica de IVA-como-gasto.
-- Reutiliza `publish-to-quickbooks` para republicación (ya respeta `default_uses_tax = false`).
-- Nuevo componente `src/pages/AuditIvaMode.tsx` + ruta en `App.tsx`.
-- No requiere cambios de schema.
+## Lo que NO toca este plan
 
-## Lo que NO incluye este plan
-
-- No cambia la configuración de Tree of Life (ya está correcta en BD).
-- No modifica la lógica de publicación — solo detecta y permite republicar las que ya salieron mal.
-
-¿Apruebas? Si quieres, primero puedo correr la auditoría una sola vez como reporte rápido (sin construir UI) para confirmar cuántas facturas están afectadas antes de invertir en la página completa.
+- No cambia la lógica para organizaciones con `default_uses_tax = true` (IVA recuperable).
+- No cambia la página de Settings ni la auditoría existente.
+- No modifica datos en la base; solo cambia cómo se construye el payload hacia QBO.
