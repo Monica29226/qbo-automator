@@ -1983,6 +1983,14 @@ export type Database = {
           service_type: string
         }[]
       }
+      get_email_provider_health: {
+        Args: { _org_id: string }
+        Returns: {
+          has_credentials: boolean
+          is_active: boolean
+          service_type: string
+        }[]
+      }
       get_organization_member_profiles: {
         Args: { _org_id: string }
         Returns: {

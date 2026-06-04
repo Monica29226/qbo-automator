@@ -1,34 +1,45 @@
-# Arreglar conexión Gmail OAuth
+# Arreglar falso "Gmail desconectado" + refresco lento
 
 ## Causa raíz
 
-`supabase/functions/gmail-oauth-callback/index.ts` envía el `postMessage` de éxito con `targetOrigin = SUPABASE_URL.origin` (dominio `*.supabase.co`). El `window.opener` es la app (`lovable.app` / `facturas.aclcostarica.com`), un origen distinto. El navegador descarta el mensaje silenciosamente, así que la UI nunca recibe `gmail-connected` y aparenta no conectarse — aunque los tokens **sí** se guardan en `integration_accounts`.
+`GmailTokenAlert` lee `integration_accounts` directamente desde el cliente para verificar credenciales. Por política de seguridad esa tabla **no tiene SELECT para usuarios** (sólo `service_role`), por lo que RLS devuelve `null` y la alerta se dispara aunque la conexión esté sana. Verificado en DB para `ASADA DE TARBACA`: `gmail_connected=true`, `integration_accounts.is_active=true`, `refresh_token` y `access_token` presentes.
 
-## Verificación previa
-
-1. Confirmar en DB que las últimas conexiones de Gmail intentadas hoy quedaron guardadas (consulta a `integration_accounts` y `organizations.gmail_connected`). Si están guardadas, queda probado el diagnóstico.
+Además, el chequeo refresca cada 10 minutos y no escucha cambios de organización ni eventos de reconexión, así que tras reconectar la alerta puede tardar mucho en desaparecer.
 
 ## Cambios
 
-### 1. `supabase/functions/gmail-oauth-callback/index.ts`
-- Aceptar el origen del opener via el parámetro `state` (agregar `origin: window.location.origin` desde el cliente al construir el state).
-- En el callback: parsear `stateData.origin`, validar contra una allowlist (`*.lovable.app`, `facturas.aclcostarica.com`, `localhost`), y usarlo como `targetOrigin` del `postMessage`.
-- Fallback: si no viene origin válido, postear a `'*'` (peor caso, pero el mensaje sí llega) — preferible al silencio actual.
+### 1. Nueva RPC `get_email_provider_health(_org_id uuid)` — SECURITY DEFINER
 
-### 2. `src/pages/Integrations.tsx` — `handleGmailOAuth`
-- Incluir `origin: window.location.origin` dentro del objeto `state` base64.
+Devuelve por proveedor si está activo y si las credenciales están completas, sin exponer las credenciales en sí:
 
-### 3. Replicar el mismo fix en los otros callbacks OAuth que usan el mismo patrón
-Revisar y aplicar igual donde aplique:
-- `supabase/functions/outlook-oauth-callback/index.ts`
-- `supabase/functions/google-drive-oauth-callback/index.ts`
-- `supabase/functions/onedrive-oauth-callback/index.ts`
-- `supabase/functions/sharepoint-oauth-callback/index.ts`
-- `supabase/functions/quickbooks-oauth-callback/`
-Y sus correspondientes handlers en el frontend para mandar `origin` en el state.
+```sql
+RETURNS TABLE(
+  service_type text,
+  is_active boolean,
+  has_credentials boolean  -- refresh_token (OAuth) o password+imap_host (IMAP)
+)
+```
+
+Validar que el caller es miembro de la org (`is_organization_member(auth.uid(), _org_id)`).
+`GRANT EXECUTE ... TO authenticated`.
+
+### 2. `src/components/dashboard/GmailTokenAlert.tsx`
+
+- Eliminar el `select` directo a `integration_accounts`.
+- Usar la nueva RPC `get_email_provider_health` para validar el proveedor activo.
+- Conservar la lógica de prioridad gmail → outlook → bluehost → hostinger.
+- Bajar el intervalo de polling a 60 s.
+- Escuchar el evento custom `dashboard:refresh` (ya disparado por `SyncEmailNowButton` y otros) y volver a chequear al recibirlo.
+- Disparar `window.dispatchEvent(new CustomEvent("dashboard:refresh"))` al final de la reconexión exitosa de Gmail/Outlook en `Integrations.tsx` para que la alerta se limpie inmediatamente.
+- Re-chequear también cuando la pestaña vuelve a foco (`visibilitychange`).
+
+### 3. Memoria de seguridad
+
+Reafirmar que ningún componente cliente debe `SELECT` sobre `integration_accounts`; siempre vía RPC SECURITY DEFINER. Añadir esta regla al índice si no existe.
 
 ## Validación
 
-1. Click "Conectar con Gmail" desde `facturas.aclcostarica.com` y desde el preview.
-2. Confirmar que aparece toast "Gmail conectado: <email>", el diálogo se cierra, y `fetchData()` refresca la lista.
-3. Verificar logs del edge function: ya no aparece "No window.opener found" ni mensaje silencioso.
+1. En el dashboard de ASADA DE TARBACA la alerta "Gmail desconectado" desaparece sin necesidad de reconectar.
+2. Desconectar Gmail manualmente (poner `is_active=false`) → alerta aparece dentro de ≤60 s o al cambiar de pestaña/org.
+3. Reconectar desde Integraciones → alerta desaparece de inmediato (vía evento `dashboard:refresh`).
+4. Cambiar de organización → la alerta refleja la nueva org sin esperar 10 min.
