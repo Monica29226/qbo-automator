@@ -2317,20 +2317,25 @@ Deno.serve(async (req) => {
                 },
               };
               
-              // ALWAYS use the actual tax rate so QBO knows which tax applies
-              // Even when tax is included in lines, we need the correct TaxCodeRef
-              const taxCodeId = await getTaxCodeRef(tasaImpuesto);
+              // When IVA goes to expense (includeTaxInLines), force EXEMPT TaxCodeRef
+              // so QBO doesn't try to recalculate tax on top of a line that already
+              // contains the IVA. Otherwise use the actual rate's TaxCodeRef.
+              const rateForCode = includeTaxInLines ? 0 : tasaImpuesto;
+              const taxCodeId = await getTaxCodeRef(rateForCode);
               if (taxCodeId) {
                 lineDetail.AccountBasedExpenseLineDetail.TaxCodeRef = { value: taxCodeId };
-              } else if (tasaImpuesto > 0) {
-                missingLineTaxRates.add(Number(tasaImpuesto.toFixed(2)));
+              } else if (rateForCode > 0) {
+                missingLineTaxRates.add(Number(rateForCode.toFixed(2)));
+              } else if (includeTaxInLines) {
+                // No exempt TaxCode available in QBO — cannot publish in IVA-as-expense mode
+                missingLineTaxRates.add(0);
               }
 
               const taxCodeMatched = taxCodeId
                 ? (taxCodesCache?.find((tc: any) => tc.Id === taxCodeId)?.Name || taxCodeId)
-                : (tasaImpuesto > 0 ? 'BLOQUEADO (no encontrado en QBO)' : 'exento');
+                : (rateForCode > 0 ? 'BLOQUEADO (no encontrado en QBO)' : 'FALTA TaxCode exento en QBO');
 
-              logInfo(`   🧾 ${doc.doc_number} Línea ${item.numeroLinea || '?'}: subtotal=${Number(subtotal).toFixed(2)} | IVA ${tasaImpuesto}% = ${Number(montoImpuestoIVA).toFixed(2)} | TaxCode QBO: ${taxCodeMatched}`);
+              logInfo(`   🧾 ${doc.doc_number} Línea ${item.numeroLinea || '?'}: subtotal=${Number(subtotal).toFixed(2)} | IVA ${tasaImpuesto}% = ${Number(montoImpuestoIVA).toFixed(2)} | TaxCode QBO: ${taxCodeMatched}${includeTaxInLines ? ' [IVA al gasto → exento]' : ''}`);
               
               // Store montoTotalLinea for TaxInclusive retry fallback
             const montoTotalLinea = parseFloat(item.montoTotalLinea) || (Math.abs(subtotal) + Math.abs(montoImpuestoIVA) + Math.abs(montoImpuestoIEBLE));
@@ -2432,11 +2437,15 @@ Deno.serve(async (req) => {
             }
             if (fallbackTaxRate === 0) fallbackTaxRate = 13; // Final fallback to 13%
           }
-          const fallbackTaxCodeId = await getTaxCodeRef(fallbackTaxRate);
+          // In IVA-as-expense mode, force exempt TaxCodeRef on the fallback line too
+          const fallbackRateForCode = includeTaxInLines ? 0 : fallbackTaxRate;
+          const fallbackTaxCodeId = await getTaxCodeRef(fallbackRateForCode);
           if (fallbackTaxCodeId) {
             fallbackLine.AccountBasedExpenseLineDetail.TaxCodeRef = { value: fallbackTaxCodeId };
-          } else if (fallbackTaxRate > 0) {
-            missingLineTaxRates.add(Number(fallbackTaxRate.toFixed(2)));
+          } else if (fallbackRateForCode > 0) {
+            missingLineTaxRates.add(Number(fallbackRateForCode.toFixed(2)));
+          } else if (includeTaxInLines) {
+            missingLineTaxRates.add(0);
           }
           
           lines.push(fallbackLine);
@@ -2612,9 +2621,9 @@ Deno.serve(async (req) => {
             DocNumber: qboDocNumber,
             Line: lines,
             PrivateNote: `Nota de Crédito - Clave: ${claveHacienda}\nProveedor: ${doc.supplier_name}`,
-            // CRITICAL: Use TaxExcluded - lines contain subtotal only, tax is passed manually
-            // TxnTaxDetail.TotalTax = TotalImpuesto from XML (exact, never recalculated)
-            GlobalTaxCalculation: "TaxExcluded",
+            // IVA-as-expense: lines already include IVA → NotApplicable (no tax recalc).
+            // Otherwise TaxExcluded so we can pass TxnTaxDetail manually.
+            GlobalTaxCalculation: includeTaxInLines ? "NotApplicable" : "TaxExcluded",
           };
           
           // Always set CurrencyRef; include ExchangeRate if differs from QBO home currency
@@ -2745,9 +2754,9 @@ Deno.serve(async (req) => {
             DocNumber: qboDocNumber,
             Line: lines,
             PrivateNote: `Factura XML: ${doc.doc_number}\nClave: ${claveHacienda}\nProveedor: ${doc.supplier_name}`,
-            // CRITICAL: Use TaxExcluded - lines contain subtotal only, tax is passed manually
-            // TxnTaxDetail.TotalTax = TotalImpuesto from XML (exact, never recalculated)
-            GlobalTaxCalculation: "TaxExcluded",
+            // IVA-as-expense: lines already include IVA → NotApplicable (no tax recalc).
+            // Otherwise TaxExcluded so we can pass TxnTaxDetail manually.
+            GlobalTaxCalculation: includeTaxInLines ? "NotApplicable" : "TaxExcluded",
           };
           
           // Always set CurrencyRef; include ExchangeRate if differs from QBO home currency
