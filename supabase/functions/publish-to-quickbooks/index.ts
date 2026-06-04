@@ -2437,11 +2437,15 @@ Deno.serve(async (req) => {
             }
             if (fallbackTaxRate === 0) fallbackTaxRate = 13; // Final fallback to 13%
           }
-          const fallbackTaxCodeId = await getTaxCodeRef(fallbackTaxRate);
+          // In IVA-as-expense mode, force exempt TaxCodeRef on the fallback line too
+          const fallbackRateForCode = includeTaxInLines ? 0 : fallbackTaxRate;
+          const fallbackTaxCodeId = await getTaxCodeRef(fallbackRateForCode);
           if (fallbackTaxCodeId) {
             fallbackLine.AccountBasedExpenseLineDetail.TaxCodeRef = { value: fallbackTaxCodeId };
-          } else if (fallbackTaxRate > 0) {
-            missingLineTaxRates.add(Number(fallbackTaxRate.toFixed(2)));
+          } else if (fallbackRateForCode > 0) {
+            missingLineTaxRates.add(Number(fallbackRateForCode.toFixed(2)));
+          } else if (includeTaxInLines) {
+            missingLineTaxRates.add(0);
           }
           
           lines.push(fallbackLine);
