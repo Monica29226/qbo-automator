@@ -437,6 +437,7 @@ const Integrations = () => {
           toast.success(`Outlook conectado: ${event.data.email}`);
           setIsDialogOpen(false);
           fetchData();
+          window.dispatchEvent(new CustomEvent("integrations:updated"));
           window.removeEventListener("message", messageHandler);
         } else if (event.data?.type === "outlook-error") {
           setOutlookError({ code: event.data.code || "oauth_error", message: event.data.message || "Error desconocido" });
