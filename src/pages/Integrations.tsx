@@ -357,6 +357,7 @@ const Integrations = () => {
           toast.success(`Gmail conectado: ${event.data.email}`);
           setIsDialogOpen(false);
           fetchData();
+          window.dispatchEvent(new CustomEvent("integrations:updated"));
           window.removeEventListener("message", messageHandler);
         }
       };
