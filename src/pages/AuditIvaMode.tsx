@@ -75,7 +75,7 @@ export default function AuditIvaMode() {
     try {
       const { data, error } = await supabase.functions.invoke("audit-iva-mode-vs-qbo", {
         body: {
-          organization_id: activeOrganization.id,
+          organization_id: activeOrganization,
           date_from: dateFrom,
           date_to: dateTo,
           limit,
