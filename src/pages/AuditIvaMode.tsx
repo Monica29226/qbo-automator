@@ -93,14 +93,24 @@ export default function AuditIvaMode() {
     }
   };
 
+  const republishOne = async (documentId: string) => {
+    if (!activeOrganization) return;
+    // 1) Delete from QBO  2) Clear tracking + republish (which uses current org IVA setting)
+    const { error: delErr } = await supabase.functions.invoke("delete-bills-from-quickbooks", {
+      body: { organization_id: activeOrganization, document_ids: [documentId] },
+    });
+    if (delErr) throw delErr;
+    const { data: repData, error: repErr } = await supabase.functions.invoke("republish-deleted-from-qbo", {
+      body: { organization_id: activeOrganization, document_ids: [documentId] },
+    });
+    if (repErr) throw repErr;
+    if (repData?.error) throw new Error(repData.error);
+  };
+
   const republish = async (documentId: string) => {
     setRepublishing(documentId);
     try {
-      const { data, error } = await supabase.functions.invoke("republish-from-extracted-data", {
-        body: { document_id: documentId, force_uses_tax: false },
-      });
-      if (error) throw error;
-      if (data?.error) throw new Error(data.error);
+      await republishOne(documentId);
       toast.success("Republicado con IVA al gasto");
       setResults((prev) => prev.filter((r) => r.document_id !== documentId));
     } catch (err: any) {
@@ -122,11 +132,8 @@ export default function AuditIvaMode() {
     let fail = 0;
     for (const t of targets) {
       try {
-        const { data, error } = await supabase.functions.invoke("republish-from-extracted-data", {
-          body: { document_id: t.document_id, force_uses_tax: false },
-        });
-        if (error || data?.error) fail++;
-        else ok++;
+        await republishOne(t.document_id);
+        ok++;
       } catch {
         fail++;
       }
@@ -135,6 +142,7 @@ export default function AuditIvaMode() {
     setBulkRunning(false);
     runAudit();
   };
+
 
   const downloadCsv = () => {
     if (!results.length) return;
