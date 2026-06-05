@@ -383,9 +383,12 @@ const Dashboard = () => {
                   <h2 className="text-2xl font-bold text-foreground">Panel de Control</h2>
                   <p className="text-sm text-muted-foreground">Monitoreo en tiempo real del procesamiento de facturas</p>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   <Suspense fallback={null}>
                     <IVAModeIndicator organizationId={activeOrganization} />
+                  </Suspense>
+                  <Suspense fallback={null}>
+                    <AutoUpdateStatusBadge organizationId={activeOrganization} />
                   </Suspense>
                   {!orgIsActive ? (
                     <Badge variant="outline" className="h-fit border-amber-500 text-amber-700 dark:text-amber-400" title={lastSyncError ?? undefined}>
@@ -399,6 +402,7 @@ const Dashboard = () => {
                     </Badge>
                   )}
                 </div>
+
               </div>
 
               <div className="mb-4">
