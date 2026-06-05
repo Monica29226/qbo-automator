@@ -387,10 +387,17 @@ const Dashboard = () => {
                   <Suspense fallback={null}>
                     <IVAModeIndicator organizationId={activeOrganization} />
                   </Suspense>
-                  <Badge variant={isLastSyncFresh ? "default" : "destructive"} className="h-fit">
-                    <Clock className="h-3 w-3 mr-1" />
-                    Última sync: {lastSyncLabel}
-                  </Badge>
+                  {!orgIsActive ? (
+                    <Badge variant="outline" className="h-fit border-amber-500 text-amber-700 dark:text-amber-400" title={lastSyncError ?? undefined}>
+                      <Clock className="h-3 w-3 mr-1" />
+                      Organización inactiva — sincronización pausada
+                    </Badge>
+                  ) : (
+                    <Badge variant={isLastSyncFresh ? "default" : "destructive"} className="h-fit" title={lastSyncError ?? undefined}>
+                      <Clock className="h-3 w-3 mr-1" />
+                      Última sync: {lastSyncLabel}
+                    </Badge>
+                  )}
                 </div>
               </div>
 
