@@ -1,55 +1,41 @@
-## Objetivo
-Corregir el problema que hace que algunas compañías publiquen en contabilidad con IVA agregado incorrectamente, y reforzar el dashboard para que las alertas de correo/token reflejen de forma confiable el estado automático real.
+## Hallazgo confirmado
+La factura `00400001010000293929` repite el mismo patrón que reportaste:
+- En el documento procesado el XML está correcto: `totalComprobante = 6,939.33` y `totalImpuesto = 798.33`.
+- Ya fue publicada en contabilidad el `2026-06-02`, antes del endurecimiento reciente de la función.
+- La organización es **Tree of Life** y sigue usando la combinación sensible `tax_handling = included_in_line_items` + `default_uses_tax = false`.
+- No quedó una alerta histórica para esa factura, así que hoy el sistema no te la está señalando retroactivamente.
 
-## Hallazgos confirmados
-- El caso de **Tree of Life / factura 00100001010000000398** sí reproduce el problema.
-- En la base, el XML y el documento procesado guardan el total correcto: **457,650.00** con impuesto **52,650.00**.
-- El total inflado que llega a contabilidad (**517,144.50**) ocurre por configuración de publicación de esa organización:
-  - `default_uses_tax = false`
-  - `tax_handling = included_in_line_items`
-- Esa combinación hace que el publicador arme líneas con IVA incluido, pero en QuickBooks el resultado final termina variando por compañía según cómo esa cuenta tenga configurados sus códigos/tasas de impuesto.
-- No es un problema del XML; es un problema de cómo se interpreta por organización al publicar.
-- Hoy solo encontré dos organizaciones con una configuración especial que puede causar este comportamiento:
-  - Tree of Life
-  - ASOCIACION DESTINY PROYECT
-- Las alertas actuales de correo/token son limitadas:
-  - QuickBooks muestra solo casos críticos cercanos a expiración.
-  - Correo solo detecta desconexión o credenciales incompletas.
-  - El dashboard no muestra claramente “última renovación automática exitosa” ni un estado verificable de auto-actualización.
+## Plan
+1. **Auditar retroactivamente publicaciones afectadas**
+   - Revisar facturas ya publicadas bajo esa configuración sensible.
+   - Comparar XML (`totalComprobante`, `totalImpuesto`) contra el tracking guardado y dejar una lista de documentos sospechosos para revisión/republicación.
+   - Empezar por Tree of Life y extender a cualquier otra organización que haya pasado por la misma lógica.
 
-## Plan de implementación
-1. **Unificar la regla de publicación para respetar literal el XML**
-   - Ajustar `publish-to-quickbooks` para que, en facturas XML con impuesto, nunca dependa de una combinación ambigua por organización que permita a QuickBooks recalcular encima.
-   - Hacer que la publicación priorice el total del XML como fuente absoluta y bloquee configuraciones que generen un total distinto.
-   - Mantener la excepción solo cuando realmente se trate de un modo contable explícito y seguro, sin permitir que termine inflando el total.
+2. **Persistir la discrepancia como estado operativo visible**
+   - Cuando la validación post-publicación detecte diferencia entre contabilidad y XML, no solo registrar alerta: también dejar el documento en un estado claramente revisable y visible en la app.
+   - Mostrar el motivo exacto con monto XML, monto en contabilidad y diferencia.
 
-2. **Eliminar la variación peligrosa por compañía**
-   - Revisar la lógica que mezcla `tax_handling` y `default_uses_tax`.
-   - Convertirla en una decisión determinística y auditada para compras:
-     - o IVA separado y total exacto del XML,
-     - o gasto incluido sin recálculo adicional de QuickBooks.
-   - Evitar que una organización quede en un estado híbrido que produzca un total distinto al XML.
+3. **Bloquear configuraciones ambiguas antes de publicar**
+   - Endurecer la función para que, si una combinación fiscal puede producir recalculo externo o no permite garantizar coincidencia literal con el XML, la publicación se detenga antes de enviarse.
+   - Mantener la regla de “XML manda” como obligatoria, sin comportamiento variable por empresa.
 
-3. **Agregar validación dura antes de publicar**
-   - Si el payload esperado para QuickBooks no cuadra exactamente con `totalComprobante` del XML, detener la publicación con error claro en vez de enviar algo ambiguo.
-   - Registrar mejor el motivo para que se vea cuál configuración causó el bloqueo.
+4. **Preparar recuperación segura de casos ya dañados**
+   - Dejar identificadas las facturas que requieren borrar y republicar en contabilidad.
+   - Evitar que vuelvan a salir como “publicadas sanas” si ya nacieron con discrepancia.
 
-4. **Mejorar alertas automáticas en dashboard**
-   - Añadir señal visible para renovación automática de token de QuickBooks.
-   - Añadir señal visible para estado de conexión/credenciales del correo con refresco periódico y mensajes más concretos.
-   - Evitar que el usuario tenga que “adivinar” si sí se renovó o si solo no hay alerta crítica.
-
-5. **Auditoría focalizada del caso Tree of Life**
-   - Dejar trazabilidad más clara del modo fiscal usado en la publicación de cada documento.
-   - Preparar el caso para que futuras diferencias por compañía se puedan detectar rápido desde el sistema, sin depender de screenshots de contabilidad.
-
-## Archivos a tocar
-- `supabase/functions/publish-to-quickbooks/index.ts`
-- `src/components/dashboard/QuickBooksTokenAlert.tsx`
-- `src/components/dashboard/GmailTokenAlert.tsx`
-- Posiblemente `src/pages/Dashboard.tsx` si hace falta exponer el nuevo estado en la vista principal.
+## Detalles técnicos
+- Revisaré y ajustaré principalmente:
+  - `supabase/functions/publish-to-quickbooks/index.ts`
+  - la persistencia de alertas / estado en `processed_documents` y `qbo_publish_tracking`
+  - la UI de revisión donde se exponen errores y discrepancias
+- La auditoría se basará en:
+  - `processed_documents.doc_number`, `doc_key`, `total_amount`, `total_tax`, `status`
+  - `qbo_publish_tracking.total_amount`, `status`, `error_message`
+  - `system_settings.tax_handling` y `system_settings.default_uses_tax`
 
 ## Resultado esperado
-- La factura de Tree of Life y las equivalentes en otras compañías respetarán literalmente el total del XML.
-- El comportamiento dejará de depender peligrosamente de la configuración particular de cada compañía.
-- El dashboard mostrará mejor cuándo correo y token se están actualizando automáticamente y cuándo realmente hay una falla.
+- La app detecta automáticamente este tipo de casos viejos.
+- Nuevas publicaciones quedan bloqueadas si no pueden respetar literalmente el XML.
+- Los documentos afectados quedan visibles para corrección, en vez de pasar silenciosamente como publicados.
+
+Si apruebas, implemento este blindaje y la auditoría retroactiva.
