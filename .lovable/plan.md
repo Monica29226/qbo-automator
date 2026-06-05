@@ -1,68 +1,55 @@
-## Diagnóstico
+## Objetivo
+Corregir el problema que hace que algunas compañías publiquen en contabilidad con IVA agregado incorrectamente, y reforzar el dashboard para que las alertas de correo/token reflejen de forma confiable el estado automático real.
 
-### 1) ASADA DE TARBACA — "última sync = marzo 2026"
+## Hallazgos confirmados
+- El caso de **Tree of Life / factura 00100001010000000398** sí reproduce el problema.
+- En la base, el XML y el documento procesado guardan el total correcto: **457,650.00** con impuesto **52,650.00**.
+- El total inflado que llega a contabilidad (**517,144.50**) ocurre por configuración de publicación de esa organización:
+  - `default_uses_tax = false`
+  - `tax_handling = included_in_line_items`
+- Esa combinación hace que el publicador arme líneas con IVA incluido, pero en QuickBooks el resultado final termina variando por compañía según cómo esa cuenta tenga configurados sus códigos/tasas de impuesto.
+- No es un problema del XML; es un problema de cómo se interpreta por organización al publicar.
+- Hoy solo encontré dos organizaciones con una configuración especial que puede causar este comportamiento:
+  - Tree of Life
+  - ASOCIACION DESTINY PROYECT
+- Las alertas actuales de correo/token son limitadas:
+  - QuickBooks muestra solo casos críticos cercanos a expiración.
+  - Correo solo detecta desconexión o credenciales incompletas.
+  - El dashboard no muestra claramente “última renovación automática exitosa” ni un estado verificable de auto-actualización.
 
-El badge del dashboard sí está en tiempo real: lee `sync_logs.started_at` cada 60s. El problema real es que **no se ha ejecutado ninguna sincronización desde el 25 de marzo 2026**, y la razón es:
+## Plan de implementación
+1. **Unificar la regla de publicación para respetar literal el XML**
+   - Ajustar `publish-to-quickbooks` para que, en facturas XML con impuesto, nunca dependa de una combinación ambigua por organización que permita a QuickBooks recalcular encima.
+   - Hacer que la publicación priorice el total del XML como fuente absoluta y bloquee configuraciones que generen un total distinto.
+   - Mantener la excepción solo cuando realmente se trate de un modo contable explícito y seguro, sin permitir que termine inflando el total.
 
-- `organizations.is_active = false` para Tarbaca.
-- El cron `auto-sync-invoices` filtra `is_active = true` (línea 109), por lo que **Tarbaca está siendo omitida en todas las corridas**, aunque Gmail se reconectó ayer (04-jun) y QuickBooks está activo.
-- La última corrida (25-mar) terminó en error `Gmail API error 403`, y desde entonces alguien marcó la organización como inactiva.
+2. **Eliminar la variación peligrosa por compañía**
+   - Revisar la lógica que mezcla `tax_handling` y `default_uses_tax`.
+   - Convertirla en una decisión determinística y auditada para compras:
+     - o IVA separado y total exacto del XML,
+     - o gasto incluido sin recálculo adicional de QuickBooks.
+   - Evitar que una organización quede en un estado híbrido que produzca un total distinto al XML.
 
-El badge dice la verdad: no hay sincronización porque la organización está desactivada.
+3. **Agregar validación dura antes de publicar**
+   - Si el payload esperado para QuickBooks no cuadra exactamente con `totalComprobante` del XML, detener la publicación con error claro en vez de enviar algo ambiguo.
+   - Registrar mejor el motivo para que se vea cuál configuración causó el bloqueo.
 
-### 2) Tree of Life — "está sumando IVA donde no corresponde"
+4. **Mejorar alertas automáticas en dashboard**
+   - Añadir señal visible para renovación automática de token de QuickBooks.
+   - Añadir señal visible para estado de conexión/credenciales del correo con refresco periódico y mensajes más concretos.
+   - Evitar que el usuario tenga que “adivinar” si sí se renovó o si solo no hay alerta crítica.
 
-Configuración actual:
-- `system_settings.default_uses_tax = 'false'` (IVA como gasto) ✅
-- `settings.tax_handling = 'included_in_line_items'` (IVA al gasto en líneas) ✅
+5. **Auditoría focalizada del caso Tree of Life**
+   - Dejar trazabilidad más clara del modo fiscal usado en la publicación de cada documento.
+   - Preparar el caso para que futuras diferencias por compañía se puedan detectar rápido desde el sistema, sin depender de screenshots de contabilidad.
 
-Auditoría XML vs QBO de las últimas 10 facturas publicadas:
+## Archivos a tocar
+- `supabase/functions/publish-to-quickbooks/index.ts`
+- `src/components/dashboard/QuickBooksTokenAlert.tsx`
+- `src/components/dashboard/GmailTokenAlert.tsx`
+- Posiblemente `src/pages/Dashboard.tsx` si hace falta exponer el nuevo estado en la vista principal.
 
-```text
-9 OK, 0 IVA separado, 1 mismatch
-```
-
-Todas las facturas normales publicadas en QBO tienen `TotalAmt` idéntico al `totalComprobante` del XML (ej. 21,855.33 / 79,100 / 3,000,000.84 / 68,295.32 — todos coinciden con `GlobalTaxCalculation=NotApplicable` y `TotalTax=0`).
-
-El único "mismatch" es una **nota de crédito** (`00100501030000008297`): XML −21,855.33, QBO +21,855.33. Esto es correcto en QBO porque las `VendorCredit` se almacenan con monto positivo (el signo lo da el tipo de entidad, no el `TotalAmt`); el auditor compara con signo y por eso lo marca.
-
-Necesito el número de factura o el proveedor específico que estás viendo inflado para reproducirlo, porque los datos actuales en QBO de Tree of Life respetan exactamente el `totalComprobante` del XML.
-
----
-
-## Cambios propuestos
-
-### A. Reactivar Tarbaca y endurecer la visibilidad
-
-1. **Reactivar la organización en BD**
-   ```sql
-   UPDATE public.organizations
-   SET is_active = true, updated_at = now()
-   WHERE id = 'e03a56ce-8936-4591-8c1c-f8c067efe89d';
-   ```
-
-2. **Disparar primera sincronización manual** (Gmail) para que se cree un nuevo `sync_logs` y el badge se ponga verde.
-
-3. **Mejorar el badge "Última sync"** en `src/pages/Dashboard.tsx`:
-   - Si `organizations.is_active = false` → mostrar badge ámbar "Organización inactiva — la sincronización está pausada" (en vez de "Sin registros" o una fecha vieja). Esto evita confusión futura.
-   - Tooltip con la causa exacta del último `sync_logs.error_message`.
-
-4. **Alerta en SystemAlertsPanel**: si han pasado >24 h sin un `sync_logs` exitoso para una org con integraciones activas, levantar issue `stale_sync` con botón "Sincronizar ahora".
-
-### B. Caso Tree of Life (pendiente de evidencia)
-
-Como las 10 facturas auditadas hoy respetan el XML al céntimo, antes de tocar el publicador necesito:
-
-- El número de factura (o `doc_key`) específico donde ves el monto inflado, o
-- Aprobación para correr el auditor sobre los últimos 30 días de Tree of Life y entregar la lista de discrepancias reales antes de cambiar lógica de publicación.
-
-No voy a tocar `publish-to-quickbooks` "preventivamente" porque podría romper las facturas que hoy están correctas.
-
----
-
-## Archivos a modificar (parte A)
-
-- Migración SQL: `UPDATE organizations SET is_active = true ...`
-- `src/pages/Dashboard.tsx` — badge "Última sync" con estado `inactive`
-- `src/hooks/useDashboardStats.ts` — exponer `is_active` de la organización
-- `src/components/dashboard/SystemAlertsPanel.tsx` — issue `stale_sync`
+## Resultado esperado
+- La factura de Tree of Life y las equivalentes en otras compañías respetarán literalmente el total del XML.
+- El comportamiento dejará de depender peligrosamente de la configuración particular de cada compañía.
+- El dashboard mostrará mejor cuándo correo y token se están actualizando automáticamente y cuándo realmente hay una falla.
