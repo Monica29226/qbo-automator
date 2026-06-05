@@ -33,11 +33,21 @@ interface Orphan {
   reason: string;
 }
 
+interface AmountMismatch extends Orphan {
+  xml_total: number;
+  qbo_total: number;
+  total_diff: number;
+  xml_tax: number;
+  qbo_tax: number;
+  tax_diff: number;
+}
+
 export const AuditPublishedVsQBO = () => {
   const { activeOrganization } = useAuth();
   const [auditing, setAuditing] = useState(false);
   const [republishing, setRepublishing] = useState(false);
   const [orphans, setOrphans] = useState<Orphan[]>([]);
+  const [mismatches, setMismatches] = useState<AmountMismatch[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [progress, setProgress] = useState<{ checked: number; total: number } | null>(null);
   const [ran, setRan] = useState(false);
@@ -93,17 +103,19 @@ export const AuditPublishedVsQBO = () => {
     }
     setAuditing(true);
     setOrphans([]);
+    setMismatches([]);
     setSelected(new Set());
     setProgress({ checked: 0, total: 0 });
 
     try {
       let offset = 0;
       let allOrphans: Orphan[] = [];
+      let allMismatches: AmountMismatch[] = [];
       let total = 0;
       // Safety cap to avoid infinite loops
       for (let i = 0; i < 50; i++) {
         const { data, error } = await supabase.functions.invoke("audit-qbo-published-vs-actual", {
-          body: { organization_id: activeOrganization, offset, limit: 200 },
+          body: { organization_id: activeOrganization, offset, limit: 200, mark_review: true },
         });
         if (error) throw error;
         if (!data?.success) {
@@ -115,13 +127,17 @@ export const AuditPublishedVsQBO = () => {
         }
         total = data.total ?? 0;
         allOrphans = allOrphans.concat(data.orphans || []);
+        allMismatches = allMismatches.concat(data.amount_mismatches || []);
         offset = data.next_offset ?? (offset + (data.checked_in_page || 0));
         setProgress({ checked: offset, total });
         setOrphans([...allOrphans]);
+        setMismatches([...allMismatches]);
         if (!data.has_more) break;
       }
       setRan(true);
-      toast.success(`Auditoría completa: ${allOrphans.length} huérfanas de ${total} publicadas`);
+      toast.success(
+        `Auditoría completa: ${allOrphans.length} huérfanas y ${allMismatches.length} con montos distintos de ${total} publicadas`
+      );
     } catch (err: any) {
       toast.error(`Error: ${err.message}`);
     } finally {
@@ -136,8 +152,9 @@ export const AuditPublishedVsQBO = () => {
   };
 
   const toggleAll = () => {
-    if (selected.size === orphans.length) setSelected(new Set());
-    else setSelected(new Set(orphans.map((o) => o.id)));
+    const ids = [...orphans.map((o) => o.id), ...mismatches.map((m) => m.id)];
+    if (selected.size === ids.length) setSelected(new Set());
+    else setSelected(new Set(ids));
   };
 
   const republish = async () => {
@@ -223,10 +240,58 @@ export const AuditPublishedVsQBO = () => {
         </div>
 
 
-        {ran && orphans.length === 0 && !auditing && (
+        {ran && orphans.length === 0 && mismatches.length === 0 && !auditing && (
           <div className="text-sm text-muted-foreground flex items-center gap-2 p-3 bg-muted rounded">
             <ShieldCheck className="h-4 w-4 text-primary" />
-            Todas las facturas publicadas existen en QuickBooks.
+            Todas las facturas publicadas existen en QuickBooks y los montos coinciden con el XML.
+          </div>
+        )}
+
+        {mismatches.length > 0 && (
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="h-4 w-4 text-destructive" />
+              <span className="text-sm font-medium">
+                {mismatches.length} factura(s) con monto QBO distinto al XML (marcadas en revisión)
+              </span>
+            </div>
+            <div className="text-xs text-muted-foreground">
+              Bórralas en QuickBooks y luego republícalas desde el log de pendientes.
+            </div>
+            <div className="border rounded max-h-96 overflow-y-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-muted sticky top-0">
+                  <tr className="text-left">
+                    <th className="p-2">Fecha</th>
+                    <th className="p-2">Proveedor</th>
+                    <th className="p-2">Número</th>
+                    <th className="p-2 text-right">XML</th>
+                    <th className="p-2 text-right">QBO</th>
+                    <th className="p-2 text-right">Diferencia</th>
+                    <th className="p-2">QBO ID</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {mismatches.map((m) => (
+                    <tr key={m.id} className="border-t hover:bg-muted/50">
+                      <td className="p-2 whitespace-nowrap">{m.issue_date}</td>
+                      <td className="p-2">{m.supplier_name}</td>
+                      <td className="p-2 font-mono text-xs">{m.doc_number}</td>
+                      <td className="p-2 text-right whitespace-nowrap">
+                        {m.currency} {Number(m.xml_total).toLocaleString()}
+                      </td>
+                      <td className="p-2 text-right whitespace-nowrap">
+                        {m.currency} {Number(m.qbo_total).toLocaleString()}
+                      </td>
+                      <td className="p-2 text-right whitespace-nowrap text-destructive font-medium">
+                        {Number(m.total_diff).toLocaleString()}
+                      </td>
+                      <td className="p-2 font-mono text-xs">{m.qbo_entity_id}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
 

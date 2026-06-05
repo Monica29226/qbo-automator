@@ -2986,17 +2986,7 @@ Deno.serve(async (req) => {
             } catch (alertErr: any) {
               logError(`Failed to record qbo_total_mismatch alert: ${alertErr?.message || alertErr}`);
             }
-            // Persist a clear, actionable error on the document so the user sees it
-            try {
-              await supabase
-                .from('processed_documents')
-                .update({
-                  error_message: `Discrepancia QBO vs XML: QBO=${qboTotalAmt.toFixed(2)}, XML=${expectedTotal.toFixed(2)} (diff ${totalDiscrepancy.toFixed(2)}). Bill creado (ID ${entityId}) pero requiere revisión en QuickBooks.`,
-                })
-                .eq('id', doc.id);
-            } catch (updErr: any) {
-              logError(`Failed to mark doc with discrepancy: ${updErr?.message || updErr}`);
-            }
+            (doc as any).__discrepancyMsg = `Discrepancia QBO vs XML: QBO=${qboTotalAmt.toFixed(2)}, XML=${expectedTotal.toFixed(2)} (diff ${totalDiscrepancy.toFixed(2)}). Bill creado (ID ${entityId}) pero requiere revisión y republicación en QuickBooks.`;
           }
 
         }
@@ -3010,16 +3000,20 @@ Deno.serve(async (req) => {
         
         // =============================================================
         // STEP 12: UPDATE DOCUMENT
+        // If a post-publish discrepancy was detected, flag the document as
+        // 'review' instead of 'published' so it surfaces in the UI for the
+        // user to delete in QBO and republish cleanly.
         // =============================================================
+        const _discrepancyMsg: string | null = (doc as any).__discrepancyMsg || null;
         await supabase
           .from("processed_documents")
           .update({
             qbo_entity_id: entityId,
             qbo_entity_type: entityType,
-            status: "published",
+            status: _discrepancyMsg ? "review" : "published",
             processed_at: new Date().toISOString(),
             processed_by: userId,
-            error_message: null,
+            error_message: _discrepancyMsg,
           })
           .eq("id", doc.id);
         
