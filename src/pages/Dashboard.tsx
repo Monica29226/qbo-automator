@@ -32,6 +32,7 @@ import WaitingForQboPanel from "@/components/dashboard/WaitingForQboPanel";
 import CurrencyMismatchPanel from "@/components/dashboard/CurrencyMismatchPanel";
 
 import { SharePointKpiCard } from "@/components/dashboard/SharePointKpiCard";
+import { AutoUpdateStatusBadge } from "@/components/dashboard/AutoUpdateStatusBadge";
 import { AccountsPayableCard } from "@/components/dashboard/AccountsPayableCard";
 import { OnboardingBanner } from "@/components/onboarding/OnboardingBanner";
 const AICreditsMonitor = lazy(() => import("@/components/dashboard/AICreditsMonitor").then(m => ({ default: m.AICreditsMonitor })));
