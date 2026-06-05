@@ -33,11 +33,21 @@ interface Orphan {
   reason: string;
 }
 
+interface AmountMismatch extends Orphan {
+  xml_total: number;
+  qbo_total: number;
+  total_diff: number;
+  xml_tax: number;
+  qbo_tax: number;
+  tax_diff: number;
+}
+
 export const AuditPublishedVsQBO = () => {
   const { activeOrganization } = useAuth();
   const [auditing, setAuditing] = useState(false);
   const [republishing, setRepublishing] = useState(false);
   const [orphans, setOrphans] = useState<Orphan[]>([]);
+  const [mismatches, setMismatches] = useState<AmountMismatch[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [progress, setProgress] = useState<{ checked: number; total: number } | null>(null);
   const [ran, setRan] = useState(false);
