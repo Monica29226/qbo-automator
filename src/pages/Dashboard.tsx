@@ -76,23 +76,38 @@ const Dashboard = () => {
   // React Query hooks for cached data
   const { data: stats = { processed: 0, review: 0, pending: 0, total: 0, errors: 0, published: 0, pendingConfig: 0 }, isLoading: statsLoading } = useDashboardStats(activeOrganization);
   const { data: connections = { gmail: false, quickbooks: false, outlook: false, hostinger: false, bluehost: false }, isLoading: connectionsLoading } = useOrganizationConnections(activeOrganization);
-  const { data: lastSyncAt } = useQuery({
+  const { data: lastSyncInfo } = useQuery({
     queryKey: ["dashboard-last-sync", activeOrganization],
     queryFn: async () => {
       if (!activeOrganization) return null;
-      const { data } = await supabase
-        .from("sync_logs")
-        .select("started_at")
-        .eq("organization_id", activeOrganization)
-        .order("started_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      return data?.started_at ?? null;
+      const [{ data: log }, { data: org }] = await Promise.all([
+        supabase
+          .from("sync_logs")
+          .select("started_at, status, error_message")
+          .eq("organization_id", activeOrganization)
+          .order("started_at", { ascending: false })
+          .limit(1)
+          .maybeSingle(),
+        supabase
+          .from("organizations")
+          .select("is_active")
+          .eq("id", activeOrganization)
+          .maybeSingle(),
+      ]);
+      return {
+        startedAt: log?.started_at ?? null,
+        status: log?.status ?? null,
+        errorMessage: log?.error_message ?? null,
+        isActive: org?.is_active ?? true,
+      };
     },
     enabled: !!activeOrganization,
     staleTime: 30_000,
     refetchInterval: 60_000,
   });
+  const lastSyncAt = lastSyncInfo?.startedAt ?? null;
+  const orgIsActive = lastSyncInfo?.isActive ?? true;
+  const lastSyncError = lastSyncInfo?.errorMessage ?? null;
   const { data: cemsanMarchCoverage } = useQuery({
     queryKey: ["dashboard-cemsan-march-gap", activeOrganization],
     queryFn: async () => {
@@ -372,10 +387,17 @@ const Dashboard = () => {
                   <Suspense fallback={null}>
                     <IVAModeIndicator organizationId={activeOrganization} />
                   </Suspense>
-                  <Badge variant={isLastSyncFresh ? "default" : "destructive"} className="h-fit">
-                    <Clock className="h-3 w-3 mr-1" />
-                    Última sync: {lastSyncLabel}
-                  </Badge>
+                  {!orgIsActive ? (
+                    <Badge variant="outline" className="h-fit border-amber-500 text-amber-700 dark:text-amber-400" title={lastSyncError ?? undefined}>
+                      <Clock className="h-3 w-3 mr-1" />
+                      Organización inactiva — sincronización pausada
+                    </Badge>
+                  ) : (
+                    <Badge variant={isLastSyncFresh ? "default" : "destructive"} className="h-fit" title={lastSyncError ?? undefined}>
+                      <Clock className="h-3 w-3 mr-1" />
+                      Última sync: {lastSyncLabel}
+                    </Badge>
+                  )}
                 </div>
               </div>
 
