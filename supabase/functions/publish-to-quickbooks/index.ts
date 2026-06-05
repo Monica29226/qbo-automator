@@ -2317,25 +2317,28 @@ Deno.serve(async (req) => {
                 },
               };
               
-              // When IVA goes to expense (includeTaxInLines), force EXEMPT TaxCodeRef
-              // so QBO doesn't try to recalculate tax on top of a line that already
-              // contains the IVA. Otherwise use the actual rate's TaxCodeRef.
-              const rateForCode = includeTaxInLines ? 0 : tasaImpuesto;
-              const taxCodeId = await getTaxCodeRef(rateForCode);
-              if (taxCodeId) {
-                lineDetail.AccountBasedExpenseLineDetail.TaxCodeRef = { value: taxCodeId };
-              } else if (rateForCode > 0) {
-                missingLineTaxRates.add(Number(rateForCode.toFixed(2)));
-              } else if (includeTaxInLines) {
-                // No exempt TaxCode available in QBO — cannot publish in IVA-as-expense mode
-                missingLineTaxRates.add(0);
+              // CRITICAL: When IVA goes inside the line as expense (includeTaxInLines),
+              // do NOT attach any TaxCodeRef. With GlobalTaxCalculation=NotApplicable
+              // and no TaxCodeRef, QBO won't recalculate tax on top of a line that
+              // already includes the IVA. Otherwise use the actual rate's TaxCodeRef.
+              if (includeTaxInLines) {
+                // Intentionally omit TaxCodeRef to prevent QBO from adding tax on top.
+                logInfo(`   🧾 ${doc.doc_number} Línea ${item.numeroLinea || '?'}: subtotal=${Number(subtotal).toFixed(2)} | IVA ${tasaImpuesto}% = ${Number(montoImpuestoIVA).toFixed(2)} INCLUIDO en línea | TaxCode QBO: <ninguno> [modo IVA-como-gasto]`);
+              } else {
+                const rateForCode = tasaImpuesto;
+                const taxCodeId = await getTaxCodeRef(rateForCode);
+                if (taxCodeId) {
+                  lineDetail.AccountBasedExpenseLineDetail.TaxCodeRef = { value: taxCodeId };
+                } else if (rateForCode > 0) {
+                  missingLineTaxRates.add(Number(rateForCode.toFixed(2)));
+                }
+
+                const taxCodeMatched = taxCodeId
+                  ? (taxCodesCache?.find((tc: any) => tc.Id === taxCodeId)?.Name || taxCodeId)
+                  : (rateForCode > 0 ? 'BLOQUEADO (no encontrado en QBO)' : 'sin código');
+
+                logInfo(`   🧾 ${doc.doc_number} Línea ${item.numeroLinea || '?'}: subtotal=${Number(subtotal).toFixed(2)} | IVA ${tasaImpuesto}% = ${Number(montoImpuestoIVA).toFixed(2)} | TaxCode QBO: ${taxCodeMatched}`);
               }
-
-              const taxCodeMatched = taxCodeId
-                ? (taxCodesCache?.find((tc: any) => tc.Id === taxCodeId)?.Name || taxCodeId)
-                : (rateForCode > 0 ? 'BLOQUEADO (no encontrado en QBO)' : 'FALTA TaxCode exento en QBO');
-
-              logInfo(`   🧾 ${doc.doc_number} Línea ${item.numeroLinea || '?'}: subtotal=${Number(subtotal).toFixed(2)} | IVA ${tasaImpuesto}% = ${Number(montoImpuestoIVA).toFixed(2)} | TaxCode QBO: ${taxCodeMatched}${includeTaxInLines ? ' [IVA al gasto → exento]' : ''}`);
               
               // Store montoTotalLinea for TaxInclusive retry fallback
             const montoTotalLinea = parseFloat(item.montoTotalLinea) || (Math.abs(subtotal) + Math.abs(montoImpuestoIVA) + Math.abs(montoImpuestoIEBLE));
@@ -2437,15 +2440,15 @@ Deno.serve(async (req) => {
             }
             if (fallbackTaxRate === 0) fallbackTaxRate = 13; // Final fallback to 13%
           }
-          // In IVA-as-expense mode, force exempt TaxCodeRef on the fallback line too
-          const fallbackRateForCode = includeTaxInLines ? 0 : fallbackTaxRate;
-          const fallbackTaxCodeId = await getTaxCodeRef(fallbackRateForCode);
-          if (fallbackTaxCodeId) {
-            fallbackLine.AccountBasedExpenseLineDetail.TaxCodeRef = { value: fallbackTaxCodeId };
-          } else if (fallbackRateForCode > 0) {
-            missingLineTaxRates.add(Number(fallbackRateForCode.toFixed(2)));
-          } else if (includeTaxInLines) {
-            missingLineTaxRates.add(0);
+          // In IVA-as-expense mode, omit TaxCodeRef so QBO doesn't add tax on top of
+          // a line that already contains the IVA. Otherwise apply the rate's TaxCodeRef.
+          if (!includeTaxInLines) {
+            const fallbackTaxCodeId = await getTaxCodeRef(fallbackTaxRate);
+            if (fallbackTaxCodeId) {
+              fallbackLine.AccountBasedExpenseLineDetail.TaxCodeRef = { value: fallbackTaxCodeId };
+            } else if (fallbackTaxRate > 0) {
+              missingLineTaxRates.add(Number(fallbackTaxRate.toFixed(2)));
+            }
           }
           
           lines.push(fallbackLine);
