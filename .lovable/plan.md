@@ -1,54 +1,68 @@
-# Por qué Melissa no ve todas las empresas
+## Diagnóstico
 
-Investigué la base de datos y el código de "Gestión de Usuarios":
+### 1) ASADA DE TARBACA — "última sync = marzo 2026"
 
-- Melissa (`melissa@aclcostarica.com`) sólo tiene **2 membresías** en `organization_members`:
-  - "Agricola Lloronal" (member)
-  - "Mi Empresa" (owner)
-- Existen **31 organizaciones** (19 activas) en el sistema.
-- Cuando intentaste darle acceso "a todas", **no se crearon las filas** en `organization_members` para las demás empresas.
+El badge del dashboard sí está en tiempo real: lee `sync_logs.started_at` cada 60s. El problema real es que **no se ha ejecutado ninguna sincronización desde el 25 de marzo 2026**, y la razón es:
 
-## Causa raíz
+- `organizations.is_active = false` para Tarbaca.
+- El cron `auto-sync-invoices` filtra `is_active = true` (línea 109), por lo que **Tarbaca está siendo omitida en todas las corridas**, aunque Gmail se reconectó ayer (04-jun) y QuickBooks está activo.
+- La última corrida (25-mar) terminó en error `Gmail API error 403`, y desde entonces alguien marcó la organización como inactiva.
 
-Las políticas RLS están escritas pensando solo en miembros, sin contemplar al **admin global** (rol `admin` en `user_roles`):
+El badge dice la verdad: no hay sincronización porque la organización está desactivada.
 
-1. `organizations` → política `org_select_members`: solo devuelve organizaciones donde el usuario ya es miembro. Por eso el diálogo de "Editar empresas del usuario" mostraba solo el subconjunto de empresas del admin que estaba operando, no las 31. El botón "Seleccionar todas" solo seleccionaba las visibles.
-2. `organization_members` → política `om_insert_admin_adds_member` exige `is_organization_admin(auth.uid(), organization_id)`, es decir, ser admin **de cada empresa** para agregar al usuario. Un admin global no cumple esto, así que aunque se intentara insertar, fallaría silenciosamente.
+### 2) Tree of Life — "está sumando IVA donde no corresponde"
 
-Resultado: el flujo no informó error visible y la asignación quedó solo en las pocas empresas donde el admin era miembro/admin.
+Configuración actual:
+- `system_settings.default_uses_tax = 'false'` (IVA como gasto) ✅
+- `settings.tax_handling = 'included_in_line_items'` (IVA al gasto en líneas) ✅
 
-## Plan de solución
+Auditoría XML vs QBO de las últimas 10 facturas publicadas:
 
-### 1. Migración SQL — dar bypass al admin global
+```text
+9 OK, 0 IVA separado, 1 mismatch
+```
 
-Agregar políticas adicionales (sin remover las existentes) usando `public.has_role(auth.uid(), 'admin')`:
+Todas las facturas normales publicadas en QBO tienen `TotalAmt` idéntico al `totalComprobante` del XML (ej. 21,855.33 / 79,100 / 3,000,000.84 / 68,295.32 — todos coinciden con `GlobalTaxCalculation=NotApplicable` y `TotalTax=0`).
 
-- `organizations`: SELECT permitido si es admin global.
-- `organization_members`: SELECT / INSERT / UPDATE / DELETE permitidos si es admin global.
-- `organization_invitations`: SELECT permitido si es admin global (para que también vea invitaciones pendientes de todas las orgs).
+El único "mismatch" es una **nota de crédito** (`00100501030000008297`): XML −21,855.33, QBO +21,855.33. Esto es correcto en QBO porque las `VendorCredit` se almacenan con monto positivo (el signo lo da el tipo de entidad, no el `TotalAmt`); el auditor compara con signo y por eso lo marca.
 
-Esto se alinea con la regla del proyecto "Admins can view all organizations".
+Necesito el número de factura o el proveedor específico que estás viendo inflado para reproducirlo, porque los datos actuales en QBO de Tree of Life respetan exactamente el `totalComprobante` del XML.
 
-### 2. Backfill de Melissa
+---
 
-Insertar membresías faltantes para Melissa en las 19 organizaciones activas restantes con `role='member'` e `is_active=true` (sin tocar las 2 que ya tiene). Las inactivas no se incluyen para no reactivar empresas archivadas; si quieres también esas, lo indicas.
+## Cambios propuestos
 
-### 3. Feedback en UI (frontend)
+### A. Reactivar Tarbaca y endurecer la visibilidad
 
-En `src/pages/UsersManagement.tsx` (`handleSaveUserOrgs`):
-- Revisar el `error` devuelto por cada `insert`/`update` en `organization_members` y acumular fallos.
-- Si hay fallos, mostrar `toast.error` con la cuenta de empresas que no se pudieron asignar (en lugar del actual "Empresas actualizadas correctamente" siempre verde).
-- Después del fix de RLS, esto sirve como red de seguridad para futuros casos.
+1. **Reactivar la organización en BD**
+   ```sql
+   UPDATE public.organizations
+   SET is_active = true, updated_at = now()
+   WHERE id = 'e03a56ce-8936-4591-8c1c-f8c067efe89d';
+   ```
 
-### 4. Verificación
+2. **Disparar primera sincronización manual** (Gmail) para que se cree un nuevo `sync_logs` y el badge se ponga verde.
 
-Tras aplicar:
-- Reabrir el diálogo "Editar Empresas" → deben aparecer las 19 activas.
-- Melissa al iniciar sesión en `SelectCompany` verá las 19 empresas.
+3. **Mejorar el badge "Última sync"** en `src/pages/Dashboard.tsx`:
+   - Si `organizations.is_active = false` → mostrar badge ámbar "Organización inactiva — la sincronización está pausada" (en vez de "Sin registros" o una fecha vieja). Esto evita confusión futura.
+   - Tooltip con la causa exacta del último `sync_logs.error_message`.
 
-## Archivos afectados
+4. **Alerta en SystemAlertsPanel**: si han pasado >24 h sin un `sync_logs` exitoso para una org con integraciones activas, levantar issue `stale_sync` con botón "Sincronizar ahora".
 
-- Nueva migración SQL (políticas RLS + backfill de Melissa).
-- `src/pages/UsersManagement.tsx` (mejor manejo de errores en `handleSaveUserOrgs`).
+### B. Caso Tree of Life (pendiente de evidencia)
 
-¿Apruebo y procedo?
+Como las 10 facturas auditadas hoy respetan el XML al céntimo, antes de tocar el publicador necesito:
+
+- El número de factura (o `doc_key`) específico donde ves el monto inflado, o
+- Aprobación para correr el auditor sobre los últimos 30 días de Tree of Life y entregar la lista de discrepancias reales antes de cambiar lógica de publicación.
+
+No voy a tocar `publish-to-quickbooks` "preventivamente" porque podría romper las facturas que hoy están correctas.
+
+---
+
+## Archivos a modificar (parte A)
+
+- Migración SQL: `UPDATE organizations SET is_active = true ...`
+- `src/pages/Dashboard.tsx` — badge "Última sync" con estado `inactive`
+- `src/hooks/useDashboardStats.ts` — exponer `is_active` de la organización
+- `src/components/dashboard/SystemAlertsPanel.tsx` — issue `stale_sync`
