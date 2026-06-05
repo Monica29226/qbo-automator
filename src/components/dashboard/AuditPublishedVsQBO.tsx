@@ -103,17 +103,19 @@ export const AuditPublishedVsQBO = () => {
     }
     setAuditing(true);
     setOrphans([]);
+    setMismatches([]);
     setSelected(new Set());
     setProgress({ checked: 0, total: 0 });
 
     try {
       let offset = 0;
       let allOrphans: Orphan[] = [];
+      let allMismatches: AmountMismatch[] = [];
       let total = 0;
       // Safety cap to avoid infinite loops
       for (let i = 0; i < 50; i++) {
         const { data, error } = await supabase.functions.invoke("audit-qbo-published-vs-actual", {
-          body: { organization_id: activeOrganization, offset, limit: 200 },
+          body: { organization_id: activeOrganization, offset, limit: 200, mark_review: true },
         });
         if (error) throw error;
         if (!data?.success) {
@@ -125,13 +127,17 @@ export const AuditPublishedVsQBO = () => {
         }
         total = data.total ?? 0;
         allOrphans = allOrphans.concat(data.orphans || []);
+        allMismatches = allMismatches.concat(data.amount_mismatches || []);
         offset = data.next_offset ?? (offset + (data.checked_in_page || 0));
         setProgress({ checked: offset, total });
         setOrphans([...allOrphans]);
+        setMismatches([...allMismatches]);
         if (!data.has_more) break;
       }
       setRan(true);
-      toast.success(`Auditoría completa: ${allOrphans.length} huérfanas de ${total} publicadas`);
+      toast.success(
+        `Auditoría completa: ${allOrphans.length} huérfanas y ${allMismatches.length} con montos distintos de ${total} publicadas`
+      );
     } catch (err: any) {
       toast.error(`Error: ${err.message}`);
     } finally {
@@ -146,8 +152,9 @@ export const AuditPublishedVsQBO = () => {
   };
 
   const toggleAll = () => {
-    if (selected.size === orphans.length) setSelected(new Set());
-    else setSelected(new Set(orphans.map((o) => o.id)));
+    const ids = [...orphans.map((o) => o.id), ...mismatches.map((m) => m.id)];
+    if (selected.size === ids.length) setSelected(new Set());
+    else setSelected(new Set(ids));
   };
 
   const republish = async () => {
