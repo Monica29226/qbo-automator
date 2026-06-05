@@ -2960,6 +2960,9 @@ Deno.serve(async (req) => {
           if (totalDiscrepancy > 1.0 || taxDiscrepancy > 1.0) {
             const issue = {
               code: 'qbo_total_mismatch',
+              type: 'critical',
+              title: `Total QBO no coincide con XML — ${doc.doc_number}`,
+              description: `QBO total=${qboTotalAmt.toFixed(2)} vs XML total=${expectedTotal.toFixed(2)} (diff ${totalDiscrepancy.toFixed(2)}). QBO tax=${qboTotalTax.toFixed(2)} vs XML tax=${expectedTax.toFixed(2)} (diff ${taxDiscrepancy.toFixed(2)}). Revisa la configuración fiscal de la organización.`,
               doc_number: doc.doc_number,
               doc_key: doc.doc_key,
               qbo_entity_id: entityId,
@@ -2972,16 +2975,27 @@ Deno.serve(async (req) => {
               tax_diff: Number(taxDiscrepancy.toFixed(2)),
               detected_at: new Date().toISOString(),
             };
-            logInfo(`⚠️ ${doc.doc_number}: DISCREPANCIA POST-PUBLICACIÓN ${JSON.stringify(issue)}`);
+            logError(`⚠️ ${doc.doc_number}: DISCREPANCIA POST-PUBLICACIÓN ${JSON.stringify(issue)}`);
             try {
               await supabase.from('alert_history').insert({
                 organization_id: doc.organization_id,
-                alert_type: 'qbo_total_mismatch',
+                alert_type: 'critical',
                 issues_count: 1,
                 issues_data: [issue],
               });
             } catch (alertErr: any) {
               logError(`Failed to record qbo_total_mismatch alert: ${alertErr?.message || alertErr}`);
+            }
+            // Persist a clear, actionable error on the document so the user sees it
+            try {
+              await supabase
+                .from('processed_documents')
+                .update({
+                  error_message: `Discrepancia QBO vs XML: QBO=${qboTotalAmt.toFixed(2)}, XML=${expectedTotal.toFixed(2)} (diff ${totalDiscrepancy.toFixed(2)}). Bill creado (ID ${entityId}) pero requiere revisión en QuickBooks.`,
+                })
+                .eq('id', doc.id);
+            } catch (updErr: any) {
+              logError(`Failed to mark doc with discrepancy: ${updErr?.message || updErr}`);
             }
           }
 
