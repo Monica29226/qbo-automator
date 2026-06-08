@@ -405,17 +405,58 @@ const Dashboard = () => {
                   <Suspense fallback={null}>
                     <AutoUpdateStatusBadge organizationId={activeOrganization} />
                   </Suspense>
-                  {!orgIsActive ? (
-                    <Badge variant="outline" className="h-fit border-amber-500 text-amber-700 dark:text-amber-400" title={lastSyncError ?? undefined}>
-                      <Clock className="h-3 w-3 mr-1" />
-                      Organización inactiva — sincronización pausada
-                    </Badge>
-                  ) : (
-                    <Badge variant={isLastSyncFresh ? "default" : "destructive"} className="h-fit" title={lastSyncError ?? undefined}>
-                      <Clock className="h-3 w-3 mr-1" />
-                      Última sync: {lastSyncLabel}
-                    </Badge>
-                  )}
+                  <Badge variant={isLastSyncFresh ? "default" : "destructive"} className="h-fit" title={lastSyncError ?? undefined}>
+                    <Clock className="h-3 w-3 mr-1" />
+                    Última sync: {lastSyncLabel}
+                  </Badge>
+                </div>
+              </div>
+
+              {!orgIsActive && (
+                <Card className="mb-4 border-l-4 border-l-amber-500 bg-amber-50/40 dark:bg-amber-900/10">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-base flex items-center gap-2 text-amber-800 dark:text-amber-300">
+                      <AlertCircle className="h-4 w-4" />
+                      Sincronización pausada para esta organización
+                    </CardTitle>
+                    <CardDescription>
+                      El cron de correo/QuickBooks está omitiendo esta organización porque fue marcada como inactiva.
+                      Las integraciones siguen conectadas — sólo hay que reactivarla para que vuelvan a entrar facturas.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <Button
+                      size="sm"
+                      onClick={async () => {
+                        if (!activeOrganization) return;
+                        const { error } = await supabase
+                          .from("organizations")
+                          .update({ is_active: true })
+                          .eq("id", activeOrganization);
+                        if (error) {
+                          toast.error("No se pudo reactivar: " + error.message);
+                          return;
+                        }
+                        toast.success("Sincronización reactivada");
+                        queryClient.invalidateQueries({ queryKey: ["dashboard-last-sync"] });
+                        try {
+                          await supabase.functions.invoke("auto-sync-invoices", {
+                            body: { organization_id: activeOrganization },
+                          });
+                        } catch {}
+                        refreshData();
+                      }}
+                    >
+                      <RefreshCw className="h-4 w-4 mr-2" />
+                      Reactivar sincronización ahora
+                    </Button>
+                  </CardContent>
+                </Card>
+              )}
+
+              {false && (
+                <div className="hidden">
+
                 </div>
               </div>
 
