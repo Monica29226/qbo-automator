@@ -454,11 +454,8 @@ const Dashboard = () => {
                 </Card>
               )}
 
-              {false && (
-                <div className="hidden">
 
-                </div>
-              </div>
+
 
               <div className="mb-4">
                 <OnboardingBanner organizationId={activeOrganization} />
