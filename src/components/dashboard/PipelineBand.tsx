@@ -120,11 +120,8 @@ export function PipelineBand({ organizationId }: PipelineBandProps) {
 
       <ol className="grid grid-cols-1 md:grid-cols-[1fr_auto_1fr_auto_1fr_auto_1fr] items-stretch">
         {steps.map((step, idx) => (
-          <>
-            <li
-              key={step.key}
-              className="px-6 py-5 flex flex-col gap-1.5 justify-center min-w-0"
-            >
+          <div key={step.key} className="contents">
+            <li className="px-6 py-5 flex flex-col gap-1.5 justify-center min-w-0">
               <div className="flex items-center gap-2 text-muted-foreground">
                 <step.icon className="h-4 w-4" />
                 <span className="text-xs font-medium uppercase tracking-wide">
@@ -151,7 +148,7 @@ export function PipelineBand({ organizationId }: PipelineBandProps) {
                 <ChevronRight className="h-5 w-5" />
               </li>
             )}
-          </>
+          </div>
         ))}
       </ol>
     </section>
