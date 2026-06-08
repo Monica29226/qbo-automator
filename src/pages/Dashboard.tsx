@@ -34,6 +34,8 @@ import CurrencyMismatchPanel from "@/components/dashboard/CurrencyMismatchPanel"
 import { SharePointKpiCard } from "@/components/dashboard/SharePointKpiCard";
 import { AutoUpdateStatusBadge } from "@/components/dashboard/AutoUpdateStatusBadge";
 import { AccountsPayableCard } from "@/components/dashboard/AccountsPayableCard";
+import { PipelineBand } from "@/components/dashboard/PipelineBand";
+import { MonthlyKpis } from "@/components/dashboard/MonthlyKpis";
 import { OnboardingBanner } from "@/components/onboarding/OnboardingBanner";
 const AICreditsMonitor = lazy(() => import("@/components/dashboard/AICreditsMonitor").then(m => ({ default: m.AICreditsMonitor })));
 const ErrorLogsViewer = lazy(() => import("@/components/dashboard/ErrorLogsViewer").then(m => ({ default: m.ErrorLogsViewer })));
@@ -330,33 +332,42 @@ const Dashboard = () => {
         
         <SidebarInset className="flex-1">
           <header className="sticky top-0 z-10 border-b bg-card shadow-sm">
-            <div className="flex h-14 items-center gap-4 px-6">
+            <div className="flex h-16 items-center gap-4 px-6">
               <SidebarTrigger className="-ml-2" />
-              
+              <div className="flex flex-col min-w-0">
+                <h1 className="text-xl font-heading font-semibold text-foreground leading-tight truncate">
+                  Panel de Control
+                </h1>
+                <p className="text-xs text-muted-foreground">
+                  Monitoreo en tiempo real del procesamiento de facturas
+                </p>
+              </div>
+
               <div className="flex items-center gap-2 ml-auto">
                 <OrganizationSwitcher />
-                <Button 
-                  variant="default" 
-                  size="sm" 
+                <Button
+                  variant="default"
+                  size="sm"
                   onClick={handlePublishToQuickBooks}
                   disabled={isFetchingEmails}
+                  className="bg-secondary text-secondary-foreground hover:bg-secondary/90"
                 >
                   {isFetchingEmails ? (
                     <>
                       <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
-                      Publicando...
+                      Sincronizando...
                     </>
                   ) : (
                     <>
                       <Send className="h-4 w-4 mr-2" />
-                      Publicar a QuickBooks
+                      Sincronizar ahora
                     </>
                   )}
                 </Button>
                 {stats.errors > 0 && (
-                  <Button 
-                    variant="destructive" 
-                    size="sm" 
+                  <Button
+                    variant="destructive"
+                    size="sm"
                     onClick={handleRetryAllErrors}
                     disabled={isRetryingErrors}
                   >
