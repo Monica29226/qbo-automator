@@ -12,13 +12,14 @@ import { cn } from "@/lib/utils";
 export function QBOSyncPill() {
   const { activeOrganization } = useAuth();
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError } = useQuery({
     queryKey: ["qbo-sync-pill", activeOrganization],
     enabled: !!activeOrganization,
     staleTime: 30_000,
     refetchInterval: 60_000,
+    retry: 1,
     queryFn: async () => {
-      const [{ data: integ }, { data: log }] = await Promise.all([
+      const [{ data: integ, error: integErr }, { data: log }] = await Promise.all([
         supabase
           .from("integration_accounts")
           .select("is_active")
@@ -34,6 +35,7 @@ export function QBOSyncPill() {
           .limit(1)
           .maybeSingle(),
       ]);
+      if (integErr) throw integErr;
       return {
         connected: !!integ,
         startedAt: log?.started_at ?? null,
@@ -41,14 +43,16 @@ export function QBOSyncPill() {
     },
   });
 
-  if (isLoading) {
+
+  if (isLoading || (isError && !data)) {
     return (
       <div className="mx-3 mt-3 mb-2 flex items-center gap-2 rounded-lg bg-sidebar-accent/15 px-3 py-2 text-xs text-sidebar-foreground/80">
         <Loader2 className="h-3.5 w-3.5 animate-spin" />
-        Comprobando…
+        {isError ? "Reintentando…" : "Comprobando…"}
       </div>
     );
   }
+
 
   const connected = data?.connected ?? false;
   const startedAt = data?.startedAt ? new Date(data.startedAt) : null;

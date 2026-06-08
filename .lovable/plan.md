@@ -1,41 +1,44 @@
-## Hallazgo confirmado
-La factura `00400001010000293929` repite el mismo patrón que reportaste:
-- En el documento procesado el XML está correcto: `totalComprobante = 6,939.33` y `totalImpuesto = 798.33`.
-- Ya fue publicada en contabilidad el `2026-06-02`, antes del endurecimiento reciente de la función.
-- La organización es **Tree of Life** y sigue usando la combinación sensible `tax_handling = included_in_line_items` + `default_uses_tax = false`.
-- No quedó una alerta histórica para esa factura, así que hoy el sistema no te la está señalando retroactivamente.
+# Diagnóstico — Jimena Cross
+
+## Hallazgos en base de datos
+
+- `organizations.is_active = false` para Jimena Cross (id `4ff74a44…`).
+- `integration_accounts`: **Gmail activo con refresh_token** y **QuickBooks activo con refresh_token** (actualizado hoy 16:00 UTC). Ambas integraciones están realmente conectadas.
+- `sync_logs`: **0 registros**. El cron nunca ha corrido para esta organización.
+- `processed_documents`: 27 en abril, 37 en mayo, **0 en junio**.
+
+## Causa raíz
+
+`auto-sync-invoices` filtra por `organizations.is_active = true` (línea 109). Como Jimena Cross está marcada inactiva, el cron la omite por completo, por eso no aparece ninguna factura de junio. Esto coincide con el mensaje "inactiva — sincronización pausada" en el dashboard.
+
+El cartel "QuickBooks desconectado" que ves es engañoso: la integración SÍ está activa en BD. Los `TypeError: Load failed` de la consola muestran que la RPC `has_active_integration` falló por red en ese momento; el componente trata cualquier error como "no conectado". Además conviven cuatro indicadores que se contradicen ("Sistema saludable", "Auto-actualización activa", "QuickBooks desconectado", "inactiva — pausada"), lo que confunde aún más.
 
 ## Plan
-1. **Auditar retroactivamente publicaciones afectadas**
-   - Revisar facturas ya publicadas bajo esa configuración sensible.
-   - Comparar XML (`totalComprobante`, `totalImpuesto`) contra el tracking guardado y dejar una lista de documentos sospechosos para revisión/republicación.
-   - Empezar por Tree of Life y extender a cualquier otra organización que haya pasado por la misma lógica.
 
-2. **Persistir la discrepancia como estado operativo visible**
-   - Cuando la validación post-publicación detecte diferencia entre contabilidad y XML, no solo registrar alerta: también dejar el documento en un estado claramente revisable y visible en la app.
-   - Mostrar el motivo exacto con monto XML, monto en contabilidad y diferencia.
+1. **Reactivar la organización**
+   - Migración que ponga `organizations.is_active = true` para Jimena Cross.
+   - Tras la siguiente ejecución de cron (cada hora) entrarán los correos de junio. Opcionalmente disparar `auto-sync-invoices` manualmente para no esperar.
 
-3. **Bloquear configuraciones ambiguas antes de publicar**
-   - Endurecer la función para que, si una combinación fiscal puede producir recalculo externo o no permite garantizar coincidencia literal con el XML, la publicación se detenga antes de enviarse.
-   - Mantener la regla de “XML manda” como obligatoria, sin comportamiento variable por empresa.
+2. **Corregir falsos negativos de "QuickBooks desconectado"**
+   - En `QBOSyncPill` y `AutoUpdateStatusBadge`: distinguir entre "error de red al consultar" y "no conectado". Si la consulta falla, mostrar estado "Comprobando…" en ámbar en vez de rojo "Desconectado".
+   - Añadir un retry corto (1 reintento) antes de declarar desconexión.
 
-4. **Preparar recuperación segura de casos ya dañados**
-   - Dejar identificadas las facturas que requieren borrar y republicar en contabilidad.
-   - Evitar que vuelvan a salir como “publicadas sanas” si ya nacieron con discrepancia.
+3. **Unificar indicadores de salud en el sidebar/topbar**
+   - Una sola píldora con jerarquía clara:
+     - Rojo: organización inactiva (pausada manualmente).
+     - Rojo: integración sin refresh_token.
+     - Ámbar: última sync >60 min o con errores.
+     - Verde: sync reciente OK.
+   - Quitar duplicados ("Sistema saludable" + "Auto-actualización activa" + pill QBO + banner "inactiva") consolidando en `QBOSyncPill` + un único banner contextual cuando `is_active=false` que explique "Sincronización pausada por administrador — Reactivar".
 
-## Detalles técnicos
-- Revisaré y ajustaré principalmente:
-  - `supabase/functions/publish-to-quickbooks/index.ts`
-  - la persistencia de alertas / estado en `processed_documents` y `qbo_publish_tracking`
-  - la UI de revisión donde se exponen errores y discrepancias
-- La auditoría se basará en:
-  - `processed_documents.doc_number`, `doc_key`, `total_amount`, `total_tax`, `status`
-  - `qbo_publish_tracking.total_amount`, `status`, `error_message`
-  - `system_settings.tax_handling` y `system_settings.default_uses_tax`
+4. **Botón "Reactivar sincronización"** en el banner de organización inactiva, que llame a un edge function seguro (requiere admin) que ponga `is_active=true` y dispare un primer `auto-sync-invoices` para esa org.
 
-## Resultado esperado
-- La app detecta automáticamente este tipo de casos viejos.
-- Nuevas publicaciones quedan bloqueadas si no pueden respetar literalmente el XML.
-- Los documentos afectados quedan visibles para corrección, en vez de pasar silenciosamente como publicados.
+## Archivos afectados (estimado)
 
-Si apruebas, implemento este blindaje y la auditoría retroactiva.
+- `supabase/migrations/<new>.sql` (reactivar Jimena Cross).
+- `src/components/dashboard/QBOSyncPill.tsx`
+- `src/components/dashboard/AutoUpdateStatusBadge.tsx`
+- `src/pages/Dashboard.tsx` (consolidar banners, añadir botón reactivar)
+- Nueva edge function `reactivate-organization-sync` (opcional, sólo si quieres botón en UI).
+
+¿Procedo con los 4 pasos o sólo con (1) reactivar Jimena Cross ahora y dejar el resto para otra iteración?

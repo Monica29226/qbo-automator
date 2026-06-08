@@ -14,25 +14,28 @@ interface Props {
  * Token expiry is read via SECURITY DEFINER RPC because credentials are RLS-protected.
  */
 export const AutoUpdateStatusBadge = ({ organizationId }: Props) => {
-  const { data } = useQuery({
+  const { data, isError } = useQuery({
     queryKey: ["auto-update-status", organizationId],
     enabled: !!organizationId,
     refetchInterval: 30_000,
     staleTime: 15_000,
+    retry: 1,
     queryFn: async () => {
-      const [orgRes, healthRes] = await Promise.all([
+      const [orgRes, healthRes, qboActive] = await Promise.all([
         supabase
           .from("organizations")
           .select("gmail_connected, outlook_connected, bluehost_connected, hostinger_connected")
           .eq("id", organizationId!)
           .maybeSingle(),
         supabase.rpc("get_email_provider_health", { _org_id: organizationId! }),
+        supabase.rpc("has_active_integration", {
+          _org_id: organizationId!,
+          _service_type: "quickbooks",
+        }),
       ]);
 
-      const qboActive = await supabase.rpc("has_active_integration", {
-        _org_id: organizationId!,
-        _service_type: "quickbooks",
-      });
+      if (orgRes.error) throw orgRes.error;
+      if (qboActive.error) throw qboActive.error;
 
       const emailRows = (healthRes.data ?? []) as Array<{
         service_type: string;
@@ -54,7 +57,17 @@ export const AutoUpdateStatusBadge = ({ organizationId }: Props) => {
     },
   });
 
-  if (!organizationId || !data) return null;
+  if (!organizationId) return null;
+  if (isError && !data) {
+    return (
+      <Badge variant="outline" className="h-fit border-muted-foreground/40 text-muted-foreground">
+        <RefreshCw className="h-3 w-3 mr-1 animate-spin" />
+        Comprobando estado…
+      </Badge>
+    );
+  }
+  if (!data) return null;
+
 
   const ok = data.qboConnected && data.emailHealthy;
   const warn = data.qboConnected && data.emailConnected && !data.emailHealthy;
