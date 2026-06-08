@@ -19,6 +19,7 @@ import {
   CheckCircle2,
 } from "lucide-react";
 import calderonLogo from "@/assets/acl-logo-new.png";
+import { QBOSyncPill } from "@/components/dashboard/QBOSyncPill";
 import {
   Sidebar,
   SidebarContent,
@@ -203,21 +204,26 @@ export function DashboardSidebar({ isAdmin, reviewCount, onSignOut }: DashboardS
       <SidebarContent>
         {/* Logo/Brand */}
         <SidebarGroup>
-          <div className="flex items-center gap-3 px-4 py-6 border-b border-sidebar-accent/20">
-            <div className="h-12 w-12 flex items-center justify-center flex-shrink-0 bg-card rounded-lg p-1.5 transition-transform duration-300 hover:scale-105">
-              <img 
-                src={calderonLogo} 
-                alt="Calderón Logo" 
+          <div className="flex items-center gap-3 px-4 py-5 border-b border-sidebar-accent/20">
+            <div className="h-11 w-11 flex items-center justify-center flex-shrink-0 bg-card rounded-lg p-1.5 transition-transform duration-300 hover:scale-105">
+              <img
+                src={calderonLogo}
+                alt="ACL Calderón"
                 className="w-full h-full object-contain"
               />
             </div>
             {!collapsed && (
-              <div className="animate-fade-in-subtle">
-                <h2 className="text-base font-heading font-bold text-sidebar-foreground">FacturaFlow CR</h2>
-                <p className="text-xs text-sidebar-foreground/70">Sistema de Facturación</p>
+              <div className="animate-fade-in-subtle min-w-0">
+                <h2 className="text-base font-heading font-bold text-sidebar-foreground leading-tight truncate">
+                  Invoice ACL
+                </h2>
+                <p className="text-[11px] uppercase tracking-wider text-sidebar-foreground/60">
+                  FacturaFlow
+                </p>
               </div>
             )}
           </div>
+          {!collapsed && <QBOSyncPill />}
         </SidebarGroup>
 
         {/* Navigation */}

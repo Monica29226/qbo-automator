@@ -63,6 +63,7 @@
 - [Hostinger IMAP Config](mem://integrations/hostinger/configuracion-y-optimizacion) — Auto-batching, UTF-8 decode, tag-specific auth checking
 - [IMAP Auth Logic](mem://integrations/imap-authentication-logic) — Tag-specific matching to prevent false negative IMAP login errors
 - [Branding Assets](mem://style/branding-assets) — Use ACL logo for emails and favicon
+- [Invoice ACL Brief](mem://style/invoice-acl-brief) — Navy sidebar + QBO sync pill, Caslon topbar, pipeline band, monthly KPIs in ₡, split login
 - [Invoice Search Tool](mem://features/invoice-search-tool) — Query by clave, number, vendor across all statuses
 - [Dashboard Sync Badge](mem://features/dashboard-sync-status-badge) — Color-coded badge showing last sync timestamp
 - [Reconciliation Control Cards](mem://features/reconciliation-control-cards) — Track consecutive gaps against official Hacienda records
