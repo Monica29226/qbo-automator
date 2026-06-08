@@ -44,14 +44,15 @@ export function QBOSyncPill() {
   });
 
 
-  if (isLoading) {
+  if (isLoading || (isError && !data)) {
     return (
       <div className="mx-3 mt-3 mb-2 flex items-center gap-2 rounded-lg bg-sidebar-accent/15 px-3 py-2 text-xs text-sidebar-foreground/80">
         <Loader2 className="h-3.5 w-3.5 animate-spin" />
-        Comprobando…
+        {isError ? "Reintentando…" : "Comprobando…"}
       </div>
     );
   }
+
 
   const connected = data?.connected ?? false;
   const startedAt = data?.startedAt ? new Date(data.startedAt) : null;
