@@ -389,12 +389,15 @@ const Dashboard = () => {
           </header>
 
           <main className="p-6">
+            {/* Pipeline + KPIs del mes (ACL brief) */}
+            <PipelineBand organizationId={activeOrganization} />
+            <MonthlyKpis
+              organizationId={activeOrganization}
+              pendingReviewCount={stats.review + stats.pendingConfig}
+            />
+
             <div className="mb-6">
-              <div className="flex items-center justify-between mb-4">
-                <div>
-                  <h2 className="text-2xl font-bold text-foreground">Panel de Control</h2>
-                  <p className="text-sm text-muted-foreground">Monitoreo en tiempo real del procesamiento de facturas</p>
-                </div>
+              <div className="flex items-center justify-end mb-4">
                 <div className="flex items-center gap-2 flex-wrap">
                   <Suspense fallback={null}>
                     <IVAModeIndicator organizationId={activeOrganization} />
@@ -414,7 +417,6 @@ const Dashboard = () => {
                     </Badge>
                   )}
                 </div>
-
               </div>
 
               <div className="mb-4">
