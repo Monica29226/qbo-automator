@@ -3,141 +3,102 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.7.1";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-interface DeleteUserRequest {
-  userId: string;
-}
-
-const handler = async (req: Request): Promise<Response> => {
+serve(async (req: Request): Promise<Response> => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
 
   try {
     const authHeader = req.headers.get("Authorization");
-    if (!authHeader) {
-      return new Response(
-        JSON.stringify({ error: "No se proporcionó token de autenticación" }),
-        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
+    if (!authHeader) return json({ error: "No autenticado" }, 401);
 
     const supabaseAdmin = createClient(
       Deno.env.get("SUPABASE_URL") ?? "",
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
     );
 
-    // Verify JWT token
-    const jwtToken = authHeader.replace("Bearer ", "");
-    const { data: { user: requestingUser }, error: authError } = await supabaseAdmin.auth.getUser(jwtToken);
+    const jwt = authHeader.replace("Bearer ", "");
+    const { data: { user: requestingUser }, error: authError } =
+      await supabaseAdmin.auth.getUser(jwt);
 
-    if (authError || !requestingUser) {
-      return new Response(
-        JSON.stringify({ error: "No autenticado" }),
-        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
+    if (authError || !requestingUser) return json({ error: "No autenticado" }, 401);
 
-    // Verify requesting user is admin
+    // Only global admins can delete users
     const { data: userRole } = await supabaseAdmin
       .from("user_roles")
       .select("role")
       .eq("user_id", requestingUser.id)
+      .eq("role", "admin")
       .maybeSingle();
 
-    if (userRole?.role !== "admin") {
-      return new Response(
-        JSON.stringify({ error: "Solo administradores pueden eliminar usuarios" }),
-        { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
+    if (!userRole) return json({ error: "Solo administradores globales pueden eliminar usuarios" }, 403);
 
-    const { userId }: DeleteUserRequest = await req.json();
-
-    if (!userId) {
-      return new Response(
-        JSON.stringify({ error: "ID de usuario requerido" }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
-    // Prevent self-deletion
-    if (userId === requestingUser.id) {
-      return new Response(
-        JSON.stringify({ error: "No puedes eliminar tu propia cuenta" }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
+    const { userId } = await req.json();
+    if (!userId) return json({ error: "ID de usuario requerido" }, 400);
+    if (userId === requestingUser.id) return json({ error: "No puedes eliminar tu propia cuenta" }, 400);
 
     console.log("Deleting user:", userId);
 
-    // 1. Delete from organization_members
-    const { error: membersError } = await supabaseAdmin
-      .from("organization_members")
-      .delete()
-      .eq("user_id", userId);
-
-    if (membersError) {
-      console.error("Error deleting organization_members:", membersError);
-    }
-
-    // 2. Delete from user_active_organization
-    const { error: activeOrgError } = await supabaseAdmin
-      .from("user_active_organization")
-      .delete()
-      .eq("user_id", userId);
-
-    if (activeOrgError) {
-      console.error("Error deleting user_active_organization:", activeOrgError);
-    }
-
-    // 3. Delete from user_roles
-    const { error: rolesError } = await supabaseAdmin
-      .from("user_roles")
-      .delete()
-      .eq("user_id", userId);
-
-    if (rolesError) {
-      console.error("Error deleting user_roles:", rolesError);
-    }
-
-    // 4. Delete from profiles
-    const { error: profilesError } = await supabaseAdmin
+    // Get email up front to clean invitations afterwards
+    const { data: profile } = await supabaseAdmin
       .from("profiles")
-      .delete()
-      .eq("id", userId);
+      .select("email")
+      .eq("id", userId)
+      .maybeSingle();
 
-    if (profilesError) {
-      console.error("Error deleting profiles:", profilesError);
-    }
-
-    // 5. Delete from auth.users using admin API
+    // ===== Primary: delete from auth.users (cascade via FKs) =====
     const { error: authDeleteError } = await supabaseAdmin.auth.admin.deleteUser(userId);
 
     if (authDeleteError) {
-      console.error("Error deleting auth user:", authDeleteError);
-      return new Response(
-        JSON.stringify({ error: `Error al eliminar usuario: ${authDeleteError.message}` }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+      // If auth user not found, try cascading manually to clean up orphans
+      const notFound = authDeleteError.message?.toLowerCase().includes('not found')
+        || (authDeleteError as any).status === 404;
+      if (!notFound) {
+        console.error("Auth delete error:", authDeleteError);
+        return json({ error: `Error al eliminar: ${authDeleteError.message}` }, 500);
+      }
+      console.warn("Auth user not found, cleaning orphan rows");
     }
 
-    console.log("User deleted successfully:", userId);
+    // ===== Belt-and-suspenders: clean rows that might not cascade =====
+    const cleanups = await Promise.allSettled([
+      supabaseAdmin.from("organization_members").delete().eq("user_id", userId),
+      supabaseAdmin.from("user_roles").delete().eq("user_id", userId),
+      supabaseAdmin.from("user_active_organization").delete().eq("user_id", userId),
+      supabaseAdmin.from("profiles").delete().eq("id", userId),
+      profile?.email
+        ? supabaseAdmin.from("organization_invitations").delete().eq("email", profile.email)
+        : Promise.resolve(),
+      profile?.email
+        ? supabaseAdmin.from("allowed_emails").delete().eq("email", profile.email.toLowerCase().trim())
+        : Promise.resolve(),
+    ]);
 
-    return new Response(
-      JSON.stringify({ success: true, message: "Usuario eliminado correctamente" }),
-      { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
+    const failures = cleanups
+      .map((r, i) => ({ r, i }))
+      .filter(({ r }) => r.status === "rejected")
+      .map(({ r, i }) => ({ step: i, reason: (r as PromiseRejectedResult).reason?.message }));
+
+    if (failures.length > 0) console.warn("Cleanup warnings:", failures);
+
+    return json({
+      success: true,
+      message: "Usuario eliminado correctamente",
+      cleanupWarnings: failures,
+    }, 200);
 
   } catch (error: any) {
-    console.error("Error in delete-user function:", error);
-    return new Response(
-      JSON.stringify({ error: error.message || "Error interno del servidor" }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
+    console.error("delete-user error:", error);
+    return json({ error: error.message || "Error interno" }, 500);
   }
-};
+});
 
-serve(handler);
+function json(data: unknown, status: number) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
