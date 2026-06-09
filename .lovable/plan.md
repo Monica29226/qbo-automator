@@ -1,44 +1,69 @@
-# Diagnóstico — Jimena Cross
 
-## Hallazgos en base de datos
+## Objetivo
 
-- `organizations.is_active = false` para Jimena Cross (id `4ff74a44…`).
-- `integration_accounts`: **Gmail activo con refresh_token** y **QuickBooks activo con refresh_token** (actualizado hoy 16:00 UTC). Ambas integraciones están realmente conectadas.
-- `sync_logs`: **0 registros**. El cron nunca ha corrido para esta organización.
-- `processed_documents`: 27 en abril, 37 en mayo, **0 en junio**.
+Permitir que un administrador global pueda:
+1. Crear un usuario y asignarlo a **una, varias o todas** las empresas de un solo paso, sin errores parciales.
+2. Eliminar un usuario y que **no queden rastros** (perfil, membresías, rol, organización activa, invitaciones, sesión).
+3. Mostrar el mismo rol en todas las empresas asignadas al usuario.
 
-## Causa raíz
+## Causas raíz detectadas
 
-`auto-sync-invoices` filtra por `organizations.is_active = true` (línea 109). Como Jimena Cross está marcada inactiva, el cron la omite por completo, por eso no aparece ninguna factura de junio. Esto coincide con el mensaje "inactiva — sincronización pausada" en el dashboard.
+1. **Acceso a "todas las empresas" falla.** `create-user` valida que el llamante sea `owner/admin` de cada `organization_id`. El UI lo invoca una vez por empresa, así que si el admin global no es miembro de cada una, fallan todas menos las que administra. Las políticas RLS ya reconocen `has_role(auth.uid(),'admin')` como admin global, pero la edge function no.
+2. **Rol ignorado.** `create-user` siempre inserta a la membresía como `member` y guarda el rol global con un mapeo arbitrario (`admin → admin`, todo lo demás → `user`).
+3. **Organización fantasma "Mi Empresa".** El trigger `handle_new_user_organization` crea una organización + settings por cada signup, ensuciando la base cuando un admin crea usuarios.
+4. **Eliminación parcial.** `delete-user` borra tablas manualmente antes del `auth.admin.deleteUser`. Si una FK falla o el borrado de auth corta a mitad, quedan huérfanos. Además no limpia `organization_invitations`, `password_reset_tokens`, `audit_log`, ni invalida sesiones.
+5. **UI hace N llamadas seriales.** Una falla en medio deja al usuario asignado solo en algunas empresas con un toast confuso de "X de Y fallaron".
 
-El cartel "QuickBooks desconectado" que ves es engañoso: la integración SÍ está activa en BD. Los `TypeError: Load failed` de la consola muestran que la RPC `has_active_integration` falló por red en ese momento; el componente trata cualquier error como "no conectado". Además conviven cuatro indicadores que se contradicen ("Sistema saludable", "Auto-actualización activa", "QuickBooks desconectado", "inactiva — pausada"), lo que confunde aún más.
+## Cambios
 
-## Plan
+### 1. Backend — `create-user` (multi-empresa atómico)
 
-1. **Reactivar la organización**
-   - Migración que ponga `organizations.is_active = true` para Jimena Cross.
-   - Tras la siguiente ejecución de cron (cada hora) entrarán los correos de junio. Opcionalmente disparar `auto-sync-invoices` manualmente para no esperar.
+- Aceptar `organization_ids: string[]` además del actual `organization_id` (compatibilidad).
+- Permisos: aceptar al llamante si **es admin global** (`has_role(auth.uid(),'admin')`) **o** admin de cada organización solicitada. Si es admin por empresa, filtrar la lista a las que sí administra y devolver `skipped[]`.
+- Crear/actualizar el usuario una sola vez, luego hacer `upsert` masivo en `organization_members` con el rol elegido (`owner|admin|member|viewer`).
+- Guardar `user_roles` solo cuando `role === 'admin'` (rol global); en el resto, el rol vive en `organization_members`.
+- Respuesta unificada: `{ userId, added: [...], skipped: [...], alreadyMember: [...] }`.
 
-2. **Corregir falsos negativos de "QuickBooks desconectado"**
-   - En `QBOSyncPill` y `AutoUpdateStatusBadge`: distinguir entre "error de red al consultar" y "no conectado". Si la consulta falla, mostrar estado "Comprobando…" en ámbar en vez de rojo "Desconectado".
-   - Añadir un retry corto (1 reintento) antes de declarar desconexión.
+### 2. Backend — `delete-user` (limpieza confiable)
 
-3. **Unificar indicadores de salud en el sidebar/topbar**
-   - Una sola píldora con jerarquía clara:
-     - Rojo: organización inactiva (pausada manualmente).
-     - Rojo: integración sin refresh_token.
-     - Ámbar: última sync >60 min o con errores.
-     - Verde: sync reciente OK.
-   - Quitar duplicados ("Sistema saludable" + "Auto-actualización activa" + pill QBO + banner "inactiva") consolidando en `QBOSyncPill` + un único banner contextual cuando `is_active=false` que explique "Sincronización pausada por administrador — Reactivar".
+- Orden invertido: primero `auth.admin.deleteUser` y, si tiene éxito, dejar que la limpieza la haga la base por `ON DELETE CASCADE`.
+- Migración para añadir/forzar `ON DELETE CASCADE` desde `auth.users` hacia: `profiles`, `organization_members`, `user_roles`, `user_active_organization`, `password_reset_tokens`, y `invited_by` en `organization_invitations` (este último `ON DELETE SET NULL`).
+- Borrar invitaciones por email del usuario (no quedan colgadas).
+- Devolver `{ success, deleted: { auth, profile, memberships, roles, invitations } }` con conteos para visibilidad.
 
-4. **Botón "Reactivar sincronización"** en el banner de organización inactiva, que llame a un edge function seguro (requiere admin) que ponga `is_active=true` y dispare un primer `auto-sync-invoices` para esa org.
+### 3. Backend — Trigger "Mi Empresa"
 
-## Archivos afectados (estimado)
+- Eliminar el trigger que dispara `handle_new_user_organization` (mantener la función por compatibilidad pero sin trigger activo). `handle_new_user` (perfil + rol desde `allowed_emails`) se conserva.
 
-- `supabase/migrations/<new>.sql` (reactivar Jimena Cross).
-- `src/components/dashboard/QBOSyncPill.tsx`
-- `src/components/dashboard/AutoUpdateStatusBadge.tsx`
-- `src/pages/Dashboard.tsx` (consolidar banners, añadir botón reactivar)
-- Nueva edge function `reactivate-organization-sync` (opcional, sólo si quieres botón en UI).
+### 4. Frontend — `UsersManagement.tsx`
 
-¿Procedo con los 4 pasos o sólo con (1) reactivar Jimena Cross ahora y dejar el resto para otra iteración?
+- Reemplazar el `for` que invoca `create-user` por **una sola llamada** con `organization_ids: selectedOrganizations` y `role`.
+- Mostrar resultado consolidado: "Creado y asignado a N empresas" + lista de las que se omitieron (con motivo).
+- Mostrar el rol global (admin/usuario) y el rol por empresa en la tabla.
+- En "Editar empresas": al añadir, usar el rol del usuario en otras empresas (consistencia "mismo rol").
+- Reset de cache de organizaciones del propio usuario eliminado si aplica (no aplica porque borra a otros).
+
+### 5. UX
+
+- Banner en el diálogo de creación cuando se elige "Seleccionar todas": "Como admin global, se asignará a las 23 empresas".
+- Botón "Eliminar usuario" con confirmación que liste lo que se borrará.
+
+## Archivos a tocar
+
+- `supabase/functions/create-user/index.ts`
+- `supabase/functions/delete-user/index.ts`
+- `supabase/migrations/<nuevo>.sql` (CASCADE FKs + drop trigger `handle_new_user_organization`)
+- `src/pages/UsersManagement.tsx`
+- `src/hooks/useUserManagementData.ts` (incluir rol por empresa en la respuesta)
+
+## Notas técnicas
+
+- Las FKs actuales en `public.*` apuntan a `auth.users`; al recrearlas con `ON DELETE CASCADE` se hará en una sola transacción para evitar downtime.
+- `audit_log` mantiene `user_id` pero como `ON DELETE SET NULL` para preservar trazabilidad histórica.
+- Compatibilidad: si el cliente sigue mandando `organization_id` único, `create-user` lo trata como array de uno.
+- Sin cambios a las políticas RLS existentes (ya soportan admin global).
+
+## Fuera de alcance
+
+- Cambiar el esquema de roles (`owner/admin/member/viewer`) o reasignar permisos.
+- Onboarding/auto-creación de organizaciones para signups públicos (queda deshabilitado pero la función permanece por si más adelante se reactiva con otro flujo).
