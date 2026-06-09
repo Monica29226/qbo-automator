@@ -216,69 +216,52 @@ const UsersManagement = () => {
     setIsSending(true);
 
     try {
-      const orgsToAdd = organizations.filter(org => selectedOrganizations.includes(org.id));
-      
-      let successCount = 0;
-      let errorCount = 0;
+      const { data, error } = await supabase.functions.invoke("create-user", {
+        body: {
+          email: formData.email,
+          password: formData.password,
+          full_name: formData.full_name,
+          role: formData.role,
+          organization_ids: selectedOrganizations,
+          tipo_persona: formData.tipo_persona,
+          numero_cedula: formData.numero_cedula ? formData.numero_cedula.replace(/\D/g, "") : null,
+          nombre_comercial: formData.tipo_persona === "juridica" ? formData.nombre_comercial : null,
+          nombre_representante: formData.tipo_persona === "juridica" ? formData.nombre_representante : null,
+          cedula_representante: formData.tipo_persona === "juridica" ? formData.cedula_representante.replace(/\D/g, "") : null,
+          telefono: formData.telefono || null,
+          direccion: formData.direccion || null,
+        },
+      });
 
-      for (let i = 0; i < orgsToAdd.length; i++) {
-        const org = orgsToAdd[i];
-        
-        try {
-          const result = await supabase.functions.invoke("create-user", {
-            body: {
-              email: formData.email,
-              password: formData.password,
-              full_name: formData.tipo_persona === "juridica" ? formData.full_name : formData.full_name,
-              role: formData.role,
-              organization_id: org.id,
-              tipo_persona: formData.tipo_persona,
-              numero_cedula: formData.numero_cedula ? formData.numero_cedula.replace(/\D/g, "") : null,
-              nombre_comercial: formData.tipo_persona === "juridica" ? formData.nombre_comercial : null,
-              nombre_representante: formData.tipo_persona === "juridica" ? formData.nombre_representante : null,
-              cedula_representante: formData.tipo_persona === "juridica" ? formData.cedula_representante.replace(/\D/g, "") : null,
-              telefono: formData.telefono || null,
-              direccion: formData.direccion || null,
-            },
-          });
-
-          if (result.error || result.data?.error) {
-            errorCount++;
-            console.error(`Error adding to ${org.name}:`, result.error || result.data?.error);
-          } else {
-            successCount++;
-          }
-
-          if (i < orgsToAdd.length - 1) {
-            await new Promise(resolve => setTimeout(resolve, 300));
-          }
-        } catch (err) {
-          errorCount++;
-          console.error(`Exception adding to ${org.name}:`, err);
-        }
+      if (error || data?.error) {
+        throw new Error(data?.error || error?.message || "Error al crear usuario");
       }
 
-      if (errorCount === 0) {
+      const assigned = (data?.added?.length || 0) + (data?.reactivated?.length || 0);
+      const skippedCount = (data?.skipped?.length || 0) + (data?.failed?.length || 0);
+
+      if (skippedCount === 0) {
         toast.success(
-          `Usuario creado y agregado a ${successCount} empresa${successCount > 1 ? 's' : ''}. Se envió correo con credenciales.`
+          data?.isNewUser
+            ? `Usuario creado y asignado a ${assigned} empresa(s). Se envió correo con credenciales.`
+            : `Usuario asignado a ${assigned} empresa(s).`
         );
-        setIsInviteDialogOpen(false);
-        resetFormData();
-        invalidate();
-      } else if (successCount > 0) {
-        toast.warning(
-          `Usuario agregado a ${successCount} de ${orgsToAdd.length} empresas. ${errorCount} fallaron.`
-        );
-        invalidate();
       } else {
-        toast.error("No se pudo crear el usuario. Verifica tus permisos.");
+        toast.warning(
+          `Asignado a ${assigned} empresa(s). ${skippedCount} omitida(s) por permisos o conflicto.`
+        );
       }
+
+      setIsInviteDialogOpen(false);
+      resetFormData();
+      invalidate();
     } catch (error: any) {
       toast.error(`Error al crear usuario: ${error.message || "Error desconocido"}`);
     } finally {
       setIsSending(false);
     }
   };
+
 
   const resetFormData = () => {
     setFormData({
