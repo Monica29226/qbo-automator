@@ -65,27 +65,22 @@ Deno.serve(async (req) => {
       };
 
       // Always compute inconsistency counters
-      const [{ count: totalPublished }, { count: pendingWithId }, { count: noTracking }] = await Promise.all([
+      const [pubRes, pendRes, noTrkRes] = await Promise.all([
         supabase.from("processed_documents")
           .select("id", { count: "exact", head: true })
           .eq("organization_id", orgId).eq("status", "published"),
         supabase.from("processed_documents")
           .select("id", { count: "exact", head: true })
           .eq("organization_id", orgId).eq("status", "pending").not("qbo_entity_id", "is", null),
-        supabase.rpc("noop_dummy_call").then(() => ({ count: null }), () => ({ count: null })),
+        // published docs whose tracking row is missing
+        supabase.rpc("count_published_without_tracking", { p_org: orgId }).then(
+          (r: any) => ({ count: typeof r?.data === 'number' ? r.data : 0 }),
+          () => ({ count: 0 }),
+        ),
       ]);
-
-      orgRow.published_total = totalPublished || 0;
-      orgRow.pending_with_qbo_id = pendingWithId || 0;
-
-      // published_without_tracking via direct query (no rpc)
-      const { data: noTrackRows } = await supabase
-        .from("processed_documents")
-        .select("id", { count: "exact", head: true } as any)
-        .eq("organization_id", orgId)
-        .eq("status", "published")
-        .not("qbo_entity_id", "is", null);
-      orgRow.published_without_tracking = noTrackRows ? 0 : 0; // placeholder; expensive join skipped
+      orgRow.published_total = pubRes.count || 0;
+      orgRow.pending_with_qbo_id = pendRes.count || 0;
+      orgRow.published_without_tracking = (noTrkRes as any).count || 0;
 
       if (!token || !realmId) {
         orgRow.token_missing = true;
