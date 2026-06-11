@@ -46,7 +46,7 @@ Deno.serve(async (req) => {
     const { data: docs, count } = await supabase
       .from("processed_documents")
       .select(
-        "id, doc_number, doc_key, supplier_name, issue_date, total_amount, total_tax, currency, qbo_entity_id, qbo_entity_type",
+        "id, doc_number, doc_key, supplier_name, issue_date, total_amount, total_tax, currency, qbo_entity_id, qbo_entity_type, qbo_realm_id",
         { count: "exact" }
       )
       .eq("organization_id", organization_id)
@@ -80,7 +80,13 @@ Deno.serve(async (req) => {
             break;
           }
           if (r.orphan) {
-            orphans.push({ ...doc, reason: r.reason });
+            // If the document was published to a DIFFERENT QBO company than the
+            // one currently connected, that's why it "isn't there" — make it explicit.
+            const realmMismatch = doc.qbo_realm_id && doc.qbo_realm_id !== realmId;
+            const reason = realmMismatch
+              ? `Publicada en otra compañía QBO (realm ${doc.qbo_realm_id} ≠ actual ${realmId}). ${r.reason}`
+              : r.reason;
+            orphans.push({ ...doc, reason });
           } else if (r.unverifiable) {
             unverifiable.push({ ...doc, reason: r.reason });
           } else if (r.amountMismatch) {

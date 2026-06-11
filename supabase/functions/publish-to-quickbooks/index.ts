@@ -857,8 +857,12 @@ const fetchWithRetry = async (
 // PDF ATTACHMENT TO QUICKBOOKS BILL
 // Uses QuickBooks Attachable API with multipart/form-data
 // =============================================================
-async function attachPdfToQuickBooks(
-  pdfUrl: string,
+// Generic file attacher for QuickBooks. Handles PDF and XML (and any other
+// QBO-supported type) by parameterizing the content type and extension.
+async function attachFileToQuickBooks(
+  fileUrl: string,
+  contentType: string,
+  ext: string,
   entityId: string,
   entityType: string,
   docNumber: string,
@@ -866,44 +870,45 @@ async function attachPdfToQuickBooks(
   accessToken: string,
   supabase: any
 ): Promise<boolean> {
+  const label = ext.toUpperCase();
   try {
-    logInfo(`📎 ${docNumber}: Attaching PDF to ${entityType} ${entityId}...`);
-    
-    // Step 1: Download PDF from storage (handle both public URLs and storage paths)
-    let pdfData: ArrayBuffer;
-    let filename = `${docNumber}.pdf`;
-    
-    if (pdfUrl.startsWith('http')) {
+    logInfo(`📎 ${docNumber}: Attaching ${label} to ${entityType} ${entityId}...`);
+
+    // Step 1: Download file from storage (handle both public URLs and storage paths)
+    let fileData: ArrayBuffer;
+    const filename = `${docNumber}.${ext}`;
+
+    if (fileUrl.startsWith('http')) {
       // Public URL - fetch directly
-      const pdfResponse = await fetch(pdfUrl);
-      if (!pdfResponse.ok) {
-        logError(`❌ ${docNumber}: Failed to download PDF: ${pdfResponse.status}`);
+      const fileResponse = await fetch(fileUrl);
+      if (!fileResponse.ok) {
+        logError(`❌ ${docNumber}: Failed to download ${label}: ${fileResponse.status}`);
         return false;
       }
-      pdfData = await pdfResponse.arrayBuffer();
+      fileData = await fileResponse.arrayBuffer();
     } else {
       // Storage path - use Supabase storage
       const { data, error } = await supabase.storage
         .from('company-documents')
-        .download(pdfUrl);
-      
+        .download(fileUrl);
+
       if (error || !data) {
-        logError(`❌ ${docNumber}: Failed to download PDF from storage: ${error?.message}`);
+        logError(`❌ ${docNumber}: Failed to download ${label} from storage: ${error?.message}`);
         return false;
       }
-      pdfData = await data.arrayBuffer();
+      fileData = await data.arrayBuffer();
     }
-    
-    if (!pdfData || pdfData.byteLength === 0) {
-      logError(`❌ ${docNumber}: PDF data is empty`);
+
+    if (!fileData || fileData.byteLength === 0) {
+      logError(`❌ ${docNumber}: ${label} data is empty`);
       return false;
     }
-    
-    logInfo(`   📄 ${docNumber}: PDF downloaded (${Math.round(pdfData.byteLength / 1024)} KB)`);
-    
+
+    logInfo(`   📄 ${docNumber}: ${label} downloaded (${Math.round(fileData.byteLength / 1024)} KB)`);
+
     // Step 2: Create multipart form data for QuickBooks Upload API
     const boundary = '----WebKitFormBoundary' + Math.random().toString(36).substring(2);
-    
+
     // Metadata for the attachable
     const metadata = {
       AttachableRef: [{
@@ -913,36 +918,36 @@ async function attachPdfToQuickBooks(
         }
       }],
       FileName: filename,
-      ContentType: 'application/pdf'
+      ContentType: contentType
     };
-    
+
     // Build multipart body
     const metadataJson = JSON.stringify(metadata);
-    const pdfBytes = new Uint8Array(pdfData);
-    
+    const fileBytes = new Uint8Array(fileData);
+
     // Create the multipart body parts
     const metadataPart = `--${boundary}\r\nContent-Disposition: form-data; name="file_metadata_01"; filename="file_metadata_01"\r\nContent-Type: application/json\r\n\r\n${metadataJson}\r\n`;
-    const filePartHeader = `--${boundary}\r\nContent-Disposition: form-data; name="file_content_01"; filename="${filename}"\r\nContent-Type: application/pdf\r\n\r\n`;
+    const filePartHeader = `--${boundary}\r\nContent-Disposition: form-data; name="file_content_01"; filename="${filename}"\r\nContent-Type: ${contentType}\r\n\r\n`;
     const endBoundary = `\r\n--${boundary}--\r\n`;
-    
+
     // Combine all parts into a single Uint8Array
     const encoder = new TextEncoder();
     const metadataBytes = encoder.encode(metadataPart);
     const headerBytes = encoder.encode(filePartHeader);
     const endBytes = encoder.encode(endBoundary);
-    
-    const totalLength = metadataBytes.length + headerBytes.length + pdfBytes.length + endBytes.length;
+
+    const totalLength = metadataBytes.length + headerBytes.length + fileBytes.length + endBytes.length;
     const body = new Uint8Array(totalLength);
-    
+
     let offset = 0;
     body.set(metadataBytes, offset); offset += metadataBytes.length;
     body.set(headerBytes, offset); offset += headerBytes.length;
-    body.set(pdfBytes, offset); offset += pdfBytes.length;
+    body.set(fileBytes, offset); offset += fileBytes.length;
     body.set(endBytes, offset);
-    
+
     // Step 3: Upload to QuickBooks
     const uploadUrl = `https://quickbooks.api.intuit.com/v3/company/${realmId}/upload?minorversion=69`;
-    
+
     const uploadResponse = await fetch(uploadUrl, {
       method: 'POST',
       headers: {
@@ -952,29 +957,45 @@ async function attachPdfToQuickBooks(
       },
       body: body,
     });
-    
+
     if (!uploadResponse.ok) {
       const errorText = await uploadResponse.text();
-      logError(`❌ ${docNumber}: QuickBooks upload failed: ${uploadResponse.status} - ${errorText.substring(0, 200)}`);
+      logError(`❌ ${docNumber}: QuickBooks ${label} upload failed: ${uploadResponse.status} - ${errorText.substring(0, 200)}`);
       return false;
     }
-    
+
     const uploadResult = await uploadResponse.json();
     const attachableId = uploadResult.AttachableResponse?.[0]?.Attachable?.Id;
-    
+
     if (attachableId) {
-      logInfo(`✅ ${docNumber}: PDF attached to ${entityType} ${entityId} (Attachable ID: ${attachableId})`);
+      logInfo(`✅ ${docNumber}: ${label} attached to ${entityType} ${entityId} (Attachable ID: ${attachableId})`);
       return true;
     } else {
-      logInfo(`⚠️ ${docNumber}: Upload succeeded but no Attachable ID returned`);
+      logInfo(`⚠️ ${docNumber}: ${label} upload succeeded but no Attachable ID returned`);
       return true; // Still consider it a success
     }
-    
+
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : String(error);
-    logError(`❌ ${docNumber}: PDF attachment error: ${errorMessage}`);
+    logError(`❌ ${docNumber}: ${label} attachment error: ${errorMessage}`);
     return false;
   }
+}
+
+// Backward-compatible PDF wrapper
+async function attachPdfToQuickBooks(
+  pdfUrl: string,
+  entityId: string,
+  entityType: string,
+  docNumber: string,
+  realmId: string,
+  accessToken: string,
+  supabase: any
+): Promise<boolean> {
+  return attachFileToQuickBooks(
+    pdfUrl, 'application/pdf', 'pdf',
+    entityId, entityType, docNumber, realmId, accessToken, supabase
+  );
 }
 
 Deno.serve(async (req) => {
@@ -3104,7 +3125,23 @@ Deno.serve(async (req) => {
             error_message: _discrepancyMsg,
           })
           .eq("id", doc.id);
-        
+
+        // Bind the document to the realm it was published to. Separate,
+        // non-blocking update so that if the qbo_realm_id column has not been
+        // migrated yet, publishing still succeeds (we just log a warning).
+        try {
+          const { error: realmErr } = await supabase
+            .from("processed_documents")
+            .update({ qbo_realm_id: realmId })
+            .eq("id", doc.id);
+          if (realmErr) {
+            logError(`⚠️ ${doc.doc_number}: could not stamp qbo_realm_id (non-blocking): ${realmErr.message}`);
+          }
+        } catch (realmStampErr: unknown) {
+          const m = realmStampErr instanceof Error ? realmStampErr.message : String(realmStampErr);
+          logError(`⚠️ ${doc.doc_number}: qbo_realm_id stamp exception (non-blocking): ${m}`);
+        }
+
         // Attach PDF to QuickBooks Bill - AWAIT to ensure it completes before function terminates
         if (doc.pdf_attachment_url && entityId) {
           try {
@@ -3125,7 +3162,31 @@ Deno.serve(async (req) => {
             logError(`⚠️ ${doc.doc_number}: PDF attachment error (non-blocking): ${errMsg}`);
           }
         }
-        
+
+        // Attach the source XML to the QuickBooks Bill too - the XML is the
+        // fiscal source of truth, so it must always travel with the Bill.
+        if (doc.xml_attachment_url && entityId) {
+          try {
+            const xmlAttached = await attachFileToQuickBooks(
+              doc.xml_attachment_url,
+              'application/xml',
+              'xml',
+              entityId,
+              entityType,
+              doc.doc_number,
+              realmId,
+              accessToken,
+              supabase
+            );
+            if (!xmlAttached) {
+              logError(`⚠️ ${doc.doc_number}: XML attachment failed but bill was created successfully`);
+            }
+          } catch (err: unknown) {
+            const errMsg = err instanceof Error ? err.message : String(err);
+            logError(`⚠️ ${doc.doc_number}: XML attachment error (non-blocking): ${errMsg}`);
+          }
+        }
+
         // Fire-and-forget SharePoint upload (non-blocking)
         try {
           fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/upload-to-sharepoint`, {
