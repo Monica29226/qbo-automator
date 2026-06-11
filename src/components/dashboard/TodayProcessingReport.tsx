@@ -60,12 +60,17 @@ export const TodayProcessingReport = () => {
         .lte("created_at", todayEnd.toISOString());
 
       if (documents) {
-        // Count "published" and "processed" with qbo_entity_id as successfully published
-        const published = documents.filter(d => d.status === "published" || (d.status === "processed" && d.qbo_entity_id)).length;
+        // Solo contar como "publicadas" si están verificadas en QBO (tienen qbo_entity_id)
+        const published = documents.filter(d => (d.status === "published" || d.status === "processed") && !!d.qbo_entity_id).length;
         const errors = documents.filter(d => d.status === "error").length;
-        const pending = documents.filter(d => d.status === "pending" || d.status === "review" || (d.status === "processed" && !d.qbo_entity_id)).length;
+        // Las marcadas published sin qbo_entity_id son publicaciones no verificadas → cuentan como pendientes
+        const pending = documents.filter(d =>
+          d.status === "pending" ||
+          d.status === "review" ||
+          ((d.status === "processed" || d.status === "published") && !d.qbo_entity_id)
+        ).length;
         const total_amount = documents
-          .filter(d => d.status === "published")
+          .filter(d => (d.status === "published" || d.status === "processed") && !!d.qbo_entity_id)
           .reduce((sum, d) => sum + Math.abs(d.total_amount), 0);
 
         setStats({ published, errors, pending, total_amount });
