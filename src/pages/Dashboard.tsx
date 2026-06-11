@@ -36,6 +36,7 @@ import { AutoUpdateStatusBadge } from "@/components/dashboard/AutoUpdateStatusBa
 import { AccountsPayableCard } from "@/components/dashboard/AccountsPayableCard";
 import { PipelineBand } from "@/components/dashboard/PipelineBand";
 import { MonthlyKpis } from "@/components/dashboard/MonthlyKpis";
+import { PublishGuideCard } from "@/components/dashboard/PublishGuideCard";
 import { OnboardingBanner } from "@/components/onboarding/OnboardingBanner";
 const AICreditsMonitor = lazy(() => import("@/components/dashboard/AICreditsMonitor").then(m => ({ default: m.AICreditsMonitor })));
 const ErrorLogsViewer = lazy(() => import("@/components/dashboard/ErrorLogsViewer").then(m => ({ default: m.ErrorLogsViewer })));
@@ -193,15 +194,24 @@ const Dashboard = () => {
 
       if (error) throw error;
 
-      const published = data.published || 0;
-      const failed = data.failed || 0;
+      const published = data?.published || 0;
+      const failed = data?.failed || 0;
+      const reviewCount = data?.review_count || 0;
+      const waiting = data?.waiting_for_qbo || 0;
 
-      if (published > 0) {
-        toast.success(
-          `✓ ${published} factura${published !== 1 ? 's' : ''} publicada${published !== 1 ? 's' : ''} en QuickBooks${failed > 0 ? ` (${failed} fallidas)` : ''}`
-        );
-      } else if (failed > 0) {
-        toast.error(`No se pudo publicar ninguna factura (${failed} errores)`);
+      // Honest reporting: only celebrate confirmed QBO publications.
+      const parts: string[] = [];
+      if (published > 0) parts.push(`${published} confirmada(s) en QuickBooks`);
+      if (reviewCount > 0) parts.push(`${reviewCount} movidas a revisión`);
+      if (waiting > 0) parts.push(`${waiting} esperando respuesta de QBO`);
+      if (failed > 0) parts.push(`${failed} con error`);
+
+      if (published > 0 && failed === 0 && reviewCount === 0) {
+        toast.success(`✓ ${parts.join(" · ")}`);
+      } else if (published > 0) {
+        toast.warning(`Resultado parcial: ${parts.join(" · ")}`);
+      } else if (failed > 0 || reviewCount > 0 || waiting > 0) {
+        toast.error(`No se confirmaron publicaciones. ${parts.join(" · ")}`);
       } else {
         toast.info("No hay facturas pendientes para publicar");
       }
@@ -395,6 +405,7 @@ const Dashboard = () => {
               organizationId={activeOrganization}
               pendingReviewCount={stats.review + stats.pendingConfig}
             />
+            <PublishGuideCard organizationId={activeOrganization} />
 
             <div className="mb-6">
               <div className="flex items-center justify-end mb-4">

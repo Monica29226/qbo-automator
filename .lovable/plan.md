@@ -1,163 +1,106 @@
-# Plan de acción para dejar el sistema confiable al 100%
+# Plan de acción
 
-## Diagnóstico confirmado
+## Diagnóstico inicial
+Hoy el dashboard está mezclando señales y por eso no se entiende qué está pasando:
 
-Hoy no es solo un caso aislado de Terranova; hay problemas estructurales de estado y verificación:
+- **El estado de QuickBooks es inconsistente**: en una parte aparece “desconectado” y en otra “conectado”.
+- **Las alertas no dicen con claridad qué bloquea el envío** ni cuál es el siguiente paso correcto.
+- **El usuario no tiene una ruta simple** para responder a la pregunta clave: “¿qué debo hacer para que las facturas sí lleguen a QuickBooks?”.
+- **Hay métricas de publicación/éxito que pueden inducir a error** si no distinguen entre publicación local, espera, revisión y confirmación real.
 
-- **Terranova:** ya se comprobó que de **219** facturas marcadas como publicadas, **193 no existen en QuickBooks**.
-- **Global:** hay **8,848** documentos en estado `published` con `qbo_entity_id`.
-- **Global:** hay **1,302** documentos marcados como publicados **sin fila de tracking**, o sea con trazabilidad incompleta.
-- **Global:** hay **33** documentos en estado `pending` que **todavía conservan `qbo_entity_id`**, lo cual es inconsistente.
-- El flujo actual cuenta como éxito casos que no deberían verse como “publicados” todavía.
+## Qué vamos a hacer
 
-## Causas raíz detectadas
+### 1) Unificar la fuente de verdad de QuickBooks
+Voy a hacer que sidebar, tarjetas de conexión, alertas y acciones del dashboard lean **el mismo estado operativo**.
 
-1. **Se reporta éxito demasiado pronto**
-   - El publicador incrementa el contador de `published` cuando `processDocument()` devuelve éxito, aunque el documento haya quedado en `review` por discrepancia post-publicación.
+Estados claros:
+- Conectado y listo
+- Requiere reconexión
+- Token por vencer
+- Esperando respuesta de QuickBooks
+- Bloqueado / requiere revisión
 
-2. **El tracking viejo puede re-marcar como publicado sin verificación fuerte**
-   - Si existe una fila previa en `qbo_publish_tracking`, el flujo puede volver a poner el documento como `published` usando ese `qbo_entity_id` sin reconfirmar que todavía exista en QuickBooks.
+**Resultado esperado:** ya no habrá un lugar diciendo “desconectado” y otro “conectado” al mismo tiempo.
 
-3. **La UI usa “publicada” como si significara “confirmada y visible en QuickBooks”**
-   - Eso hoy no está blindado de punta a punta.
+### 2) Hacer que las alertas expliquen qué hacer
+Las alertas pasarán de ser mensajes ambiguos a mensajes operativos.
 
-4. **La auditoría existe, pero es reactiva y manual**
-   - Falta una reconciliación global automática por empresa para detectar huérfanas, borradas en QBO, discrepancias de monto/IVA y tracking incompleto.
+Cada alerta dirá:
+- qué problema existe,
+- qué impacto tiene sobre las facturas,
+- qué botón usar,
+- y qué ocurrirá después.
 
-5. **Hay estados de negocio ambiguos**
-   - Hoy `published` mezcla al menos 3 realidades distintas:
-     - creada y confirmada en QBO,
-     - detectada como duplicado,
-     - marcada internamente con ID histórico pero no necesariamente verificable hoy.
+Ejemplos:
+- “QuickBooks está desconectado: las facturas no pueden enviarse.”
+- “El token expiró o está por expirar: reconectar desbloquea la publicación.”
+- “Hay facturas esperando respuesta de QuickBooks: reintentar ahora.”
+- “Hay facturas en revisión: no se enviarán hasta resolver clasificación o IVA.”
 
-## Objetivo del cambio
+### 3) Crear una guía visible de operación en el dashboard
+Voy a agregar un bloque principal que explique el flujo correcto:
 
-Garantizar para **todas las empresas** que:
+```text
+1. Confirmar conexión de QuickBooks
+2. Confirmar token válido
+3. Revisar si las facturas están listas, en revisión o esperando QBO
+4. Ejecutar publicación
+5. Verificar resultado real
+```
 
-- el **XML sea la fuente absoluta de verdad**,
-- el **total final sea idéntico al XML**,
-- el **IVA quede registrado exactamente como lo dicta el XML**,
-- **ningún documento vuelva a mostrarse como publicado si no está confirmado en QuickBooks**,
-- el sistema tenga **auditoría global y reparación masiva** cuando algo quede inconsistente.
+**Resultado esperado:** cualquier usuario podrá entender el flujo sin interpretar varias tarjetas distintas.
 
-## Plan por fases
+### 4) Corregir mensajes falsamente optimistas
+Voy a ajustar toasts, contadores y tarjetas para que **no sugieran éxito** cuando en realidad ocurrió alguno de estos casos:
+- no hay conexión,
+- el token está vencido,
+- la factura quedó en revisión,
+- la factura quedó esperando respuesta de QuickBooks,
+- o no existe confirmación suficiente.
 
-### Fase 1 — Contención inmediata
+**Regla:** solo se comunica como éxito lo que esté realmente confirmado.
 
-1. **Cambiar la semántica de estados y mensajes de éxito**
-   - Dejar de mostrar “publicada” cuando solo hubo intento exitoso.
-   - Separar visualmente:
-     - `Enviada a QBO`
-     - `Verificada en QBO`
-     - `En revisión`
-     - `Inconsistente`
-     - `Pendiente de reenvío`
+### 5) Mostrar por qué una factura no llegó
+En los paneles de publicación y diagnóstico voy a separar claramente estas causas:
+- QuickBooks desconectado
+- token vencido o crítico
+- esperando respuesta de QuickBooks
+- error de publicación
+- revisión pendiente
+- publicada y verificada
 
-2. **Bloquear falsos positivos en toasts, paneles y contadores**
-   - Si una factura termina en `review`, no debe sumarse a “éxito”.
-   - Si viene de tracking histórico sin verificación actual, no debe verse como confirmada.
+**Resultado esperado:** el usuario sabrá si debe reconectar, reintentar o corregir la factura.
 
-3. **Desactivar la confianza ciega en tracking histórico**
-   - Antes de reutilizar un `qbo_entity_id` previo, reconfirmar que el Bill/VendorCredit exista realmente en QuickBooks.
-   - Si no existe, pasar a inconsistencia/republicación, no a `published`.
+### 6) Alinear el botón de publicar con el estado real
+El flujo de “publicar a QuickBooks” va a indicar claramente:
+- cuántas facturas sí están listas,
+- cuántas no pueden enviarse todavía,
+- cuántas están bloqueadas por conexión/token,
+- y qué paso previo falta.
 
-### Fase 2 — Endurecer el publicador con validación estricta XML → QBO
+## Qué observé antes del cambio
+- En el navegador aparece el mensaje: **“QuickBooks not connected, skipping account fetch”**.
+- Al mismo tiempo, la pantalla muestra un estado contradictorio de conexión.
+- Eso confirma que el problema no es solo operativo: **también es de UX y de consistencia de estado**.
 
-1. **Confirmación fuerte post-creación**
-   - Después de crear el Bill/VendorCredit, leerlo otra vez desde QuickBooks y validar:
-     - existencia real,
-     - total,
-     - impuesto total,
-     - tipo de entidad,
-     - documento/consecutivo,
-     - proveedor correcto.
+## Resultado esperado para el usuario
+Después de estos cambios, al entrar al dashboard quedará claro:
+- si QuickBooks realmente está usable,
+- si hay que reconectar o solo reintentar,
+- si las facturas están listas o bloqueadas,
+- y qué paso exacto hacer para que sí lleguen al sistema contable.
 
-2. **Promoción a “published” solo si pasa la validación completa**
-   - Si falla cualquier chequeo, marcar `review` o `error`, nunca `published`.
+## Alcance técnico
+Voy a alinear la lógica y mensajes en estos puntos clave:
+- estado de QuickBooks en sidebar/dashboard,
+- panel de alertas,
+- métricas de publicación,
+- panel de espera/reintento,
+- y modal/acción de publicar.
 
-3. **IVA exacto desde XML**
-   - Mantener la lógica de IVA por línea como fuente de verdad.
-   - Reforzar que el chequeo final compare **IVA XML vs IVA QBO** con tolerancia mínima y explícita.
-
-4. **Persistencia coherente**
-   - Alinear `processed_documents` y `qbo_publish_tracking` para que no queden:
-     - `published` sin tracking,
-     - `pending` con `qbo_entity_id`,
-     - `review` con mensaje ambiguo.
-
-### Fase 3 — Auditoría global de todas las empresas
-
-1. **Ejecutar auditoría masiva tenant-wide**
-   - Revisar organización por organización todas las facturas “publicadas” contra QuickBooks.
-
-2. **Clasificar cada documento en categorías operativas**
-   - Verificada OK
-   - Huérfana / borrada en QBO
-   - Monto distinto
-   - IVA distinto
-   - Tracking incompleto
-   - Estado incoherente
-   - No verificable por token/conexión
-
-3. **Generar un reporte global accionable**
-   - Resumen por empresa
-   - Conteos por tipo de fallo
-   - Listado exportable de documentos afectados
-
-### Fase 4 — Reparación masiva segura
-
-1. **Limpiar inconsistencias de estado**
-   - Corregir documentos `pending` con `qbo_entity_id`.
-   - Corregir documentos `published` sin tracking.
-   - Corregir documentos cuyo tracking apunta a entidades inexistentes.
-
-2. **Republicación controlada por lotes**
-   - Reabrir solo documentos auditados como huérfanos o inconsistentes.
-   - Republicar respetando exactamente XML, total e IVA.
-
-3. **Verificación posterior obligatoria**
-   - Cada lote republicado debe re-auditarse automáticamente antes de marcarlo como exitoso.
-
-### Fase 5 — Monitoreo permanente y prevención
-
-1. **Auditoría automática programada**
-   - Revisar de forma periódica publicaciones recientes para detectar borrados o discrepancias.
-
-2. **Alertas confiables**
-   - Si QuickBooks no devuelve el documento o devuelve total/IVA distinto, levantar alerta crítica y sacar el documento de “published”.
-
-3. **Panel de salud por empresa**
-   - Mostrar por organización:
-     - publicadas verificadas,
-     - en revisión,
-     - huérfanas,
-     - pendientes de reparación,
-     - fallos de conexión/token.
-
-## Orden de ejecución recomendado
-
-1. Corregir semántica de éxito/estado en backend y UI.
-2. Blindar el publicador para que solo marque `published` con verificación real.
-3. Ejecutar auditoría global de todas las empresas.
-4. Entregarte reporte global por empresa.
-5. Ejecutar republicación masiva por lotes con re-verificación automática.
-6. Dejar monitoreo permanente para que no vuelva a pasar.
-
-## Resultado esperado
-
-Al terminar este plan:
-
-- “Published” significará realmente **visible y confirmado en QuickBooks**.
-- El sistema dejará de inventar éxito cuando hay discrepancias.
-- El **XML seguirá mandando siempre** para montos e IVA.
-- Tendremos un diagnóstico completo de **todas las empresas**, no solo Terranova.
-- La reparación quedará hecha con trazabilidad y control.
-
-## Detalles técnicos
-
-- Habrá cambios en el flujo de publicación, tracking, auditoría y UI de estados.
-- Haré una revisión de los edge functions de publicación/republicación/auditoría y de las pantallas que hoy muestran “publicado”.
-- Probablemente se necesiten ajustes de esquema para separar mejor estados verificados vs inconsistentes y para registrar auditorías globales de forma confiable.
-- La republicación de Terranova debe ejecutarse **después** de aplicar al menos la contención de la Fase 1, para no volver a producir falsos positivos.
-
-Si apruebas este plan, lo implemento en ese orden y te entrego primero la **contención + auditoría global**, que es lo más urgente.
+## Validación
+Antes de darlo por terminado validaré que:
+- no haya estados contradictorios,
+- las alertas indiquen acciones comprensibles,
+- el flujo para publicar sea claro,
+- y los mensajes de éxito no exageren el resultado real.

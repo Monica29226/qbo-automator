@@ -2,12 +2,14 @@ import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { Link } from "react-router-dom";
-import { CheckCircle2, AlertCircle, Loader2 } from "lucide-react";
+import { CheckCircle2, AlertCircle, Loader2, Clock } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 /**
  * Píldora de estado QuickBooks en la parte superior del sidebar.
- * Verde si conectado y con sync reciente, ámbar si stale, rojo si desconectado.
+ * Usa la MISMA fuente de verdad que el resto del dashboard
+ * (RPC has_active_integration) para evitar mostrar "Desconectado"
+ * cuando otras tarjetas dicen "Conectado".
  */
 export function QBOSyncPill() {
   const { activeOrganization } = useAuth();
@@ -19,14 +21,11 @@ export function QBOSyncPill() {
     refetchInterval: 60_000,
     retry: 1,
     queryFn: async () => {
-      const [{ data: integ, error: integErr }, { data: log }] = await Promise.all([
-        supabase
-          .from("integration_accounts")
-          .select("is_active")
-          .eq("organization_id", activeOrganization!)
-          .eq("service_type", "quickbooks")
-          .eq("is_active", true)
-          .maybeSingle(),
+      const [qboActive, { data: log }] = await Promise.all([
+        supabase.rpc("has_active_integration", {
+          _org_id: activeOrganization!,
+          _service_type: "quickbooks",
+        }),
         supabase
           .from("sync_logs")
           .select("started_at, status")
@@ -35,9 +34,9 @@ export function QBOSyncPill() {
           .limit(1)
           .maybeSingle(),
       ]);
-      if (integErr) throw integErr;
+      if (qboActive.error) throw qboActive.error;
       return {
-        connected: !!integ,
+        connected: !!qboActive.data,
         startedAt: log?.started_at ?? null,
       };
     },
@@ -62,19 +61,19 @@ export function QBOSyncPill() {
   let tone = "bg-[hsl(var(--success))]/15 text-[hsl(var(--success))]";
   let dot = "bg-[hsl(var(--success))]";
   let Icon = CheckCircle2;
-  let label = "QuickBooks Online";
-  let sub = "Sincronizado";
+  const label = "QuickBooks Online";
+  let sub = "Conectado y listo";
 
   if (!connected) {
     tone = "bg-[hsl(var(--destructive))]/15 text-[hsl(var(--destructive))]";
     dot = "bg-[hsl(var(--destructive))]";
     Icon = AlertCircle;
-    sub = "Desconectado";
+    sub = "Desconectado — reconectar";
   } else if (!fresh) {
     tone = "bg-[hsl(var(--warning))]/20 text-[hsl(var(--warning))]";
     dot = "bg-[hsl(var(--warning))]";
-    Icon = AlertCircle;
-    sub = startedAt ? "Sync atrasada" : "Sin sincronizar";
+    Icon = Clock;
+    sub = startedAt ? "Última sync hace más de 1h" : "Conectado — sin sync reciente";
   } else if (ageMin !== null) {
     sub = `Sincronizado hace ${ageMin === 0 ? "menos de 1" : ageMin} min`;
   }
