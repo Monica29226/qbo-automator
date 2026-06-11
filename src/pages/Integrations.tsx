@@ -423,9 +423,20 @@ const Integrations = () => {
         body: { state },
       });
 
+      // Setup not done yet: show the exact, actionable reason instead of a generic error.
+      if (data?.setup_required) {
+        popup.close();
+        setOutlookError({ code: "setup_required", message: data.error });
+        toast.error(data.error, { duration: 12000 });
+        if (data.redirect_uri) {
+          toast.info(`Redirect URI a registrar en Azure: ${data.redirect_uri}`, { duration: 15000 });
+        }
+        return;
+      }
+
       if (error || !data?.authUrl) {
         popup.close();
-        toast.error(`Error de función: ${error ? JSON.stringify(error) : "sin authUrl"}`);
+        toast.error(`Error al iniciar Outlook: ${data?.error || (error ? JSON.stringify(error) : "sin authUrl")}`);
         return;
       }
 

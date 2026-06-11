@@ -14,14 +14,24 @@ serve(async (req) => {
     const MICROSOFT_CLIENT_ID = Deno.env.get("MICROSOFT_CLIENT_ID");
     const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
 
-    if (!MICROSOFT_CLIENT_ID || !SUPABASE_URL) {
-      throw new Error("Missing required environment variables (MICROSOFT_CLIENT_ID or SUPABASE_URL)");
+    const redirectUri = `${SUPABASE_URL}/functions/v1/outlook-oauth-callback`;
+
+    // Clear, actionable setup error instead of an opaque "Missing env vars".
+    // This is the #1 reason Outlook "never connects": the Microsoft app
+    // credentials were never added to the Supabase Edge Function secrets.
+    if (!MICROSOFT_CLIENT_ID) {
+      return new Response(
+        JSON.stringify({
+          error: "Outlook aún no está configurado. Falta el secret MICROSOFT_CLIENT_ID en Supabase (Edge Functions → Secrets). Registrá una app en Microsoft Entra con este Redirect URI y cargá su Client ID y Client Secret.",
+          setup_required: true,
+          redirect_uri: redirectUri,
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 200 },
+      );
     }
 
     const { state } = await req.json();
     if (!state) throw new Error("Missing state parameter");
-
-    const redirectUri = `${SUPABASE_URL}/functions/v1/outlook-oauth-callback`;
 
     // /common = personal + work/school accounts (do NOT use /consumers or /organizations)
     const authUrl = new URL("https://login.microsoftonline.com/common/oauth2/v2.0/authorize");
