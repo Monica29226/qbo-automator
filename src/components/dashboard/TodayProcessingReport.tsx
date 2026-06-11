@@ -159,10 +159,12 @@ export const TodayProcessingReport = () => {
   }
 
   const totalDocuments = stats.published + stats.errors + stats.pending;
-  const resolvedDocuments = stats.published + stats.errors;
-  const successRate = resolvedDocuments > 0 
-    ? ((stats.published / resolvedDocuments) * 100).toFixed(1)
-    : (stats.pending > 0 ? "—" : "100");
+  // Honest success rate: published over EVERYTHING attempted today, including
+  // pending/stuck docs. Never default to 100% when nothing was processed —
+  // that was reading as "all good" while invoices sat unpublished.
+  const successRate = totalDocuments > 0
+    ? ((stats.published / totalDocuments) * 100).toFixed(1)
+    : "—";
 
   // Display date in CR timezone using Intl (always reflects today in America/Costa_Rica)
   const crDateLabel = new Intl.DateTimeFormat("es-CR", {
@@ -210,7 +212,7 @@ export const TodayProcessingReport = () => {
               <TrendingUp className="h-4 w-4 text-primary" />
               Tasa de Éxito
             </div>
-            <div className="text-2xl font-bold text-primary">{successRate}%</div>
+            <div className="text-2xl font-bold text-primary">{successRate === "—" ? "—" : `${successRate}%`}</div>
           </div>
         </div>
 

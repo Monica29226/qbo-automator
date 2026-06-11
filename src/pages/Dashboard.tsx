@@ -451,10 +451,17 @@ const Dashboard = () => {
                         toast.success("Sincronización reactivada");
                         queryClient.invalidateQueries({ queryKey: ["dashboard-last-sync"] });
                         try {
-                          await supabase.functions.invoke("auto-sync-invoices", {
+                          const { error: syncErr } = await supabase.functions.invoke("auto-sync-invoices", {
                             body: { organization_id: activeOrganization },
                           });
-                        } catch {}
+                          if (syncErr) throw syncErr;
+                        } catch (e: any) {
+                          toast.warning(
+                            "Reactivada, pero la sincronización inmediata no arrancó: " +
+                              (e?.message || "error desconocido") +
+                              ". Correrá en el próximo ciclo automático."
+                          );
+                        }
                         refreshData();
                       }}
                     >
@@ -601,14 +608,12 @@ const Dashboard = () => {
           <StatsCard
             title="Procesadas Hoy"
             value={stats.processed.toString()}
-            change="+12%"
             icon={CheckCircle}
             variant="success"
           />
           <StatsCard
             title="En Revisión"
             value={stats.review.toString()}
-            change="-2"
             icon={AlertCircle}
             variant="warning"
           />
@@ -616,7 +621,6 @@ const Dashboard = () => {
             <StatsCard
               title="Con Error"
               value={stats.errors.toString()}
-              change="+3"
               icon={AlertCircle}
               variant="warning"
             />
@@ -625,7 +629,6 @@ const Dashboard = () => {
             <StatsCard
               title="Publicadas"
               value={stats.published.toString()}
-              change="+QB"
               icon={CheckCircle}
               variant="default"
             />
@@ -633,7 +636,6 @@ const Dashboard = () => {
           <StatsCard
             title="Pendientes"
             value={stats.pending.toString()}
-            change="+5"
             icon={Clock}
             variant="default"
             onActionClick={() => navigate("/invoices-pending-log")}
@@ -642,7 +644,6 @@ const Dashboard = () => {
           <StatsCard
             title="Total (7 días)"
             value={stats.total.toString()}
-            change="+18%"
             icon={FileText}
             variant="primary"
           />

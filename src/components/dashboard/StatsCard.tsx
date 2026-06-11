@@ -6,23 +6,24 @@ import { cn } from "@/lib/utils";
 interface StatsCardProps {
   title: string;
   value: string;
-  change: string;
+  /** Optional real trend vs. a prior period. Omit it rather than show a fabricated value. */
+  change?: string;
   icon: LucideIcon;
   variant?: "default" | "primary" | "success" | "warning";
   onActionClick?: () => void;
   actionLabel?: string;
 }
 
-export const StatsCard = ({ 
-  title, 
-  value, 
-  change, 
-  icon: Icon, 
+export const StatsCard = ({
+  title,
+  value,
+  change,
+  icon: Icon,
   variant = "default",
   onActionClick,
-  actionLabel 
+  actionLabel
 }: StatsCardProps) => {
-  const isPositive = change.startsWith("+");
+  const isPositive = change?.startsWith("+") ?? false;
   
   const variantStyles = {
     default: "bg-card",
@@ -49,12 +50,14 @@ export const StatsCard = ({
       </div>
       <div className="space-y-1">
         <p className="text-3xl font-bold text-foreground font-heading">{value}</p>
-        <p className={cn(
-          "text-xs font-medium",
-          isPositive ? "text-success" : "text-muted-foreground"
-        )}>
-          {change} vs ayer
-        </p>
+        {change && (
+          <p className={cn(
+            "text-xs font-medium",
+            isPositive ? "text-success" : "text-muted-foreground"
+          )}>
+            {change} vs ayer
+          </p>
+        )}
       </div>
       {onActionClick && actionLabel && (
         <Button 

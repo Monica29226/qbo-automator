@@ -124,6 +124,39 @@ export const SystemAlertsPanel = ({ organizationId }: Props) => {
     refetchInterval: 60_000,
   });
 
+  // Real health signals — so the green "all good" state actually reflects
+  // QuickBooks connectivity and the document backlog, not merely the absence
+  // of rows in alert_history.
+  const { data: health, isError: healthError } = useQuery({
+    queryKey: ["system-health-signals", organizationId],
+    enabled: !!organizationId,
+    refetchInterval: 60_000,
+    queryFn: async () => {
+      const [qboRes, errRes, pendRes] = await Promise.all([
+        supabase.rpc("has_active_integration", {
+          _org_id: organizationId!,
+          _service_type: "quickbooks",
+        }),
+        supabase
+          .from("processed_documents")
+          .select("id", { count: "exact", head: true })
+          .eq("organization_id", organizationId!)
+          .eq("status", "error"),
+        supabase
+          .from("processed_documents")
+          .select("id", { count: "exact", head: true })
+          .eq("organization_id", organizationId!)
+          .in("status", ["pending", "review"]),
+      ]);
+      if (qboRes.error) throw qboRes.error;
+      return {
+        qboConnected: !!qboRes.data,
+        errorCount: errRes.count ?? 0,
+        pendingCount: pendRes.count ?? 0,
+      };
+    },
+  });
+
   useEffect(() => {
     if (!organizationId) return;
     const channel = supabase
@@ -250,10 +283,45 @@ export const SystemAlertsPanel = ({ organizationId }: Props) => {
         {isLoading ? (
           <div className="animate-pulse h-16 bg-muted rounded-md" />
         ) : total === 0 ? (
-          <div className="flex items-center gap-3 p-4 rounded-md bg-green-500/5 border border-green-500/30">
-            <CheckCircle2 className="h-5 w-5 text-green-600 dark:text-green-400" />
-            <p className="text-sm font-medium">Sistema saludable — todo funcionando correctamente</p>
-          </div>
+          healthError || !health ? (
+            <div className="flex items-center gap-3 p-4 rounded-md bg-muted border">
+              <Info className="h-5 w-5 text-muted-foreground" />
+              <p className="text-sm">
+                No hay alertas registradas. No se pudo verificar el estado de las integraciones.
+              </p>
+            </div>
+          ) : health.qboConnected && health.errorCount === 0 && health.pendingCount === 0 ? (
+            <div className="flex items-center gap-3 p-4 rounded-md bg-green-500/5 border border-green-500/30">
+              <CheckCircle2 className="h-5 w-5 text-green-600 dark:text-green-400" />
+              <p className="text-sm font-medium">
+                Sistema saludable — QuickBooks conectado, sin errores ni pendientes.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-2 p-4 rounded-md bg-yellow-500/5 border border-yellow-500/30">
+              <p className="text-sm font-medium flex items-center gap-2">
+                <AlertTriangle className="h-4 w-4 text-yellow-600 dark:text-yellow-500" />
+                Sin alertas registradas, pero hay cosas por revisar:
+              </p>
+              <ul className="text-sm text-muted-foreground space-y-1 pl-6 list-disc">
+                {!health.qboConnected && <li>QuickBooks no está conectado.</li>}
+                {health.errorCount > 0 && (
+                  <li>
+                    <button className="underline hover:text-foreground" onClick={() => navigate("/error-documents")}>
+                      {health.errorCount} documento(s) con error
+                    </button>
+                  </li>
+                )}
+                {health.pendingCount > 0 && (
+                  <li>
+                    <button className="underline hover:text-foreground" onClick={() => navigate("/invoices-pending-log")}>
+                      {health.pendingCount} pendiente(s) sin publicar
+                    </button>
+                  </li>
+                )}
+              </ul>
+            </div>
+          )
         ) : (
           <div className="space-y-3">
             {visible.map((a, idx) => (

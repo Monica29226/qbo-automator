@@ -64,8 +64,13 @@ export const GmailTokenAlert = () => {
       });
 
       if (error) {
-        // Don't show a misleading alert if we couldn't verify
-        setAlert(null);
+        // Surface the failure instead of hiding it — a silent null read as
+        // "connection fine" even when we never verified it.
+        setAlert({
+          provider: activeProvider,
+          label: PROVIDER_LABELS[activeProvider],
+          message: `No se pudo verificar la conexión de ${PROVIDER_LABELS[activeProvider]}. Si las facturas no están entrando, reconéctela desde Integraciones.`,
+        });
         return;
       }
 

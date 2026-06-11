@@ -59,10 +59,12 @@ export const AutoUpdateStatusBadge = ({ organizationId }: Props) => {
 
   if (!organizationId) return null;
   if (isError && !data) {
+    // The query failed — say so, rather than spinning "Comprobando…" forever,
+    // which read as "still checking" when it had actually given up.
     return (
-      <Badge variant="outline" className="h-fit border-muted-foreground/40 text-muted-foreground">
-        <RefreshCw className="h-3 w-3 mr-1 animate-spin" />
-        Comprobando estado…
+      <Badge variant="outline" className="h-fit border-destructive/40 text-destructive">
+        <AlertTriangle className="h-3 w-3 mr-1" />
+        Estado no verificado
       </Badge>
     );
   }
