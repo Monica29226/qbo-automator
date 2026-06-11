@@ -3053,8 +3053,15 @@ Deno.serve(async (req) => {
         }
         
         const elapsedTime = Date.now() - startTime;
-        log(`${progress} ✅ Done in ${elapsedTime}ms`);
-        return { success: true, docNumber: doc.doc_number, qbo_entity_id: entityId };
+        const finalStatus = _discrepancyMsg ? "review" : "published";
+        log(`${progress} ✅ Done in ${elapsedTime}ms (status=${finalStatus})`);
+        return {
+          success: !_discrepancyMsg,
+          docNumber: doc.doc_number,
+          qbo_entity_id: entityId,
+          finalStatus,
+          discrepancyMsg: _discrepancyMsg || undefined,
+        };
         
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : "Unknown error";
@@ -3103,22 +3110,27 @@ Deno.serve(async (req) => {
       } finally {
         await ensureNotStuck(doc.id);
       }
-      
+
+      let singleReview = 0;
       if (result.success) {
         if (result.skipped) {
           results.skipped_duplicates = 1;
         } else {
           results.published = 1;
         }
+      } else if (result.finalStatus === "review") {
+        singleReview = 1;
       } else {
         results.failed = 1;
         results.errors.push({ doc_number: result.docNumber, error: result.error });
       }
-      
+
       return new Response(
         JSON.stringify({
-          success: result.success,
+          success: result.success && singleReview === 0,
           published: results.published,
+          review_count: singleReview,
+          review: singleReview ? [{ doc_number: result.docNumber, reason: result.discrepancyMsg, qbo_entity_id: result.qbo_entity_id }] : undefined,
           skipped_duplicates: results.skipped_duplicates,
           failed: results.failed,
           errors: results.errors.length > 0 ? results.errors : undefined,
@@ -3156,7 +3168,9 @@ Deno.serve(async (req) => {
       }
     }
     
-    // Count results
+    // Count results - 'published' only counts docs CONFIRMED published in QBO (not 'review')
+    let reviewCount = 0;
+    const reviewList: { doc_number: string; reason: string; qbo_entity_id?: string }[] = [];
     for (const result of documentResults) {
       if (result.success) {
         if (result.skipped) {
@@ -3171,19 +3185,29 @@ Deno.serve(async (req) => {
         } else {
           results.published++;
         }
+      } else if (result.finalStatus === "review") {
+        // Bill was created in QBO but with discrepancy → NOT counted as published
+        reviewCount++;
+        reviewList.push({
+          doc_number: result.docNumber,
+          reason: result.discrepancyMsg || "Discrepancia QBO vs XML",
+          qbo_entity_id: result.qbo_entity_id,
+        });
       } else {
         results.failed++;
         results.errors.push({ doc_number: result.docNumber, error: result.error });
       }
     }
-    
+
     const totalTime = Date.now() - batchStartTime;
-    logInfo(`📊 Batch complete: ${results.published} published, ${results.skipped_duplicates} skipped, ${results.failed} failed in ${totalTime}ms`);
+    logInfo(`📊 Batch complete: ${results.published} published, ${reviewCount} review, ${results.skipped_duplicates} skipped, ${results.failed} failed in ${totalTime}ms`);
 
     return new Response(
       JSON.stringify({
-        success: results.failed === 0,
+        success: results.failed === 0 && reviewCount === 0,
         published: results.published,
+        review_count: reviewCount,
+        review: reviewList.length > 0 ? reviewList : undefined,
         skipped_duplicates: results.skipped_duplicates,
         failed: results.failed,
         errors: results.errors.length > 0 ? results.errors : undefined,
