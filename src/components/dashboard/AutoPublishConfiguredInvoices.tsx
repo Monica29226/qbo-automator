@@ -69,12 +69,23 @@ export const AutoPublishConfiguredInvoices = () => {
         } else {
           const published = publishResult?.published || 0;
           const failed = publishResult?.failed || 0;
+          const review = publishResult?.review || publishResult?.needs_review || 0;
+          const waiting = publishResult?.waiting || 0;
 
-          if (published > 0) {
-            toast.success(
-              `✅ ${published} factura(s) publicadas a QuickBooks${failed > 0 ? ` (${failed} fallidas)` : ''}`,
-              { duration: 5000 }
-            );
+          if (published > 0 || failed > 0 || review > 0) {
+            const parts: string[] = [];
+            if (published > 0) parts.push(`${published} publicadas`);
+            if (review > 0) parts.push(`${review} en revisión`);
+            if (waiting > 0) parts.push(`${waiting} esperando QBO`);
+            if (failed > 0) parts.push(`${failed} con error`);
+            const msg = parts.join(" · ");
+            if (failed > 0 && published === 0) {
+              toast.error(`Auto-publicación: ${msg}`, { duration: 7000 });
+            } else if (published > 0) {
+              toast.success(`Auto-publicación: ${msg}`, { duration: 6000 });
+            } else {
+              toast.message(`Auto-publicación: ${msg}`, { duration: 6000 });
+            }
             queryClient.invalidateQueries({ queryKey: ["recent-documents"] });
             queryClient.invalidateQueries({ queryKey: ["pending-invoices"] });
           }
