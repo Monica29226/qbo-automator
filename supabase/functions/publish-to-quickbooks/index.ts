@@ -1852,28 +1852,73 @@ Deno.serve(async (req) => {
         // STEP 1: CHECK DUPLICATE IN TRACKING TABLE (PRIMARY CHECK)
         // =============================================================
         const trackingCheck = await checkDuplicateInTracking(claveHacienda);
-        
+
         if (trackingCheck.isDuplicate) {
-          logInfo(`🚫 DUPLICATE BLOCKED: ${doc.doc_number} - Already published as ${trackingCheck.trackingRecord.qbo_entity_type} ID: ${trackingCheck.trackingRecord.qbo_entity_id}`);
-          
-          // Update document to reflect it's already published
+          // CRITICAL: reverify the QBO entity still exists before reusing the historic ID.
+          // Previously this path marked the doc as 'published' blindly, producing false positives
+          // when QuickBooks users deleted the Bill/VendorCredit.
+          const trk = trackingCheck.trackingRecord;
+          const trkType = (trk.qbo_entity_type || 'Bill').toLowerCase();
+          let stillExists = false;
+          try {
+            const verifyResp = await fetch(
+              `https://quickbooks.api.intuit.com/v3/company/${realmId}/${trkType}/${trk.qbo_entity_id}?minorversion=73`,
+              { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" } }
+            );
+            if (verifyResp.ok) {
+              const verifyBody = await verifyResp.json().catch(() => ({}));
+              const entity = verifyBody?.Bill || verifyBody?.VendorCredit || verifyBody?.Invoice;
+              const isDeleted = entity?.status === 'Deleted' || entity?.Status === 'Deleted';
+              stillExists = !!entity && !isDeleted;
+            } else if (verifyResp.status === 404) {
+              stillExists = false;
+            } else {
+              // On transient errors (token, 5xx) we keep the historic state — don't downgrade
+              logInfo(`⚠️ ${doc.doc_number}: tracking verify HTTP ${verifyResp.status} — preservando estado histórico`);
+              stillExists = true;
+            }
+          } catch (verifyErr) {
+            logError(`tracking verify failed for ${doc.doc_number}:`, verifyErr);
+            // Network failure: don't flip status, just skip
+            stillExists = true;
+          }
+
+          if (stillExists) {
+            logInfo(`🚫 DUPLICATE BLOCKED (verified): ${doc.doc_number} - QBO ${trk.qbo_entity_type} ID ${trk.qbo_entity_id}`);
+            await supabase
+              .from("processed_documents")
+              .update({
+                qbo_entity_id: trk.qbo_entity_id,
+                qbo_entity_type: trk.qbo_entity_type,
+                status: "published",
+                error_message: `Ya publicado (tracking ID: ${trk.id})`,
+              })
+              .eq("id", doc.id);
+
+            return {
+              success: true,
+              docNumber: doc.doc_number,
+              skipped: true,
+              reason: `Ya existe en tracking (QBO ID: ${trk.qbo_entity_id})`,
+              qbo_entity_id: trk.qbo_entity_id,
+            };
+          }
+
+          // Historic entity no longer exists in QBO → clear tracking and continue publishing fresh
+          logInfo(`♻️ ${doc.doc_number}: tracking apunta a ${trk.qbo_entity_type} ${trk.qbo_entity_id} pero ya NO existe en QBO. Limpiando y republicando.`);
+          await supabase
+            .from("qbo_publish_tracking")
+            .delete()
+            .eq("id", trk.id);
           await supabase
             .from("processed_documents")
             .update({
-              qbo_entity_id: trackingCheck.trackingRecord.qbo_entity_id,
-              qbo_entity_type: trackingCheck.trackingRecord.qbo_entity_type,
-              status: "published",
-              error_message: `Ya publicado (tracking ID: ${trackingCheck.trackingRecord.id})`,
+              qbo_entity_id: null,
+              qbo_entity_type: null,
+              error_message: `Tracking previo (${trk.qbo_entity_id}) ya no existe en QBO — republicando.`,
             })
             .eq("id", doc.id);
-          
-          return { 
-            success: true, 
-            docNumber: doc.doc_number, 
-            skipped: true, 
-            reason: `Ya existe en tracking (QBO ID: ${trackingCheck.trackingRecord.qbo_entity_id})`,
-            qbo_entity_id: trackingCheck.trackingRecord.qbo_entity_id 
-          };
+          // fall through to normal publish flow
         }
         
         // =============================================================
