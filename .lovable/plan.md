@@ -1,106 +1,50 @@
-# Plan de acción
+## Objetivo
+Corregir el caso de **Centro Médico Terranoa** donde el sistema muestra facturas como “publicadas” aunque no existen en QuickBooks, y eliminar los mensajes de éxito falsos que hoy dañan la confianza.
 
-## Diagnóstico inicial
-Hoy el dashboard está mezclando señales y por eso no se entiende qué está pasando:
+## Hallazgos ya confirmados
+- La organización **CENTRO MEDICO TERRANOA SOCIEDAD ANONIMA** sí tiene la integración de QuickBooks activa.
+- Tiene **221 documentos marcados como `published`** en la base.
+- La auditoría real contra QuickBooks ya devolvió **facturas huérfanas**: documentos marcados como publicados pero que QuickBooks responde como “Objeto no encontrado”.
+- Ejemplos detectados en la auditoría: documentos con números **06600001010000002842**, **00100001010000000197**, **00500001010000093894**, entre otros.
+- Además, todavía hay lógica que puede inflar el éxito:
+  - un componente de UI sigue tratando `processed` como éxito del paso de publicación,
+  - y el flujo de publicación backend todavía puede asumir que una factura “sí existe” cuando la verificación con QuickBooks falla por error transitorio.
 
-- **El estado de QuickBooks es inconsistente**: en una parte aparece “desconectado” y en otra “conectado”.
-- **Las alertas no dicen con claridad qué bloquea el envío** ni cuál es el siguiente paso correcto.
-- **El usuario no tiene una ruta simple** para responder a la pregunta clave: “¿qué debo hacer para que las facturas sí lleguen a QuickBooks?”.
-- **Hay métricas de publicación/éxito que pueden inducir a error** si no distinguen entre publicación local, espera, revisión y confirmación real.
+## Plan
+### 1. Endurecer la verdad de publicación
+- Ajustar el backend de publicación para que **no dé por existente** una factura en QuickBooks si la verificación falla por timeout, 5xx o error transitorio.
+- Mantener como “publicada” solo lo realmente confirmado por QuickBooks o por tracking válido.
+- Si no se puede verificar, dejar el documento en un estado honesto de espera/revisión/error, no en `published`.
 
-## Qué vamos a hacer
+### 2. Corregir todos los contadores y mensajes engañosos
+- Corregir los componentes del dashboard que aún muestran éxito usando estados intermedios en vez de confirmación real.
+- Cambiar el cálculo de éxito para que el usuario vea solo:
+  - confirmadas en QuickBooks,
+  - en revisión,
+  - esperando respuesta,
+  - con error,
+  - huérfanas detectadas por auditoría.
+- Eliminar cualquier “100% de éxito” si no hubo confirmación real en QuickBooks.
 
-### 1) Unificar la fuente de verdad de QuickBooks
-Voy a hacer que sidebar, tarjetas de conexión, alertas y acciones del dashboard lean **el mismo estado operativo**.
+### 3. Dejar una recuperación clara para Terranoa
+- Aprovechar la auditoría existente para listar las facturas huérfanas de Terranoa de forma clara.
+- Usar el flujo de **republicación controlada** para reenviar solo las que faltan realmente en QuickBooks.
+- Mantener visible cuáles se recuperaron, cuáles siguen fallando y cuáles requieren revisión manual.
 
-Estados claros:
-- Conectado y listo
-- Requiere reconexión
-- Token por vencer
-- Esperando respuesta de QuickBooks
-- Bloqueado / requiere revisión
+### 4. Validar al final con una auditoría real
+- Ejecutar nuevamente la verificación contra QuickBooks después de los cambios.
+- Confirmar que las facturas recuperadas ya existen en QuickBooks.
+- Confirmar que el dashboard ya no las cuenta como éxito si no están realmente allá.
 
-**Resultado esperado:** ya no habrá un lugar diciendo “desconectado” y otro “conectado” al mismo tiempo.
+## Resultado esperado
+- Si una factura no existe en QuickBooks, **no volverá a verse como publicada exitosa**.
+- El porcentaje y los toasts dejarán de exagerar el resultado.
+- Para Terranoa quedará un flujo confiable: **auditar → detectar faltantes → republicar faltantes → verificar de nuevo**.
 
-### 2) Hacer que las alertas expliquen qué hacer
-Las alertas pasarán de ser mensajes ambiguos a mensajes operativos.
-
-Cada alerta dirá:
-- qué problema existe,
-- qué impacto tiene sobre las facturas,
-- qué botón usar,
-- y qué ocurrirá después.
-
-Ejemplos:
-- “QuickBooks está desconectado: las facturas no pueden enviarse.”
-- “El token expiró o está por expirar: reconectar desbloquea la publicación.”
-- “Hay facturas esperando respuesta de QuickBooks: reintentar ahora.”
-- “Hay facturas en revisión: no se enviarán hasta resolver clasificación o IVA.”
-
-### 3) Crear una guía visible de operación en el dashboard
-Voy a agregar un bloque principal que explique el flujo correcto:
-
-```text
-1. Confirmar conexión de QuickBooks
-2. Confirmar token válido
-3. Revisar si las facturas están listas, en revisión o esperando QBO
-4. Ejecutar publicación
-5. Verificar resultado real
-```
-
-**Resultado esperado:** cualquier usuario podrá entender el flujo sin interpretar varias tarjetas distintas.
-
-### 4) Corregir mensajes falsamente optimistas
-Voy a ajustar toasts, contadores y tarjetas para que **no sugieran éxito** cuando en realidad ocurrió alguno de estos casos:
-- no hay conexión,
-- el token está vencido,
-- la factura quedó en revisión,
-- la factura quedó esperando respuesta de QuickBooks,
-- o no existe confirmación suficiente.
-
-**Regla:** solo se comunica como éxito lo que esté realmente confirmado.
-
-### 5) Mostrar por qué una factura no llegó
-En los paneles de publicación y diagnóstico voy a separar claramente estas causas:
-- QuickBooks desconectado
-- token vencido o crítico
-- esperando respuesta de QuickBooks
-- error de publicación
-- revisión pendiente
-- publicada y verificada
-
-**Resultado esperado:** el usuario sabrá si debe reconectar, reintentar o corregir la factura.
-
-### 6) Alinear el botón de publicar con el estado real
-El flujo de “publicar a QuickBooks” va a indicar claramente:
-- cuántas facturas sí están listas,
-- cuántas no pueden enviarse todavía,
-- cuántas están bloqueadas por conexión/token,
-- y qué paso previo falta.
-
-## Qué observé antes del cambio
-- En el navegador aparece el mensaje: **“QuickBooks not connected, skipping account fetch”**.
-- Al mismo tiempo, la pantalla muestra un estado contradictorio de conexión.
-- Eso confirma que el problema no es solo operativo: **también es de UX y de consistencia de estado**.
-
-## Resultado esperado para el usuario
-Después de estos cambios, al entrar al dashboard quedará claro:
-- si QuickBooks realmente está usable,
-- si hay que reconectar o solo reintentar,
-- si las facturas están listas o bloqueadas,
-- y qué paso exacto hacer para que sí lleguen al sistema contable.
-
-## Alcance técnico
-Voy a alinear la lógica y mensajes en estos puntos clave:
-- estado de QuickBooks en sidebar/dashboard,
-- panel de alertas,
-- métricas de publicación,
-- panel de espera/reintento,
-- y modal/acción de publicar.
-
-## Validación
-Antes de darlo por terminado validaré que:
-- no haya estados contradictorios,
-- las alertas indiquen acciones comprensibles,
-- el flujo para publicar sea claro,
-- y los mensajes de éxito no exageren el resultado real.
+## Detalles técnicos
+- Archivos probables a tocar:
+  - `supabase/functions/publish-to-quickbooks/index.ts`
+  - `src/components/dashboard/ProcessingFlow.tsx`
+  - `src/components/dashboard/AuditPublishedVsQBO.tsx`
+  - componentes del dashboard que aún calculen “éxito” con estados no confirmados
+- La recuperación se apoyará en las funciones ya existentes de auditoría y republicación, no en un flujo nuevo paralelo.
