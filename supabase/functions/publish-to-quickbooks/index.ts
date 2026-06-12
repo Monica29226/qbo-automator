@@ -2225,6 +2225,24 @@ Deno.serve(async (req) => {
           }
         } else {
           accountRef = await getAccountIdByCode(extractedCode);
+          // Defensive fallback: if direct lookup failed but the error history / default ref
+          // hints at a legacy code, try resolving via legacy_account_mapping before erroring.
+          if (!accountRef) {
+            const hint = `${doc.error_message || ""} ${doc.default_account_ref || ""}`;
+            const legacyHint = hint.match(/1150040\d+/)?.[0];
+            if (legacyHint) {
+              const { data: m2 } = await supabase
+                .from("legacy_account_mapping")
+                .select("qbo_account_id")
+                .eq("organization_id", organization_id)
+                .eq("legacy_account_code", legacyHint)
+                .maybeSingle();
+              if (m2?.qbo_account_id) {
+                accountRef = m2.qbo_account_id;
+                logInfo(`   🔁 ${doc.doc_number}: Fallback legacy ${legacyHint} → QBO ${accountRef}`);
+              }
+            }
+          }
         }
         
         if (!accountRef) {

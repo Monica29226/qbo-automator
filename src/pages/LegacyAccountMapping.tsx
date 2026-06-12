@@ -95,21 +95,62 @@ export default function LegacyAccountMapping() {
         },
         { onConflict: "organization_id,legacy_account_code" }
       );
-    setSaving(null);
     if (error) {
+      setSaving(null);
       toast.error(`Error guardando: ${error.message}`);
       return;
     }
     toast.success(`Mapeo guardado: ${row.legacy_code} → ${acc?.name || row.qbo_account_id}`);
 
-    // Move affected error docs to 'processed' so publish-to-quickbooks picks them up
-    await supabase
+    // Find affected docs (status error/needs_account_mapping referencing this legacy code)
+    const { data: affected } = await supabase
       .from("processed_documents")
-      .update({ status: "processed", error_message: null })
+      .select("id")
       .eq("organization_id", activeOrganization)
       .in("status", ["error", "needs_account_mapping"])
       .or(`error_message.ilike.%${row.legacy_code}%,default_account_ref.ilike.%${row.legacy_code}%`);
 
+    const affectedIds = (affected || []).map((d: any) => d.id);
+
+    if (affectedIds.length > 0) {
+      // CRITICAL: force default_account_ref to the legacy code so the resolver hits the
+      // legacy_account_mapping branch in publish-to-quickbooks (docs whose original
+      // default_account_ref was a non-legacy string like "652 Cuotas" would fail again).
+      await supabase
+        .from("processed_documents")
+        .update({
+          status: "processed",
+          default_account_ref: row.legacy_code,
+          error_message: null,
+        })
+        .in("id", affectedIds);
+
+      // Clear stale tracking rows so audits reflect the re-queued state.
+      await supabase
+        .from("qbo_publish_tracking")
+        .delete()
+        .in("document_id", affectedIds)
+        .eq("status", "needs_account_mapping");
+
+      toast.success(`${affectedIds.length} factura(s) re-encoladas. Publicando en segundo plano…`);
+
+      // Fire-and-forget republish (function may take >30 s for batches).
+      supabase.functions
+        .invoke("publish-to-quickbooks", { body: { organization_id: activeOrganization } })
+        .then(({ data, error: pubErr }) => {
+          if (pubErr) {
+            toast.error(`Error republicando: ${pubErr.message}`);
+          } else {
+            toast.success(
+              `Republicación completada. Publicadas: ${data?.published ?? 0}, fallidas: ${data?.failed ?? 0}`
+            );
+          }
+          load();
+        })
+        .catch((e) => toast.error(`Error republicando: ${e?.message || e}`));
+    }
+
+    setSaving(null);
     load();
   };
 
