@@ -1873,14 +1873,39 @@ Deno.serve(async (req) => {
             } else if (verifyResp.status === 404) {
               stillExists = false;
             } else {
-              // On transient errors (token, 5xx) we keep the historic state — don't downgrade
-              logInfo(`⚠️ ${doc.doc_number}: tracking verify HTTP ${verifyResp.status} — preservando estado histórico`);
-              stillExists = true;
+              // Transient error (token, 5xx). NEVER mark as 'published' without confirmation.
+              // Defer the document so the user sees the truth instead of a false success.
+              logInfo(`⚠️ ${doc.doc_number}: tracking verify HTTP ${verifyResp.status} — no se puede confirmar existencia en QBO, dejando como waiting_for_qbo`);
+              await supabase
+                .from("processed_documents")
+                .update({
+                  status: "waiting_for_qbo",
+                  error_message: `No se pudo verificar existencia en QuickBooks (HTTP ${verifyResp.status}). Se reintentará.`,
+                })
+                .eq("id", doc.id);
+              return {
+                success: false,
+                docNumber: doc.doc_number,
+                waiting: true,
+                reason: `Verificación QBO no concluyente (HTTP ${verifyResp.status})`,
+              };
             }
           } catch (verifyErr) {
             logError(`tracking verify failed for ${doc.doc_number}:`, verifyErr);
-            // Network failure: don't flip status, just skip
-            stillExists = true;
+            // Network failure: don't flip to 'published' — defer honestly.
+            await supabase
+              .from("processed_documents")
+              .update({
+                status: "waiting_for_qbo",
+                error_message: `Error de red al verificar QuickBooks: ${(verifyErr as any)?.message || verifyErr}. Se reintentará.`,
+              })
+              .eq("id", doc.id);
+            return {
+              success: false,
+              docNumber: doc.doc_number,
+              waiting: true,
+              reason: "Verificación QBO falló por error de red",
+            };
           }
 
           if (stillExists) {
