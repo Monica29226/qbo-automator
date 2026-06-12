@@ -190,7 +190,7 @@ export const ProcessingFlow = () => {
       status: connections.quickbooks ? "connected" : "disconnected",
       action: "/integrations",
       actionLabel: connections.quickbooks ? "Configurado" : "Conectar",
-      stats: `✓ ${stats.success} exitosos`,
+      stats: `✓ ${stats.success} confirmadas en QuickBooks`,
     },
   ];
 
