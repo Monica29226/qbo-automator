@@ -83,25 +83,27 @@ export const ProcessingFlow = () => {
     
     setIsLoading(true);
 
-    // Fetch document stats
+    // Fetch document stats — honest success requires real qbo_entity_id confirmation.
     const { data: docs } = await supabase
       .from("processed_documents")
-      .select("status, error_message, created_at")
+      .select("status, error_message, created_at, qbo_entity_id")
       .eq("organization_id", activeOrganization)
       .gte("created_at", new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString());
 
     if (docs) {
-      // Contar todos los documentos procesados (processed + published)
-      const processed = docs.filter(d => d.status === "processed" || d.status === "published").length;
-      const pending = docs.filter(d => d.status === "pending").length;
-      const review = docs.filter(d => d.status === "review").length;
+      // Success = confirmed in QuickBooks (status='published' AND qbo_entity_id present).
+      const success = docs.filter(d => d.status === "published" && !!d.qbo_entity_id).length;
+      const pending = docs.filter(d => d.status === "pending" || d.status === "processed" || d.status === "waiting_for_qbo").length;
+      const review = docs.filter(d => d.status === "review" || d.status === "pending_config").length;
       const errors = docs.filter(d => d.status === "error").length;
+      // Documents marked published but missing qbo_entity_id are not real successes — count as errors.
+      const fakePublished = docs.filter(d => d.status === "published" && !d.qbo_entity_id).length;
       
       setStats({
         total: docs.length,
-        success: processed,
-        errors: errors,
-        pending: pending + review, // Combinar pending + review para mostrar total
+        success,
+        errors: errors + fakePublished,
+        pending: pending + review,
       });
     }
 
@@ -188,7 +190,7 @@ export const ProcessingFlow = () => {
       status: connections.quickbooks ? "connected" : "disconnected",
       action: "/integrations",
       actionLabel: connections.quickbooks ? "Configurado" : "Conectar",
-      stats: `✓ ${stats.success} exitosos`,
+      stats: `✓ ${stats.success} confirmadas en QuickBooks`,
     },
   ];
 
