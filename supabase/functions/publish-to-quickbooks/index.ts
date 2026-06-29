@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.78.0";
+import { authorizeOrganizationAccess } from "../_shared/auth.ts";
 
 // DEBUG flag - set to false in production
 const DEBUG = Deno.env.get("DEBUG") === "true";
@@ -18,6 +19,21 @@ const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 // Per-invoice timeout for processing
 const INVOICE_TIMEOUT_MS = 45000; // 45 seconds per invoice max
+
+function normalizeTaxId(value: string | null | undefined): string {
+  return (value || "").replace(/[^0-9]/g, "").trim();
+}
+
+function normalizeVendorName(value: string | null | undefined): string {
+  return (value || "")
+    .toLowerCase()
+    .trim()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/&amp;/g, "")
+    .replace(/&/g, "")
+    .replace(/[^a-z0-9]/g, "");
+}
 
 // =============================================================
 // Per-org QBO CompanyInfo cache (homeCurrency, multiCurrencyEnabled)
@@ -1008,28 +1024,21 @@ Deno.serve(async (req) => {
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    const authHeader = req.headers.get("Authorization");
-    let userId: string | null = null;
-    
-    // Allow internal calls without auth header (for batch operations)
-    if (authHeader) {
-      const token = authHeader.replace("Bearer ", "");
-      const isServiceRole = token === supabaseKey;
-      
-      if (!isServiceRole) {
-        const { data: { user }, error: authError } = await supabase.auth.getUser(token);
-        if (authError || !user) {
-          throw new Error("Authentication failed");
-        }
-        userId = user.id;
-      }
-    }
-
     const { organization_id, document_ids } = await req.json();
 
     if (!organization_id) {
       throw new Error("organization_id is required");
     }
+
+    const authorized = await authorizeOrganizationAccess(
+      req,
+      supabase,
+      supabaseKey,
+      organization_id,
+    );
+    if (authorized instanceof Response) return authorized;
+
+    const userId = authorized.userId;
 
     logInfo(`📤 Publishing documents for org: ${organization_id}`);
 
@@ -2155,29 +2164,75 @@ Deno.serve(async (req) => {
         // CRITICAL: Always check vendor config FIRST, then use document as fallback
         // =============================================================
         let accountCode: string | null = null;
+        let vendorDefaultUsesTax: boolean | null = null;
+        const normalizedDocVendorName = normalizeVendorName(doc.supplier_name);
+        const normalizedDocVendorTaxId = normalizeTaxId(doc.supplier_tax_id);
         
         // PRIORITY 1: Try vendor_defaults table (highest priority - user-configured rules)
-        const { data: vendorDefault } = await supabase
+        let vendorDefault = null;
+        const exactVendorDefaultQuery = await supabase
           .from("vendor_defaults")
-          .select("default_account_ref")
+          .select("vendor_name, default_account_ref, default_uses_tax")
           .eq("organization_id", organization_id)
           .ilike("vendor_name", doc.supplier_name)
           .maybeSingle();
-        
+
+        vendorDefault = exactVendorDefaultQuery.data;
+
+        if (!vendorDefault) {
+          const fallbackVendorDefaultsQuery = await supabase
+            .from("vendor_defaults")
+            .select("vendor_name, default_account_ref, default_uses_tax")
+            .eq("organization_id", organization_id);
+
+          vendorDefault = (fallbackVendorDefaultsQuery.data || []).find((candidate: any) =>
+            normalizeVendorName(candidate.vendor_name) === normalizedDocVendorName
+          ) || null;
+        }
+
         if (vendorDefault?.default_account_ref) {
           accountCode = vendorDefault.default_account_ref;
+          vendorDefaultUsesTax = vendorDefault.default_uses_tax ?? true;
           logInfo(`   📋 ${doc.doc_number}: Using vendor_defaults account: ${accountCode}`);
         }
         
         // PRIORITY 2: Try vendors table
         if (!accountCode) {
-          const { data: vendor } = await supabase
+          let vendor = null;
+          const exactVendorQuery = await supabase
             .from("vendors")
-            .select("default_account_ref")
+            .select("vendor_name, vendor_tax_id, default_account_ref")
             .eq("organization_id", organization_id)
             .ilike("vendor_name", doc.supplier_name)
             .maybeSingle();
-          
+
+          vendor = exactVendorQuery.data;
+
+          if (!vendor && normalizedDocVendorTaxId) {
+            const fallbackVendorQuery = await supabase
+              .from("vendors")
+              .select("vendor_name, vendor_tax_id, default_account_ref")
+              .eq("organization_id", organization_id)
+              .eq("is_active", true)
+              .not("vendor_tax_id", "is", null);
+
+            vendor = (fallbackVendorQuery.data || []).find((candidate: any) =>
+              normalizeTaxId(candidate.vendor_tax_id) === normalizedDocVendorTaxId
+            ) || null;
+          }
+
+          if (!vendor) {
+            const fallbackVendorByNameQuery = await supabase
+              .from("vendors")
+              .select("vendor_name, vendor_tax_id, default_account_ref")
+              .eq("organization_id", organization_id)
+              .eq("is_active", true);
+
+            vendor = (fallbackVendorByNameQuery.data || []).find((candidate: any) =>
+              normalizeVendorName(candidate.vendor_name) === normalizedDocVendorName
+            ) || null;
+          }
+
           if (vendor?.default_account_ref) {
             accountCode = vendor.default_account_ref;
             logInfo(`   📋 ${doc.doc_number}: Using vendors table account: ${accountCode}`);
@@ -2503,7 +2558,8 @@ Deno.serve(async (req) => {
         if (lines.length === 0) {
           // effectiveUsesTax = true: IVA como impuesto recuperable -> subtotal = total - tax, y tax va aparte
           // effectiveUsesTax = false: IVA como gasto -> subtotal = total (todo va como gasto, sin tax)
-          const effectiveUsesTax = (doc.uses_tax !== false) && orgDefaultUsesTax && !includeTaxInLines;
+            const docUsesTax = doc.uses_tax ?? vendorDefaultUsesTax ?? true;
+            const effectiveUsesTax = (docUsesTax !== false) && orgDefaultUsesTax && !includeTaxInLines;
           
           let subtotal: number;
           if (effectiveUsesTax) {
@@ -2569,7 +2625,8 @@ Deno.serve(async (req) => {
         // any silent fallback to "Fuera del alcance del impuesto" (NotApplicable).
         // =============================================================
         const xmlHasTaxPre = Math.abs(parseFloat(doc.total_tax as any) || 0) > 0.001;
-        const effectiveUsesTaxPre = (doc.uses_tax !== false) && orgDefaultUsesTax && !includeTaxInLines;
+        const docUsesTaxPre = doc.uses_tax ?? vendorDefaultUsesTax ?? true;
+        const effectiveUsesTaxPre = (docUsesTaxPre !== false) && orgDefaultUsesTax && !includeTaxInLines;
         if (xmlHasTaxPre && effectiveUsesTaxPre) {
           // Pre-resolve TaxRateRef for every rate that will appear in TxnTaxDetail
           const missingTxnTaxRateIds = new Set<number>();
@@ -2656,7 +2713,8 @@ Deno.serve(async (req) => {
         }
         
         // Determine if IVA should be reported as separate tax or included in expense
-        const effectiveUsesTax = (doc.uses_tax !== false) && orgDefaultUsesTax && !includeTaxInLines;
+        const docUsesTaxFinal = doc.uses_tax ?? vendorDefaultUsesTax ?? true;
+        const effectiveUsesTax = (docUsesTaxFinal !== false) && orgDefaultUsesTax && !includeTaxInLines;
         
         // CRITICAL VALIDATION: (sum of line amounts + TotalImpuesto from XML) must equal TotalComprobante
         // For IVA recuperable: lines = subtotal (+ IEBLE no asumido), so lines + (TotalImpuesto - IEBLE en líneas) = TotalComprobante
@@ -3069,7 +3127,7 @@ Deno.serve(async (req) => {
           if (totalDiscrepancy > 1.0 || taxDiscrepancy > 1.0) {
             const issue = {
               code: 'qbo_total_mismatch',
-              type: 'critical',
+              type: totalDiscrepancy > 1.0 ? 'critical' : 'warning',
               title: `Total QBO no coincide con XML — ${doc.doc_number}`,
               description: `QBO total=${qboTotalAmt.toFixed(2)} vs XML total=${expectedTotal.toFixed(2)} (diff ${totalDiscrepancy.toFixed(2)}). QBO tax=${qboTotalTax.toFixed(2)} vs XML tax=${expectedTax.toFixed(2)} (diff ${taxDiscrepancy.toFixed(2)}). Revisa la configuración fiscal de la organización.`,
               doc_number: doc.doc_number,
@@ -3088,14 +3146,19 @@ Deno.serve(async (req) => {
             try {
               await supabase.from('alert_history').insert({
                 organization_id: doc.organization_id,
-                alert_type: 'critical',
+                alert_type: issue.type,
                 issues_count: 1,
                 issues_data: [issue],
               });
             } catch (alertErr: any) {
               logError(`Failed to record qbo_total_mismatch alert: ${alertErr?.message || alertErr}`);
             }
-            (doc as any).__discrepancyMsg = `Discrepancia QBO vs XML: QBO=${qboTotalAmt.toFixed(2)}, XML=${expectedTotal.toFixed(2)} (diff ${totalDiscrepancy.toFixed(2)}). Bill creado (ID ${entityId}) pero requiere revisión y republicación en QuickBooks.`;
+            // Solo bloquear en revisión si el TOTAL difiere más de ₡1.
+            // Diferencias solo en IVA (redondeo QBO) con total correcto se registran
+            // como warning en alert_history pero la factura se publica normalmente.
+            if (totalDiscrepancy > 1.0) {
+              (doc as any).__discrepancyMsg = `Discrepancia QBO vs XML: total QBO=${qboTotalAmt.toFixed(2)}, XML=${expectedTotal.toFixed(2)} (diff ₡${totalDiscrepancy.toFixed(2)}). IVA QBO=${qboTotalTax.toFixed(2)}, XML=${expectedTax.toFixed(2)} (diff ₡${taxDiscrepancy.toFixed(2)}). Bill creado (ID ${entityId}) — revisar y republicar.`;
+            }
           }
 
         }
