@@ -340,16 +340,18 @@ function parseSubtotal(xmlData: any): number {
       let lineSubtotal = 0;
       for (const item of detalleArray) {
         if (!item) continue;
-        // Use subtotal or montoTotal from each line (before tax)
-        // IMPORTANT: Use absolute value since some systems store negative amounts for credit notes
+        // baseImponible is ALWAYS post-discount in the Hacienda CR 4.3 schema
+        // (BaseImponible = SubTotal - Descuento). Prefer it over subtotal/montoTotal
+        // which may be pre-discount (gross) in some provider XMLs.
         const amount = parseFloat(
-          item.subtotal || 
-          item.Subtotal || 
-          item.montoTotal ||
-          item.MontoTotal ||
-          item.SubTotal ||
           item.baseImponible ||
           item.BaseImponible ||
+          item.subtotal ||
+          item.subTotal ||
+          item.Subtotal ||
+          item.SubTotal ||
+          item.montoTotal ||
+          item.MontoTotal ||
           '0'
         );
         lineSubtotal += Math.abs(amount);
@@ -2372,8 +2374,9 @@ Deno.serve(async (req) => {
             const rawBaseImponible = item.baseImponible !== undefined && item.baseImponible !== null
               ? parseFloat(item.baseImponible)
               : NaN;
-            // Prefer subtotal (post-discount) if available; fallback to baseImponible, then manual calc
-            let subtotal = !isNaN(rawSubtotal) ? rawSubtotal : (!isNaN(rawBaseImponible) ? rawBaseImponible : (cantidad * precioUnitario));
+            // baseImponible (Hacienda CR schema) = SubTotal - Descuento, always post-discount.
+            // Prefer it over rawSubtotal which may be pre-discount (gross) in some provider XMLs.
+            let subtotal = !isNaN(rawBaseImponible) ? rawBaseImponible : (!isNaN(rawSubtotal) ? rawSubtotal : (cantidad * precioUnitario));
             
             // If there's a discount and subtotal doesn't reflect it, apply it
             const montoDescuento = parseFloat(item.montoDescuento || item.MontoDescuento || '0');
