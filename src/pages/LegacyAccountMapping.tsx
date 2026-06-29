@@ -261,8 +261,9 @@ export default function LegacyAccountMapping() {
                 <TableRow>
                   <TableCell>
                     {row.doc_count > 0 && (
-                      <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => toggleExpand(row.legacy_code)}>
-                        {expanded[row.legacy_code] ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                      <Button variant="outline" size="sm" className="h-7 text-xs gap-1" onClick={() => toggleExpand(row.legacy_code)}>
+                        {expanded[row.legacy_code] ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                        Ver facturas
                       </Button>
                     )}
                   </TableCell>

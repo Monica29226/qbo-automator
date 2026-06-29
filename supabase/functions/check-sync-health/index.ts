@@ -77,6 +77,7 @@ serve(async (req) => {
         checkAICredits(supabase, org.id),
         checkConnections(org),
         checkStuckInvoices(supabase, org.id),
+        checkLegacyUnmapped(supabase, org.id),
       ]);
 
       checks.forEach((issue) => {
@@ -456,6 +457,39 @@ async function checkStuckInvoices(
   }
 
   return null;
+}
+
+async function checkLegacyUnmapped(
+  supabase: any,
+  orgId: string
+): Promise<HealthIssue | null> {
+  const { data: docs } = await supabase
+    .from("processed_documents")
+    .select("default_account_ref, error_message")
+    .eq("organization_id", orgId)
+    .eq("status", "needs_account_mapping");
+
+  const LEGACY_RE = /1150040\d+/;
+  const codes = new Set<string>();
+  for (const d of docs || []) {
+    const code =
+      (d.default_account_ref || "").match(LEGACY_RE)?.[0] ||
+      (d.error_message || "").match(LEGACY_RE)?.[0];
+    if (code) codes.add(code);
+  }
+
+  const count = docs?.length || 0;
+  if (count === 0) return null;
+
+  return {
+    type: "critical",
+    code: "legacy_unmapped_accounts",
+    title: "Cuentas legacy sin mapear — facturas bloqueadas",
+    description: `${count} factura(s) bloqueadas por ${codes.size} código(s) legacy sin mapear a QuickBooks (${[...codes].join(", ")}). No se publicarán hasta que se configuren.`,
+    actionRequired: "Ir a Mapeo de Cuentas y asociar cada código a su cuenta de QuickBooks",
+    action_link: "/legacy-account-mapping",
+    data: { blockedCount: count, legacyCodes: [...codes] },
+  };
 }
 
 async function sendAlertEmail(
