@@ -166,6 +166,12 @@ export function DashboardSidebar({ isAdmin, reviewCount, onSignOut }: DashboardS
       path: "/validation-rules",
       show: isAdmin,
     },
+    {
+      title: "Mapeo de Cuentas",
+      icon: Landmark,
+      path: "/legacy-account-mapping",
+      show: isAdmin,
+    },
   ], [isAdmin]);
 
   const renderMenuItems = (items: typeof navigationItems) => {
