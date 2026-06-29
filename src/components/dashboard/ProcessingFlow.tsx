@@ -107,35 +107,35 @@ export const ProcessingFlow = () => {
       });
     }
 
-    // Fetch connections — detect active email provider dynamically
-    const { data: accounts } = await supabase
-      .from("integration_accounts")
-      .select("service_type, account_email")
-      .eq("organization_id", activeOrganization)
-      .eq("is_active", true);
+    // Fetch connections via SECURITY DEFINER RPCs — integration_accounts has no SELECT RLS.
+    const [qboRes, emailsRes] = await Promise.all([
+      supabase.rpc("has_active_integration", {
+        _org_id: activeOrganization,
+        _service_type: "quickbooks",
+      }),
+      supabase.rpc("get_active_email_services", { _org_id: activeOrganization }),
+    ]);
 
-    if (accounts) {
-      // Priority order: gmail > outlook > bluehost > hostinger (matches auto-sync-invoices)
-      const providerPriority: Array<"gmail" | "outlook" | "bluehost" | "hostinger"> = [
-        "gmail", "outlook", "bluehost", "hostinger",
-      ];
-      let emailProvider: typeof providerPriority[number] | null = null;
-      let emailAccount: string | null = null;
-      for (const p of providerPriority) {
-        const acc = accounts.find(a => a.service_type === p);
-        if (acc) {
-          emailProvider = p;
-          emailAccount = acc.account_email ?? null;
-          break;
-        }
+    const emailAccounts = (emailsRes.data as Array<{ service_type: string; account_email?: string }>) || [];
+    const providerPriority: Array<"gmail" | "outlook" | "bluehost" | "hostinger"> = [
+      "gmail", "outlook", "bluehost", "hostinger",
+    ];
+    let emailProvider: typeof providerPriority[number] | null = null;
+    let emailAccount: string | null = null;
+    for (const p of providerPriority) {
+      const acc = emailAccounts.find(a => a.service_type === p);
+      if (acc) {
+        emailProvider = p;
+        emailAccount = acc.account_email ?? null;
+        break;
       }
-      setConnections({
-        email: emailProvider !== null,
-        emailProvider,
-        emailAccount,
-        quickbooks: accounts.some(a => a.service_type === "quickbooks"),
-      });
     }
+    setConnections({
+      email: emailProvider !== null,
+      emailProvider,
+      emailAccount,
+      quickbooks: !!qboRes.data,
+    });
 
     // Fetch rules count from vendor_categories
     const { count } = await supabase

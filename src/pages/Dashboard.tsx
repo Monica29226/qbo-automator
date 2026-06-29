@@ -165,16 +165,13 @@ const Dashboard = () => {
   const handlePublishToQuickBooks = useCallback(async () => {
     if (!activeOrganization) return;
 
-    // Check if QuickBooks is connected first
-    const { data: accounts } = await supabase
-      .from("integration_accounts")
-      .select("id")
-      .eq("organization_id", activeOrganization)
-      .eq("service_type", "quickbooks")
-      .eq("is_active", true)
-      .limit(1);
+    // Check if QuickBooks is connected via SECURITY DEFINER RPC (integration_accounts has no SELECT RLS)
+    const { data: qboActive } = await supabase.rpc("has_active_integration", {
+      _org_id: activeOrganization,
+      _service_type: "quickbooks",
+    });
 
-    if (!accounts || accounts.length === 0) {
+    if (!qboActive) {
       toast.error("Primero debes conectar QuickBooks desde Integraciones", {
         action: {
           label: "Ir a Integraciones",
