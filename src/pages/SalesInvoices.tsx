@@ -217,6 +217,24 @@ export default function SalesInvoices() {
           onImported={() => refetch()}
         />
 
+        {hasSiku && (
+          <Card className="border-primary/30 bg-primary/5">
+            <CardContent className="py-3 flex items-center justify-between gap-4">
+              <div className="flex items-center gap-3 text-sm">
+                <Clock className="h-5 w-5 text-primary shrink-0" />
+                <div>
+                  <strong>Sync automático activo</strong> — Las facturas de Siku se importan diariamente a las 6:00 AM.
+                  {lastSikuSync && <> Última sync: <strong>{lastSikuSync}</strong></>}
+                </div>
+              </div>
+              <Button size="sm" variant="outline" onClick={() => setSikuOpen(true)}>
+                Sincronizar ahora
+              </Button>
+            </CardContent>
+          </Card>
+        )}
+
+
 
         {/* Stats Cards */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
