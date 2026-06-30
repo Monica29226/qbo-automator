@@ -8,10 +8,31 @@ const corsHeaders = {
 
 const AUTH_URL = "https://auth.sikuapps.com/api/token";
 const API_BASE = "https://portalapi.sikumedico.com/api";
-const CLIENT_ID_CANDIDATES = ["web", "siku-web", "portal", "angular", "siku", "siku.portal"];
+const FALLBACK_PASSWORD_CLIENT_IDS = ["web", "siku-web", "portal", "angular", "siku", "siku.portal"];
 
-async function getSikuToken(username: string, password: string): Promise<{ access_token: string; refresh_token: string } | null> {
-  for (const clientId of CLIENT_ID_CANDIDATES) {
+async function getSikuTokenClientCredentials(clientId: string, clientSecret: string): Promise<{ access_token: string; refresh_token?: string } | null> {
+  const body = new URLSearchParams({
+    grant_type: "client_credentials",
+    client_id: clientId,
+    client_secret: clientSecret,
+  });
+  const r = await fetch(AUTH_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: body.toString(),
+  });
+  if (r.ok) {
+    const data = await r.json();
+    console.log(`✅ Siku auth OK (client_credentials, client_id=${clientId})`);
+    return { access_token: data.access_token, refresh_token: data.refresh_token };
+  }
+  const err = await r.text().catch(() => "");
+  console.warn(`Siku client_credentials failed (client_id=${clientId}):`, err.substring(0, 300));
+  return null;
+}
+
+async function getSikuTokenPassword(username: string, password: string): Promise<{ access_token: string; refresh_token: string } | null> {
+  for (const clientId of FALLBACK_PASSWORD_CLIENT_IDS) {
     const body = new URLSearchParams({
       grant_type: "password",
       username,
@@ -25,32 +46,31 @@ async function getSikuToken(username: string, password: string): Promise<{ acces
     });
     if (r.ok) {
       const data = await r.json();
-      console.log(`✅ Siku auth OK with client_id=${clientId}`);
+      console.log(`✅ Siku auth OK (password, client_id=${clientId})`);
       return { access_token: data.access_token, refresh_token: data.refresh_token };
     }
     const err = await r.json().catch(() => ({}));
     if (err.error === "invalid_clientId") continue;
-    console.warn(`Siku auth failed with client_id=${clientId}:`, err);
+    console.warn(`Siku password auth failed with client_id=${clientId}:`, err);
   }
   return null;
 }
 
-async function refreshSikuToken(refreshToken: string): Promise<string | null> {
-  for (const clientId of CLIENT_ID_CANDIDATES) {
-    const body = new URLSearchParams({
-      grant_type: "refresh_token",
-      refresh_token: refreshToken,
-      client_id: clientId,
-    });
-    const r = await fetch(AUTH_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: body.toString(),
-    });
-    if (r.ok) {
-      const data = await r.json();
-      return data.access_token;
-    }
+async function refreshSikuToken(refreshToken: string, clientId: string, clientSecret?: string): Promise<string | null> {
+  const params: Record<string, string> = {
+    grant_type: "refresh_token",
+    refresh_token: refreshToken,
+    client_id: clientId,
+  };
+  if (clientSecret) params.client_secret = clientSecret;
+  const r = await fetch(AUTH_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams(params).toString(),
+  });
+  if (r.ok) {
+    const data = await r.json();
+    return data.access_token;
   }
   return null;
 }
