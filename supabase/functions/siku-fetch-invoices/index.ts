@@ -124,12 +124,24 @@ Deno.serve(async (req) => {
     }
 
     let accessToken: string | null = null;
+    const ccClientId = creds.client_id || "sikumed-public-api";
+    const ccClientSecret = creds.client_secret;
+    const ocpKey = creds.ocp_apim_key;
 
     if (creds.refresh_token) {
-      accessToken = await refreshSikuToken(creds.refresh_token);
+      accessToken = await refreshSikuToken(creds.refresh_token, ccClientId, ccClientSecret);
+    }
+    if (!accessToken && ccClientSecret) {
+      const tokens = await getSikuTokenClientCredentials(ccClientId, ccClientSecret);
+      if (tokens) {
+        accessToken = tokens.access_token;
+        await supabase.from("integration_accounts").update({
+          credentials: { ...creds, access_token: tokens.access_token, ...(tokens.refresh_token ? { refresh_token: tokens.refresh_token } : {}) }
+        }).eq("id", integ.id);
+      }
     }
     if (!accessToken && creds.username && creds.password) {
-      const tokens = await getSikuToken(creds.username, creds.password);
+      const tokens = await getSikuTokenPassword(creds.username, creds.password);
       if (tokens) {
         accessToken = tokens.access_token;
         await supabase.from("integration_accounts").update({
@@ -139,7 +151,7 @@ Deno.serve(async (req) => {
     }
 
     if (!accessToken) {
-      return new Response(JSON.stringify({ success: false, error: "No se pudo autenticar con Siku. Verifique usuario y contraseña.", code: "auth_failed" }), {
+      return new Response(JSON.stringify({ success: false, error: "No se pudo autenticar con Siku. Verifique credenciales (client_id/client_secret o usuario/contraseña).", code: "auth_failed" }), {
         status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
