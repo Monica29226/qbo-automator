@@ -233,42 +233,54 @@ Deno.serve(async (req) => {
 
     const currencyMap: Record<string, string> = { "¢": "CRC", "$": "USD", "€": "EUR" };
 
-    const toInsert = lista
-      .filter((d: any) => d.DocumentoGuid && !existingSet.has(d.DocumentoGuid))
-      .map((d: any) => {
-        const def = defMap.get(d.Nombre);
-        const currency = currencyMap[d.MonedaSimbolo] || "CRC";
-        const incomeAccount = def?.default_income_account_ref || orgDefaultAccount;
-        return {
-          organization_id,
-          doc_key: d.DocumentoGuid,
-          doc_number: d.NumeroConsecutivo || String(d.IDDocumento),
-          doc_type: d.TipoDocumento === "Nota de crédito electrónica" ? "NC" : "FE",
-          issue_date: d.FechaDocumento?.split("T")[0] || todayISO(0),
-          customer_name: d.Nombre || "Sin nombre",
-          customer_tax_id: null,
-          customer_email: null,
-          currency,
-          exchange_rate: 1,
-          subtotal: d.MontoTotal || 0,
-          total_tax: 0,
-          total_discount: 0,
-          total_amount: d.MontoTotal || 0,
-          xml_attachment_url: null,
-          pdf_attachment_url: null,
-          xml_data: {
-            siku_id: d.IDDocumento,
-            siku_guid: d.DocumentoGuid,
-            estado_pago: d.EstadoPago,
-            tipo_documento: d.TipoDocumento,
-            source: "siku",
-          },
-          status: incomeAccount ? "pending" : "pending_config",
-          default_income_account_ref: incomeAccount,
-          default_class_ref: def?.default_class_ref || null,
-          payment_terms_ref: def?.payment_terms_ref || null,
-        };
+    const newDocs = lista.filter((d: any) => d.DocumentoGuid && !existingSet.has(d.DocumentoGuid));
+    const toInsert: any[] = [];
+    for (const d of newDocs) {
+      const def = defMap.get(d.Nombre);
+      const currency = currencyMap[d.MonedaSimbolo] || "CRC";
+      const incomeAccount = def?.default_income_account_ref || orgDefaultAccount;
+      const montoTotal = d.MontoTotal || 0;
+      const xmlData = d.DocumentoGuid
+        ? await getSikuInvoiceXML(d.DocumentoGuid, accessToken!, ocpKey)
+        : null;
+      const totalTax = xmlData?.totalImpuesto ?? 0;
+      const subtotal = xmlData
+        ? (xmlData.totalVentaNeta || montoTotal - totalTax)
+        : montoTotal;
+      toInsert.push({
+        organization_id,
+        doc_key: d.DocumentoGuid,
+        doc_number: d.NumeroConsecutivo || String(d.IDDocumento),
+        doc_type: d.TipoDocumento === "Nota de crédito electrónica" ? "NC" : "FE",
+        issue_date: d.FechaDocumento?.split("T")[0] || todayISO(0),
+        customer_name: d.Nombre || "Sin nombre",
+        customer_tax_id: null,
+        customer_email: null,
+        currency,
+        exchange_rate: 1,
+        subtotal,
+        total_tax: totalTax,
+        total_discount: 0,
+        total_amount: montoTotal,
+        xml_attachment_url: null,
+        pdf_attachment_url: null,
+        xml_data: {
+          siku_id: d.IDDocumento,
+          siku_guid: d.DocumentoGuid,
+          estado_pago: d.EstadoPago,
+          tipo_documento: d.TipoDocumento,
+          source: "siku",
+          xml_parsed: xmlData !== null,
+          xml_total_impuesto: xmlData?.totalImpuesto ?? null,
+          xml_total_venta_neta: xmlData?.totalVentaNeta ?? null,
+        },
+        status: incomeAccount ? "pending" : "pending_config",
+        default_income_account_ref: incomeAccount,
+        default_class_ref: def?.default_class_ref || null,
+        payment_terms_ref: def?.payment_terms_ref || null,
       });
+    }
+
 
 
     if (toInsert.length > 0) {
