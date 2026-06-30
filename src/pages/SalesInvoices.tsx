@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ArrowLeft, TrendingUp, DollarSign, CheckCircle2, Clock, AlertCircle, Mail, Loader2, RefreshCw } from "lucide-react";
 import { SikuImportDialog } from "@/components/siku/SikuImportDialog";
-import { useQuery } from "@tanstack/react-query";
+
 
 import { Button } from "@/components/ui/button";
 import {
