@@ -888,7 +888,9 @@ const Integrations = () => {
                 </div>
               </Card>
             ))}
+            <SikuCard organizationId={activeOrganization} />
           </div>
+
         )}
       </main>
 
