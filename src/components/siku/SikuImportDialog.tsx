@@ -83,18 +83,6 @@ export function SikuImportDialog({ open, onOpenChange, organizationId, onImporte
 
         {!result && !loading && (
           <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <Label htmlFor="siku-from">Desde</Label>
-                <Input id="siku-from" type="date" value={fechaInicio} onChange={(e) => setFechaInicio(e.target.value)} />
-              </div>
-              <div>
-                <Label htmlFor="siku-to">Hasta</Label>
-                <Input id="siku-to" type="date" value={fechaFin} onChange={(e) => setFechaFin(e.target.value)} />
-              </div>
-            </div>
-        {!result && !loading && (
-          <div className="space-y-4">
             <div>
               <Label className="text-xs text-muted-foreground">Meses recientes</Label>
               <div className="flex flex-wrap gap-2 mt-1">
