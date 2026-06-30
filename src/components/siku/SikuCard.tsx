@@ -23,7 +23,7 @@ export function SikuCard({ organizationId }: Props) {
   const [loading, setLoading] = useState(true);
   const [account, setAccount] = useState<SikuAccount | null>(null);
   const [apiKey, setApiKey] = useState("");
-  const [baseUrl, setBaseUrl] = useState("https://app.siku.cr");
+  const [baseUrl, setBaseUrl] = useState("https://portal.sikumedico.com");
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
@@ -58,7 +58,7 @@ export function SikuCard({ organizationId }: Props) {
         organization_id: organizationId,
         service_type: "siku",
         is_active: true,
-        credentials: { api_key: apiKey, base_url: baseUrl || "https://app.siku.cr" },
+        credentials: { api_key: apiKey, base_url: baseUrl || "https://portal.sikumedico.com" },
       });
       if (error) throw error;
       toast.success("Credenciales de Siku guardadas");
@@ -147,7 +147,7 @@ export function SikuCard({ organizationId }: Props) {
                   API Key: <code className="text-xs bg-muted px-1.5 py-0.5 rounded">{maskedKey}</code>
                 </p>
                 <p className="text-sm">
-                  URL: <code className="text-xs bg-muted px-1.5 py-0.5 rounded">{account?.credentials?.base_url || "https://app.siku.cr"}</code>
+                  URL: <code className="text-xs bg-muted px-1.5 py-0.5 rounded">{account?.credentials?.base_url || "https://portal.sikumedico.com"}</code>
                 </p>
                 <div className="flex gap-2 pt-2">
                   <Button size="sm" onClick={() => setImportOpen(true)}>
@@ -180,7 +180,7 @@ export function SikuCard({ organizationId }: Props) {
                     id="siku-url"
                     value={baseUrl}
                     onChange={(e) => setBaseUrl(e.target.value)}
-                    placeholder="https://app.siku.cr"
+                    placeholder="https://portal.sikumedico.com"
                   />
                 </div>
                 <div className="flex gap-2">

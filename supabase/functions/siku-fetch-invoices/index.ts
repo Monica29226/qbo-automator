@@ -127,7 +127,7 @@ Deno.serve(async (req) => {
 
     const creds = (integ.credentials || {}) as { api_key?: string; base_url?: string };
     const apiKey = creds.api_key;
-    const baseUrl = creds.base_url || "https://app.siku.cr";
+    const baseUrl = creds.base_url || "https://portal.sikumedico.com";
 
     if (!apiKey) {
       return new Response(
