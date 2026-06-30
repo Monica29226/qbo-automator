@@ -225,3 +225,7 @@ verify_jwt = false
 [functions.siku-fetch-invoices]
 verify_jwt = true
 
+
+[functions.siku-daily-sync]
+verify_jwt = false
+schedule = "0 12 * * *"
