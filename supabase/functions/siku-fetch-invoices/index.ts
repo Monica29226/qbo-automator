@@ -8,36 +8,14 @@ const corsHeaders = {
 
 const AUTH_URL = "https://auth.sikuapps.com/api/token";
 const API_BASE = "https://portalapi.sikumedico.com/api";
-const FALLBACK_PASSWORD_CLIENT_IDS = ["web", "siku-web", "portal", "angular", "siku", "siku.portal"];
 
-async function getSikuTokenClientCredentials(clientId: string, clientSecret: string): Promise<{ access_token: string; refresh_token?: string } | null> {
-  const body = new URLSearchParams({
-    grant_type: "client_credentials",
-    client_id: clientId,
-    client_secret: clientSecret,
-  });
-  const r = await fetch(AUTH_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: body.toString(),
-  });
-  if (r.ok) {
-    const data = await r.json();
-    console.log(`✅ Siku auth OK (client_credentials, client_id=${clientId})`);
-    return { access_token: data.access_token, refresh_token: data.refresh_token };
-  }
-  const err = await r.text().catch(() => "");
-  console.warn(`Siku client_credentials failed (client_id=${clientId}):`, err.substring(0, 300));
-  return null;
-}
-
-async function getSikuTokenPassword(username: string, password: string): Promise<{ access_token: string; refresh_token: string } | null> {
-  for (const clientId of FALLBACK_PASSWORD_CLIENT_IDS) {
+async function getSikuToken(creds: any): Promise<string | null> {
+  // Try client_credentials first
+  if (creds.client_id && creds.client_secret) {
     const body = new URLSearchParams({
-      grant_type: "password",
-      username,
-      password,
-      client_id: clientId,
+      grant_type: "client_credentials",
+      client_id: creds.client_id,
+      client_secret: creds.client_secret,
     });
     const r = await fetch(AUTH_URL, {
       method: "POST",
@@ -46,70 +24,74 @@ async function getSikuTokenPassword(username: string, password: string): Promise
     });
     if (r.ok) {
       const data = await r.json();
-      console.log(`✅ Siku auth OK (password, client_id=${clientId})`);
-      return { access_token: data.access_token, refresh_token: data.refresh_token };
+      console.log("Siku auth OK (client_credentials)");
+      return data.access_token;
     }
-    const err = await r.json().catch(() => ({}));
-    if (err.error === "invalid_clientId") continue;
-    console.warn(`Siku password auth failed with client_id=${clientId}:`, err);
+    const err = await r.text().catch(() => "");
+    console.warn("client_credentials failed:", err.substring(0, 200));
+  }
+  // Fallback: password grant
+  if (creds.username && creds.password) {
+    const clientIds = ["web", "siku-web", "portal", "angular", "siku", "siku.portal"];
+    for (const clientId of clientIds) {
+      const body = new URLSearchParams({
+        grant_type: "password",
+        username: creds.username,
+        password: creds.password,
+        client_id: clientId,
+      });
+      const r = await fetch(AUTH_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: body.toString(),
+      });
+      if (r.ok) {
+        const data = await r.json();
+        console.log("Siku auth OK (password, client_id=" + clientId + ")");
+        return data.access_token;
+      }
+    }
   }
   return null;
 }
 
-async function refreshSikuToken(refreshToken: string, clientId: string, clientSecret?: string): Promise<string | null> {
-  const params: Record<string, string> = {
-    grant_type: "refresh_token",
-    refresh_token: refreshToken,
-    client_id: clientId,
-  };
-  if (clientSecret) params.client_secret = clientSecret;
-  const r = await fetch(AUTH_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams(params).toString(),
-  });
-  if (r.ok) {
-    const data = await r.json();
-    return data.access_token;
-  }
-  return null;
-}
-
-function todayISO(offsetDays = 0): string {
-  const d = new Date();
-  d.setUTCDate(d.getUTCDate() + offsetDays);
-  return d.toISOString().slice(0, 10);
-}
-
-async function getSikuInvoiceXML(
-  guid: string,
-  accessToken: string,
-  ocpKey: string | null,
-): Promise<{ totalImpuesto: number; totalVentaNeta: number } | null> {
+async function getXmlTax(guid: string, token: string, ocpKey: string | null): Promise<{ tax: number; net: number } | null> {
   try {
     const headers: Record<string, string> = {
-      Authorization: `Bearer ${accessToken}`,
+      Authorization: "Bearer " + token,
       Accept: "application/xml, text/xml, */*",
     };
     if (ocpKey) headers["Ocp-Apim-Subscription-Key"] = ocpKey;
-    const r = await fetch(`${API_BASE}/fact/DOC/xml?guid=${guid}`, { headers });
+    const r = await fetch(API_BASE + "/fact/DOC/xml?guid=" + guid, { headers });
     if (!r.ok) return null;
     const xml = await r.text();
-    if (!xml || !xml.includes("<")) return null;
-    const extractTag = (tag: string): number => {
-      const m = xml.match(new RegExp(`<${tag}[^>]*>([\\d.]+)<\\/${tag}>`, "i"));
-      return m ? parseFloat(m[1]) : 0;
+    if (!xml || xml.indexOf("<") === -1) return null;
+    const getTag = (tag: string): number => {
+      const idx = xml.indexOf("<" + tag);
+      if (idx === -1) return 0;
+      const start = xml.indexOf(">", idx) + 1;
+      const end = xml.indexOf("</" + tag, start);
+      if (start <= 0 || end <= start) return 0;
+      return parseFloat(xml.substring(start, end)) || 0;
     };
-    const totalImpuesto = extractTag("TotalImpuesto") || extractTag("TotalImpuestoNeto");
-    const totalVentaNeta = extractTag("TotalVentaNeta") || extractTag("TotalVenta");
-    return { totalImpuesto, totalVentaNeta };
-  } catch {
+    const tax = getTag("TotalImpuesto") || getTag("TotalImpuestoNeto");
+    const net = getTag("TotalVentaNeta") || getTag("TotalVenta");
+    return { tax, net };
+  } catch (_) {
     return null;
   }
 }
 
+function todayISO(offset = 0): string {
+  const d = new Date();
+  d.setUTCDate(d.getUTCDate() + offset);
+  return d.toISOString().slice(0, 10);
+}
+
 Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+  if (req.method === "OPTIONS") {
+    return new Response("ok", { headers: corsHeaders });
+  }
 
   try {
     const supabase = createClient(
@@ -119,14 +101,16 @@ Deno.serve(async (req) => {
 
     const body = await req.json().catch(() => ({}));
     const { organization_id, fecha_inicio, fecha_fin } = body;
-    const fi = fecha_inicio || todayISO(-30);
-    const ff = fecha_fin || todayISO(0);
 
     if (!organization_id) {
-      return new Response(JSON.stringify({ success: false, error: "organization_id requerido" }), {
-        status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return new Response(
+        JSON.stringify({ success: false, error: "organization_id requerido" }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
     }
+
+    const fi = fecha_inicio || todayISO(-30);
+    const ff = fecha_fin || todayISO(0);
 
     const { data: integ } = await supabase
       .from("integration_accounts")
@@ -137,122 +121,101 @@ Deno.serve(async (req) => {
       .maybeSingle();
 
     if (!integ?.credentials) {
-      return new Response(JSON.stringify({ success: false, error: "API key no configurada", code: "no_credentials" }), {
-        status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return new Response(
+        JSON.stringify({ success: false, error: "Integración Siku no configurada", code: "no_credentials" }),
+        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
     }
 
     const creds = integ.credentials as any;
     const companyGuid = creds.company_guid;
     if (!companyGuid) {
-      return new Response(JSON.stringify({ success: false, error: "company_guid no configurado", code: "no_company_guid" }), {
-        status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return new Response(
+        JSON.stringify({ success: false, error: "company_guid no configurado", code: "no_company_guid" }),
+        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
     }
 
-    let accessToken: string | null = null;
-    const ccClientId = creds.client_id || "sikumed-public-api";
-    const ccClientSecret = creds.client_secret;
-    const ocpKey = creds.ocp_apim_key;
-
-    if (creds.refresh_token) {
-      accessToken = await refreshSikuToken(creds.refresh_token, ccClientId, ccClientSecret);
-    }
-    if (!accessToken && ccClientSecret) {
-      const tokens = await getSikuTokenClientCredentials(ccClientId, ccClientSecret);
-      if (tokens) {
-        accessToken = tokens.access_token;
-        await supabase.from("integration_accounts").update({
-          credentials: { ...creds, access_token: tokens.access_token, ...(tokens.refresh_token ? { refresh_token: tokens.refresh_token } : {}) }
-        }).eq("id", integ.id);
-      }
-    }
-    if (!accessToken && creds.username && creds.password) {
-      const tokens = await getSikuTokenPassword(creds.username, creds.password);
-      if (tokens) {
-        accessToken = tokens.access_token;
-        await supabase.from("integration_accounts").update({
-          credentials: { ...creds, refresh_token: tokens.refresh_token, access_token: tokens.access_token }
-        }).eq("id", integ.id);
-      }
-    }
-
+    const accessToken = await getSikuToken(creds);
     if (!accessToken) {
-      return new Response(JSON.stringify({ success: false, error: "No se pudo autenticar con Siku. Verifique credenciales (client_id/client_secret o usuario/contraseña).", code: "auth_failed" }), {
-        status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return new Response(
+        JSON.stringify({ success: false, error: "No se pudo autenticar con Siku. Verifique credenciales.", code: "auth_failed" }),
+        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
     }
 
-    let fetched = 0, inserted = 0, skipped = 0, errors = 0;
+    const ocpKey: string | null = creds.ocp_apim_key || null;
+    const orgDefaultAccount = creds.default_income_account_ref || null;
+    const currencyMap: Record<string, string> = { "¢": "CRC", "$": "USD", "€": "EUR" };
 
-    const url = `${API_BASE}/fact/DOC/buscar?id=-1&idc=${companyGuid}&ids=-1&es=-1&fi=${fi}&ff=${ff}&u=&esce=-1`;
-    console.log(`Fetching: ${url}`);
+    const url = API_BASE + "/fact/DOC/buscar?id=-1&idc=" + companyGuid + "&ids=-1&es=-1&fi=" + fi + "&ff=" + ff + "&u=&esce=-1";
+    console.log("Fetching:", url);
 
     const apiHeaders: Record<string, string> = {
-      Authorization: `Bearer ${accessToken}`,
+      Authorization: "Bearer " + accessToken,
       Accept: "application/json",
     };
     if (ocpKey) apiHeaders["Ocp-Apim-Subscription-Key"] = ocpKey;
 
     const apiResp = await fetch(url, { headers: apiHeaders });
-
     if (!apiResp.ok) {
       const errBody = await apiResp.text();
       if (apiResp.status === 401) {
-        return new Response(JSON.stringify({ success: false, error: "Token inválido o vencido. Reconecte Siku.", code: "unauthorized" }), {
-          status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
+        return new Response(
+          JSON.stringify({ success: false, error: "Token inválido. Reconecte Siku.", code: "unauthorized" }),
+          { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
       }
-      throw new Error(`Siku API error ${apiResp.status}: ${errBody.substring(0, 200)}`);
+      throw new Error("Siku API error " + apiResp.status + ": " + errBody.substring(0, 200));
     }
 
     const apiData = await apiResp.json();
     const lista: any[] = Array.isArray(apiData)
       ? apiData
       : (apiData?.Lista ?? apiData?.ListaDocumentos ?? apiData?.documentos ?? []);
-    fetched = lista.length;
-    console.log(`Got ${fetched} documents (total in period: ${apiData.TotalCantidadDocumentos})`);
+    const fetched = lista.length;
+    console.log("Got " + fetched + " documents");
 
     const docKeys = lista.map((d: any) => d.DocumentoGuid).filter(Boolean);
     const { data: existing } = await supabase
       .from("sales_invoices")
       .select("doc_key")
       .eq("organization_id", organization_id)
-      .in("doc_key", docKeys);
+      .in("doc_key", docKeys.length > 0 ? docKeys : ["__none__"]);
     const existingSet = new Set((existing || []).map((e: any) => e.doc_key));
 
-    const customerNames = [...new Set(lista.map((d: any) => d.Nombre).filter(Boolean))];
+    const customerNames = [...new Set(lista.map((d: any) => d.Nombre).filter(Boolean))] as string[];
     const { data: defs } = await supabase
       .from("customer_defaults")
       .select("customer_name, default_income_account_ref, default_class_ref, payment_terms_ref")
       .eq("organization_id", organization_id)
-      .in("customer_name", customerNames);
+      .in("customer_name", customerNames.length > 0 ? customerNames : ["__none__"]);
     const defMap = new Map((defs || []).map((d: any) => [d.customer_name, d]));
-
-    const orgDefaultAccount = creds.default_income_account_ref || null;
-
-    const currencyMap: Record<string, string> = { "¢": "CRC", "$": "USD", "€": "EUR" };
 
     const newDocs = lista.filter((d: any) => d.DocumentoGuid && !existingSet.has(d.DocumentoGuid));
     const toInsert: any[] = [];
+
     for (const d of newDocs) {
       const def = defMap.get(d.Nombre);
       const currency = currencyMap[d.MonedaSimbolo] || "CRC";
-      const incomeAccount = def?.default_income_account_ref || orgDefaultAccount;
-      const montoTotal = d.MontoTotal || 0;
+      const incomeAccount = (def?.default_income_account_ref) || orgDefaultAccount;
+      const montoTotal = Number(d.MontoTotal) || 0;
+
       const xmlData = d.DocumentoGuid
-        ? await getSikuInvoiceXML(d.DocumentoGuid, accessToken!, ocpKey)
+        ? await getXmlTax(d.DocumentoGuid, accessToken, ocpKey)
         : null;
-      const totalTax = xmlData?.totalImpuesto ?? 0;
+
+      const totalTax = xmlData ? xmlData.tax : 0;
       const subtotal = xmlData
-        ? (xmlData.totalVentaNeta || montoTotal - totalTax)
+        ? (xmlData.net || montoTotal - totalTax)
         : montoTotal;
+
       toInsert.push({
         organization_id,
         doc_key: d.DocumentoGuid,
         doc_number: d.NumeroConsecutivo || String(d.IDDocumento),
         doc_type: d.TipoDocumento === "Nota de crédito electrónica" ? "NC" : "FE",
-        issue_date: d.FechaDocumento?.split("T")[0] || todayISO(0),
+        issue_date: d.FechaDocumento ? d.FechaDocumento.split("T")[0] : todayISO(0),
         customer_name: d.Nombre || "Sin nombre",
         customer_tax_id: null,
         customer_email: null,
@@ -271,8 +234,6 @@ Deno.serve(async (req) => {
           tipo_documento: d.TipoDocumento,
           source: "siku",
           xml_parsed: xmlData !== null,
-          xml_total_impuesto: xmlData?.totalImpuesto ?? null,
-          xml_total_venta_neta: xmlData?.totalVentaNeta ?? null,
         },
         status: incomeAccount ? "pending" : "pending_config",
         default_income_account_ref: incomeAccount,
@@ -281,8 +242,8 @@ Deno.serve(async (req) => {
       });
     }
 
-
-
+    let inserted = 0;
+    let errors = 0;
     if (toInsert.length > 0) {
       const { error: insErr } = await supabase.from("sales_invoices").insert(toInsert);
       if (insErr) {
@@ -293,25 +254,25 @@ Deno.serve(async (req) => {
       }
     }
 
-    skipped = fetched - toInsert.length - errors;
-    if (skipped < 0) skipped = 0;
+    const skipped = Math.max(0, fetched - toInsert.length - errors);
 
-    return new Response(JSON.stringify({
-      success: true,
-      fetched,
-      inserted,
-      skipped,
-      errors,
-      total_period: apiData.TotalCantidadDocumentos,
-      monto_total: apiData.MontoTotal,
-    }), {
-      status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
-
+    return new Response(
+      JSON.stringify({
+        success: true,
+        fetched,
+        inserted,
+        skipped,
+        errors,
+        total_period: apiData.TotalCantidadDocumentos,
+        monto_total: apiData.MontoTotal,
+      }),
+      { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+    );
   } catch (e: any) {
     console.error("siku-fetch-invoices error:", e);
-    return new Response(JSON.stringify({ success: false, error: "Error interno", detail: e.message }), {
-      status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    return new Response(
+      JSON.stringify({ success: false, error: "Error interno: " + e.message }),
+      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+    );
   }
 });
