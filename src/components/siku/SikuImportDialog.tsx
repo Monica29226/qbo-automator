@@ -93,6 +93,44 @@ export function SikuImportDialog({ open, onOpenChange, organizationId, onImporte
                 <Input id="siku-to" type="date" value={fechaFin} onChange={(e) => setFechaFin(e.target.value)} />
               </div>
             </div>
+        {!result && !loading && (
+          <div className="space-y-4">
+            <div>
+              <Label className="text-xs text-muted-foreground">Meses recientes</Label>
+              <div className="flex flex-wrap gap-2 mt-1">
+                {Array.from({ length: 6 }).map((_, i) => {
+                  const ref = new Date();
+                  ref.setDate(1);
+                  ref.setMonth(ref.getMonth() - i);
+                  const y = ref.getFullYear();
+                  const m = ref.getMonth();
+                  const first = new Date(y, m, 1).toISOString().slice(0, 10);
+                  const last = new Date(y, m + 1, 0).toISOString().slice(0, 10);
+                  const label = ref.toLocaleDateString("es-CR", { month: "long", year: "numeric" });
+                  return (
+                    <Button
+                      key={i}
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => { setFechaInicio(first); setFechaFin(last); }}
+                    >
+                      {label.charAt(0).toUpperCase() + label.slice(1)}
+                    </Button>
+                  );
+                })}
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label htmlFor="siku-from">Desde</Label>
+                <Input id="siku-from" type="date" value={fechaInicio} onChange={(e) => setFechaInicio(e.target.value)} />
+              </div>
+              <div>
+                <Label htmlFor="siku-to">Hasta</Label>
+                <Input id="siku-to" type="date" value={fechaFin} onChange={(e) => setFechaFin(e.target.value)} />
+              </div>
+            </div>
             {error && (
               <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm flex gap-2">
                 <AlertCircle className="h-4 w-4 text-destructive shrink-0 mt-0.5" />
