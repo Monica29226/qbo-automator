@@ -221,3 +221,7 @@ verify_jwt = false
 
 [functions.unstick-publishing]
 verify_jwt = false
+
+[functions.siku-fetch-invoices]
+verify_jwt = true
+

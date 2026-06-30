@@ -20,6 +20,8 @@ import { useAuth } from "@/hooks/useAuth";
 import { OrganizationSwitcher } from "@/components/OrganizationSwitcher";
 import { OutlookImapConnectDialog } from "@/components/OutlookImapConnectDialog";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { SikuCard } from "@/components/siku/SikuCard";
+
 
 interface IntegrationAccount {
   id: string;
@@ -888,7 +890,9 @@ const Integrations = () => {
                 </div>
               </Card>
             ))}
+            <SikuCard organizationId={activeOrganization} />
           </div>
+
         )}
       </main>
 
