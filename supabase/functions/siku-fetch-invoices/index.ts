@@ -161,9 +161,13 @@ Deno.serve(async (req) => {
     const url = `${API_BASE}/fact/DOC/buscar?id=-1&idc=${companyGuid}&ids=-1&es=-1&fi=${fi}&ff=${ff}&u=&esce=-1`;
     console.log(`Fetching: ${url}`);
 
-    const apiResp = await fetch(url, {
-      headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" },
-    });
+    const apiHeaders: Record<string, string> = {
+      Authorization: `Bearer ${accessToken}`,
+      Accept: "application/json",
+    };
+    if (ocpKey) apiHeaders["Ocp-Apim-Subscription-Key"] = ocpKey;
+
+    const apiResp = await fetch(url, { headers: apiHeaders });
 
     if (!apiResp.ok) {
       const errBody = await apiResp.text();
