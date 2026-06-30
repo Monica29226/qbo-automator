@@ -37,6 +37,39 @@ export default function SalesInvoices() {
   const [sendingEmailId, setSendingEmailId] = useState<string | null>(null);
   const [sikuOpen, setSikuOpen] = useState(false);
 
+  const { data: hasSiku } = useQuery({
+    queryKey: ["siku-integration", activeOrganization],
+    queryFn: async () => {
+      if (!activeOrganization) return false;
+      const { data } = await supabase
+        .from("integration_accounts")
+        .select("id")
+        .eq("organization_id", activeOrganization)
+        .eq("service_type", "siku")
+        .eq("is_active", true)
+        .maybeSingle();
+      return !!data;
+    },
+    enabled: !!activeOrganization,
+  });
+
+  const { data: lastSikuSync } = useQuery({
+    queryKey: ["last-siku-sync", activeOrganization],
+    queryFn: async () => {
+      if (!activeOrganization) return null;
+      const { data } = await supabase
+        .from("sales_invoices")
+        .select("created_at")
+        .eq("organization_id", activeOrganization)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      return data?.created_at ? new Date(data.created_at).toLocaleDateString('es-CR') : null;
+    },
+    enabled: !!activeOrganization,
+  });
+
+
 
   const handleSendEmail = async (invoice: any) => {
     const email = invoice.customer_email || prompt("Ingrese el correo del cliente:");
