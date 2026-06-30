@@ -81,6 +81,33 @@ function todayISO(offsetDays = 0): string {
   return d.toISOString().slice(0, 10);
 }
 
+async function getSikuInvoiceXML(
+  guid: string,
+  accessToken: string,
+  ocpKey: string | null,
+): Promise<{ totalImpuesto: number; totalVentaNeta: number } | null> {
+  try {
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${accessToken}`,
+      Accept: "application/xml, text/xml, */*",
+    };
+    if (ocpKey) headers["Ocp-Apim-Subscription-Key"] = ocpKey;
+    const r = await fetch(`${API_BASE}/fact/DOC/xml?guid=${guid}`, { headers });
+    if (!r.ok) return null;
+    const xml = await r.text();
+    if (!xml || !xml.includes("<")) return null;
+    const extractTag = (tag: string): number => {
+      const m = xml.match(new RegExp(`<${tag}[^>]*>([\\d.]+)<\\/${tag}>`, "i"));
+      return m ? parseFloat(m[1]) : 0;
+    };
+    const totalImpuesto = extractTag("TotalImpuesto") || extractTag("TotalImpuestoNeto");
+    const totalVentaNeta = extractTag("TotalVentaNeta") || extractTag("TotalVenta");
+    return { totalImpuesto, totalVentaNeta };
+  } catch {
+    return null;
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
