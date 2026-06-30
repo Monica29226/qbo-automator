@@ -8,6 +8,8 @@ import { Check, X, Loader2, FileText } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { SikuImportDialog } from "./SikuImportDialog";
+import { AccountCombobox } from "@/components/AccountCombobox";
+import { useQBOAccounts } from "@/hooks/useQBOAccounts";
 
 interface Props {
   organizationId: string | null;
@@ -15,7 +17,12 @@ interface Props {
 
 interface SikuAccount {
   id: string;
-  credentials: { username?: string; password?: string; company_guid?: string } | null;
+  credentials: {
+    username?: string;
+    password?: string;
+    company_guid?: string;
+    default_income_account_ref?: string;
+  } | null;
   is_active: boolean;
 }
 
@@ -25,9 +32,13 @@ export function SikuCard({ organizationId }: Props) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [companyGuid, setCompanyGuid] = useState("");
+  const [defaultIncomeAccount, setDefaultIncomeAccount] = useState("");
+  const [savingDefault, setSavingDefault] = useState(false);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+
+  const { accounts } = useQBOAccounts();
 
   const load = async () => {
     if (!organizationId) return;
@@ -59,18 +70,43 @@ export function SikuCard({ organizationId }: Props) {
         organization_id: organizationId,
         service_type: "siku",
         is_active: true,
-        credentials: { username, password, company_guid: companyGuid },
+        credentials: {
+          username,
+          password,
+          company_guid: companyGuid,
+          default_income_account_ref: defaultIncomeAccount || null,
+        },
       });
       if (error) throw error;
       toast.success("Credenciales de Siku guardadas");
       setUsername("");
       setPassword("");
       setCompanyGuid("");
+      setDefaultIncomeAccount("");
       await load();
     } catch (e: any) {
       toast.error("No se pudo guardar: " + (e?.message || "error"));
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleUpdateDefaultAccount = async (newRef: string) => {
+    if (!account) return;
+    setSavingDefault(true);
+    try {
+      const newCreds = { ...(account.credentials || {}), default_income_account_ref: newRef || null };
+      const { error } = await supabase
+        .from("integration_accounts")
+        .update({ credentials: newCreds })
+        .eq("id", account.id);
+      if (error) throw error;
+      toast.success("Cuenta de ingreso por defecto actualizada");
+      await load();
+    } catch (e: any) {
+      toast.error("No se pudo actualizar: " + (e?.message || "error"));
+    } finally {
+      setSavingDefault(false);
     }
   };
 
@@ -116,6 +152,7 @@ export function SikuCard({ organizationId }: Props) {
   const displayGuid = account?.credentials?.company_guid
     ? `${account.credentials.company_guid.slice(0, 8)}...`
     : "—";
+  const currentDefaultAccount = account?.credentials?.default_income_account_ref || "";
 
   return (
     <Card className="p-6">
@@ -153,6 +190,25 @@ export function SikuCard({ organizationId }: Props) {
                 <p className="text-sm">
                   Empresa GUID: <code className="text-xs bg-muted px-1.5 py-0.5 rounded">{displayGuid}</code>
                 </p>
+                {currentDefaultAccount && (
+                  <p className="text-sm">
+                    Cuenta: <code className="text-xs bg-muted px-1.5 py-0.5 rounded">{currentDefaultAccount}</code>
+                  </p>
+                )}
+                <div className="pt-2 max-w-md">
+                  <Label className="text-xs text-muted-foreground">Cuenta de ingreso por defecto (QBO)</Label>
+                  <AccountCombobox
+                    accounts={accounts}
+                    value={currentDefaultAccount}
+                    onValueChange={handleUpdateDefaultAccount}
+                    placeholder="Sin cuenta por defecto"
+                    disabled={savingDefault}
+                    className="w-full"
+                  />
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Se usa como fallback cuando un paciente no tiene cuenta configurada.
+                  </p>
+                </div>
                 <div className="flex gap-2 pt-2">
                   <Button size="sm" onClick={() => setImportOpen(true)}>
                     Sincronizar ahora
@@ -199,6 +255,19 @@ export function SikuCard({ organizationId }: Props) {
                   />
                   <p className="text-xs text-muted-foreground mt-1">
                     Encuentre el GUID de su empresa en Portal Siku → Perfil → Integraciones, o pregúntele a ACL.
+                  </p>
+                </div>
+                <div>
+                  <Label>Cuenta de ingreso por defecto (QBO)</Label>
+                  <AccountCombobox
+                    accounts={accounts}
+                    value={defaultIncomeAccount}
+                    onValueChange={setDefaultIncomeAccount}
+                    placeholder="Opcional — fallback para pacientes sin configurar"
+                    className="w-full"
+                  />
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Opcional. Se usa cuando un paciente no tiene cuenta específica configurada.
                   </p>
                 </div>
                 <div className="flex gap-2">
