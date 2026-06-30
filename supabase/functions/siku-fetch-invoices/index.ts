@@ -164,6 +164,8 @@ Deno.serve(async (req) => {
       .in("customer_name", customerNames);
     const defMap = new Map((defs || []).map((d: any) => [d.customer_name, d]));
 
+    const orgDefaultAccount = creds.default_income_account_ref || null;
+
     const currencyMap: Record<string, string> = { "¢": "CRC", "$": "USD", "€": "EUR" };
 
     const toInsert = lista
@@ -171,6 +173,7 @@ Deno.serve(async (req) => {
       .map((d: any) => {
         const def = defMap.get(d.Nombre);
         const currency = currencyMap[d.MonedaSimbolo] || "CRC";
+        const incomeAccount = def?.default_income_account_ref || orgDefaultAccount;
         return {
           organization_id,
           doc_key: d.DocumentoGuid,
@@ -195,12 +198,13 @@ Deno.serve(async (req) => {
             tipo_documento: d.TipoDocumento,
             source: "siku",
           },
-          status: "pending",
-          default_income_account_ref: def?.default_income_account_ref || null,
+          status: incomeAccount ? "pending" : "pending_config",
+          default_income_account_ref: incomeAccount,
           default_class_ref: def?.default_class_ref || null,
           payment_terms_ref: def?.payment_terms_ref || null,
         };
       });
+
 
     if (toInsert.length > 0) {
       const { error: insErr } = await supabase.from("sales_invoices").insert(toInsert);
