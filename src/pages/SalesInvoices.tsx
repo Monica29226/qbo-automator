@@ -156,15 +156,33 @@ export default function SalesInvoices() {
               </p>
             </div>
           </div>
-          <Button
-            onClick={handlePublishAll}
-            disabled={isPublishing || readyCount === 0}
-            size="lg"
-          >
-            <DollarSign className="mr-2 h-5 w-5" />
-            {isPublishing ? "Publicando..." : `Publicar ${readyCount} Listas`}
-          </Button>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              size="lg"
+              onClick={() => setSikuOpen(true)}
+            >
+              <RefreshCw className="mr-2 h-5 w-5" />
+              Sincronizar Siku
+            </Button>
+            <Button
+              onClick={handlePublishAll}
+              disabled={isPublishing || readyCount === 0}
+              size="lg"
+            >
+              <DollarSign className="mr-2 h-5 w-5" />
+              {isPublishing ? "Publicando..." : `Publicar ${readyCount} Listas`}
+            </Button>
+          </div>
         </div>
+
+        <SikuImportDialog
+          open={sikuOpen}
+          onOpenChange={setSikuOpen}
+          organizationId={activeOrganization}
+          onImported={() => refetch()}
+        />
+
 
         {/* Stats Cards */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
