@@ -180,7 +180,9 @@ Deno.serve(async (req) => {
     }
 
     const apiData = await apiResp.json();
-    const lista: any[] = apiData.Lista || [];
+    const lista: any[] = Array.isArray(apiData)
+      ? apiData
+      : (apiData?.Lista ?? apiData?.ListaDocumentos ?? apiData?.documentos ?? []);
     fetched = lista.length;
     console.log(`Got ${fetched} documents (total in period: ${apiData.TotalCantidadDocumentos})`);
 
