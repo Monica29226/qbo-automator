@@ -194,10 +194,13 @@ export default function SalesInvoices() {
             <Button
               variant="outline"
               size="lg"
-              onClick={() => setSikuOpen(true)}
+              onClick={() => {
+                if (hasSiku) setSikuOpen(true);
+                else navigate("/integrations");
+              }}
             >
               <RefreshCw className="mr-2 h-5 w-5" />
-              Sincronizar Siku
+              {hasSiku ? "Sincronizar Siku" : "Configurar Siku"}
             </Button>
             <Button
               onClick={handlePublishAll}
