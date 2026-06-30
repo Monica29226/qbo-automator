@@ -34,6 +34,8 @@ export default function SalesInvoices() {
   const [searchTerm, setSearchTerm] = useState("");
   const [isPublishing, setIsPublishing] = useState(false);
   const [sendingEmailId, setSendingEmailId] = useState<string | null>(null);
+  const [sikuOpen, setSikuOpen] = useState(false);
+
 
   const handleSendEmail = async (invoice: any) => {
     const email = invoice.customer_email || prompt("Ingrese el correo del cliente:");
