@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ArrowLeft, TrendingUp, DollarSign, CheckCircle2, Clock, AlertCircle, Mail, Loader2, RefreshCw } from "lucide-react";
 import { SikuImportDialog } from "@/components/siku/SikuImportDialog";
-import { useQuery } from "@tanstack/react-query";
+
 
 import { Button } from "@/components/ui/button";
 import {
@@ -37,37 +37,6 @@ export default function SalesInvoices() {
   const [sendingEmailId, setSendingEmailId] = useState<string | null>(null);
   const [sikuOpen, setSikuOpen] = useState(false);
 
-  const { data: hasSiku } = useQuery({
-    queryKey: ["siku-integration", activeOrganization],
-    queryFn: async () => {
-      if (!activeOrganization) return false;
-      const { data } = await supabase
-        .from("integration_accounts")
-        .select("id")
-        .eq("organization_id", activeOrganization)
-        .eq("service_type", "siku")
-        .eq("is_active", true)
-        .maybeSingle();
-      return !!data;
-    },
-    enabled: !!activeOrganization,
-  });
-
-  const { data: lastSikuSync } = useQuery({
-    queryKey: ["last-siku-sync", activeOrganization],
-    queryFn: async () => {
-      if (!activeOrganization) return null;
-      const { data } = await supabase
-        .from("sales_invoices")
-        .select("created_at")
-        .eq("organization_id", activeOrganization)
-        .order("created_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      return data?.created_at ? new Date(data.created_at).toLocaleDateString('es-CR') : null;
-    },
-    enabled: !!activeOrganization,
-  });
 
 
 
@@ -194,13 +163,10 @@ export default function SalesInvoices() {
             <Button
               variant="outline"
               size="lg"
-              onClick={() => {
-                if (hasSiku) setSikuOpen(true);
-                else navigate("/integrations");
-              }}
+              onClick={() => setSikuOpen(true)}
             >
               <RefreshCw className="mr-2 h-5 w-5" />
-              {hasSiku ? "Sincronizar Siku" : "Configurar Siku"}
+              Sincronizar Siku
             </Button>
             <Button
               onClick={handlePublishAll}
@@ -220,22 +186,6 @@ export default function SalesInvoices() {
           onImported={() => refetch()}
         />
 
-        {hasSiku && (
-          <Card className="border-primary/30 bg-primary/5">
-            <CardContent className="py-3 flex items-center justify-between gap-4">
-              <div className="flex items-center gap-3 text-sm">
-                <Clock className="h-5 w-5 text-primary shrink-0" />
-                <div>
-                  <strong>Sync automático activo</strong> — Las facturas de Siku se importan diariamente a las 6:00 AM.
-                  {lastSikuSync && <> Última sync: <strong>{lastSikuSync}</strong></>}
-                </div>
-              </div>
-              <Button size="sm" variant="outline" onClick={() => setSikuOpen(true)}>
-                Sincronizar ahora
-              </Button>
-            </CardContent>
-          </Card>
-        )}
 
 
 
