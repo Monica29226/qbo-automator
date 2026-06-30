@@ -122,10 +122,19 @@ export function SikuImportDialog({ open, onOpenChange, organizationId, onImporte
 
         {result && (
           <div className="space-y-2 text-sm">
+            {(result.total_period != null || result.monto_total != null) && (
+              <p className="text-muted-foreground">
+                Siku reporta <strong>{result.total_period ?? result.fetched}</strong> facturas
+                {result.monto_total != null && (
+                  <> por <strong>{new Intl.NumberFormat("es-CR", { style: "currency", currency: "CRC", maximumFractionDigits: 0 }).format(Number(result.monto_total) || 0)}</strong></>
+                )}{" "}
+                en el período.
+              </p>
+            )}
             <p>✅ <strong>{result.inserted}</strong> nuevas facturas importadas</p>
             <p>⏭ <strong>{result.skipped}</strong> ya existían (duplicados)</p>
             <p>❌ <strong>{result.errors}</strong> con errores</p>
-            <p className="text-muted-foreground">Total consultado: {result.fetched}</p>
+            <p className="text-muted-foreground">Total consultado en esta página: {result.fetched}</p>
           </div>
         )}
 
