@@ -32,24 +32,31 @@ async function getSikuToken(creds: any): Promise<string | null> {
   }
   // Fallback: password grant
   if (creds.username && creds.password) {
-    const clientIds = ["web", "siku-web", "portal", "angular", "siku", "siku.portal"];
+    const clientIds = [creds.client_id, "sikumed-public-api", "web", "siku-web", "portal", "angular", "siku", "siku.portal"].filter(Boolean);
+    const seen = new Set<string>();
     for (const clientId of clientIds) {
-      const body = new URLSearchParams({
+      if (seen.has(clientId)) continue;
+      seen.add(clientId);
+      const params: Record<string, string> = {
         grant_type: "password",
         username: creds.username,
         password: creds.password,
         client_id: clientId,
-      });
+        scope: "openid profile offline_access",
+      };
+      if (creds.client_secret) params.client_secret = creds.client_secret;
       const r = await fetch(AUTH_URL, {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: body.toString(),
+        body: new URLSearchParams(params).toString(),
       });
       if (r.ok) {
         const data = await r.json();
         console.log("Siku auth OK (password, client_id=" + clientId + ")");
         return data.access_token;
       }
+      const err = await r.text().catch(() => "");
+      console.warn("password grant failed (client_id=" + clientId + "): " + err.substring(0, 200));
     }
   }
   return null;
