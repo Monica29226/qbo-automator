@@ -10,6 +10,10 @@ const AUTH_URL = "https://auth.sikuapps.com/api/token";
 const API_BASE = "https://portalapi.sikumedico.com/api";
 
 async function getSikuToken(creds: any): Promise<string | null> {
+  // Si hay un access_token guardado (capturado del portal), usarlo directamente
+  if (creds.access_token) {
+    return creds.access_token;
+  }
   // Try client_credentials first
   if (creds.client_id && creds.client_secret) {
     const body = new URLSearchParams({
@@ -62,13 +66,13 @@ async function getSikuToken(creds: any): Promise<string | null> {
   return null;
 }
 
-async function getXmlTax(guid: string, token: string, ocpKey: string | null): Promise<{ tax: number; net: number } | null> {
+async function getXmlTax(guid: string, token: string, extraHeaders: Record<string, string>): Promise<{ tax: number; net: number } | null> {
   try {
     const headers: Record<string, string> = {
       Authorization: "Bearer " + token,
       Accept: "application/xml, text/xml, */*",
+      ...extraHeaders,
     };
-    if (ocpKey) headers["Ocp-Apim-Subscription-Key"] = ocpKey;
     const r = await fetch(API_BASE + "/fact/DOC/xml?guid=" + guid, { headers });
     if (!r.ok) return null;
     const xml = await r.text();
@@ -155,21 +159,26 @@ Deno.serve(async (req) => {
     const orgDefaultAccount = creds.default_income_account_ref || null;
     const currencyMap: Record<string, string> = { "¢": "CRC", "$": "USD", "€": "EUR" };
 
+    const extraHeaders: Record<string, string> = {};
+    if (creds.x_sid) extraHeaders["x-SID"] = creds.x_sid;
+    if (creds.x_idsesion) extraHeaders["x-IDSesion"] = creds.x_idsesion;
+    if (ocpKey) extraHeaders["Ocp-Apim-Subscription-Key"] = ocpKey;
+
     const url = API_BASE + "/fact/DOC/buscar?id=-1&idc=" + companyGuid + "&ids=-1&es=-1&fi=" + fi + "&ff=" + ff + "&u=&esce=-1";
     console.log("Fetching:", url);
 
     const apiHeaders: Record<string, string> = {
       Authorization: "Bearer " + accessToken,
       Accept: "application/json",
+      ...extraHeaders,
     };
-    if (ocpKey) apiHeaders["Ocp-Apim-Subscription-Key"] = ocpKey;
 
     const apiResp = await fetch(url, { headers: apiHeaders });
     if (!apiResp.ok) {
       const errBody = await apiResp.text();
       if (apiResp.status === 401) {
         return new Response(
-          JSON.stringify({ success: false, error: "Token inválido. Reconecte Siku.", code: "unauthorized" }),
+          JSON.stringify({ success: false, error: "Token inválido o vencido. Recapture el token desde el portal Siku.", code: "token_expired" }),
           { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
         );
       }
@@ -209,7 +218,7 @@ Deno.serve(async (req) => {
       const montoTotal = Number(d.MontoTotal) || 0;
 
       const xmlData = d.DocumentoGuid
-        ? await getXmlTax(d.DocumentoGuid, accessToken, ocpKey)
+        ? await getXmlTax(d.DocumentoGuid, accessToken, extraHeaders)
         : null;
 
       const totalTax = xmlData ? xmlData.tax : 0;
