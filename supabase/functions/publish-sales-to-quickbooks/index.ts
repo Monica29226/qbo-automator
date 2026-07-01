@@ -28,8 +28,29 @@ async function qboPost(base: string, token: string, entity: string, body: any) {
     },
     body: JSON.stringify(body),
   });
-  if (!r.ok) throw new Error(`QBO ${entity} error ${r.status}: ${await r.text()}`);
-  return r.json();
+  const text = await r.text();
+  if (!r.ok) {
+    const err: any = new Error(`QBO ${entity} error ${r.status}: ${text}`);
+    err.status = r.status;
+    err.body = text;
+    // Try to parse QBO fault code
+    try {
+      const j = JSON.parse(text);
+      const fault = j?.Fault?.Error?.[0];
+      if (fault) {
+        err.qboCode = fault.code;
+        err.qboMessage = fault.Message;
+        err.qboDetail = fault.Detail;
+      }
+    } catch (_) { /* ignore */ }
+    throw err;
+  }
+  try { return JSON.parse(text); } catch { throw new Error(`QBO ${entity}: invalid JSON response: ${text.slice(0, 500)}`); }
+}
+function assertEntity(created: any, entityType: string, context: string) {
+  if (!created || !created[entityType] || !created[entityType].Id) {
+    throw new Error(`QBO ${context}: respuesta sin ${entityType}.Id — ${JSON.stringify(created).slice(0, 500)}`);
+  }
 }
 
 // Build tarifa (percent number) -> TaxCode Id map from QBO active tax codes.
@@ -80,21 +101,60 @@ async function ensureServiceItem(base: string, token: string, incomeAccountRef: 
     IncomeAccountRef: { value: String(incomeAccountRef) },
     Taxable: true,
   });
+  assertEntity(created, "Item", "ensureServiceItem");
   return { id: created.Item.Id, name: created.Item.Name };
 }
 
 async function findOrCreateCustomer(base: string, token: string, name: string, email: string | null, taxId: string | null): Promise<string> {
-  const safe = (name || "Cliente de Contado").replace(/'/g, "\\'").slice(0, 100);
-  const search = await qboGet(base, token, `SELECT * FROM Customer WHERE DisplayName='${safe}'`);
+  const raw = (name || "Cliente de Contado").trim().slice(0, 100);
+  // QBO query language: escape single quote by doubling it
+  const qEsc = raw.replace(/'/g, "''");
+  const search = await qboGet(base, token, `SELECT * FROM Customer WHERE DisplayName='${qEsc}'`);
   const existing = search.QueryResponse?.Customer?.[0];
   if (existing) return existing.Id;
-  const created = await qboPost(base, token, "customer", {
-    DisplayName: safe,
-    CompanyName: safe,
-    PrimaryEmailAddr: email ? { Address: email } : undefined,
-    Notes: taxId ? `Tax ID: ${taxId}` : undefined,
-  });
-  return created.Customer.Id;
+  try {
+    const created = await qboPost(base, token, "customer", {
+      DisplayName: raw,
+      CompanyName: raw,
+      PrimaryEmailAddr: email ? { Address: email } : undefined,
+      Notes: taxId ? `Tax ID: ${taxId}` : undefined,
+    });
+    assertEntity(created, "Customer", "findOrCreateCustomer");
+    return created.Customer.Id;
+  } catch (e: any) {
+    // 6240 = Duplicate Name Exists (conflict with Vendor/Employee sharing DisplayName)
+    if (e?.qboCode === "6240" || /6240|duplicad|duplicate/i.test(e?.message || "")) {
+      // Try again, sometimes it exists as Customer already
+      try {
+        const s2 = await qboGet(base, token, `SELECT * FROM Customer WHERE DisplayName='${qEsc}'`);
+        const e2 = s2.QueryResponse?.Customer?.[0];
+        if (e2) return e2.Id;
+      } catch (_) { /* ignore */ }
+      // Fallback: scan and case-insensitive match
+      try {
+        const all = await qboGet(base, token, `SELECT * FROM Customer MAXRESULTS 1000`);
+        const list: any[] = all.QueryResponse?.Customer || [];
+        const target = raw.toLowerCase();
+        const hit = list.find((c) => (c.DisplayName || "").trim().toLowerCase() === target);
+        if (hit) return hit.Id;
+      } catch (_) { /* ignore */ }
+      // Suffix with "(Cliente)" to disambiguate from Vendor/Employee
+      const alt = `${raw} (Cliente)`.slice(0, 100);
+      const altEsc = alt.replace(/'/g, "''");
+      const s3 = await qboGet(base, token, `SELECT * FROM Customer WHERE DisplayName='${altEsc}'`);
+      const e3 = s3.QueryResponse?.Customer?.[0];
+      if (e3) return e3.Id;
+      const created2 = await qboPost(base, token, "customer", {
+        DisplayName: alt,
+        CompanyName: raw,
+        PrimaryEmailAddr: email ? { Address: email } : undefined,
+        Notes: taxId ? `Tax ID: ${taxId}` : undefined,
+      });
+      assertEntity(created2, "Customer", "findOrCreateCustomer(alt)");
+      return created2.Customer.Id;
+    }
+    throw e;
+  }
 }
 
 function isGenericCustomer(name: string | null): boolean {
@@ -265,6 +325,7 @@ serve(async (req) => {
         console.log(`📤 Creating ${entityType} for ${invoice.doc_number} (${lines.length} líneas)`);
 
         const created = await qboPost(base, access_token, entity, payload);
+        assertEntity(created, entityType, `publish ${invoice.doc_number}`);
         const qbId = created[entityType].Id;
         console.log(`✅ ${entityType} ${qbId} creado`);
 
