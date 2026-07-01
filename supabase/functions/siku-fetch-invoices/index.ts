@@ -66,13 +66,13 @@ async function getSikuToken(creds: any): Promise<string | null> {
   return null;
 }
 
-async function getXmlTax(guid: string, token: string, ocpKey: string | null): Promise<{ tax: number; net: number } | null> {
+async function getXmlTax(guid: string, token: string, extraHeaders: Record<string, string>): Promise<{ tax: number; net: number } | null> {
   try {
     const headers: Record<string, string> = {
       Authorization: "Bearer " + token,
       Accept: "application/xml, text/xml, */*",
+      ...extraHeaders,
     };
-    if (ocpKey) headers["Ocp-Apim-Subscription-Key"] = ocpKey;
     const r = await fetch(API_BASE + "/fact/DOC/xml?guid=" + guid, { headers });
     if (!r.ok) return null;
     const xml = await r.text();
