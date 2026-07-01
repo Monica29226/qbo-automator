@@ -10,11 +10,7 @@ const AUTH_URL = "https://auth.sikuapps.com/api/token";
 const API_BASE = "https://portalapi.sikumedico.com/api";
 
 async function getSikuToken(creds: any): Promise<string | null> {
-  // Si hay un access_token guardado (capturado del portal), usarlo directamente
-  if (creds.access_token) {
-    return creds.access_token;
-  }
-  // Try client_credentials first
+  if (creds.access_token) return creds.access_token;
   if (creds.client_id && creds.client_secret) {
     const body = new URLSearchParams({
       grant_type: "client_credentials",
@@ -28,13 +24,11 @@ async function getSikuToken(creds: any): Promise<string | null> {
     });
     if (r.ok) {
       const data = await r.json();
-      console.log("Siku auth OK (client_credentials)");
       return data.access_token;
     }
     const err = await r.text().catch(() => "");
     console.warn("client_credentials failed:", err.substring(0, 200));
   }
-  // Fallback: password grant
   if (creds.username && creds.password) {
     const clientIds = [creds.client_id, "sikumed-public-api", "web", "siku-web", "portal", "angular", "siku", "siku.portal"].filter(Boolean);
     const seen = new Set<string>();
@@ -56,7 +50,6 @@ async function getSikuToken(creds: any): Promise<string | null> {
       });
       if (r.ok) {
         const data = await r.json();
-        console.log("Siku auth OK (password, client_id=" + clientId + ")");
         return data.access_token;
       }
       const err = await r.text().catch(() => "");
@@ -66,31 +59,107 @@ async function getSikuToken(creds: any): Promise<string | null> {
   return null;
 }
 
-async function getXmlTax(guid: string, token: string, extraHeaders: Record<string, string>): Promise<{ tax: number; net: number } | null> {
+function tagVal(xml: string, tag: string): string | null {
+  const re = new RegExp("<" + tag + "(?:\\s[^>]*)?>([\\s\\S]*?)</" + tag + ">", "i");
+  const m = xml.match(re);
+  return m ? m[1].trim() : null;
+}
+function tagNum(xml: string, tag: string): number {
+  const v = tagVal(xml, tag);
+  return v ? (parseFloat(v) || 0) : 0;
+}
+
+interface XmlDetalle {
+  totalVentaNeta: number;
+  totalImpuesto: number;
+  totalComprobante: number;
+  totalGravado: number;
+  totalExento: number;
+  esNC: boolean;
+  infoRef: { numero: string | null; razon: string | null } | null;
+  detalles: Array<{
+    detalle: string | null;
+    cantidad: number;
+    precioUnitario: number;
+    montoNeto: number;
+    montoTotalLinea: number;
+    impuestoNeto: number;
+    tarifa: number;
+    montoIva: number;
+  }>;
+}
+
+async function getXmlDetalle(guid: string, token: string, extraHeaders: Record<string, string>): Promise<XmlDetalle | null> {
   try {
     const headers: Record<string, string> = {
       Authorization: "Bearer " + token,
       Accept: "application/xml, text/xml, */*",
       ...extraHeaders,
     };
-    const r = await fetch(API_BASE + "/fact/DOC/xml?guid=" + guid, { headers });
-    if (!r.ok) return null;
+    const r = await fetch(`${API_BASE}/fact/DOC/${guid}/ComprobanteElectronico/XmlEnviado`, { headers });
+    if (!r.ok) {
+      console.warn(`XmlEnviado fetch failed ${guid}: ${r.status}`);
+      return null;
+    }
     const xml = await r.text();
     if (!xml || xml.indexOf("<") === -1) return null;
-    const getTag = (tag: string): number => {
-      const idx = xml.indexOf("<" + tag);
-      if (idx === -1) return 0;
-      const start = xml.indexOf(">", idx) + 1;
-      const end = xml.indexOf("</" + tag, start);
-      if (start <= 0 || end <= start) return 0;
-      return parseFloat(xml.substring(start, end)) || 0;
-    };
-    const tax = getTag("TotalImpuesto") || getTag("TotalImpuestoNeto");
-    const net = getTag("TotalVentaNeta") || getTag("TotalVenta");
-    return { tax, net };
-  } catch (_) {
+
+    const esNC = /<NotaCreditoElectronica[\s>]/i.test(xml);
+
+    const resumenMatch = xml.match(/<ResumenFactura>([\s\S]*?)<\/ResumenFactura>/i);
+    const resumen = resumenMatch ? resumenMatch[1] : xml;
+
+    const totalVentaNeta = tagNum(resumen, "TotalVentaNeta");
+    const totalImpuesto = tagNum(resumen, "TotalImpuesto");
+    const totalComprobante = tagNum(resumen, "TotalComprobante");
+    const totalGravado = tagNum(resumen, "TotalGravado");
+    const totalExento = tagNum(resumen, "TotalExento");
+
+    let infoRef: { numero: string | null; razon: string | null } | null = null;
+    const irMatch = xml.match(/<InformacionReferencia>([\s\S]*?)<\/InformacionReferencia>/i);
+    if (irMatch) {
+      infoRef = {
+        numero: tagVal(irMatch[1], "Numero"),
+        razon: tagVal(irMatch[1], "Razon"),
+      };
+    }
+
+    const detalles: XmlDetalle["detalles"] = [];
+    const lineRe = /<LineaDetalle>([\s\S]*?)<\/LineaDetalle>/gi;
+    let m: RegExpExecArray | null;
+    while ((m = lineRe.exec(xml)) !== null) {
+      const b = m[1];
+      const impMatch = b.match(/<Impuesto>([\s\S]*?)<\/Impuesto>/i);
+      let tarifa = 0;
+      let montoIva = 0;
+      if (impMatch) {
+        tarifa = tagNum(impMatch[1], "Tarifa");
+        montoIva = tagNum(impMatch[1], "Monto");
+      }
+      detalles.push({
+        detalle: tagVal(b, "Detalle"),
+        cantidad: tagNum(b, "Cantidad"),
+        precioUnitario: tagNum(b, "PrecioUnitario"),
+        montoNeto: tagNum(b, "MontoTotal"),
+        montoTotalLinea: tagNum(b, "MontoTotalLinea"),
+        impuestoNeto: tagNum(b, "ImpuestoNeto"),
+        tarifa,
+        montoIva,
+      });
+    }
+
+    return { totalVentaNeta, totalImpuesto, totalComprobante, totalGravado, totalExento, esNC, infoRef, detalles };
+  } catch (e) {
+    console.warn("getXmlDetalle error:", (e as Error).message);
     return null;
   }
+}
+
+function detectDocType(tipo: string): string {
+  if (!tipo) return "FE";
+  if (/nota de cr[ée]dito/i.test(tipo)) return "NC";
+  if (/tiquete/i.test(tipo)) return "TE";
+  return "FE";
 }
 
 function todayISO(offset = 0): string {
@@ -100,9 +169,7 @@ function todayISO(offset = 0): string {
 }
 
 Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders });
-  }
+  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
   try {
     const supabase = createClient(
@@ -218,16 +285,16 @@ Deno.serve(async (req) => {
         const currency = currencyMap[d.MonedaSimbolo] || "CRC";
         const incomeAccount = (def?.default_income_account_ref) || orgDefaultAccount;
         const montoTotal = Number(d.MontoTotal) || 0;
-        const xmlData = d.DocumentoGuid
-          ? await getXmlTax(d.DocumentoGuid, accessToken, extraHeaders)
+        const xml = d.DocumentoGuid
+          ? await getXmlDetalle(d.DocumentoGuid, accessToken, extraHeaders)
           : null;
-        const totalTax = xmlData ? xmlData.tax : 0;
-        const subtotal = xmlData ? (xmlData.net || montoTotal - totalTax) : montoTotal;
+        const subtotal = xml ? xml.totalVentaNeta : montoTotal;
+        const totalTax = xml ? xml.totalImpuesto : 0;
         return {
           organization_id,
           doc_key: d.DocumentoGuid,
           doc_number: d.NumeroConsecutivo || String(d.IDDocumento),
-          doc_type: d.TipoDocumento === "Nota de crédito electrónica" ? "NC" : "FE",
+          doc_type: detectDocType(d.TipoDocumento),
           issue_date: d.FechaDocumento ? d.FechaDocumento.split("T")[0] : todayISO(0),
           customer_name: d.Nombre || "Sin nombre",
           customer_tax_id: null,
@@ -246,7 +313,12 @@ Deno.serve(async (req) => {
             estado_pago: d.EstadoPago,
             tipo_documento: d.TipoDocumento,
             source: "siku",
-            xml_parsed: xmlData !== null,
+            xml_parsed: xml !== null,
+            detalles: xml?.detalles || [],
+            info_referencia: xml?.infoRef || null,
+            total_gravado: xml?.totalGravado || 0,
+            total_exento: xml?.totalExento || 0,
+            total_comprobante: xml?.totalComprobante || montoTotal,
           },
           status: incomeAccount ? "pending" : "pending_config",
           default_income_account_ref: incomeAccount,
