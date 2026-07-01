@@ -260,20 +260,30 @@ Deno.serve(async (req) => {
     console.log("Got " + fetched + " documents");
 
     const docKeys = lista.map((d: any) => d.DocumentoGuid).filter(Boolean);
-    const { data: existing } = await supabase
-      .from("sales_invoices")
-      .select("doc_key")
-      .eq("organization_id", organization_id)
-      .in("doc_key", docKeys.length > 0 ? docKeys : ["__none__"]);
-    const existingSet = new Set((existing || []).map((e: any) => e.doc_key));
+    // Fetch existing doc_keys in chunks to avoid URL length limits
+    const existingSet = new Set<string>();
+    const CHUNK = 100;
+    for (let i = 0; i < docKeys.length; i += CHUNK) {
+      const part = docKeys.slice(i, i + CHUNK);
+      const { data: existing } = await supabase
+        .from("sales_invoices")
+        .select("doc_key")
+        .eq("organization_id", organization_id)
+        .in("doc_key", part);
+      (existing || []).forEach((e: any) => existingSet.add(e.doc_key));
+    }
 
     const customerNames = [...new Set(lista.map((d: any) => d.Nombre).filter(Boolean))] as string[];
-    const { data: defs } = await supabase
-      .from("customer_defaults")
-      .select("customer_name, default_income_account_ref, default_class_ref, payment_terms_ref")
-      .eq("organization_id", organization_id)
-      .in("customer_name", customerNames.length > 0 ? customerNames : ["__none__"]);
-    const defMap = new Map((defs || []).map((d: any) => [d.customer_name, d]));
+    const defMap = new Map<string, any>();
+    for (let i = 0; i < customerNames.length; i += CHUNK) {
+      const part = customerNames.slice(i, i + CHUNK);
+      const { data: defs } = await supabase
+        .from("customer_defaults")
+        .select("customer_name, default_income_account_ref, default_class_ref, payment_terms_ref")
+        .eq("organization_id", organization_id)
+        .in("customer_name", part);
+      (defs || []).forEach((d: any) => defMap.set(d.customer_name, d));
+    }
 
     const newDocs = lista.filter((d: any) => d.DocumentoGuid && !existingSet.has(d.DocumentoGuid));
     const BATCH = 10;
@@ -329,15 +339,21 @@ Deno.serve(async (req) => {
       toInsert.push(...rows);
     }
 
+    // Upsert in chunks with ignoreDuplicates to survive races
     let inserted = 0;
     let errors = 0;
-    if (toInsert.length > 0) {
-      const { error: insErr } = await supabase.from("sales_invoices").insert(toInsert);
+    const INS_CHUNK = 100;
+    for (let i = 0; i < toInsert.length; i += INS_CHUNK) {
+      const part = toInsert.slice(i, i + INS_CHUNK);
+      const { data: upData, error: insErr } = await supabase
+        .from("sales_invoices")
+        .upsert(part, { onConflict: "organization_id,doc_key", ignoreDuplicates: true })
+        .select("id");
       if (insErr) {
-        console.error("Insert error:", insErr);
-        errors = toInsert.length;
+        console.error("Upsert error:", insErr);
+        errors += part.length;
       } else {
-        inserted = toInsert.length;
+        inserted += (upData || []).length;
       }
     }
 
