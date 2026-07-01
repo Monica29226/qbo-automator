@@ -325,6 +325,7 @@ serve(async (req) => {
         console.log(`📤 Creating ${entityType} for ${invoice.doc_number} (${lines.length} líneas)`);
 
         const created = await qboPost(base, access_token, entity, payload);
+        assertEntity(created, entityType, `publish ${invoice.doc_number}`);
         const qbId = created[entityType].Id;
         console.log(`✅ ${entityType} ${qbId} creado`);
 
