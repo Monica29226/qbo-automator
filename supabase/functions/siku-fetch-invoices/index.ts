@@ -218,7 +218,7 @@ Deno.serve(async (req) => {
       const montoTotal = Number(d.MontoTotal) || 0;
 
       const xmlData = d.DocumentoGuid
-        ? await getXmlTax(d.DocumentoGuid, accessToken, ocpKey)
+        ? await getXmlTax(d.DocumentoGuid, accessToken, extraHeaders)
         : null;
 
       const totalTax = xmlData ? xmlData.tax : 0;
