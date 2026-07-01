@@ -10,6 +10,10 @@ const AUTH_URL = "https://auth.sikuapps.com/api/token";
 const API_BASE = "https://portalapi.sikumedico.com/api";
 
 async function getSikuToken(creds: any): Promise<string | null> {
+  // Si hay un access_token guardado (capturado del portal), usarlo directamente
+  if (creds.access_token) {
+    return creds.access_token;
+  }
   // Try client_credentials first
   if (creds.client_id && creds.client_secret) {
     const body = new URLSearchParams({
