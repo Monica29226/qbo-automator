@@ -28,8 +28,29 @@ async function qboPost(base: string, token: string, entity: string, body: any) {
     },
     body: JSON.stringify(body),
   });
-  if (!r.ok) throw new Error(`QBO ${entity} error ${r.status}: ${await r.text()}`);
-  return r.json();
+  const text = await r.text();
+  if (!r.ok) {
+    const err: any = new Error(`QBO ${entity} error ${r.status}: ${text}`);
+    err.status = r.status;
+    err.body = text;
+    // Try to parse QBO fault code
+    try {
+      const j = JSON.parse(text);
+      const fault = j?.Fault?.Error?.[0];
+      if (fault) {
+        err.qboCode = fault.code;
+        err.qboMessage = fault.Message;
+        err.qboDetail = fault.Detail;
+      }
+    } catch (_) { /* ignore */ }
+    throw err;
+  }
+  try { return JSON.parse(text); } catch { throw new Error(`QBO ${entity}: invalid JSON response: ${text.slice(0, 500)}`); }
+}
+function assertEntity(created: any, entityType: string, context: string) {
+  if (!created || !created[entityType] || !created[entityType].Id) {
+    throw new Error(`QBO ${context}: respuesta sin ${entityType}.Id — ${JSON.stringify(created).slice(0, 500)}`);
+  }
 }
 
 // Build tarifa (percent number) -> TaxCode Id map from QBO active tax codes.
