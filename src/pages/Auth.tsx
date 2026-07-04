@@ -7,7 +7,7 @@ import { Card } from "@/components/ui/card";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { Loader2, Mail } from "lucide-react";
-import calderonLogo from "@/assets/acl-logo-new.png";
+import calderonLogo from "@/assets/acl-logo-navy.png";
 import { lovable } from "@/integrations/lovable";
 import {
   Dialog,
@@ -151,7 +151,7 @@ const Auth = () => {
         <div className="absolute inset-0 opacity-[0.04] pointer-events-none [background-image:radial-gradient(hsl(var(--sidebar-foreground))_1px,transparent_1px)] [background-size:24px_24px]" />
         <div className="relative flex items-center gap-3">
           <div className="h-12 w-12 bg-card rounded-lg p-1.5">
-            <img src={calderonLogo} alt="ACL Calderón" className="w-full h-full object-contain" />
+            <img src={calderonLogo} alt="ACL" className="w-full h-full object-contain" />
           </div>
           <div>
             <p className="text-base font-heading font-semibold leading-tight">Invoice ACL</p>
@@ -190,7 +190,7 @@ const Auth = () => {
       <section className="flex items-center justify-center p-6 sm:p-10">
         <div className="w-full max-w-md">
           <div className="lg:hidden mb-8 flex flex-col items-center">
-            <img src={calderonLogo} alt="ACL Calderón" className="h-16 w-auto mb-4" />
+            <img src={calderonLogo} alt="ACL" className="h-16 w-auto mb-4" />
             <h1 className="text-xl font-heading font-semibold">Invoice ACL · FacturaFlow</h1>
           </div>
 

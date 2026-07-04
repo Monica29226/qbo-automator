@@ -18,7 +18,7 @@ import {
   Wallet,
   CheckCircle2,
 } from "lucide-react";
-import calderonLogo from "@/assets/acl-logo-new.png";
+import calderonLogo from "@/assets/acl-logo-navy.png";
 import { QBOSyncPill } from "@/components/dashboard/QBOSyncPill";
 import {
   Sidebar,
@@ -214,7 +214,7 @@ export function DashboardSidebar({ isAdmin, reviewCount, onSignOut }: DashboardS
             <div className="h-11 w-11 flex items-center justify-center flex-shrink-0 bg-card rounded-lg p-1.5 transition-transform duration-300 hover:scale-105">
               <img
                 src={calderonLogo}
-                alt="ACL Calderón"
+                alt="ACL"
                 className="w-full h-full object-contain"
               />
             </div>
