@@ -174,6 +174,44 @@ export function useBankImports() {
     onError: (err: any) => toast.error(err.message),
   });
 
+  const publishJob = useMutation({
+    mutationFn: async ({ jobId, itemIds }: { jobId: string; itemIds?: string[] }) => {
+      const { data, error } = await supabase.functions.invoke("publish-bank-transactions-to-quickbooks", {
+        body: { organization_id: organizationId, job_id: jobId, item_ids: itemIds },
+      });
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+      return data;
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["bank-import-jobs"] });
+      const parts = [`${data.published} publicadas`];
+      if (data.failed) parts.push(`${data.failed} con error`);
+      if (data.skipped_uncategorized) parts.push(`${data.skipped_uncategorized} sin categorizar`);
+      toast.success(parts.join(", "));
+    },
+    onError: (err: any) => toast.error(err.message),
+  });
+
+  const updateItemCategory = useMutation({
+    mutationFn: async ({
+      itemId,
+      categoryAccountId,
+      categoryAccountName,
+    }: {
+      itemId: string;
+      categoryAccountId: string;
+      categoryAccountName: string;
+    }) => {
+      const { error } = await supabase
+        .from("bank_import_job_items")
+        .update({ category_account_id: categoryAccountId, category_account_name: categoryAccountName })
+        .eq("id", itemId);
+      if (error) throw error;
+    },
+    onError: (err: any) => toast.error(err.message),
+  });
+
   const reprocessJob = useMutation({
     mutationFn: async (jobId: string) => {
       const { data, error } = await supabase.functions.invoke("process-bank-statement", {
@@ -221,6 +259,8 @@ export function useBankImports() {
     createJob,
     processJob,
     generateCsv,
+    publishJob,
+    updateItemCategory,
     reprocessJob,
     getJobItems,
     downloadCsv,

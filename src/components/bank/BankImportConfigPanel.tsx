@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useBankImports } from "@/hooks/useBankImports";
+import { useQBOAccounts } from "@/hooks/useQBOAccounts";
 import { useAuth } from "@/hooks/useAuth";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -33,8 +34,10 @@ import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 
 export function BankImportConfigPanel() {
-  const { configs, createConfig, deleteConfig, sources, createSource } = useBankImports();
+  const { configs, createConfig, updateConfig, deleteConfig, sources, createSource } = useBankImports();
+  const { accounts: qboAccounts } = useQBOAccounts();
   const { activeOrganization } = useAuth();
+  const bankAccounts = qboAccounts.filter((a: any) => a.type === "Bank");
   const [showAddConfig, setShowAddConfig] = useState(false);
   const [showAddSource, setShowAddSource] = useState(false);
   const [connectingOneDrive, setConnectingOneDrive] = useState(false);
@@ -217,6 +220,7 @@ export function BankImportConfigPanel() {
                   <TableHead>Moneda</TableHead>
                   <TableHead>Formato Fecha</TableHead>
                   <TableHead>Layout</TableHead>
+                  <TableHead>Cuenta QuickBooks</TableHead>
                   <TableHead>Carpeta OneDrive</TableHead>
                   <TableHead>Estado</TableHead>
                   <TableHead>Acciones</TableHead>
@@ -229,6 +233,28 @@ export function BankImportConfigPanel() {
                     <TableCell>{c.currency}</TableCell>
                     <TableCell className="text-sm">{c.date_format}</TableCell>
                     <TableCell className="text-sm">{c.amount_layout}</TableCell>
+                    <TableCell className="min-w-[180px]">
+                      <Select
+                        value={c.qbo_bank_account_id || ""}
+                        onValueChange={(accountId) => {
+                          const account = bankAccounts.find((a: any) => a.id === accountId);
+                          updateConfig.mutate({
+                            id: c.id,
+                            qbo_bank_account_id: accountId,
+                            qbo_bank_account_name: account?.name || null,
+                          });
+                        }}
+                      >
+                        <SelectTrigger className="h-8 text-xs">
+                          <SelectValue placeholder="Sin asignar" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {bankAccounts.map((a: any) => (
+                            <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </TableCell>
                     <TableCell className="text-xs text-muted-foreground max-w-[150px] truncate">
                       {c.onedrive_folder_incoming || "No configurada"}
                     </TableCell>

@@ -25,7 +25,7 @@ const BankStatements = () => {
                 Estados de Cuenta
               </h1>
               <p className="text-muted-foreground text-sm">
-                Importar estados bancarios y generar CSV para QuickBooks Banking
+                Importar estados bancarios y publicarlos directamente en QuickBooks
               </p>
             </div>
             <div className="flex items-center gap-3">

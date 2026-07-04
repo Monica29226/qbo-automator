@@ -158,6 +158,8 @@ export type Database = {
           onedrive_folder_incoming: string | null
           onedrive_folder_processed: string | null
           organization_id: string
+          qbo_bank_account_id: string | null
+          qbo_bank_account_name: string | null
           updated_at: string
         }
         Insert: {
@@ -173,6 +175,8 @@ export type Database = {
           onedrive_folder_incoming?: string | null
           onedrive_folder_processed?: string | null
           organization_id: string
+          qbo_bank_account_id?: string | null
+          qbo_bank_account_name?: string | null
           updated_at?: string
         }
         Update: {
@@ -188,6 +192,8 @@ export type Database = {
           onedrive_folder_incoming?: string | null
           onedrive_folder_processed?: string | null
           organization_id?: string
+          qbo_bank_account_id?: string | null
+          qbo_bank_account_name?: string | null
           updated_at?: string
         }
         Relationships: [
@@ -203,6 +209,8 @@ export type Database = {
       bank_import_job_items: {
         Row: {
           bank_import_job_id: string
+          category_account_id: string | null
+          category_account_name: string | null
           created_at: string
           currency: string
           description: string | null
@@ -210,6 +218,11 @@ export type Database = {
           money_in: number | null
           money_out: number | null
           organization_id: string
+          publish_error: string | null
+          published_at: string | null
+          qbo_entity_id: string | null
+          qbo_entity_type: string | null
+          qbo_realm_id: string | null
           raw_row: Json | null
           reference: string | null
           source_bank: string | null
@@ -219,6 +232,8 @@ export type Database = {
         }
         Insert: {
           bank_import_job_id: string
+          category_account_id?: string | null
+          category_account_name?: string | null
           created_at?: string
           currency?: string
           description?: string | null
@@ -226,6 +241,11 @@ export type Database = {
           money_in?: number | null
           money_out?: number | null
           organization_id: string
+          publish_error?: string | null
+          published_at?: string | null
+          qbo_entity_id?: string | null
+          qbo_entity_type?: string | null
+          qbo_realm_id?: string | null
           raw_row?: Json | null
           reference?: string | null
           source_bank?: string | null
@@ -235,6 +255,8 @@ export type Database = {
         }
         Update: {
           bank_import_job_id?: string
+          category_account_id?: string | null
+          category_account_name?: string | null
           created_at?: string
           currency?: string
           description?: string | null
@@ -242,6 +264,11 @@ export type Database = {
           money_in?: number | null
           money_out?: number | null
           organization_id?: string
+          publish_error?: string | null
+          published_at?: string | null
+          qbo_entity_id?: string | null
+          qbo_entity_type?: string | null
+          qbo_realm_id?: string | null
           raw_row?: Json | null
           reference?: string | null
           source_bank?: string | null
