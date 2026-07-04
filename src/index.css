@@ -1,113 +1,120 @@
+@import url('https://fonts.googleapis.com/css2?family=Libre+Caslon+Display&family=Libre+Caslon+Text:ital,wght@0,400;1,400&family=Mulish:wght@300;400;500;600;700;800&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-/* Definition of the design system. All colors, gradients, fonts, etc should be defined here. 
-All colors MUST be HSL.
+/*
+  ACL — Accounting Consulting Leaders
+  Paleta oficial (HSL):
+   Navy tinta   #1A2046 → 232 46% 19%
+   Crema        #E8E2CD → 44 32% 86%
+   Papel        #F5F2E9 → 43 40% 93%
+   Oro antiguo  #B6924F → 38 41% 51%
+   Azul royal   #052C76 → 217 92% 24%
 */
 
 @layer base {
   :root {
-    /* Colores corporativos ACL Calderón */
-    --background: 44 31% 91%;
-    --foreground: 238 35% 13%;
+    --background: 43 40% 93%;
+    --foreground: 232 46% 19%;
 
-    --card: 44 31% 96%;
-    --card-foreground: 238 35% 13%;
+    --card: 43 45% 97%;
+    --card-foreground: 232 46% 19%;
 
-    --popover: 44 31% 96%;
-    --popover-foreground: 238 35% 13%;
+    --popover: 43 45% 97%;
+    --popover-foreground: 232 46% 19%;
 
-    --primary: 235 42% 26%;
-    --primary-foreground: 44 31% 91%;
+    --primary: 232 46% 19%;
+    --primary-foreground: 43 40% 93%;
 
-    --secondary: 217 96% 24%;
-    --secondary-foreground: 44 31% 91%;
+    --secondary: 217 92% 24%;
+    --secondary-foreground: 43 40% 93%;
 
-    --muted: 44 20% 85%;
-    --muted-foreground: 238 20% 40%;
+    --muted: 44 24% 88%;
+    --muted-foreground: 232 20% 35%;
 
-    --accent: 44 31% 86%;
-    --accent-foreground: 238 35% 13%;
+    --accent: 44 32% 86%;
+    --accent-foreground: 232 46% 19%;
 
-    --success: 145 65% 45%;
+    --success: 145 55% 38%;
     --success-foreground: 0 0% 100%;
 
-    --warning: 40 95% 55%;
-    --warning-foreground: 30 20% 15%;
+    --warning: 38 41% 51%;
+    --warning-foreground: 232 46% 19%;
 
-    --destructive: 0 75% 55%;
+    --destructive: 0 68% 45%;
     --destructive-foreground: 0 0% 100%;
 
     --border: 44 20% 80%;
     --input: 44 20% 80%;
-    --ring: 235 42% 26%;
+    --ring: 232 46% 19%;
 
-    --radius: 0.5rem;
+    --radius: 0.25rem;
 
-    --sidebar: 238 35% 13%;
-    --sidebar-background: 238 35% 13%;
-    --sidebar-foreground: 44 31% 91%;
-    --sidebar-accent: 235 42% 26%;
-    --sidebar-accent-foreground: 44 31% 91%;
-    --sidebar-border: 238 20% 20%;
-    --sidebar-ring: 235 42% 26%;
+    --sidebar: 232 46% 19%;
+    --sidebar-background: 232 46% 19%;
+    --sidebar-foreground: 44 32% 86%;
+    --sidebar-accent: 217 92% 24%;
+    --sidebar-accent-foreground: 44 32% 86%;
+    --sidebar-border: 232 30% 25%;
+    --sidebar-ring: 38 41% 51%;
 
-    --chart-1: 235 42% 26%;
-    --chart-2: 217 96% 24%;
-    --chart-3: 238 35% 13%;
-    --chart-4: 44 31% 86%;
-    --chart-5: 238 20% 40%;
+    --chart-1: 232 46% 19%;
+    --chart-2: 217 92% 24%;
+    --chart-3: 38 41% 51%;
+    --chart-4: 44 32% 86%;
+    --chart-5: 232 20% 35%;
   }
 
   .dark {
-    --background: 238 35% 8%;
-    --foreground: 44 31% 91%;
+    --background: 232 46% 10%;
+    --foreground: 43 40% 93%;
 
-    --card: 238 35% 10%;
-    --card-foreground: 44 31% 91%;
+    --card: 232 46% 13%;
+    --card-foreground: 43 40% 93%;
 
-    --popover: 238 35% 10%;
-    --popover-foreground: 44 31% 91%;
+    --popover: 232 46% 13%;
+    --popover-foreground: 43 40% 93%;
 
-    --primary: 235 42% 26%;
-    --primary-foreground: 44 31% 91%;
+    --primary: 232 46% 19%;
+    --primary-foreground: 43 40% 93%;
 
-    --secondary: 217 96% 24%;
-    --secondary-foreground: 44 31% 91%;
+    --secondary: 217 92% 24%;
+    --secondary-foreground: 43 40% 93%;
 
-    --muted: 238 20% 20%;
-    --muted-foreground: 44 20% 60%;
+    --muted: 232 25% 20%;
+    --muted-foreground: 44 20% 70%;
 
-    --accent: 235 42% 35%;
-    --accent-foreground: 44 31% 91%;
+    --accent: 232 30% 25%;
+    --accent-foreground: 43 40% 93%;
 
-    --success: 145 60% 45%;
+    --success: 145 55% 42%;
     --success-foreground: 0 0% 100%;
 
-    --warning: 40 90% 55%;
-    --warning-foreground: 30 20% 15%;
+    --warning: 38 41% 51%;
+    --warning-foreground: 232 46% 10%;
 
-    --destructive: 0 70% 50%;
+    --destructive: 0 68% 45%;
     --destructive-foreground: 0 0% 100%;
 
-    --border: 238 20% 20%;
-    --input: 238 20% 20%;
-    --ring: 235 42% 26%;
+    --border: 232 25% 22%;
+    --input: 232 25% 22%;
+    --ring: 38 41% 51%;
 
-    --sidebar: 238 35% 10%;
-    --sidebar-background: 238 35% 10%;
-    --sidebar-foreground: 44 31% 91%;
-    --sidebar-accent: 235 42% 35%;
-    --sidebar-accent-foreground: 44 31% 91%;
-    --sidebar-border: 238 20% 15%;
-    --sidebar-ring: 235 42% 26%;
+    --sidebar: 232 46% 13%;
+    --sidebar-background: 232 46% 13%;
+    --sidebar-foreground: 44 32% 86%;
+    --sidebar-accent: 232 30% 25%;
+    --sidebar-accent-foreground: 44 32% 86%;
+    --sidebar-border: 232 25% 18%;
+    --sidebar-ring: 38 41% 51%;
 
-    --chart-1: 235 42% 26%;
-    --chart-2: 217 96% 24%;
-    --chart-3: 238 35% 13%;
-    --chart-4: 44 31% 86%;
-    --chart-5: 238 20% 40%;
+    --chart-1: 232 46% 19%;
+    --chart-2: 217 92% 24%;
+    --chart-3: 38 41% 51%;
+    --chart-4: 44 32% 86%;
+    --chart-5: 232 20% 60%;
   }
 }
 

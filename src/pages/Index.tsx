@@ -4,7 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { FileText, Zap, Shield, BarChart3, ArrowRight, CheckCircle, Tag, LogIn } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
-import calderonLogo from "@/assets/acl-logo-new.png";
+import calderonLogo from "@/assets/acl-logo-navy.png";
 
 const Index = () => {
   const { user } = useAuth();
@@ -57,9 +57,9 @@ const Index = () => {
       <section className="relative overflow-hidden bg-gradient-to-br from-primary/5 via-background to-accent/5">
         <div className="container mx-auto px-6 py-20 lg:py-32">
           <div className="max-w-4xl mx-auto text-center">
-            {/* Logo Calderón */}
+            {/* Logo ACL */}
             <div className="mb-8 flex justify-center">
-              <img src={calderonLogo} alt="Calderón Logo" className="h-24 w-auto" />
+              <img src={calderonLogo} alt="ACL" className="h-24 w-auto" />
             </div>
             <Badge className="mb-6" variant="secondary">
               Procesamiento XML Directo - Sin IA

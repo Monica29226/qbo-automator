@@ -7,7 +7,7 @@ import { Card } from "@/components/ui/card";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { Loader2, Mail, ArrowLeft, CheckCircle } from "lucide-react";
-import calderonLogo from "@/assets/acl-logo-new.png";
+import calderonLogo from "@/assets/acl-logo-navy.png";
 
 const ForgotPassword = () => {
   const navigate = useNavigate();
