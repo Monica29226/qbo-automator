@@ -71,17 +71,20 @@ export default {
           "4": "hsl(var(--chart-4))",
           "5": "hsl(var(--chart-5))",
         },
-        'calderon': {
-          'navy': '#15162C',
-          'dark-blue': '#272D60',
-          'midnight': '#1D1F3E',
-          'blue': '#052C76',
+        'acl': {
+          'navy': '#1A2046',
+          'royal': '#052C76',
           'cream': '#E8E2CD',
+          'paper': '#F5F2E9',
+          'gold': '#B6924F',
         },
       },
       fontFamily: {
-        'heading': ['Libre Caslon Text', 'serif'],
-        'body': ['Montserrat', 'sans-serif'],
+        'heading': ['"Libre Caslon Display"', '"Libre Caslon Text"', 'serif'],
+        'display': ['"Libre Caslon Display"', 'serif'],
+        'serif-italic': ['"Libre Caslon Text"', 'serif'],
+        'body': ['Mulish', 'system-ui', 'sans-serif'],
+        'sans': ['Mulish', 'system-ui', 'sans-serif'],
       },
       borderRadius: {
         lg: "var(--radius)",
