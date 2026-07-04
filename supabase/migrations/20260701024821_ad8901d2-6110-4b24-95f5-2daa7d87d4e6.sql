@@ -1,0 +1,1 @@
+UPDATE sales_invoices SET status='pending', error_message=NULL WHERE organization_id IN ('4ff74a44-839d-43d9-a91e-9aa854619243','fce6045d-0bb8-4648-ae5d-f502085314c9','e34be1a0-6f37-46b8-acf7-8f9b3c6fdc89') AND status='error';
