@@ -1851,18 +1851,65 @@ Deno.serve(async (req) => {
     // =============================================================
     // HELPER: Get TaxRate ID for TxnTaxDetail.TaxLine
     // =============================================================
-    const getTaxRateRefForRate = async (taxRate: number): Promise<string | null> => {
-      await loadTaxRatesMap();
-      if (!taxRatesCache) return null;
-      const rate = Number(taxRate) || 0;
-      let best: { id: string; diff: number } | null = null;
-      for (const [rateId, rateValue] of taxRatesCache.entries()) {
-        const diff = Math.abs(rateValue - rate);
-        if (diff < 0.15 && (!best || diff < best.diff)) {
-          best = { id: rateId, diff };
+    // Set of TaxRate IDs used by any TaxCode's PurchaseTaxRateList.
+    // Bills/VendorCredits are PURCHASE transactions, so when a rate exists
+    // both as a sales and a purchase TaxRate (same RateValue), QBO requires
+    // the purchase one — otherwise it returns 6000 "error al calcular el impuesto".
+    let purchaseTaxRateIds: Set<string> | null = null;
+    const loadPurchaseTaxRateIds = async () => {
+      if (purchaseTaxRateIds) return;
+      // Ensure taxCodesCache is populated (same query used by getTaxCodeRef)
+      if (!taxCodesCache) {
+        try {
+          const query = `SELECT Id, Name, Description, SalesTaxRateList, PurchaseTaxRateList FROM TaxCode WHERE Active = true MAXRESULTS 100`;
+          const response = await fetchWithRetry(
+            `https://quickbooks.api.intuit.com/v3/company/${realmId}/query?query=${encodeURIComponent(query)}`,
+            {
+              headers: {
+                "Authorization": `Bearer ${accessToken}`,
+                "Accept": "application/json",
+              },
+            }
+          );
+          if (response.ok) {
+            const data = await response.json();
+            taxCodesCache = data.QueryResponse?.TaxCode || [];
+          } else {
+            taxCodesCache = [];
+          }
+        } catch {
+          taxCodesCache = [];
         }
       }
-      return best?.id || null;
+      purchaseTaxRateIds = new Set<string>();
+      for (const tc of taxCodesCache!) {
+        const purchases = tc.PurchaseTaxRateList?.TaxRateDetail || [];
+        for (const p of purchases) {
+          const id = p?.TaxRateRef?.value;
+          if (id) purchaseTaxRateIds.add(String(id));
+        }
+      }
+      logInfo(`📊 Purchase TaxRate IDs: ${purchaseTaxRateIds.size} (${[...purchaseTaxRateIds].join(',')})`);
+    };
+
+    const getTaxRateRefForRate = async (taxRate: number): Promise<string | null> => {
+      await loadTaxRatesMap();
+      await loadPurchaseTaxRateIds();
+      if (!taxRatesCache) return null;
+      const rate = Number(taxRate) || 0;
+      const candidates: { id: string; diff: number }[] = [];
+      for (const [rateId, rateValue] of taxRatesCache.entries()) {
+        const diff = Math.abs(rateValue - rate);
+        if (diff < 0.15) candidates.push({ id: String(rateId), diff });
+      }
+      if (candidates.length === 0) return null;
+      // Prefer TaxRates that belong to a purchase TaxCode
+      const purchaseMatches = purchaseTaxRateIds
+        ? candidates.filter((c) => purchaseTaxRateIds!.has(c.id))
+        : [];
+      const pool = purchaseMatches.length > 0 ? purchaseMatches : candidates;
+      pool.sort((a, b) => a.diff - b.diff);
+      return pool[0].id;
     };
 
     const batchStartTime = Date.now();
@@ -2857,7 +2904,7 @@ Deno.serve(async (req) => {
           
           logInfo(`📤 ${doc.doc_number}: VendorCredit payload keys: ${Object.keys(vendorCreditPayload).join(',')}, Lines: ${vendorCreditPayload.Line?.length}, Line[0] keys: ${vendorCreditPayload.Line?.[0] ? Object.keys(vendorCreditPayload.Line[0]).join(',') : 'none'}`);
           
-          const vcResponse = await fetchWithRetry(
+          let vcResponse = await fetchWithRetry(
             `https://quickbooks.api.intuit.com/v3/company/${realmId}/vendorcredit`,
             {
               method: "POST",
@@ -2880,19 +2927,45 @@ Deno.serve(async (req) => {
                 errorText.includes('error al calcular el impuesto') || 
                 errorText.includes('calculating the tax') ||
                 errorText.includes('tax rate') ||
+                errorText.includes('tasa impositiva') ||
                 errorText.includes('Invalid tax rate') ||
                 errorText.includes('TaxCodeRef')) {
               
               const xmlHasTax = Math.abs(totalTax) > 0.001;
               if (xmlHasTax) {
-                const taxErrorMsg = `QBO rechazó el impuesto de la nota de crédito. Se bloqueó la publicación para evitar enviarla como Fuera del alcance del impuesto. Detalle: ${errorText.substring(0, 350)}`;
-                logError(`❌ ${doc.doc_number}: ${taxErrorMsg}`);
-                await registerInTracking(doc, 'error', null, null, taxErrorMsg.substring(0, 500));
-                await supabase
-                  .from("processed_documents")
-                  .update({ status: "error", error_message: taxErrorMsg.substring(0, 500) })
-                  .eq("id", doc.id);
-                return { success: false, docNumber: doc.doc_number, error: taxErrorMsg.substring(0, 200) };
+                // Smart retry: strip TaxLine breakdown from TxnTaxDetail (same as Bill branch).
+                // Lets QBO compute per-line tax from each line's TaxCodeRef and only verify TotalTax.
+                if (vendorCreditPayload.TxnTaxDetail?.TaxLine) {
+                  logInfo(`   🔁 ${doc.doc_number}: QBO rechazó cálculo de impuesto en VendorCredit. Reintentando sin TaxLine breakdown (solo TotalTax)...`);
+                  vendorCreditPayload.TxnTaxDetail = { TotalTax: parseFloat(Math.abs(totalTax).toFixed(2)) };
+                  vcResponse = await fetchWithRetry(
+                    `https://quickbooks.api.intuit.com/v3/company/${realmId}/vendorcredit`,
+                    {
+                      method: "POST",
+                      headers: {
+                        "Authorization": `Bearer ${accessToken}`,
+                        "Accept": "application/json",
+                        "Content-Type": "application/json",
+                      },
+                      body: JSON.stringify(vendorCreditPayload),
+                    }
+                  );
+                  if (vcResponse.ok) {
+                    logInfo(`   ✅ ${doc.doc_number}: VendorCredit publicado en reintento sin TaxLine breakdown`);
+                  }
+                }
+
+                if (!vcResponse.ok) {
+                  const finalErrorText = await vcResponse.clone().text();
+                  const taxErrorMsg = `QBO rechazó el impuesto de la nota de crédito. Se bloqueó la publicación para evitar enviarla como Fuera del alcance del impuesto. Detalle: ${finalErrorText.substring(0, 350)}`;
+                  logError(`❌ ${doc.doc_number}: ${taxErrorMsg}`);
+                  await registerInTracking(doc, 'error', null, null, taxErrorMsg.substring(0, 500));
+                  await supabase
+                    .from("processed_documents")
+                    .update({ status: "error", error_message: taxErrorMsg.substring(0, 500) })
+                    .eq("id", doc.id);
+                  return { success: false, docNumber: doc.doc_number, error: taxErrorMsg.substring(0, 200) };
+                }
               }
             } else {
               const fullMsg = `QBO VendorCredit Error: ${errorText.substring(0, 500)}`;
