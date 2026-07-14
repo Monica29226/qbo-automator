@@ -2904,7 +2904,7 @@ Deno.serve(async (req) => {
           
           logInfo(`📤 ${doc.doc_number}: VendorCredit payload keys: ${Object.keys(vendorCreditPayload).join(',')}, Lines: ${vendorCreditPayload.Line?.length}, Line[0] keys: ${vendorCreditPayload.Line?.[0] ? Object.keys(vendorCreditPayload.Line[0]).join(',') : 'none'}`);
           
-          const vcResponse = await fetchWithRetry(
+          let vcResponse = await fetchWithRetry(
             `https://quickbooks.api.intuit.com/v3/company/${realmId}/vendorcredit`,
             {
               method: "POST",
@@ -2927,19 +2927,45 @@ Deno.serve(async (req) => {
                 errorText.includes('error al calcular el impuesto') || 
                 errorText.includes('calculating the tax') ||
                 errorText.includes('tax rate') ||
+                errorText.includes('tasa impositiva') ||
                 errorText.includes('Invalid tax rate') ||
                 errorText.includes('TaxCodeRef')) {
               
               const xmlHasTax = Math.abs(totalTax) > 0.001;
               if (xmlHasTax) {
-                const taxErrorMsg = `QBO rechazó el impuesto de la nota de crédito. Se bloqueó la publicación para evitar enviarla como Fuera del alcance del impuesto. Detalle: ${errorText.substring(0, 350)}`;
-                logError(`❌ ${doc.doc_number}: ${taxErrorMsg}`);
-                await registerInTracking(doc, 'error', null, null, taxErrorMsg.substring(0, 500));
-                await supabase
-                  .from("processed_documents")
-                  .update({ status: "error", error_message: taxErrorMsg.substring(0, 500) })
-                  .eq("id", doc.id);
-                return { success: false, docNumber: doc.doc_number, error: taxErrorMsg.substring(0, 200) };
+                // Smart retry: strip TaxLine breakdown from TxnTaxDetail (same as Bill branch).
+                // Lets QBO compute per-line tax from each line's TaxCodeRef and only verify TotalTax.
+                if (vendorCreditPayload.TxnTaxDetail?.TaxLine) {
+                  logInfo(`   🔁 ${doc.doc_number}: QBO rechazó cálculo de impuesto en VendorCredit. Reintentando sin TaxLine breakdown (solo TotalTax)...`);
+                  vendorCreditPayload.TxnTaxDetail = { TotalTax: parseFloat(Math.abs(totalTax).toFixed(2)) };
+                  vcResponse = await fetchWithRetry(
+                    `https://quickbooks.api.intuit.com/v3/company/${realmId}/vendorcredit`,
+                    {
+                      method: "POST",
+                      headers: {
+                        "Authorization": `Bearer ${accessToken}`,
+                        "Accept": "application/json",
+                        "Content-Type": "application/json",
+                      },
+                      body: JSON.stringify(vendorCreditPayload),
+                    }
+                  );
+                  if (vcResponse.ok) {
+                    logInfo(`   ✅ ${doc.doc_number}: VendorCredit publicado en reintento sin TaxLine breakdown`);
+                  }
+                }
+
+                if (!vcResponse.ok) {
+                  const finalErrorText = await vcResponse.clone().text();
+                  const taxErrorMsg = `QBO rechazó el impuesto de la nota de crédito. Se bloqueó la publicación para evitar enviarla como Fuera del alcance del impuesto. Detalle: ${finalErrorText.substring(0, 350)}`;
+                  logError(`❌ ${doc.doc_number}: ${taxErrorMsg}`);
+                  await registerInTracking(doc, 'error', null, null, taxErrorMsg.substring(0, 500));
+                  await supabase
+                    .from("processed_documents")
+                    .update({ status: "error", error_message: taxErrorMsg.substring(0, 500) })
+                    .eq("id", doc.id);
+                  return { success: false, docNumber: doc.doc_number, error: taxErrorMsg.substring(0, 200) };
+                }
               }
             } else {
               const fullMsg = `QBO VendorCredit Error: ${errorText.substring(0, 500)}`;
