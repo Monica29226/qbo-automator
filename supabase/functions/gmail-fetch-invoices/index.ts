@@ -235,6 +235,25 @@ serve(async (req) => {
       return /^\d{4}-\d{2}-\d{2}$/.test(normalized) ? normalized : null;
     };
 
+    // Extract Clave (50-digit unique key from Hacienda) — namespace-aware, same
+    // logic used by process-document-xml. Returns null if not a valid 50-char key.
+    const parseClaveFromXml = (xml: string): string | null => {
+      const clave = parseXMLValue(xml, "Clave");
+      if (clave && clave.length === 50) return clave;
+      return null;
+    };
+
+    // Extract NumeroConsecutivo (20-digit) — mirrors parseNumeroConsecutivo in
+    // process-document-xml: try direct tag, else last 20 digits of Clave.
+    const parseDocNumberFromXml = (xml: string): string | null => {
+      const direct = parseXMLValue(xml, "NumeroConsecutivo");
+      if (direct && direct.length > 0 && direct.length <= 25) return direct;
+      const clave = parseXMLValue(xml, "Clave");
+      if (clave && clave.length === 50) return clave.substring(30, 50);
+      if (direct && direct.length > 25) return direct.substring(direct.length - 20);
+      return direct || null;
+    };
+
     const matchesRequestedPeriod = (issueDate: string | null): boolean => {
       if (!requestedPeriod) return true;
       return issueDate?.startsWith(requestedPeriod) ?? false;
@@ -618,6 +637,31 @@ serve(async (req) => {
                 messagesInRequestedPeriod.add(message.id);
               }
 
+              // Dedup BEFORE any Storage upload: if this XML's Clave already exists
+              // in processed_documents for this organization, skip entirely to avoid
+              // re-uploading duplicate PDFs on every cron run (bug that inflated Storage).
+              // Rows that never got inserted (missing_doc_number, org_no_tax_id,
+              // receptor_mismatch, etc.) will not have a doc_key match and will still
+              // be retried normally.
+              const claveForDedup = parseClaveFromXml(xmlContent);
+              if (claveForDedup) {
+                const { data: existingDoc } = await supabase
+                  .from("processed_documents")
+                  .select("id")
+                  .eq("organization_id", organization_id)
+                  .eq("doc_key", claveForDedup)
+                  .maybeSingle();
+                if (existingDoc) {
+                  console.log(`⏭️ Ya existe en processed_documents (Clave ${claveForDedup}), omitiendo descarga: ${xmlPart.filename}`);
+                  skippedInvoices.push({
+                    filename: xmlPart.filename,
+                    reason: "duplicate_already_in_processed_documents",
+                    doc_key: claveForDedup,
+                  });
+                  continue;
+                }
+              }
+
               // Descargar y guardar PDF si existe (antes de procesar)
               let pdfUrl = null;
               if (pdfAttachmentId && pdfFilename) {
@@ -643,8 +687,12 @@ serve(async (req) => {
                     }
                     
                     // Extraer número de documento del XML para el nombre del archivo
-                    const docNumberMatch = xmlContent.match(/<NumeroConsecutivo>(.*?)<\/NumeroConsecutivo>/);
-                    const docNumber = docNumberMatch ? docNumberMatch[1] : `invoice_${Date.now()}`;
+                    // usando el mismo parser namespace-aware que process-document-xml
+                    // (NumeroConsecutivo directo, fallback a últimos 20 dígitos de Clave).
+                    const parsedDocNumber = parseDocNumberFromXml(xmlContent);
+                    const docNumber = parsedDocNumber && parsedDocNumber.length > 0
+                      ? parsedDocNumber
+                      : `invoice_${Date.now()}`;
                     
                     // Guardar en Supabase Storage
                     const pdfPath = `${organization_id}/${docNumber}.pdf`;
