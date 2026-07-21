@@ -235,6 +235,25 @@ serve(async (req) => {
       return /^\d{4}-\d{2}-\d{2}$/.test(normalized) ? normalized : null;
     };
 
+    // Extract Clave (50-digit unique key from Hacienda) — namespace-aware, same
+    // logic used by process-document-xml. Returns null if not a valid 50-char key.
+    const parseClaveFromXml = (xml: string): string | null => {
+      const clave = parseXMLValue(xml, "Clave");
+      if (clave && clave.length === 50) return clave;
+      return null;
+    };
+
+    // Extract NumeroConsecutivo (20-digit) — mirrors parseNumeroConsecutivo in
+    // process-document-xml: try direct tag, else last 20 digits of Clave.
+    const parseDocNumberFromXml = (xml: string): string | null => {
+      const direct = parseXMLValue(xml, "NumeroConsecutivo");
+      if (direct && direct.length > 0 && direct.length <= 25) return direct;
+      const clave = parseXMLValue(xml, "Clave");
+      if (clave && clave.length === 50) return clave.substring(30, 50);
+      if (direct && direct.length > 25) return direct.substring(direct.length - 20);
+      return direct || null;
+    };
+
     const matchesRequestedPeriod = (issueDate: string | null): boolean => {
       if (!requestedPeriod) return true;
       return issueDate?.startsWith(requestedPeriod) ?? false;
