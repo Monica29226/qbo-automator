@@ -91,9 +91,9 @@ const fetchPendingInvoicesFromAPI = async (
     .from("processed_documents")
     .select("*")
     .eq("organization_id", organizationId)
-    .in("status", ["pending", "pending_config"])
+    .in("status", ["pending", "pending_config", "review"])
     .is("qbo_entity_id", null)
-    .gte("issue_date", "2025-11-01")
+    .gte("issue_date", "2026-01-01")
     .order("created_at", { ascending: false })
     .limit(100);
 

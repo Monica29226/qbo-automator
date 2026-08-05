@@ -37,7 +37,7 @@ export const PendingVendorConfiguration = () => {
         .from("processed_documents")
         .select("id, supplier_name, supplier_tax_id, doc_number")
         .eq("organization_id", activeOrganization)
-        .eq("status", "pending_config");
+        .in("status", ["pending_config", "review"]);
 
       if (error) throw error;
 
