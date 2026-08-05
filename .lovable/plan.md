@@ -1,45 +1,57 @@
-## Problema
+# Por qué esa factura queda en "Revisión" y no aparece para clasificar
 
-La pantalla **Mapeo de cuentas legacy** (`/legacy-account-mapping`) guarda el mapeo (código `1150040xxx` → cuenta QBO), pero las facturas afectadas no se vuelven a publicar y siguen marcadas como `needs_account_mapping` / `error`. Causas detectadas en código y base de datos:
+## Lo que encontré (verificado en datos y código)
 
-1. Hay facturas en `status='error'` cuyo `error_message` contiene el código legacy pero su `default_account_ref` es otro (ej. `"652 Cuotas y suscripciones"` con error `Cuenta 1150040027 no existe`). `saveRow` las marca como `processed`, pero al republicar, `publish-to-quickbooks` extrae el código de `default_account_ref` (`"652"`), NO entra al branch de mapeo legacy y vuelve a fallar.
-2. `saveRow` solo cambia el `status` a `processed`; **no dispara automáticamente la republicación**. El usuario debe acordarse de pulsar "Reintentar publicación".
-3. `qbo_publish_tracking` queda con el estado viejo (`needs_account_mapping`), así que algunas vistas de auditoría siguen mostrando la factura como pendiente aunque ya se haya resuelto.
-4. La función `publish-to-quickbooks` ya tiene el branch de resolución legacy (líneas 2204-2228), pero solo lo usa cuando `default_account_ref` empieza con `1150040`.
+La factura `00100001010000000039` de ALVARO SEGURA BARBOZA (ASADA DE TARBACA, emitida 2026-07-02, ingresada 2026-08-05) está en la base con:
 
-## Solución
+- `status = 'review'`
+- `error_message = 'Proveedor sin regla automática'`
+- `default_account_ref` vacío, sin `vendor_id`
 
-### 1. Arreglo en `src/pages/LegacyAccountMapping.tsx` — `saveRow`
-Al guardar un mapeo:
-- Localizar los documentos afectados (mismo filtro `.or()`).
-- Actualizarlos en una sola pasada con:
-  - `status = 'processed'`
-  - `default_account_ref = <legacy_code>` (forzar que el resolver use el branch legacy).
-  - `error_message = null`.
-- Limpiar `qbo_publish_tracking` (`status='needs_account_mapping'`) de esos documentos para que las auditorías reflejen el cambio.
-- Disparar `publish-to-quickbooks` en background (fire-and-forget) con `organization_id` para republicar inmediatamente.
-- Mostrar toast con conteo: "X facturas re-encoladas, publicando en segundo plano…".
-- Llamar `load()` al terminar.
+Es decir: el sistema la ingirió bien, solo que el proveedor no tiene regla de cuenta.
 
-### 2. Mejora en `publish-to-quickbooks/index.ts`
-Reforzar el branch legacy para resolver también cuando el código viene en `error_message` (no solo en `default_account_ref`). Como fallback defensivo:
-- Si `getAccountIdByCode(extractedCode)` devuelve null **y** el `error_message` del documento contiene `1150040\d+`, intentar resolver vía `legacy_account_mapping` antes de marcar error.
+### Causa 1 — Estados inconsistentes: el ingestor escribe `review`, los paneles de clasificación buscan `pending_config`
 
-### 3. Botón "Reintentar publicación"
-Hoy invoca `publish-to-quickbooks` sin filtro y muestra el resultado. Añadir:
-- Refresco automático del listado tras 2-3 s.
-- Toast intermedio "Procesando en segundo plano…" si la respuesta tarda.
+`process-document-xml` marca como `review` (nunca usa `pending_config`) cuando el proveedor no tiene regla. Pero los paneles del dashboard donde usted clasifica filtran solo `pending_config`:
 
-### 4. Deploy
-Desplegar `publish-to-quickbooks` después del cambio.
+- `PendingVendorConfiguration` → `.eq("status", "pending_config")` — nunca ve estas facturas.
+- `VendorsWithoutRules` → `status in (error, pending, pending_config)` — tampoco incluye `review`.
+- `usePendingInvoices` (hook antiguo) → `status in (pending, pending_config)` y encima corta por `issue_date >= 2025-11-01`.
 
-## Archivos a tocar
+Solo la página "Facturas pendientes" (`InvoicesPendingLog`, que usa `usePendingInvoicesOptimized`) sí incluye `review`. De ahí la sensación de que "sale en revisión pero no aparece para clasificar": depende de por dónde entre.
 
-- `src/pages/LegacyAccountMapping.tsx` — `saveRow` y `retryAll`.
-- `supabase/functions/publish-to-quickbooks/index.ts` — fallback legacy desde `error_message`.
+En esta organización hay 2 facturas en `review` y 70 publicadas — las 2 están invisibles en los paneles del dashboard.
 
-## Validación
+### Causa 2 — Facturas enviadas tarde: la ventana de correo es de 30 días
 
-- Tomar una factura ejemplo de Centro Médico Terranoa (org `a247170a…`) con `default_account_ref` legacy, guardar el mapeo y confirmar que aparece como `published` con `qbo_entity_id` en menos de 30 s.
-- Repetir con una factura cuyo legacy code solo está en `error_message` (caso `00100001010043452608`).
-- Confirmar que el contador de "Facturas afectadas" en la pantalla baja a 0 tras el save.
+El `mail_query` guardado es `has:attachment (filename:xml OR filename:pdf) newer_than:30d` (28 de 30 organizaciones igual; una con 7 días). Si el cliente envía la factura más de 30 días después de emitida, el cron **nunca la ve** y no queda ningún rastro. Además, si una organización no tiene `mail_query` configurado, `gmail-fetch-invoices` cae a un default de **3 días**, aún más estrecho.
+
+## Plan de corrección
+
+### 1. Unificar el estado "necesita clasificación"
+Tratar `review` y `pending_config` como el mismo estado a la vista del usuario, en todos los puntos de entrada:
+
+- `PendingVendorConfiguration`: cambiar a `status in ('review','pending_config')`.
+- `VendorsWithoutRules`: añadir `review` al filtro.
+- `usePendingInvoices`: añadir `review` y quitar el corte fijo `issue_date >= 2025-11-01` (o alinearlo al corte oficial 2026-01-01).
+
+Con esto, la factura de ALVARO SEGURA BARBOZA aparece para clasificar desde el dashboard, y al asignar la cuenta se propaga al proveedor como ya funciona hoy.
+
+### 2. Ampliar la ventana de correo para facturas enviadas tarde
+- Subir el `mail_query` por defecto de las organizaciones de `newer_than:30d` a `newer_than:90d` (y cambiar el fallback de 3 días en `gmail-fetch-invoices` a 90 días), para cubrir el envío tardío típico.
+- La deduplicación por Clave ya existe, así que ampliar la ventana no crea duplicados ni infla Storage (el fix de descarga de PDF ya está aplicado).
+
+### 3. Hacer visible lo que llega tarde (opcional, recomendado)
+Marcar en la lista de pendientes cuándo `created_at` es muy posterior a `issue_date` (por ejemplo "recibida 34 días tarde"), para que se distinga un atraso del cliente de una falla del sistema.
+
+## Detalle técnico
+
+Archivos a tocar:
+
+- `src/components/dashboard/PendingVendorConfiguration.tsx` — filtro de estado.
+- `src/components/dashboard/VendorsWithoutRules.tsx` — filtro de estado.
+- `src/hooks/usePendingInvoices.ts` — filtro de estado y corte de fecha.
+- `supabase/functions/gmail-fetch-invoices/index.ts` — solo el default de `newer_than` (sin tocar la lógica de parseo ni de dedup).
+- Migración/actualización de `system_settings.mail_query` a 90 días para las organizaciones que hoy tienen 30d o 7d.
+
+No se cambia nada del cálculo de montos, IVA ni de la publicación a QuickBooks.
