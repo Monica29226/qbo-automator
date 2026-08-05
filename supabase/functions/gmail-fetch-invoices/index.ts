@@ -292,7 +292,7 @@ serve(async (req) => {
       console.log(`   Final validation will use XML FechaEmision, not Gmail received date`);
     } else {
       mailQuery = settings?.find(s => s.key === "mail_query")?.value || 
-        "has:attachment (filename:xml OR filename:pdf) newer_than:3d";
+        "has:attachment (filename:xml OR filename:pdf) newer_than:90d";
       console.log(`Using default Gmail query: ${mailQuery}`);
     }
 
