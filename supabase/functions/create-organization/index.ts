@@ -167,7 +167,7 @@ Deno.serve(async (req) => {
     const defaultSettings = [
       { key: "qbo_company_id", value: "", description: "QuickBooks Company ID (realmId)", organization_id: orgId },
       { key: "mail_provider", value: "gmail", description: "Proveedor de correo: gmail u outlook", organization_id: orgId },
-      { key: "mail_query", value: "has:attachment (filename:xml OR filename:pdf) newer_than:30d", description: "Filtro de búsqueda de correos", organization_id: orgId },
+      { key: "mail_query", value: "has:attachment (filename:xml OR filename:pdf) newer_than:90d", description: "Filtro de búsqueda de correos", organization_id: orgId },
       { key: "process_credit_notes", value: "true", description: "Procesar notas de crédito automáticamente", organization_id: orgId },
       { key: "currency_fallback", value: "CRC", description: "Moneda por defecto si falta en XML", organization_id: orgId },
       { key: "duplicate_window_days", value: "120", description: "Ventana anti-duplicados en días", organization_id: orgId },

@@ -40,7 +40,7 @@ export const VendorsWithoutRules = () => {
         .from("processed_documents")
         .select("id, supplier_name, supplier_tax_id, doc_number, error_message, status, vendor_id, default_account_ref")
         .eq("organization_id", activeOrganization)
-        .or("status.eq.error,status.eq.pending,status.eq.pending_config")
+        .or("status.eq.error,status.eq.pending,status.eq.pending_config,status.eq.review")
         .is("qbo_entity_id", null); // Solo no publicados
 
       if (error) throw error;
