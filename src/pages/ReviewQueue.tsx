@@ -456,12 +456,14 @@ const ReviewQueue = () => {
                         {formatCurrency(doc.total_amount, doc.currency)}
                       </TableCell>
                       <TableCell>
-                        {doc.status === "review" ? (
+                        {doc.status === "review" || doc.status === "pending_config" ? (
                           <Badge variant="outline" className="bg-yellow-50 text-yellow-700 border-yellow-300">Pendiente</Badge>
                         ) : doc.status === "published" ? (
                           <Badge variant="outline" className="bg-green-50 text-green-700 border-green-300">Publicada</Badge>
                         ) : doc.status === "error" ? (
                           <Badge variant="outline" className="bg-red-50 text-red-700 border-red-300">Error</Badge>
+                        ) : doc.status === "needs_account_mapping" ? (
+                          <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-300">Falta cuenta</Badge>
                         ) : doc.status === "processed" ? (
                           <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-300">Procesada</Badge>
                         ) : (
@@ -480,11 +482,19 @@ const ReviewQueue = () => {
                               <Eye className="h-4 w-4" />
                             </Button>
                           )}
-                          {doc.status === "review" && (
-                            <Button variant="outline" size="sm" onClick={(e) => { e.stopPropagation(); openDialog(doc); }}>
+                          {ACTIONABLE_STATUSES.includes(doc.status) && !doc.qbo_entity_id && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={(e) => { e.stopPropagation(); openDialog(doc); }}
+                              title="Corregir la cuenta y solicitar la publicación a QuickBooks"
+                            >
                               Revisar
                             </Button>
                           )}
+                        </div>
+                      </TableCell>
+
                         </div>
                       </TableCell>
                     </TableRow>
