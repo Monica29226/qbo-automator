@@ -309,53 +309,32 @@ const ReviewQueue = () => {
 
     // OPTIMISTIC UI UPDATE - Cerrar diálogo y actualizar lista inmediatamente
     const supplierName = selectedDoc.supplier_name;
-    const affectedDocs = documents.filter(d => d.supplier_name === supplierName);
-    
-    setDocuments(prev => prev.filter(d => d.supplier_name !== supplierName));
-    setIsDialogOpen(false);
-    
-    toast.success(
-      affectedDocs.length > 1 
-        ? `${affectedDocs.length} facturas de ${supplierName} clasificadas`
-        : "Documento clasificado - listo para publicar"
+    const affectedDocs = documents.filter(
+      d => d.supplier_name === supplierName && ACTIONABLE_STATUSES.includes(d.status) && !d.qbo_entity_id
     );
 
-    // BACKGROUND OPERATIONS - No bloquean el UI
-    Promise.allSettled([
-      // 1. Guardar vendor default
-      supabase
-        .from("vendor_defaults")
-        .upsert({
-          vendor_name: supplierName,
-          default_account_ref: accountRef,
-          organization_id: activeOrganization,
-        }, {
-          onConflict: 'organization_id,vendor_name'
-        }),
-      
-      // 2. Actualizar TODAS las facturas del mismo proveedor
-      supabase
-        .from("processed_documents")
-        .update({
-          vendor_id: selectedVendor || null,
-          default_account_ref: accountRef,
-          status: "pending",
-          error_message: null,
-        })
-        .eq("organization_id", activeOrganization)
-        .eq("supplier_name", supplierName)
-        .eq("status", "review")
-    ]).then(results => {
-      const errors = results.filter(r => r.status === 'rejected' || (r.status === 'fulfilled' && r.value?.error));
-      if (errors.length > 0) {
-        console.error('❌ Errores en operaciones background:', errors);
-        // Recargar datos si hubo errores para sincronizar estado
+    setDocuments(prev => prev.filter(d => !affectedDocs.some(a => a.id === d.id)));
+    setIsDialogOpen(false);
+
+    toast.success(
+      affectedDocs.length > 1
+        ? `${affectedDocs.length} facturas de ${supplierName} corregidas · publicación solicitada`
+        : "Documento corregido · publicación solicitada a QuickBooks"
+    );
+
+    // BACKGROUND: aplicar cuenta, limpiar el error y pedir la republicación
+    applyAccountAndRepublish(activeOrganization!, supplierName, accountRef, selectedVendor || null)
+      .then((count) => {
+        console.log(`✅ ${count} facturas de ${supplierName} corregidas y enviadas a publicar`);
         fetchData();
-      } else {
-        console.log(`✅ ${affectedDocs.length} facturas de ${supplierName} guardadas en BD`);
-      }
-    });
+      })
+      .catch((err) => {
+        console.error('❌ Error al corregir/publicar:', err);
+        toast.error("No se pudo solicitar la publicación; revise el detalle");
+        fetchData();
+      });
   };
+
 
   const handleReject = async () => {
     if (!selectedDoc) return;
