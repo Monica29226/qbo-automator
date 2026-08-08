@@ -72,6 +72,52 @@ interface Account {
   accountNumber?: string | null;
 }
 
+// Estados que el usuario puede corregir desde esta cola
+const ACTIONABLE_STATUSES = ["review", "error", "needs_account_mapping", "pending_config", "pending"];
+
+// Reasigna la cuenta a todas las facturas corregibles del proveedor y pide la republicación
+const applyAccountAndRepublish = async (
+  organizationId: string,
+  supplierName: string,
+  accountRef: string,
+  vendorId?: string | null
+) => {
+  // 1. Regla del proveedor para el futuro
+  await supabase
+    .from("vendor_defaults")
+    .upsert({
+      vendor_name: supplierName,
+      default_account_ref: accountRef,
+      organization_id: organizationId,
+    }, { onConflict: "organization_id,vendor_name" });
+
+  // 2. Corregir todas las facturas atascadas de ese proveedor
+  const { data: updated } = await supabase
+    .from("processed_documents")
+    .update({
+      default_account_ref: accountRef,
+      ...(vendorId ? { vendor_id: vendorId } : {}),
+      status: "pending",
+      error_message: null,
+    })
+    .eq("organization_id", organizationId)
+    .eq("supplier_name", supplierName)
+    .in("status", ACTIONABLE_STATUSES)
+    .is("qbo_entity_id", null)
+    .select("id");
+
+  const ids = (updated || []).map((d: any) => d.id);
+
+  // 3. Solicitar la publicación a QuickBooks de las corregidas
+  if (ids.length > 0) {
+    await supabase.functions.invoke("publish-to-quickbooks", {
+      body: { organization_id: organizationId, document_ids: ids },
+    });
+  }
+
+  return ids.length;
+};
+
 const EditableAccountField = ({ doc, accounts, activeOrganization, onUpdated }: {
   doc: Document;
   accounts: Account[];
@@ -91,38 +137,10 @@ const EditableAccountField = ({ doc, accounts, activeOrganization, onUpdated }: 
       : selectedAcc?.name || accountId;
 
     try {
-      // Update document
-      await supabase
-        .from("processed_documents")
-        .update({
-          default_account_ref: accountRef,
-          status: "pending",
-          error_message: null,
-        })
-        .eq("id", doc.id);
-
-      // Also update vendor_defaults for future invoices
-      await supabase
-        .from("vendor_defaults")
-        .upsert({
-          vendor_name: doc.supplier_name,
-          default_account_ref: accountRef,
-          organization_id: activeOrganization,
-        }, { onConflict: "organization_id,vendor_name" });
-
-      // Update all other error/pending docs from same supplier
-      await supabase
-        .from("processed_documents")
-        .update({
-          default_account_ref: accountRef,
-          status: "pending",
-          error_message: null,
-        })
-        .eq("organization_id", activeOrganization)
-        .eq("supplier_name", doc.supplier_name)
-        .in("status", ["error", "pending_config", "review"]);
-
-      toast.success(`Cuenta actualizada a ${accountRef} para ${doc.supplier_name}`);
+      const count = await applyAccountAndRepublish(activeOrganization, doc.supplier_name, accountRef);
+      toast.success(
+        `Cuenta ${accountRef} aplicada a ${count} factura(s) de ${doc.supplier_name} · publicación solicitada`
+      );
       setIsEditing(false);
       onUpdated();
     } catch (err) {
@@ -132,6 +150,7 @@ const EditableAccountField = ({ doc, accounts, activeOrganization, onUpdated }: 
       setIsSaving(false);
     }
   };
+
 
   if (isEditing) {
     return (
