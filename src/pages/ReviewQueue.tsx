@@ -72,6 +72,52 @@ interface Account {
   accountNumber?: string | null;
 }
 
+// Estados que el usuario puede corregir desde esta cola
+const ACTIONABLE_STATUSES = ["review", "error", "needs_account_mapping", "pending_config", "pending"];
+
+// Reasigna la cuenta a todas las facturas corregibles del proveedor y pide la republicación
+const applyAccountAndRepublish = async (
+  organizationId: string,
+  supplierName: string,
+  accountRef: string,
+  vendorId?: string | null
+) => {
+  // 1. Regla del proveedor para el futuro
+  await supabase
+    .from("vendor_defaults")
+    .upsert({
+      vendor_name: supplierName,
+      default_account_ref: accountRef,
+      organization_id: organizationId,
+    }, { onConflict: "organization_id,vendor_name" });
+
+  // 2. Corregir todas las facturas atascadas de ese proveedor
+  const { data: updated } = await supabase
+    .from("processed_documents")
+    .update({
+      default_account_ref: accountRef,
+      ...(vendorId ? { vendor_id: vendorId } : {}),
+      status: "pending",
+      error_message: null,
+    })
+    .eq("organization_id", organizationId)
+    .eq("supplier_name", supplierName)
+    .in("status", ACTIONABLE_STATUSES)
+    .is("qbo_entity_id", null)
+    .select("id");
+
+  const ids = (updated || []).map((d: any) => d.id);
+
+  // 3. Solicitar la publicación a QuickBooks de las corregidas
+  if (ids.length > 0) {
+    await supabase.functions.invoke("publish-to-quickbooks", {
+      body: { organization_id: organizationId, document_ids: ids },
+    });
+  }
+
+  return ids.length;
+};
+
 const EditableAccountField = ({ doc, accounts, activeOrganization, onUpdated }: {
   doc: Document;
   accounts: Account[];
@@ -91,38 +137,10 @@ const EditableAccountField = ({ doc, accounts, activeOrganization, onUpdated }: 
       : selectedAcc?.name || accountId;
 
     try {
-      // Update document
-      await supabase
-        .from("processed_documents")
-        .update({
-          default_account_ref: accountRef,
-          status: "pending",
-          error_message: null,
-        })
-        .eq("id", doc.id);
-
-      // Also update vendor_defaults for future invoices
-      await supabase
-        .from("vendor_defaults")
-        .upsert({
-          vendor_name: doc.supplier_name,
-          default_account_ref: accountRef,
-          organization_id: activeOrganization,
-        }, { onConflict: "organization_id,vendor_name" });
-
-      // Update all other error/pending docs from same supplier
-      await supabase
-        .from("processed_documents")
-        .update({
-          default_account_ref: accountRef,
-          status: "pending",
-          error_message: null,
-        })
-        .eq("organization_id", activeOrganization)
-        .eq("supplier_name", doc.supplier_name)
-        .in("status", ["error", "pending_config", "review"]);
-
-      toast.success(`Cuenta actualizada a ${accountRef} para ${doc.supplier_name}`);
+      const count = await applyAccountAndRepublish(activeOrganization, doc.supplier_name, accountRef);
+      toast.success(
+        `Cuenta ${accountRef} aplicada a ${count} factura(s) de ${doc.supplier_name} · publicación solicitada`
+      );
       setIsEditing(false);
       onUpdated();
     } catch (err) {
@@ -132,6 +150,7 @@ const EditableAccountField = ({ doc, accounts, activeOrganization, onUpdated }: 
       setIsSaving(false);
     }
   };
+
 
   if (isEditing) {
     return (
@@ -290,53 +309,32 @@ const ReviewQueue = () => {
 
     // OPTIMISTIC UI UPDATE - Cerrar diálogo y actualizar lista inmediatamente
     const supplierName = selectedDoc.supplier_name;
-    const affectedDocs = documents.filter(d => d.supplier_name === supplierName);
-    
-    setDocuments(prev => prev.filter(d => d.supplier_name !== supplierName));
-    setIsDialogOpen(false);
-    
-    toast.success(
-      affectedDocs.length > 1 
-        ? `${affectedDocs.length} facturas de ${supplierName} clasificadas`
-        : "Documento clasificado - listo para publicar"
+    const affectedDocs = documents.filter(
+      d => d.supplier_name === supplierName && ACTIONABLE_STATUSES.includes(d.status) && !d.qbo_entity_id
     );
 
-    // BACKGROUND OPERATIONS - No bloquean el UI
-    Promise.allSettled([
-      // 1. Guardar vendor default
-      supabase
-        .from("vendor_defaults")
-        .upsert({
-          vendor_name: supplierName,
-          default_account_ref: accountRef,
-          organization_id: activeOrganization,
-        }, {
-          onConflict: 'organization_id,vendor_name'
-        }),
-      
-      // 2. Actualizar TODAS las facturas del mismo proveedor
-      supabase
-        .from("processed_documents")
-        .update({
-          vendor_id: selectedVendor || null,
-          default_account_ref: accountRef,
-          status: "pending",
-          error_message: null,
-        })
-        .eq("organization_id", activeOrganization)
-        .eq("supplier_name", supplierName)
-        .eq("status", "review")
-    ]).then(results => {
-      const errors = results.filter(r => r.status === 'rejected' || (r.status === 'fulfilled' && r.value?.error));
-      if (errors.length > 0) {
-        console.error('❌ Errores en operaciones background:', errors);
-        // Recargar datos si hubo errores para sincronizar estado
+    setDocuments(prev => prev.filter(d => !affectedDocs.some(a => a.id === d.id)));
+    setIsDialogOpen(false);
+
+    toast.success(
+      affectedDocs.length > 1
+        ? `${affectedDocs.length} facturas de ${supplierName} corregidas · publicación solicitada`
+        : "Documento corregido · publicación solicitada a QuickBooks"
+    );
+
+    // BACKGROUND: aplicar cuenta, limpiar el error y pedir la republicación
+    applyAccountAndRepublish(activeOrganization!, supplierName, accountRef, selectedVendor || null)
+      .then((count) => {
+        console.log(`✅ ${count} facturas de ${supplierName} corregidas y enviadas a publicar`);
         fetchData();
-      } else {
-        console.log(`✅ ${affectedDocs.length} facturas de ${supplierName} guardadas en BD`);
-      }
-    });
+      })
+      .catch((err) => {
+        console.error('❌ Error al corregir/publicar:', err);
+        toast.error("No se pudo solicitar la publicación; revise el detalle");
+        fetchData();
+      });
   };
+
 
   const handleReject = async () => {
     if (!selectedDoc) return;
@@ -458,12 +456,14 @@ const ReviewQueue = () => {
                         {formatCurrency(doc.total_amount, doc.currency)}
                       </TableCell>
                       <TableCell>
-                        {doc.status === "review" ? (
+                        {doc.status === "review" || doc.status === "pending_config" ? (
                           <Badge variant="outline" className="bg-yellow-50 text-yellow-700 border-yellow-300">Pendiente</Badge>
                         ) : doc.status === "published" ? (
                           <Badge variant="outline" className="bg-green-50 text-green-700 border-green-300">Publicada</Badge>
                         ) : doc.status === "error" ? (
                           <Badge variant="outline" className="bg-red-50 text-red-700 border-red-300">Error</Badge>
+                        ) : doc.status === "needs_account_mapping" ? (
+                          <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-300">Falta cuenta</Badge>
                         ) : doc.status === "processed" ? (
                           <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-300">Procesada</Badge>
                         ) : (
@@ -482,8 +482,13 @@ const ReviewQueue = () => {
                               <Eye className="h-4 w-4" />
                             </Button>
                           )}
-                          {doc.status === "review" && (
-                            <Button variant="outline" size="sm" onClick={(e) => { e.stopPropagation(); openDialog(doc); }}>
+                          {ACTIONABLE_STATUSES.includes(doc.status) && !doc.qbo_entity_id && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={(e) => { e.stopPropagation(); openDialog(doc); }}
+                              title="Corregir la cuenta y solicitar la publicación a QuickBooks"
+                            >
                               Revisar
                             </Button>
                           )}
