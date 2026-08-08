@@ -494,9 +494,6 @@ const ReviewQueue = () => {
                           )}
                         </div>
                       </TableCell>
-
-                        </div>
-                      </TableCell>
                     </TableRow>
                     {isExpanded && (
                       <TableRow>
