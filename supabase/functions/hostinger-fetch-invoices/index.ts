@@ -312,7 +312,7 @@ async function fetchEmailsViaIMAP(
             continue;
           }
 
-          const fetchCmd = `AB${fIdx}_${i} FETCH ${msgId} BODY[]`;
+          const fetchCmd = `AB${fIdx}_${i} FETCH ${msgId} BODY.PEEK[]`;
           await conn.write(encoder.encode(fetchCmd + "\r\n"));
           let emailContent = "";
           let fetchAttempts = 0;

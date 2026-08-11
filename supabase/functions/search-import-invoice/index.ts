@@ -974,7 +974,7 @@ serve(async (req) => {
             for (let partNum = 2; partNum <= 5; partNum++) {
               checkTimeout();
               try {
-                const partResp = await cmd(`FETCH ${msgId} BODY[${partNum}]`);
+                const partResp = await cmd(`FETCH ${msgId} BODY.PEEK[${partNum}]`);
                 if (partResp.includes("NIL") || partResp.includes("NO")) continue;
                 
                 // Extract the base64 content between { and the tag OK
@@ -1011,7 +1011,7 @@ serve(async (req) => {
             for (const xp of xmlParts) {
               checkTimeout();
               log(`📥 Fetching XML part ${xp.partNum}...`);
-              const partResp = await cmd(`FETCH ${msgId} BODY[${xp.partNum}]`);
+              const partResp = await cmd(`FETCH ${msgId} BODY.PEEK[${xp.partNum}]`);
               
               // Extract base64 data - IMAP response format: * N FETCH (BODY[X] {size}\r\n<data>\r\n)\r\nTAG OK ...
               // Strip everything before the literal size marker, and keep only valid base64 chars.
@@ -1051,7 +1051,7 @@ serve(async (req) => {
               const pp = pdfParts[0];
               log(`📥 Fetching PDF part ${pp.partNum}...`);
               try {
-                const partResp = await cmd(`FETCH ${msgId} BODY[${pp.partNum}]`);
+                const partResp = await cmd(`FETCH ${msgId} BODY.PEEK[${pp.partNum}]`);
                 let body = partResp;
                 const litMatch = body.match(/\{(\d+)\}\r\n/);
                 if (litMatch) body = body.substring(body.indexOf(litMatch[0]) + litMatch[0].length);
