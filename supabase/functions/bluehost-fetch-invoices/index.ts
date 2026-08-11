@@ -401,7 +401,7 @@ async function fetchEmailsViaIMAP(
           }
 
           try {
-            const bodyResp = await cmd(`FETCH ${msgId} BODY[]`, true);
+            const bodyResp = await cmd(`FETCH ${msgId} BODY.PEEK[]`, true);
             totalCandidatesFetched++;
 
             const literalMatch = bodyResp.match(/\{(\d+)\}\r\n/);

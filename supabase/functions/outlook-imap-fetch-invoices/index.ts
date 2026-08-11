@@ -181,7 +181,7 @@ async function fetchEmailsViaIMAP(
         console.log(`[Outlook-IMAP] Message ${msgId} has attachments (XML: ${hasXml}, PDF: ${hasPdf}), fetching full...`);
 
         // Fetch full message
-        const fetchCmd = `A1${i}1 FETCH ${msgId} BODY[]`;
+        const fetchCmd = `A1${i}1 FETCH ${msgId} BODY.PEEK[]`;
         await conn.write(encoder.encode(fetchCmd + "\r\n"));
         
         let emailContent = "";
