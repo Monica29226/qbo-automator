@@ -2031,6 +2031,15 @@ export type Database = {
           id: string
         }[]
       }
+      get_qbo_connection_status: {
+        Args: { _org_id: string }
+        Returns: {
+          expires_at_ms: number
+          is_active: boolean
+          realm_id: string
+          updated_at: string
+        }[]
+      }
       get_user_active_organization: {
         Args: { _user_id: string }
         Returns: string
