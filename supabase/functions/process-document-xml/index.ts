@@ -66,8 +66,14 @@ function calculateSubtotalFromLines(lineItems: any[]): number {
 }
 
 function isInvoiceXml(xml: string): boolean {
-  return /<(?:[\w]+:)?(?:FacturaElectronica|NotaCreditoElectronica|NotaDebitoElectronica|TiqueteElectronico)\b/i.test(xml);
+  return /<(?:[\w]+:)?(?:FacturaElectronica|NotaCreditoElectronica|NotaDebitoElectronica)\b/i.test(xml);
 }
+
+// Tiquete Electrónico (tipo 04) NO se acepta en el sistema
+function isTiqueteXml(xml: string): boolean {
+  return /<(?:[\w]+:)?TiqueteElectronico\b/i.test(xml);
+}
+
 
 function parseIssueDate(xml: string): string {
   const rawDate =
