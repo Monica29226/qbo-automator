@@ -141,6 +141,32 @@ Deno.serve(async (req) => {
     const nowIso = new Date().toISOString();
     const results: any[] = [];
 
+    // Sends via Resend. If the branded sender domain is not verified yet, falls
+    // back to the Resend sandbox sender, which can only reach the account owner.
+    const FALLBACK_TO = (body?.fallback_to as string) || "monicalderon.2910@gmail.com";
+    const BRANDED_FROM = "ACL Costa Rica <alertas@aureoncr.com>";
+    const SANDBOX_FROM = "ACL Costa Rica <onboarding@resend.dev>";
+
+    async function sendEmail(subject: string, html: string) {
+      if (!RESEND_API_KEY || recipients.length === 0) return { sent: false, via: "skipped" };
+      const post = (from: string, to: string[]) =>
+        fetch("https://api.resend.com/emails", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${RESEND_API_KEY}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ from, to, subject, html }),
+        });
+
+      let res = await post(BRANDED_FROM, recipients);
+      if (res.ok) return { sent: true, via: "domain" };
+      const err = await res.text();
+      console.error("Resend (domain) error", err);
+
+      res = await post(SANDBOX_FROM, [FALLBACK_TO]);
+      if (res.ok) return { sent: true, via: "sandbox" };
+      console.error("Resend (sandbox) error", await res.text());
+      return { sent: false, via: "failed" };
+    }
+
     for (const org of orgs ?? []) {
       const orgIntegrations = (integrations ?? []).filter((i) => i.organization_id === org.id);
 
@@ -239,28 +265,20 @@ Deno.serve(async (req) => {
       }
 
       let emailed = false;
-      if (toNotify.length > 0 && recipients.length > 0 && RESEND_API_KEY && !dryRun) {
-        const res = await fetch("https://api.resend.com/emails", {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${RESEND_API_KEY}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            from: "ACL Costa Rica <alertas@aureoncr.com>",
-            to: recipients,
-            subject: `🔴 ${org.name} está desconectada — ${toNotify.map((p) => p.title).join(" · ")}`,
-            html: buildHtml({
-              orgName: org.name,
-              problems: toNotify,
-              lastSyncAt,
-              pendingPublish: pendingPublish ?? 0,
-              appUrl,
-            }),
-          }),
-        });
-        emailed = res.ok;
-        if (!res.ok) console.error("Resend error", await res.text());
+      let emailVia = "none";
+      if (toNotify.length > 0 && !dryRun) {
+        const r = await sendEmail(
+          `\u{1F534} ${org.name} está desconectada — ${toNotify.map((p) => p.title).join(" · ")}`,
+          buildHtml({
+            orgName: org.name,
+            problems: toNotify,
+            lastSyncAt,
+            pendingPublish: pendingPublish ?? 0,
+            appUrl,
+          })
+        );
+        emailed = r.sent;
+        emailVia = r.via;
       }
 
       // Persist / refresh alert rows
@@ -302,27 +320,18 @@ Deno.serve(async (req) => {
             .eq("id", row.id);
           recovered.push(code);
         }
-        if (recovered.length > 0 && recipients.length > 0 && RESEND_API_KEY) {
-          await fetch("https://api.resend.com/emails", {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${RESEND_API_KEY}`,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              from: "ACL Costa Rica <alertas@aureoncr.com>",
-              to: recipients,
-              subject: `🟢 ${org.name} volvió a estar conectada`,
-              html: buildHtml({
-                orgName: org.name,
-                problems: [],
-                lastSyncAt,
-                pendingPublish: pendingPublish ?? 0,
-                appUrl,
-                recovered: true,
-              }),
-            }),
-          });
+        if (recovered.length > 0 && !dryRun) {
+          await sendEmail(
+            `\u{1F7E2} ${org.name} volvió a estar conectada`,
+            buildHtml({
+              orgName: org.name,
+              problems: [],
+              lastSyncAt,
+              pendingPublish: pendingPublish ?? 0,
+              appUrl,
+              recovered: true,
+            })
+          );
         }
       }
 
@@ -332,6 +341,7 @@ Deno.serve(async (req) => {
         problems: problems.map((p) => p.code),
         notified: toNotify.map((p) => p.code),
         emailed,
+        email_via: emailVia,
         last_sync_at: lastSyncAt,
         pending_publish: pendingPublish ?? 0,
       });
