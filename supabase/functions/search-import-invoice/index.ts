@@ -427,7 +427,7 @@ serve(async (req) => {
                 const xml = new TextDecoder('utf-8').decode(bytes);
                 if (xml.includes('<MensajeHacienda') || xml.includes('mensajeHacienda')) continue;
                 const isInv = xml.includes('<FacturaElectronica') || xml.includes('<NotaCreditoElectronica')
-                  || xml.includes('<NotaDebitoElectronica') || xml.includes('<TiqueteElectronico');
+                  || xml.includes('<NotaDebitoElectronica');
                 if (!isInv) continue;
                 await importXml(xml, savedPdfPath);
               } catch (e) { log(`⚠️ XML decode error: ${e}`); }
@@ -637,7 +637,6 @@ serve(async (req) => {
           const isInvoice = xmlContent.includes('<FacturaElectronica') || 
                             xmlContent.includes('<NotaCreditoElectronica') ||
                             xmlContent.includes('<NotaDebitoElectronica') ||
-                            xmlContent.includes('<TiqueteElectronico') ||
                             xmlContent.includes('<Emisor>');
           
           if (!isInvoice) {
@@ -1032,7 +1031,7 @@ serve(async (req) => {
               try {
                 const decoded = atob(b64Data);
                 if (decoded.includes("<FacturaElectronica") || decoded.includes("<NotaCreditoElectronica") || 
-                    decoded.includes("<NotaDebitoElectronica") || decoded.includes("<TiqueteElectronico") ||
+                    decoded.includes("<NotaDebitoElectronica") ||
                     decoded.includes("<Emisor>")) {
                   const docNum = parseNumeroConsecutivo(decoded);
                   if (docNum === invoice_number || docNum.includes(invoice_number) || invoice_number.includes(docNum)) {
