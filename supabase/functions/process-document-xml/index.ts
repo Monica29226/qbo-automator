@@ -317,12 +317,25 @@ Deno.serve(async (req) => {
     
     console.log("📄 XML Preview:", xmlContent.substring(0, 500));
 
+    if (isTiqueteXml(xmlContent)) {
+      console.log("⛔ Tiquete Electrónico (04) rechazado: no se acepta en el sistema");
+      return new Response(
+        JSON.stringify({
+          success: false,
+          rejected: true,
+          message: "Tiquete Electrónico (04) no aceptado: el sistema solo procesa Facturas Electrónicas y Notas de Crédito/Débito",
+          reason: "tiquete_electronico_not_accepted"
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
     if (!isInvoiceXml(xmlContent)) {
       return new Response(
         JSON.stringify({
           success: false,
           rejected: true,
-          message: "XML no procesable: no corresponde a Factura/Tiquete/Nota de Crédito/Nota de Débito",
+          message: "XML no procesable: no corresponde a Factura/Nota de Crédito/Nota de Débito",
           reason: "non_invoice_xml"
         }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
