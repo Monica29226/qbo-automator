@@ -427,7 +427,7 @@ serve(async (req) => {
                 const xml = new TextDecoder('utf-8').decode(bytes);
                 if (xml.includes('<MensajeHacienda') || xml.includes('mensajeHacienda')) continue;
                 const isInv = xml.includes('<FacturaElectronica') || xml.includes('<NotaCreditoElectronica')
-                  || xml.includes('<NotaDebitoElectronica') || xml.includes('<TiqueteElectronico');
+                  || xml.includes('<NotaDebitoElectronica');
                 if (!isInv) continue;
                 await importXml(xml, savedPdfPath);
               } catch (e) { log(`⚠️ XML decode error: ${e}`); }
