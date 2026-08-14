@@ -229,7 +229,12 @@ Deno.serve(async (req) => {
           toNotify.push(p);
           continue;
         }
-        const last = Date.parse(existing.sent_at ?? existing.created_at ?? "") || 0;
+        if (!existing.sent_at) {
+          // Alert row exists but the email never went out — send it now.
+          toNotify.push(p);
+          continue;
+        }
+        const last = Date.parse(existing.sent_at) || 0;
         if (nowMs - last > REMINDER_HOURS * 60 * 60 * 1000) toNotify.push(p);
       }
 
@@ -242,7 +247,7 @@ Deno.serve(async (req) => {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            from: "ACL Costa Rica <onboarding@resend.dev>",
+            from: "ACL Costa Rica <alertas@aureoncr.com>",
             to: recipients,
             subject: `🔴 ${org.name} está desconectada — ${toNotify.map((p) => p.title).join(" · ")}`,
             html: buildHtml({
@@ -305,7 +310,7 @@ Deno.serve(async (req) => {
               "Content-Type": "application/json",
             },
             body: JSON.stringify({
-              from: "ACL Costa Rica <onboarding@resend.dev>",
+              from: "ACL Costa Rica <alertas@aureoncr.com>",
               to: recipients,
               subject: `🟢 ${org.name} volvió a estar conectada`,
               html: buildHtml({
