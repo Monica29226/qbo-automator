@@ -7,10 +7,16 @@ import { useAuth } from "@/hooks/useAuth";
 import { useNavigate } from "react-router-dom";
 
 interface TokenAlert {
-  type: "expiring" | "failed";
+  type: "expiring" | "failed" | "disconnected";
   message: string;
   expiresIn?: number;
 }
+
+const TITLES: Record<TokenAlert["type"], string> = {
+  disconnected: "QuickBooks Desconectado",
+  failed: "Token de QuickBooks Expirado",
+  expiring: "Token de QuickBooks Próximo a Expirar",
+};
 
 export const QuickBooksTokenAlert = () => {
   const { activeOrganization } = useAuth();
@@ -23,42 +29,58 @@ export const QuickBooksTokenAlert = () => {
 
     const checkTokenStatus = async () => {
       try {
-        const { data: qboAccount } = await supabase
-          .from("integration_accounts")
-          .select("*")
-          .eq("organization_id", activeOrganization)
-          .eq("service_type", "quickbooks")
-          .eq("is_active", true)
-          .order("created_at", { ascending: false })
-          .limit(1)
-          .single();
+        // RPC segura: informa estado de la conexión sin exponer credenciales
+        const { data, error } = await supabase.rpc("get_qbo_connection_status", {
+          _org_id: activeOrganization,
+        });
 
-        if (!qboAccount) return;
+        if (error) {
+          console.error("Error checking QuickBooks connection:", error);
+          return;
+        }
 
-        const credentials = qboAccount.credentials as any;
-        if (!credentials?.expires_at) return;
+        const status = Array.isArray(data) ? data[0] : data;
 
-        // Manejar tanto timestamp numérico como ISO string
-        const expiresAt = typeof credentials.expires_at === 'string'
-          ? new Date(credentials.expires_at).getTime()
-          : credentials.expires_at;
+        // Sin registro de QuickBooks: la empresa nunca lo conectó, no alertamos aquí
+        if (!status) {
+          setAlert(null);
+          return;
+        }
 
-        const now = Date.now();
-        const minutesUntilExpiration = (expiresAt - now) / (1000 * 60);
+        // Conexión desactivada (token revocado o renovación fallida):
+        // este es el caso que dejaba de publicar en silencio
+        if (!status.is_active) {
+          setAlert({
+            type: "disconnected",
+            message:
+              "La conexión con QuickBooks de esta empresa está inactiva. Mientras no se reconecte, las facturas se reciben pero NO se publican en QuickBooks.",
+          });
+          return;
+        }
 
-        // Solo mostrar alerta si está realmente crítico:
-        // - Expirado: requiere reconexión
-        // - Menos de 5 minutos: crítico (la auto-renovación puede no llegar a tiempo)
-        // El widget TokenRenewalMonitor ya muestra el estado normal "Válido por X min"
+        const expiresAtMs = status.expires_at_ms
+          ? Number(status.expires_at_ms)
+          : null;
+
+        if (!expiresAtMs) {
+          setAlert(null);
+          return;
+        }
+
+        const minutesUntilExpiration = (expiresAtMs - Date.now()) / (1000 * 60);
+
         if (minutesUntilExpiration < 0) {
           setAlert({
             type: "failed",
-            message: "El token de QuickBooks ha expirado. Reconecta tu cuenta para continuar publicando facturas.",
+            message:
+              "El token de QuickBooks ha expirado. Reconecta la cuenta para continuar publicando facturas.",
           });
         } else if (minutesUntilExpiration < 5) {
           setAlert({
             type: "expiring",
-            message: `El token de QuickBooks expirará en menos de ${Math.ceil(minutesUntilExpiration)} minutos. La renovación automática se ejecutará pronto.`,
+            message: `El token de QuickBooks expirará en menos de ${Math.ceil(
+              minutesUntilExpiration
+            )} minutos. La renovación automática se ejecutará pronto.`,
             expiresIn: Math.ceil(minutesUntilExpiration),
           });
         } else {
@@ -70,10 +92,10 @@ export const QuickBooksTokenAlert = () => {
     };
 
     checkTokenStatus();
-    
+
     // Verificar cada 15 minutos
     const interval = setInterval(checkTokenStatus, 15 * 60 * 1000);
-    
+
     return () => clearInterval(interval);
   }, [activeOrganization, isDismissed]);
 
@@ -89,13 +111,13 @@ export const QuickBooksTokenAlert = () => {
   if (!alert) return null;
 
   return (
-    <Alert 
-      variant={alert.type === "failed" ? "destructive" : "default"}
+    <Alert
+      variant={alert.type === "expiring" ? "default" : "destructive"}
       className="mb-4 relative"
     >
       <AlertTriangle className="h-4 w-4" />
       <AlertTitle className="flex items-center justify-between">
-        {alert.type === "failed" ? "Token de QuickBooks Expirado" : "Token de QuickBooks Próximo a Expirar"}
+        {TITLES[alert.type]}
         <Button
           variant="ghost"
           size="icon"
@@ -112,9 +134,9 @@ export const QuickBooksTokenAlert = () => {
             La renovación se ejecuta automáticamente cada hora.
           </p>
         )}
-        {alert.type === "failed" && (
-          <Button 
-            onClick={handleReconnect} 
+        {alert.type !== "expiring" && (
+          <Button
+            onClick={handleReconnect}
             variant="outline"
             size="sm"
             className="gap-2"
