@@ -232,3 +232,7 @@ verify_jwt = true
 [functions.siku-daily-sync]
 verify_jwt = false
 schedule = "0 12 * * *"
+
+[functions.connection-watchdog]
+verify_jwt = false
+schedule = "0 * * * *"
