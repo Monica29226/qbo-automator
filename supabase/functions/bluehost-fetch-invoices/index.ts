@@ -541,7 +541,7 @@ function matchPdfToXml(
 }
 
 function isProcessableInvoiceXml(xmlContent: string): boolean {
-  return /<(?:[\w]+:)?(?:FacturaElectronica|NotaCreditoElectronica|NotaDebitoElectronica|TiqueteElectronico)\b/i.test(xmlContent);
+  return /<(?:[\w]+:)?(?:FacturaElectronica|NotaCreditoElectronica|NotaDebitoElectronica)\b/i.test(xmlContent);
 }
 
 function extractDocKey(xmlContent: string): string | null {
