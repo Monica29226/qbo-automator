@@ -90,6 +90,7 @@ serve(async (req) => {
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
     // Store or update tokens in integration_accounts (upsert)
+    // Set sync_from to now() so only future emails are imported from this connection on.
     const { error: upsertError } = await supabase
       .from("integration_accounts")
       .upsert({
@@ -99,13 +100,14 @@ serve(async (req) => {
         account_name: userInfo.name || userInfo.email,
         created_by: user_id,
         is_active: true,
+        sync_from: new Date().toISOString(),
         credentials: {
           access_token: tokens.access_token,
           refresh_token: tokens.refresh_token,
           expires_at: Date.now() + (tokens.expires_in * 1000),
         },
       }, {
-        onConflict: "organization_id,service_type"
+        onConflict: "organization_id,service_type,account_email"
       });
 
     if (upsertError) {

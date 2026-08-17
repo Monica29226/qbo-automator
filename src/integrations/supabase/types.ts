@@ -758,6 +758,7 @@ export type Database = {
           is_active: boolean | null
           organization_id: string
           service_type: string
+          sync_from: string | null
           updated_at: string | null
         }
         Insert: {
@@ -770,6 +771,7 @@ export type Database = {
           is_active?: boolean | null
           organization_id: string
           service_type: string
+          sync_from?: string | null
           updated_at?: string | null
         }
         Update: {
@@ -782,6 +784,7 @@ export type Database = {
           is_active?: boolean | null
           organization_id?: string
           service_type?: string
+          sync_from?: string | null
           updated_at?: string | null
         }
         Relationships: [
