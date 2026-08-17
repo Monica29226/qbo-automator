@@ -1,0 +1,1 @@
+UPDATE public.integration_accounts SET is_active = true, updated_at = now() WHERE organization_id='930d6cce-bcaa-4992-ad7f-1e29df1ab6e9' AND service_type='gmail' AND account_email='administrativo@gruposkr.com';
