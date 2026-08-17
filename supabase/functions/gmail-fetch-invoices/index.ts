@@ -262,6 +262,22 @@ serve(async (req) => {
     // Construir query de Gmail con filtro de fecha personalizado si se proporciona
     let mailQuery: string;
 
+    // Helper to format a date as Gmail's after:/before: expects (yyyy/mm/dd)
+    const formatGmailDate = (date: Date) => {
+      const yyyy = date.getUTCFullYear();
+      const mm = String(date.getUTCMonth() + 1).padStart(2, '0');
+      const dd = String(date.getUTCDate()).padStart(2, '0');
+      return `${yyyy}/${mm}/${dd}`;
+    };
+
+    // Minimum date from which this account should import (set on connect/reconnect).
+    const syncFrom = gmailAccount.sync_from
+      ? new Date(gmailAccount.sync_from)
+      : null;
+    const syncFromFormatted = syncFrom && !isNaN(syncFrom.getTime())
+      ? formatGmailDate(syncFrom)
+      : null;
+
     if (search_term && typeof search_term === "string" && search_term.trim()) {
       // Modo búsqueda inteligente: filtrar por remitente o asunto en últimos N días
       const days = Number.isFinite(Number(search_days)) ? Math.max(1, Number(search_days)) : 90;
@@ -293,6 +309,11 @@ serve(async (req) => {
     } else {
       mailQuery = settings?.find(s => s.key === "mail_query")?.value || 
         "has:attachment (filename:xml OR filename:pdf) newer_than:90d";
+      // If a sync_from timestamp is set, ensure automatic imports never go earlier than that moment.
+      if (syncFromFormatted) {
+        mailQuery = `${mailQuery} after:${syncFromFormatted}`;
+        console.log(`🕐 Account sync_from enforced: ${syncFromFormatted}`);
+      }
       console.log(`Using default Gmail query: ${mailQuery}`);
     }
 
