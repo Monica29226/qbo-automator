@@ -343,7 +343,14 @@ async function fetchEmailsViaIMAP(
               fetchAttempts++;
               if (Date.now() - functionStartTime > MAX_EXECUTION_TIME_MS) break;
             }
-            if (emailContent.includes(`${fetchTag} OK`) || emailContent.match(/\{(\d+)\}\r\n/)) break;
+            const attemptLiteral = emailContent.match(/\{(\d+)\}\r\n/);
+            const attemptStart = attemptLiteral
+              ? emailContent.indexOf(attemptLiteral[0]) + attemptLiteral[0].length
+              : -1;
+            const attemptComplete = attemptLiteral && attemptStart >= 0
+              ? encoder.encode(emailContent.substring(attemptStart)).length >= Number(attemptLiteral[1])
+              : false;
+            if (emailContent.includes(`${fetchTag} OK`) || attemptComplete) break;
             console.warn(`[Hostinger IMAP] Body fetch retry ${bodyTry + 1}/3 for ${folder}/${msgId}`);
             await new Promise(r => setTimeout(r, 250 * (bodyTry + 1)));
           }
