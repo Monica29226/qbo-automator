@@ -414,6 +414,7 @@ async function processOrganization(
     const invoicesSkipped = emailData.invoices_skipped || 0;
     const realFailures = emailData.invoices_failed || 0;
     const wasPartial = emailData.status === "partial" || emailData.time_limit_reached;
+    const cursorStalled = wasPartial && (mailProvider === "hostinger" || mailProvider === "bluehost") && skipCount > 0;
 
     // Publish to QuickBooks
     let qboPublished = 0;
@@ -473,8 +474,8 @@ async function processOrganization(
           execution_time_ms: Date.now() - syncStartTime,
           error_message: wasPartial ? "Sincronización parcial: queda correo pendiente o el cursor no avanzó" :
                         (realFailures > 0 ? `${realFailures} adjuntos no procesables (no son facturas válidas)` : null),
-          error_detail: null,
-          error_code: null,
+          error_detail: cursorStalled ? `Cursor preservado en ${skipCount}; ningún correo pendiente fue omitido` : null,
+          error_code: cursorStalled ? "mail_backlog_pending" : null,
         })
         .eq("id", syncLog.id);
     }
