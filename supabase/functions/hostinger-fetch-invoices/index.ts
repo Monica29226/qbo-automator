@@ -339,15 +339,26 @@ async function fetchEmailsViaIMAP(
             fetchAttempts++;
             if (Date.now() - functionStartTime > MAX_EXECUTION_TIME_MS) break;
           }
-          const fetchCompleted = emailContent.includes(`AB${fIdx}_${i} OK`);
+          // Some Hostinger responses deliver the complete IMAP literal before
+          // the tagged OK arrives. The literal byte count is authoritative;
+          // requiring the trailing tag caused large valid messages to stall the
+          // cursor forever even though their full body was already present.
+          const literalMarker = emailContent.match(/\{(\d+)\}\r\n/);
+          const literalStart = literalMarker
+            ? emailContent.indexOf(literalMarker[0]) + literalMarker[0].length
+            : -1;
+          const literalSize = literalMarker ? Number(literalMarker[1]) : 0;
+          const literalPayload = literalStart >= 0 ? emailContent.substring(literalStart) : "";
+          const literalComplete = literalSize > 0 && encoder.encode(literalPayload).length >= literalSize;
+          const fetchCompleted = emailContent.includes(`AB${fIdx}_${i} OK`) || literalComplete;
           if (emailContent.length > 0 && fetchCompleted) {
             // Extract raw email payload using the IMAP literal size marker `{N}\r\n`
             // so we trim IMAP wrappers before MIME parsing.
-            const litMatch = emailContent.match(/\{(\d+)\}\r\n/);
-            if (litMatch) {
-              const start = emailContent.indexOf(litMatch[0]) + litMatch[0].length;
-              const size = parseInt(litMatch[1]);
-              emailContent = emailContent.substring(start, start + size);
+            if (literalMarker && literalStart >= 0) {
+              // Keep the complete decoded payload. MIME parsing ignores a
+              // trailing IMAP tag, while slicing by JavaScript character count
+              // can truncate UTF-8 messages whose IMAP literal size is bytes.
+              emailContent = literalPayload;
             }
             messages.push({ rawEmail: emailContent, messageId: msgId, folder });
           } else {
