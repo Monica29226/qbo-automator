@@ -786,10 +786,12 @@ serve(async (req) => {
               },
             });
 
-            if (processError) {
-              const errorMsg = processError.message || "";
+            if (processError || processResult?.success === false) {
+              const errorMsg = processError?.message || processResult?.message || "Document processing failed";
               const msg = errorMsg.toLowerCase();
+              const reason = String(processResult?.reason || "").toLowerCase();
               const isSoftReject =
+                reason.startsWith("duplicate_") ||
                 msg.includes("duplicado") ||
                 msg.includes("ya existe") ||
                 msg.includes("fechaemision") ||
@@ -856,6 +858,7 @@ serve(async (req) => {
         invoices_missing_pdf: invoicesMissingPdf,
         invoices_skipped: skippedInvoices.length,
         partial: stoppedEarly || hasMoreMessages,
+        cursor_stalled: hasMoreMessages && nextSkip === currentSkip,
         total_messages_in_range: totalFound,
         messages_found: messages.length,
         messages_processed_this_run: conclusiveMessages,

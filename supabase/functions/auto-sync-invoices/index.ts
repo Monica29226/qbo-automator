@@ -351,6 +351,7 @@ async function processOrganization(
 
       const nextSkip = Number(chunk.next_skip_count);
       const hasNextChunk = chunk.partial === true && Number.isFinite(nextSkip) && nextSkip > skipCount;
+      const cursorStalled = chunk.partial === true && !hasNextChunk;
 
       if (hasNextChunk) {
         skipCount = nextSkip;
@@ -361,6 +362,13 @@ async function processOrganization(
           break;
         }
         await new Promise((resolve) => setTimeout(resolve, 300));
+      } else if (cursorStalled) {
+        // Never clear a persisted cursor or report completion when the provider
+        // stopped before conclusively processing the next message.
+        aggregatedEmailData.status = "partial";
+        aggregatedEmailData.time_limit_reached = true;
+        console.warn(`⚠️ ${mailProvider} cursor made no progress for ${org.name}; retrying from skip_count=${skipCount} next cron`);
+        continueFetching = false;
       } else {
         aggregatedEmailData.status = chunk.status || (chunk.partial ? "partial" : "complete");
         aggregatedEmailData.time_limit_reached = Boolean(chunk.time_limit_reached || chunk.partial);
@@ -452,7 +460,7 @@ async function processOrganization(
           qbo_failed: qboFailed,
           completed_at: new Date().toISOString(),
           execution_time_ms: Date.now() - syncStartTime,
-          error_message: wasPartial ? "Sincronización parcial por límite de tiempo" :
+          error_message: wasPartial ? "Sincronización parcial: queda correo pendiente o el cursor no avanzó" :
                         (realFailures > 0 ? `${realFailures} adjuntos no procesables (no son facturas válidas)` : null),
           error_detail: null,
           error_code: null,
