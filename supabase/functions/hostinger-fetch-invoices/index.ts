@@ -151,8 +151,16 @@ async function fetchEmailsViaIMAP(
   beforeDateStr?: string,  // Para filtrar hasta cierta fecha
   skipCount?: number,      // Para paginación - saltar los primeros N mensajes
   searchTerm?: string      // Para búsqueda inteligente por remitente/asunto
-): Promise<{ rawEmails: string[]; error?: string; totalFound?: number; processedCount?: number }> {
-  const rawEmails: string[] = [];
+): Promise<{
+  messages: Array<{ rawEmail: string | null; messageId: number; folder: string }>;
+  error?: string;
+  totalFound?: number;
+  hasMore?: boolean;
+}> {
+  // Keep one ordered result per conclusively scanned message. A null body means
+  // BODYSTRUCTURE proved that the message has no relevant attachment. Failed
+  // downloads are intentionally not appended, so the resume cursor cannot skip them.
+  const messages: Array<{ rawEmail: string | null; messageId: number; folder: string }> = [];
   
   try {
     console.log(`[Hostinger IMAP] Connecting to ${host}:${port}...`);
@@ -207,7 +215,7 @@ async function fetchEmailsViaIMAP(
 
     if (!greeting.includes("OK")) {
       conn.close();
-      return { rawEmails: [], error: "Server did not send OK greeting" };
+      return { messages: [], error: "Server did not send OK greeting" };
     }
 
     // Login
@@ -216,7 +224,7 @@ async function fetchEmailsViaIMAP(
     
     if (!loginResp.includes("OK")) {
       conn.close();
-      return { rawEmails: [], error: "Login failed: " + loginResp.substring(0, 200) };
+      return { messages: [], error: "Login failed: " + loginResp.substring(0, 200) };
     }
 
     // Discover all folders via LIST. Reading only INBOX would miss invoices
@@ -229,21 +237,23 @@ async function fetchEmailsViaIMAP(
     }
     console.log(`[Hostinger IMAP] Will scan ${folders.length} folder(s): ${folders.join(", ")}`);
 
-    const BATCH_SIZE = 50;
-    const MAX_EXECUTION_TIME_MS = 50000;
+    const BATCH_SIZE = 15;
+    const MAX_EXECUTION_TIME_MS = 35000;
     const functionStartTime = Date.now();
     let totalMessagesFoundGlobal = 0;
-    let totalMessagesProcessedGlobal = 0;
     let globalSkipRemaining = skipCount || 0;
+    let hasMore = false;
 
     folderLoop: for (let fIdx = 0; fIdx < folders.length; fIdx++) {
       const elapsedMs = Date.now() - functionStartTime;
       if (elapsedMs > MAX_EXECUTION_TIME_MS) {
         console.log(`[Hostinger IMAP] ⚠️ Time limit reached at folder ${fIdx}, stopping`);
+        hasMore = true;
         break;
       }
-      if (totalMessagesProcessedGlobal >= BATCH_SIZE) {
+      if (messages.length >= BATCH_SIZE) {
         console.log(`[Hostinger IMAP] Batch size reached, stopping folder iteration`);
+        hasMore = true;
         break;
       }
 
@@ -275,11 +285,13 @@ async function fetchEmailsViaIMAP(
       const skipInThisFolder = Math.min(globalSkipRemaining, messageIds.length);
       globalSkipRemaining -= skipInThisFolder;
       const messagesAfterSkip = messageIds.slice(skipInThisFolder);
-      const remainingBatch = BATCH_SIZE - totalMessagesProcessedGlobal;
+      const remainingBatch = BATCH_SIZE - messages.length;
       const messagesToFetch = messagesAfterSkip.slice(0, remainingBatch);
+      if (messagesAfterSkip.length > messagesToFetch.length) hasMore = true;
 
       for (let i = 0; i < messagesToFetch.length; i++) {
         if (Date.now() - functionStartTime > MAX_EXECUTION_TIME_MS) {
+          hasMore = true;
           break folderLoop;
         }
         const msgId = messagesToFetch[i];
@@ -309,6 +321,7 @@ async function fetchEmailsViaIMAP(
             lowerStructResp.includes('multipart/mixed') || lowerStructResp.includes('message/rfc822');
           // Fallback: if BODYSTRUCTURE was truncated/unreadable, still try to fetch the body.
           if (!hasAttachment && lowerStructResp.length > 200 && !lowerStructResp.includes('multipart')) {
+            messages.push({ rawEmail: null, messageId: msgId, folder });
             continue;
           }
 
@@ -326,7 +339,8 @@ async function fetchEmailsViaIMAP(
             fetchAttempts++;
             if (Date.now() - functionStartTime > MAX_EXECUTION_TIME_MS) break;
           }
-          if (emailContent.length > 0) {
+          const fetchCompleted = emailContent.includes(`AB${fIdx}_${i} OK`);
+          if (emailContent.length > 0 && fetchCompleted) {
             // Extract raw email payload using the IMAP literal size marker `{N}\r\n`
             // so we trim IMAP wrappers before MIME parsing.
             const litMatch = emailContent.match(/\{(\d+)\}\r\n/);
@@ -335,27 +349,32 @@ async function fetchEmailsViaIMAP(
               const size = parseInt(litMatch[1]);
               emailContent = emailContent.substring(start, start + size);
             }
-            rawEmails.push(emailContent);
+            messages.push({ rawEmail: emailContent, messageId: msgId, folder });
+          } else {
+            console.error(`[Hostinger IMAP] Incomplete body fetch for ${folder}/${msgId}; leaving cursor before this message`);
+            hasMore = true;
+            break folderLoop;
           }
 
         } catch (msgErr) {
           console.error(`[Hostinger IMAP] Error fetching message ${msgId}:`, msgErr);
+          hasMore = true;
+          break folderLoop;
         }
       }
-      totalMessagesProcessedGlobal += messagesToFetch.length;
     }
 
     await sendCommand("A999", "LOGOUT");
     conn.close();
 
     return {
-      rawEmails,
+      messages,
       totalFound: totalMessagesFoundGlobal,
-      processedCount: totalMessagesProcessedGlobal
+      hasMore,
     };
   } catch (error) {
     console.error("[Hostinger IMAP] Connection error:", error);
-    return { rawEmails: [], error: String(error), totalFound: 0, processedCount: 0 };
+    return { messages: [], error: String(error), totalFound: 0, hasMore: true };
   }
 }
 
@@ -594,7 +613,7 @@ serve(async (req) => {
     console.log(`[Hostinger] Searching emails since ${sinceDateStr}${beforeDateStr ? ` before ${beforeDateStr}` : ''}`);
 
     // Fetch emails via IMAP
-    const { rawEmails, error: imapError, totalFound, processedCount } = await fetchEmailsViaIMAP(
+    const { messages, error: imapError, totalFound, hasMore: imapHasMore } = await fetchEmailsViaIMAP(
       imapHost,
       imapPort,
       credentials.email,
@@ -653,36 +672,47 @@ serve(async (req) => {
       throw new Error(`IMAP error: ${imapError}`);
     }
 
-    console.log(`[Hostinger] Fetched ${rawEmails.length} raw emails with potential attachments`);
+    console.log(`[Hostinger] Scanned ${messages.length} ordered messages in this resumable batch`);
 
     let invoicesProcessed = 0;
     let invoicesFailed = 0;
     let invoicesExistingSkipped = 0;
     let invoicesMissingPdf = 0;
     let stoppedEarly = false;
+    let conclusiveMessages = 0;
     const errors: string[] = [];
     const skippedInvoices: Array<{ doc_key?: string; filename?: string; reason: string }> = [];
     const processingStartTime = Date.now();
     const MAX_PROCESSING_TIME_MS = 40000; // 40s para drenar el lote bajo el límite duro de edge
 
     // Process each email with timeout protection
-    for (const rawEmail of rawEmails) {
+    for (const message of messages) {
       // Check for timeout
       if (Date.now() - processingStartTime > MAX_PROCESSING_TIME_MS) {
         console.log(`[Hostinger] ⚠️ Approaching timeout during processing, stopping early`);
         stoppedEarly = true;
         break;
       }
+
+      // A message conclusively identified as having no attachment is safe to
+      // checkpoint without MIME parsing.
+      if (message.rawEmail === null) {
+        conclusiveMessages++;
+        continue;
+      }
       
       try {
+        const rawEmail = message.rawEmail;
         const xmlAttachments = extractXmlAttachments(rawEmail);
         const pdfAttachments = extractPdfAttachments(rawEmail);
         
         if (xmlAttachments.length === 0) {
+          conclusiveMessages++;
           continue;
         }
 
         const pdfMatches = matchPdfToXml(xmlAttachments, pdfAttachments);
+        let emailConclusive = true;
 
         for (const xml of xmlAttachments) {
           try {
@@ -783,6 +813,8 @@ serve(async (req) => {
                 console.error(`[Hostinger] Error processing ${clave}:`, processError);
                 errors.push(`${clave}: ${errorMsg}`);
                 invoicesFailed++;
+                emailConclusive = false;
+                break;
               }
             } else {
               console.log(`[Hostinger] ✓ Processed ${clave} - PDF saved: ${pdfUrl ? 'YES' : 'NO'}`);
@@ -793,18 +825,27 @@ serve(async (req) => {
             console.error(`[Hostinger] Error processing XML ${xml.filename}:`, xmlErr);
             errors.push(`${xml.filename}: ${xmlErr}`);
             invoicesFailed++;
+            emailConclusive = false;
+            break;
           }
         }
+        if (!emailConclusive) {
+          stoppedEarly = true;
+          break;
+        }
+        conclusiveMessages++;
       } catch (emailErr) {
         console.error("[Hostinger] Error processing email:", emailErr);
         invoicesFailed++;
+        stoppedEarly = true;
+        break;
       }
     }
 
     const currentSkip = skip_count || 0;
-    const nextSkip = currentSkip + (processedCount || 0);
-    const hasMoreMessages = totalFound ? (nextSkip < totalFound) : false;
-    console.log(`[Hostinger] Completed: ${invoicesProcessed} processed, ${invoicesFailed} failed. Total messages: ${totalFound || 'unknown'}, processed this run: ${processedCount || 'unknown'}, next_skip: ${nextSkip}${stoppedEarly ? ' (stopped early due to timeout)' : ''}`);
+    const nextSkip = currentSkip + conclusiveMessages;
+    const hasMoreMessages = stoppedEarly || Boolean(imapHasMore) || (totalFound ? nextSkip < totalFound : false);
+    console.log(`[Hostinger] Completed: ${invoicesProcessed} processed, ${invoicesFailed} failed. Total messages: ${totalFound || 'unknown'}, conclusively scanned this run: ${conclusiveMessages}, next_skip: ${nextSkip}${stoppedEarly ? ' (stopped before an unfinished message)' : ''}`);
 
     return new Response(
       JSON.stringify({
@@ -816,9 +857,9 @@ serve(async (req) => {
         invoices_skipped: skippedInvoices.length,
         partial: stoppedEarly || hasMoreMessages,
         total_messages_in_range: totalFound,
-        messages_found: rawEmails.length,
-        messages_processed_this_run: processedCount,
-        next_skip_count: hasMoreMessages ? nextSkip : undefined,
+        messages_found: messages.length,
+        messages_processed_this_run: conclusiveMessages,
+        next_skip_count: hasMoreMessages && nextSkip > currentSkip ? nextSkip : undefined,
         skipped: skippedInvoices,
         message: (stoppedEarly || hasMoreMessages)
           ? `Procesadas ${invoicesProcessed} facturas (correos ${currentSkip + 1}-${nextSkip} de ${totalFound || '?'}). Continuando…`
