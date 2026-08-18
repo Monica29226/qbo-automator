@@ -232,6 +232,7 @@ async function processOrganization(
       status: "complete",
       time_limit_reached: false,
       total_messages_in_range: 0,
+      cursor_stalled: false,
     };
 
     // Resume from persisted cursor if a previous run was interrupted (Hostinger/Bluehost only)
@@ -378,6 +379,7 @@ async function processOrganization(
         // stopped before conclusively processing the next message.
         aggregatedEmailData.status = "partial";
         aggregatedEmailData.time_limit_reached = true;
+        aggregatedEmailData.cursor_stalled = true;
         console.warn(`⚠️ ${mailProvider} cursor made no progress for ${org.name}; retrying from skip_count=${skipCount} next cron`);
         continueFetching = false;
       } else {
@@ -414,7 +416,7 @@ async function processOrganization(
     const invoicesSkipped = emailData.invoices_skipped || 0;
     const realFailures = emailData.invoices_failed || 0;
     const wasPartial = emailData.status === "partial" || emailData.time_limit_reached;
-    const cursorStalled = wasPartial && (mailProvider === "hostinger" || mailProvider === "bluehost") && skipCount > 0;
+    const cursorStalled = aggregatedEmailData.cursor_stalled;
 
     // Publish to QuickBooks
     let qboPublished = 0;
