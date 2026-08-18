@@ -357,6 +357,17 @@ async function processOrganization(
         skipCount = nextSkip;
         aggregatedEmailData.status = "partial";
         aggregatedEmailData.time_limit_reached = true;
+        // Checkpoint every completed chunk. If the dispatcher is terminated by
+        // the runtime, the next cron resumes here instead of rescanning earlier
+        // messages and consuming the same resources again.
+        if (mailProvider === "hostinger" || mailProvider === "bluehost") {
+          await supabase.from("system_settings").upsert({
+            organization_id: org.id,
+            key: cursorKey,
+            value: String(skipCount),
+            description: `Resume cursor for ${mailProvider} sync`,
+          }, { onConflict: "key,organization_id" });
+        }
         if (Date.now() - dispatcherStartTime > MAX_DISPATCHER_TIME_MS) {
           console.log(`⏱️ Dispatcher wall-time exceeded for ${org.name}, will resume next cron`);
           break;

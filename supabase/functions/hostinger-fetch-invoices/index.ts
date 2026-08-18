@@ -325,19 +325,27 @@ async function fetchEmailsViaIMAP(
             continue;
           }
 
-          const fetchCmd = `AB${fIdx}_${i} FETCH ${msgId} BODY.PEEK[]`;
-          await conn.write(encoder.encode(fetchCmd + "\r\n"));
           let emailContent = "";
-          let fetchAttempts = 0;
-          const maxFetchTime = Date.now() + 8000;
-          while (Date.now() < maxFetchTime && fetchAttempts < 200) {
-            const n = await conn.read(buffer);
-            if (n === null) break;
-            emailContent += decoder.decode(buffer.subarray(0, n));
-            if (emailContent.includes(`AB${fIdx}_${i} OK`)) break;
-            if (emailContent.includes(`AB${fIdx}_${i} NO`) || emailContent.includes(`AB${fIdx}_${i} BAD`)) break;
-            fetchAttempts++;
-            if (Date.now() - functionStartTime > MAX_EXECUTION_TIME_MS) break;
+          let fetchTag = "";
+          for (let bodyTry = 0; bodyTry < 3; bodyTry++) {
+            fetchTag = `AB${fIdx}_${i}_${bodyTry}`;
+            const fetchCmd = `${fetchTag} FETCH ${msgId} BODY.PEEK[]`;
+            await conn.write(encoder.encode(fetchCmd + "\r\n"));
+            emailContent = "";
+            let fetchAttempts = 0;
+            const maxFetchTime = Date.now() + 12000;
+            while (Date.now() < maxFetchTime && fetchAttempts < 300) {
+              const n = await conn.read(buffer);
+              if (n === null) break;
+              emailContent += decoder.decode(buffer.subarray(0, n));
+              if (emailContent.includes(`${fetchTag} OK`)) break;
+              if (emailContent.includes(`${fetchTag} NO`) || emailContent.includes(`${fetchTag} BAD`)) break;
+              fetchAttempts++;
+              if (Date.now() - functionStartTime > MAX_EXECUTION_TIME_MS) break;
+            }
+            if (emailContent.includes(`${fetchTag} OK`) || emailContent.match(/\{(\d+)\}\r\n/)) break;
+            console.warn(`[Hostinger IMAP] Body fetch retry ${bodyTry + 1}/3 for ${folder}/${msgId}`);
+            await new Promise(r => setTimeout(r, 250 * (bodyTry + 1)));
           }
           // Some Hostinger responses deliver the complete IMAP literal before
           // the tagged OK arrives. The literal byte count is authoritative;
@@ -350,7 +358,7 @@ async function fetchEmailsViaIMAP(
           const literalSize = literalMarker ? Number(literalMarker[1]) : 0;
           const literalPayload = literalStart >= 0 ? emailContent.substring(literalStart) : "";
           const literalComplete = literalSize > 0 && encoder.encode(literalPayload).length >= literalSize;
-          const fetchCompleted = emailContent.includes(`AB${fIdx}_${i} OK`) || literalComplete;
+          const fetchCompleted = emailContent.includes(`${fetchTag} OK`) || literalComplete;
           if (emailContent.length > 0 && fetchCompleted) {
             // Extract raw email payload using the IMAP literal size marker `{N}\r\n`
             // so we trim IMAP wrappers before MIME parsing.
