@@ -232,6 +232,7 @@ async function processOrganization(
       status: "complete",
       time_limit_reached: false,
       total_messages_in_range: 0,
+      cursor_stalled: false,
     };
 
     // Resume from persisted cursor if a previous run was interrupted (Hostinger/Bluehost only)
@@ -351,16 +352,36 @@ async function processOrganization(
 
       const nextSkip = Number(chunk.next_skip_count);
       const hasNextChunk = chunk.partial === true && Number.isFinite(nextSkip) && nextSkip > skipCount;
+      const cursorStalled = chunk.partial === true && !hasNextChunk;
 
       if (hasNextChunk) {
         skipCount = nextSkip;
         aggregatedEmailData.status = "partial";
         aggregatedEmailData.time_limit_reached = true;
+        // Checkpoint every completed chunk. If the dispatcher is terminated by
+        // the runtime, the next cron resumes here instead of rescanning earlier
+        // messages and consuming the same resources again.
+        if (mailProvider === "hostinger" || mailProvider === "bluehost") {
+          await supabase.from("system_settings").upsert({
+            organization_id: org.id,
+            key: cursorKey,
+            value: String(skipCount),
+            description: `Resume cursor for ${mailProvider} sync`,
+          }, { onConflict: "key,organization_id" });
+        }
         if (Date.now() - dispatcherStartTime > MAX_DISPATCHER_TIME_MS) {
           console.log(`⏱️ Dispatcher wall-time exceeded for ${org.name}, will resume next cron`);
           break;
         }
         await new Promise((resolve) => setTimeout(resolve, 300));
+      } else if (cursorStalled) {
+        // Never clear a persisted cursor or report completion when the provider
+        // stopped before conclusively processing the next message.
+        aggregatedEmailData.status = "partial";
+        aggregatedEmailData.time_limit_reached = true;
+        aggregatedEmailData.cursor_stalled = true;
+        console.warn(`⚠️ ${mailProvider} cursor made no progress for ${org.name}; retrying from skip_count=${skipCount} next cron`);
+        continueFetching = false;
       } else {
         aggregatedEmailData.status = chunk.status || (chunk.partial ? "partial" : "complete");
         aggregatedEmailData.time_limit_reached = Boolean(chunk.time_limit_reached || chunk.partial);
@@ -395,6 +416,7 @@ async function processOrganization(
     const invoicesSkipped = emailData.invoices_skipped || 0;
     const realFailures = emailData.invoices_failed || 0;
     const wasPartial = emailData.status === "partial" || emailData.time_limit_reached;
+    const cursorStalled = aggregatedEmailData.cursor_stalled;
 
     // Publish to QuickBooks
     let qboPublished = 0;
@@ -452,10 +474,10 @@ async function processOrganization(
           qbo_failed: qboFailed,
           completed_at: new Date().toISOString(),
           execution_time_ms: Date.now() - syncStartTime,
-          error_message: wasPartial ? "Sincronización parcial por límite de tiempo" :
+          error_message: wasPartial ? "Sincronización parcial: queda correo pendiente o el cursor no avanzó" :
                         (realFailures > 0 ? `${realFailures} adjuntos no procesables (no son facturas válidas)` : null),
-          error_detail: null,
-          error_code: null,
+          error_detail: cursorStalled ? `Cursor preservado en ${skipCount}; ningún correo pendiente fue omitido` : null,
+          error_code: cursorStalled ? "mail_backlog_pending" : null,
         })
         .eq("id", syncLog.id);
     }
