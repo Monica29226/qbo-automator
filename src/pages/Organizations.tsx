@@ -182,7 +182,7 @@ const Organizations = () => {
   // Validar identificación según tipo
   const validateIdentification = (type: string, number: string): string | null => {
     if (!number) return null;
-    const clean = number.replace(/[-\s]/g, "");
+    const clean = number.replace(/\D/g, "");
     if (type === "juridica") {
       if (!/^\d{10}$/.test(clean)) {
         return "La cédula jurídica debe tener 10 dígitos (ejemplo: 3-101-123456)";
