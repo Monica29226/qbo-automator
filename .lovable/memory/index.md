@@ -71,6 +71,7 @@
 - [Send Invoice Email](mem://features/send-invoice-by-email) — Send HTML invoice via Resend, auto-send on QB success
 - [Siku Reconciliation](mem://features/reconciliation/external-siku-reports) — Cross-reference Siku Excel exports to find missing invoices
 - [Mass Delete Pending](mem://features/eliminacion-masiva-facturas-pendientes) — Mass delete selected invoices directly from processed_documents
+- [Exclusión y fecha de corte](mem://features/ignored-documents-and-min-issue-date) — Borrar registra la clave en ignored_documents; validation_min_date bloquea comprobantes viejos por empresa
 - [MIME Recursion Limit](mem://integrations/limite-recursividad-mime-email) — Limit depth to 10 to prevent stack overflows
 - [Outlook Extended Search](mem://integrations/outlook/logica-busqueda-extendida) — Search INBOX and JunkEmail, handle 403 and 429
 - [QBO Payload Sanitization](mem://quickbooks/sanitizacion-payload-json) — Remove internal props, NaN, null before QBO API
