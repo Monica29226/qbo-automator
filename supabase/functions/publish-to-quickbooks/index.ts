@@ -1181,28 +1181,26 @@ Deno.serve(async (req) => {
       logInfo(`🔄 Reverted ${stuckDocs.length} document(s) stuck in 'publishing' state`);
     }
 
-    // ATOMIC LOCK: Select and mark documents as 'publishing'
-    let findQuery = supabase
-      .from("processed_documents")
-      .select("id")
-      .eq("organization_id", organization_id)
-      .is("qbo_entity_id", null)
-      .in("status", ["pending", "processed"]);
-    
-    // Only apply date filter when NOT targeting specific documents
-    if (!document_ids || document_ids.length === 0) {
-      findQuery = findQuery.gte("issue_date", minDate);
-    }
+    // TRANSACTIONAL CLAIM: the database selects and changes each row to
+    // `publishing` under FOR UPDATE SKIP LOCKED in one transaction. A second
+    // invocation therefore cannot claim the same invoice while this one is
+    // creating its Bill/VendorCredit in QuickBooks.
+    const requestedDocumentIds = Array.isArray(document_ids) && document_ids.length > 0
+      ? document_ids
+      : null;
+    const { data: lockedDocs, error: claimError } = await supabase.rpc(
+      "claim_documents_for_qbo_publish",
+      {
+        _organization_id: organization_id,
+        _document_ids: requestedDocumentIds,
+        _min_issue_date: requestedDocumentIds ? null : minDate,
+        _limit: 50,
+      },
+    );
 
-    if (document_ids && document_ids.length > 0) {
-      findQuery = findQuery.in("id", document_ids);
-    }
+    if (claimError) throw new Error(`No se pudieron reclamar documentos para publicación: ${claimError.message}`);
 
-    const { data: eligibleDocs, error: findError } = await findQuery.limit(50);
-
-    if (findError) throw findError;
-
-    if (!eligibleDocs || eligibleDocs.length === 0) {
+    if (!lockedDocs || lockedDocs.length === 0) {
       logInfo(`⚠️ No documents found to publish`);
       return new Response(
         JSON.stringify({ success: true, message: "No documents to publish", published: 0 }),
@@ -1210,29 +1208,8 @@ Deno.serve(async (req) => {
       );
     }
 
-    const docIdsToProcess = eligibleDocs.map(d => d.id);
-    logInfo(`📋 Found ${docIdsToProcess.length} document(s) eligible for publishing`);
-
-    // Atomically update status to 'publishing'
-    const { data: lockedDocs, error: lockError } = await supabase
-      .from("processed_documents")
-      .update({ status: "publishing", error_message: null })
-      .in("id", docIdsToProcess)
-      .in("status", ["pending", "processed"])
-      .select("*");
-
-    if (lockError) throw lockError;
-
-    if (!lockedDocs || lockedDocs.length === 0) {
-      logInfo(`⚠️ No documents to publish - all were already locked`);
-      return new Response(
-        JSON.stringify({ success: true, message: "Documents already being processed", published: 0 }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
     const documents = lockedDocs;
-    logInfo(`🔒 Locked ${documents.length} document(s) for publishing`);
+    logInfo(`🔒 Transactionally claimed ${documents.length} document(s) for publishing`);
     
     const isSingleDocument = documents.length === 1;
 
@@ -1334,6 +1311,14 @@ Deno.serve(async (req) => {
             logInfo(`   ⚠️ ${docNumber}: Existe en QBO pero monto no coincide (QBO: ${qboTotal}, Esperado: ${expectedAmount})`);
             return { isDuplicate: false, entityId: null, entityType: null };
           }
+        } else {
+          const errorBody = await response.text().catch(() => "");
+          return {
+            isDuplicate: false,
+            entityId: null,
+            entityType: null,
+            error: `No se pudo verificar duplicados en QuickBooks (HTTP ${response.status}): ${errorBody.substring(0, 200)}`,
+          };
         }
         return { isDuplicate: false, entityId: null, entityType: null };
       } catch (e) {
@@ -1994,6 +1979,7 @@ Deno.serve(async (req) => {
               .update({
                 qbo_entity_id: trk.qbo_entity_id,
                 qbo_entity_type: trk.qbo_entity_type,
+                qbo_realm_id: realmId,
                 status: "published",
                 error_message: `Ya publicado (tracking ID: ${trk.id})`,
               })
@@ -2194,6 +2180,7 @@ Deno.serve(async (req) => {
             .update({
               qbo_entity_id: qboDuplicateCheck.entityId,
               qbo_entity_type: qboDuplicateCheck.entityType,
+              qbo_realm_id: realmId,
               status: "published",
               error_message: `Ya existía en QBO (ID: ${qboDuplicateCheck.entityId})`,
             })
@@ -3258,28 +3245,13 @@ Deno.serve(async (req) => {
           .update({
             qbo_entity_id: entityId,
             qbo_entity_type: entityType,
+            qbo_realm_id: realmId,
             status: _discrepancyMsg ? "review" : "published",
             processed_at: new Date().toISOString(),
             processed_by: userId,
             error_message: _discrepancyMsg,
           })
           .eq("id", doc.id);
-
-        // Bind the document to the realm it was published to. Separate,
-        // non-blocking update so that if the qbo_realm_id column has not been
-        // migrated yet, publishing still succeeds (we just log a warning).
-        try {
-          const { error: realmErr } = await supabase
-            .from("processed_documents")
-            .update({ qbo_realm_id: realmId })
-            .eq("id", doc.id);
-          if (realmErr) {
-            logError(`⚠️ ${doc.doc_number}: could not stamp qbo_realm_id (non-blocking): ${realmErr.message}`);
-          }
-        } catch (realmStampErr: unknown) {
-          const m = realmStampErr instanceof Error ? realmStampErr.message : String(realmStampErr);
-          logError(`⚠️ ${doc.doc_number}: qbo_realm_id stamp exception (non-blocking): ${m}`);
-        }
 
         // Attach PDF to QuickBooks Bill - AWAIT to ensure it completes before function terminates
         if (doc.pdf_attachment_url && entityId) {

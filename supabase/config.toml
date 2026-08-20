@@ -51,6 +51,9 @@ verify_jwt = false
 [functions.batch-publish-all]
 verify_jwt = true
 
+[functions.audit-qbo-duplicates]
+verify_jwt = true
+
 [functions.send-invitation]
 verify_jwt = true
 
