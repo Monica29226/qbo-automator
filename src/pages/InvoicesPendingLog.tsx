@@ -55,6 +55,7 @@ import { PdfViewer } from "@/components/PdfViewer";
 import { useQBOAccounts } from "@/hooks/useQBOAccounts";
 import { useDebounce } from "@/hooks/useDebounce";
 import { usePendingInvoicesOptimized, useVendorDefaults } from "@/hooks/usePendingInvoicesOptimized";
+import { discardDocuments } from "@/lib/discardInvoices";
 
 interface QBOAccount {
   id: string;
