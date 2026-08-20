@@ -747,6 +747,50 @@ export type Database = {
           },
         ]
       }
+      ignored_documents: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          doc_key: string
+          doc_number: string | null
+          id: string
+          issue_date: string | null
+          organization_id: string
+          reason: string
+          supplier_name: string | null
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          doc_key: string
+          doc_number?: string | null
+          id?: string
+          issue_date?: string | null
+          organization_id: string
+          reason?: string
+          supplier_name?: string | null
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          doc_key?: string
+          doc_number?: string | null
+          id?: string
+          issue_date?: string | null
+          organization_id?: string
+          reason?: string
+          supplier_name?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ignored_documents_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       integration_accounts: {
         Row: {
           account_email: string | null
