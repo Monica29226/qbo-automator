@@ -54,8 +54,6 @@ export default function Step1Basic({ organizationId, initial, onSaved, bindActio
         if (!name.trim()) return toast.error("Nombre obligatorio");
         const v = validateIdentification(idType, idNumber);
         if (!v.ok) return toast.error(v.error!);
-        if (idType === "juridica" && !/^[234]/.test(v.cleaned))
-          return toast.error("Cédula jurídica debe iniciar con 2, 3 o 4");
         if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
           return toast.error("Email inválido");
         setSaving(true);
