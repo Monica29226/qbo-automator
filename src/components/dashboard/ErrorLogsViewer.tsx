@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { discardDocuments } from "@/lib/discardInvoices";
 
 interface ErrorDocument {
   id: string;
@@ -151,14 +152,9 @@ export const ErrorLogsViewer = () => {
 
   const handleDeleteError = async (errorId: string, docNumber: string) => {
     try {
-      const { error } = await supabase
-        .from("processed_documents")
-        .delete()
-        .eq("id", errorId);
+      await discardDocuments([errorId], "deleted_from_error_log");
 
-      if (error) throw error;
-
-      toast.success(`Error ${docNumber} eliminado`);
+      toast.success(`Documento ${docNumber} eliminado y excluido permanentemente`);
       fetchErrors(); // Refrescar lista
     } catch (error) {
       console.error("Error deleting error log:", error);
