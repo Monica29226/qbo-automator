@@ -1979,6 +1979,7 @@ Deno.serve(async (req) => {
               .update({
                 qbo_entity_id: trk.qbo_entity_id,
                 qbo_entity_type: trk.qbo_entity_type,
+                qbo_realm_id: realmId,
                 status: "published",
                 error_message: `Ya publicado (tracking ID: ${trk.id})`,
               })
@@ -2179,6 +2180,7 @@ Deno.serve(async (req) => {
             .update({
               qbo_entity_id: qboDuplicateCheck.entityId,
               qbo_entity_type: qboDuplicateCheck.entityType,
+              qbo_realm_id: realmId,
               status: "published",
               error_message: `Ya existía en QBO (ID: ${qboDuplicateCheck.entityId})`,
             })
@@ -3243,28 +3245,13 @@ Deno.serve(async (req) => {
           .update({
             qbo_entity_id: entityId,
             qbo_entity_type: entityType,
+            qbo_realm_id: realmId,
             status: _discrepancyMsg ? "review" : "published",
             processed_at: new Date().toISOString(),
             processed_by: userId,
             error_message: _discrepancyMsg,
           })
           .eq("id", doc.id);
-
-        // Bind the document to the realm it was published to. Separate,
-        // non-blocking update so that if the qbo_realm_id column has not been
-        // migrated yet, publishing still succeeds (we just log a warning).
-        try {
-          const { error: realmErr } = await supabase
-            .from("processed_documents")
-            .update({ qbo_realm_id: realmId })
-            .eq("id", doc.id);
-          if (realmErr) {
-            logError(`⚠️ ${doc.doc_number}: could not stamp qbo_realm_id (non-blocking): ${realmErr.message}`);
-          }
-        } catch (realmStampErr: unknown) {
-          const m = realmStampErr instanceof Error ? realmStampErr.message : String(realmStampErr);
-          logError(`⚠️ ${doc.doc_number}: qbo_realm_id stamp exception (non-blocking): ${m}`);
-        }
 
         // Attach PDF to QuickBooks Bill - AWAIT to ensure it completes before function terminates
         if (doc.pdf_attachment_url && entityId) {
