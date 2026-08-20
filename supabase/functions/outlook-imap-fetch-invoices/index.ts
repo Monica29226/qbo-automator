@@ -637,12 +637,25 @@ serve(async (req) => {
             const clave = claveMatch[1];
 
             // Check if already processed
-            const { data: existingDoc } = await supabase
-              .from("processed_documents")
-              .select("id")
-              .eq("doc_key", clave)
-              .eq("organization_id", organization_id)
-              .maybeSingle();
+            const [{ data: existingDoc }, { data: ignoredDoc }] = await Promise.all([
+              supabase
+                .from("processed_documents")
+                .select("id")
+                .eq("doc_key", clave)
+                .eq("organization_id", organization_id)
+                .maybeSingle(),
+              supabase
+                .from("ignored_documents")
+                .select("id")
+                .eq("doc_key", clave)
+                .eq("organization_id", organization_id)
+                .maybeSingle(),
+            ]);
+
+            if (ignoredDoc) {
+              console.log(`[Outlook-IMAP] Document ${clave} was permanently discarded, skipping`);
+              continue;
+            }
 
             if (existingDoc && !force_resync) {
               console.log(`[Outlook-IMAP] Document ${clave} already exists, skipping`);

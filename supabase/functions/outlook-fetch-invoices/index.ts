@@ -403,6 +403,37 @@ serve(async (req) => {
             }
             const xmlContent = new TextDecoder('utf-8').decode(bytes);
 
+            const claveMatch = xmlContent.match(/<(?:[\w-]+:)?Clave\b[^>]*>(\d{50})<\/(?:[\w-]+:)?Clave>/i);
+            const clave = claveMatch?.[1];
+            if (clave) {
+              const [{ data: existingDoc }, { data: ignoredDoc }] = await Promise.all([
+                supabase
+                  .from("processed_documents")
+                  .select("id")
+                  .eq("organization_id", organization_id)
+                  .eq("doc_key", clave)
+                  .maybeSingle(),
+                supabase
+                  .from("ignored_documents")
+                  .select("id")
+                  .eq("organization_id", organization_id)
+                  .eq("doc_key", clave)
+                  .maybeSingle(),
+              ]);
+
+              if (ignoredDoc) {
+                console.log(`[Outlook] Document ${clave} was permanently discarded, skipping`);
+                skippedInvoices.push({ filename: xmlAtt.name, reason: "ignored_by_user", doc_key: clave });
+                continue;
+              }
+
+              if (existingDoc && !force_resync) {
+                console.log(`[Outlook] Document ${clave} already exists, skipping`);
+                skippedInvoices.push({ filename: xmlAtt.name, reason: "duplicate_already_in_processed_documents", doc_key: clave });
+                continue;
+              }
+            }
+
             let pdfUrl = null;
             if (pdfAttachment?.contentBytes) {
               try {

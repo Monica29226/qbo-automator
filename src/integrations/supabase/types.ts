@@ -2118,6 +2118,10 @@ export type Database = {
         Args: { p_org: string }
         Returns: number
       }
+      discard_processed_documents: {
+        Args: { _document_ids: string[]; _reason?: string }
+        Returns: number
+      }
       get_active_email_services: {
         Args: { _org_id: string }
         Returns: {

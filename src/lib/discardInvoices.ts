@@ -13,39 +13,12 @@ export async function discardDocuments(
 ): Promise<void> {
   if (ids.length === 0) return;
 
-  const { data: docs, error: fetchError } = await supabase
-    .from("processed_documents")
-    .select("id, organization_id, doc_key, doc_number, issue_date, supplier_name")
-    .in("id", ids);
+  // La función de base de datos registra la exclusión y elimina en una sola
+  // transacción. Si no puede guardar la clave, tampoco borra el documento.
+  const { error } = await supabase.rpc("discard_processed_documents", {
+    _document_ids: ids,
+    _reason: reason,
+  });
 
-  if (fetchError) throw fetchError;
-
-  const rows = (docs || [])
-    .filter((d) => d.organization_id && d.doc_key && d.doc_key.length === 50)
-    .map((d) => ({
-      organization_id: d.organization_id as string,
-      doc_key: d.doc_key as string,
-      doc_number: d.doc_number,
-      issue_date: d.issue_date,
-      supplier_name: d.supplier_name,
-      reason,
-    }));
-
-  if (rows.length > 0) {
-    const { error: ignoreError } = await supabase
-      .from("ignored_documents")
-      .upsert(rows, { onConflict: "organization_id,doc_key" });
-
-    // No bloquear la eliminación si falla el registro, pero dejar constancia.
-    if (ignoreError) {
-      console.error("⚠️ No se pudo registrar la exclusión permanente:", ignoreError);
-    }
-  }
-
-  const { error: deleteError } = await supabase
-    .from("processed_documents")
-    .delete()
-    .in("id", ids);
-
-  if (deleteError) throw deleteError;
+  if (error) throw error;
 }

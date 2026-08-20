@@ -724,12 +724,26 @@ const imapHost = credentials.imap_host || "mail.cemsacr.com";
             continue;
           }
 
-          const { data: existing } = await supabase
-            .from("processed_documents")
-            .select("id, status, pdf_attachment_url")
-            .eq("doc_key", docKey)
-            .eq("organization_id", organization_id)
-            .maybeSingle();
+          const [{ data: existing }, { data: ignoredDoc }] = await Promise.all([
+            supabase
+              .from("processed_documents")
+              .select("id, status, pdf_attachment_url")
+              .eq("doc_key", docKey)
+              .eq("organization_id", organization_id)
+              .maybeSingle(),
+            supabase
+              .from("ignored_documents")
+              .select("id")
+              .eq("doc_key", docKey)
+              .eq("organization_id", organization_id)
+              .maybeSingle(),
+          ]);
+
+          if (ignoredDoc) {
+            console.log(`[Bluehost] Document ${docKey} was permanently discarded, skipping`);
+            skippedInvoices.push({ doc_key: docKey, reason: "ignored_by_user" });
+            continue;
+          }
 
           if (existing && !force_resync) {
             const matchedPdf = pdfMatches.get(xmlAttachment.filename);

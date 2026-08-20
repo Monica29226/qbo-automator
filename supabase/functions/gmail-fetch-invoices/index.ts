@@ -666,12 +666,29 @@ serve(async (req) => {
               // be retried normally.
               const claveForDedup = parseClaveFromXml(xmlContent);
               if (claveForDedup) {
-                const { data: existingDoc } = await supabase
-                  .from("processed_documents")
-                  .select("id")
-                  .eq("organization_id", organization_id)
-                  .eq("doc_key", claveForDedup)
-                  .maybeSingle();
+                const [{ data: existingDoc }, { data: ignoredDoc }] = await Promise.all([
+                  supabase
+                    .from("processed_documents")
+                    .select("id")
+                    .eq("organization_id", organization_id)
+                    .eq("doc_key", claveForDedup)
+                    .maybeSingle(),
+                  supabase
+                    .from("ignored_documents")
+                    .select("id")
+                    .eq("organization_id", organization_id)
+                    .eq("doc_key", claveForDedup)
+                    .maybeSingle(),
+                ]);
+                if (ignoredDoc) {
+                  console.log(`🚫 Clave descartada permanentemente, omitiendo descarga: ${claveForDedup}`);
+                  skippedInvoices.push({
+                    filename: xmlPart.filename,
+                    reason: "ignored_by_user",
+                    doc_key: claveForDedup,
+                  });
+                  continue;
+                }
                 if (existingDoc) {
                   console.log(`⏭️ Ya existe en processed_documents (Clave ${claveForDedup}), omitiendo descarga: ${xmlPart.filename}`);
                   skippedInvoices.push({

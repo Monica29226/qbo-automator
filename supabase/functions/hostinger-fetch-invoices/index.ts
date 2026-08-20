@@ -752,12 +752,26 @@ serve(async (req) => {
             const clave = claveMatch[1];
 
             // Check if already processed
-            const { data: existingDoc } = await supabase
-              .from("processed_documents")
-              .select("id")
-              .eq("doc_key", clave)
-              .eq("organization_id", organization_id)
-              .maybeSingle();
+            const [{ data: existingDoc }, { data: ignoredDoc }] = await Promise.all([
+              supabase
+                .from("processed_documents")
+                .select("id")
+                .eq("doc_key", clave)
+                .eq("organization_id", organization_id)
+                .maybeSingle(),
+              supabase
+                .from("ignored_documents")
+                .select("id")
+                .eq("doc_key", clave)
+                .eq("organization_id", organization_id)
+                .maybeSingle(),
+            ]);
+
+            if (ignoredDoc) {
+              console.log(`[Hostinger] Document ${clave} was permanently discarded, skipping`);
+              skippedInvoices.push({ doc_key: clave, filename: xml.filename, reason: "ignored_by_user" });
+              continue;
+            }
 
             if (existingDoc && !force_resync) {
               console.log(`[Hostinger] Document ${clave} already exists, skipping`);
