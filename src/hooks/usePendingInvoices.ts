@@ -214,17 +214,13 @@ export const usePendingInvoices = (vendorDefaults: Map<string, VendorDefault>) =
     },
   });
 
-  // Mutation para eliminar factura
+  // Mutation para eliminar factura (queda excluida para no reimportarse)
   const deleteInvoiceMutation = useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await supabase
-        .from("processed_documents")
-        .delete()
-        .eq("id", id);
-      
-      if (error) throw error;
+      await discardDocuments([id]);
       return id;
     },
+
     onMutate: async (id) => {
       await queryClient.cancelQueries({ queryKey: ["pending-invoices", activeOrganization] });
       const previousInvoices = queryClient.getQueryData<PendingInvoice[]>(
