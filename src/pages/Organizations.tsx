@@ -184,8 +184,8 @@ const Organizations = () => {
     if (!number) return null;
     const clean = number.replace(/[-\s]/g, "");
     if (type === "juridica") {
-      if (!/^[234]\d{9}$/.test(clean)) {
-        return "La cédula jurídica debe tener 10 dígitos y empezar con 2, 3 o 4";
+      if (!/^\d{10}$/.test(clean)) {
+        return "La cédula jurídica debe tener 10 dígitos (ejemplo: 3-101-123456)";
       }
     } else if (type === "fisica") {
       if (!/^\d{9}$/.test(clean)) return "La cédula física debe tener 9 dígitos";
