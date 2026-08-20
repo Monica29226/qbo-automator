@@ -89,7 +89,10 @@ Deno.serve(async (req) => {
 
     const grouped = new Map<string, typeof candidates>();
     for (const entity of candidates) {
-      const key = `${entity.entity_type}|${entity.DocNumber}|${entity.VendorRef?.value || ""}|${Math.abs(Number(entity.TotalAmt || 0)).toFixed(2)}`;
+      // A real duplicate can carry a different QBO total when a prior buggy
+      // publication recalculated IVA. Group by type + full consecutive +
+      // vendor, then expose every amount for comparison with the XML.
+      const key = `${entity.entity_type}|${entity.DocNumber}|${entity.VendorRef?.value || ""}`;
       const group = grouped.get(key) || [];
       group.push(entity);
       grouped.set(key, group);
@@ -106,12 +109,13 @@ Deno.serve(async (req) => {
           entity_type: first.entity_type,
           vendor_id: first.VendorRef?.value || null,
           vendor_name: first.VendorRef?.name || null,
-          total_amount: Math.abs(Number(first.TotalAmt || 0)),
+          qbo_totals: group.map((entity) => Math.abs(Number(entity.TotalAmt || 0))),
           qbo_ids: group.map((entity) => entity.Id),
           qbo_dates: group.map((entity) => entity.TxnDate),
           tracked_qbo_id: trackedId,
           suggested_keep_id: trackedId && group.some((entity) => entity.Id === trackedId) ? trackedId : group[0].Id,
           document_keys: matchingDocuments.map((doc) => doc.doc_key),
+          xml_totals: matchingDocuments.map((doc) => Math.abs(Number(doc.total_amount || 0))),
         };
       });
 
