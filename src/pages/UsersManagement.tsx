@@ -96,7 +96,7 @@ const validateCedulaFisica = (cedula: string): boolean => {
 
 const validateCedulaJuridica = (cedula: string): boolean => {
   const digits = cedula.replace(/\D/g, "");
-  return digits.length >= 9 && digits.length <= 10 && digits.startsWith("3");
+  return digits.length === 10;
 };
 
 const UsersManagement = () => {
