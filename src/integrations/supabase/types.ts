@@ -2007,6 +2007,69 @@ export type Database = {
         Args: { _org_id: string; _user_id: string }
         Returns: boolean
       }
+      claim_documents_for_qbo_publish: {
+        Args: {
+          _document_ids?: string[]
+          _limit?: number
+          _min_issue_date?: string
+          _organization_id: string
+        }
+        Returns: {
+          created_at: string
+          currency: string
+          default_account_ref: string | null
+          default_class_ref: string | null
+          doc_key: string
+          doc_number: string
+          doc_type: string
+          error_message: string | null
+          exchange_rate: number | null
+          file_path: string | null
+          google_drive_pdf_id: string | null
+          google_drive_uploaded_at: string | null
+          google_drive_xml_id: string | null
+          id: string
+          issue_date: string
+          organization_id: string | null
+          paid_at: string | null
+          paid_by: string | null
+          payment_method: string | null
+          payment_proof_drive_id: string | null
+          payment_proof_url: string | null
+          payment_reference: string | null
+          payment_status: string
+          pdf_attachment_url: string | null
+          processed_at: string | null
+          processed_by: string | null
+          qbo_entity_id: string | null
+          qbo_entity_type: string | null
+          retry_count: number | null
+          sharepoint_error: string | null
+          sharepoint_pdf_id: string | null
+          sharepoint_retry_count: number
+          sharepoint_status: string | null
+          sharepoint_uploaded_at: string | null
+          sharepoint_xml_id: string | null
+          status: string
+          supplier_email: string | null
+          supplier_name: string
+          supplier_tax_id: string | null
+          total_amount: number
+          total_discount: number | null
+          total_tax: number | null
+          updated_at: string
+          uses_tax: boolean | null
+          vendor_id: string | null
+          xml_attachment_url: string | null
+          xml_data: Json | null
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "processed_documents"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
       count_published_without_tracking: {
         Args: { p_org: string }
         Returns: number
