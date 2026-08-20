@@ -55,6 +55,7 @@ import { PdfViewer } from "@/components/PdfViewer";
 import { useQBOAccounts } from "@/hooks/useQBOAccounts";
 import { useDebounce } from "@/hooks/useDebounce";
 import { usePendingInvoicesOptimized, useVendorDefaults } from "@/hooks/usePendingInvoicesOptimized";
+import { discardDocuments } from "@/lib/discardInvoices";
 
 interface QBOAccount {
   id: string;
@@ -588,20 +589,13 @@ const InvoicesPendingLog = () => {
   const handleDeleteInvoice = async (id: string) => {
     try {
       setFilteredInvoices((prev) => prev.filter((inv) => inv.id !== id));
-      
-      const { error } = await supabase
-        .from("processed_documents")
-        .delete()
-        .eq("id", id);
 
-      if (error) {
-        invalidateInvoices();
-        throw error;
-      }
+      await discardDocuments([id]);
 
-      toast.success("Factura eliminada");
+      toast.success("Factura eliminada y marcada para no reimportarse");
     } catch (error: any) {
       console.error("Error deleting invoice:", error);
+      invalidateInvoices();
       toast.error("Error al eliminar factura");
     }
   };
@@ -617,26 +611,22 @@ const InvoicesPendingLog = () => {
       setFilteredInvoices((prev) => prev.filter((inv) => !selectedIds.has(inv.id)));
       setSelectedIds(new Set());
       setShowBulkDeleteDialog(false);
-      
-      const { error } = await supabase
-        .from("processed_documents")
-        .delete()
-        .in("id", idsToDelete);
 
-      if (error) {
-        invalidateInvoices();
-        throw error;
-      }
+      await discardDocuments(idsToDelete);
 
-      toast.success(`✓ ${idsToDelete.length} factura(s) eliminada(s)`);
+      toast.success(
+        `✓ ${idsToDelete.length} factura(s) eliminada(s) y marcadas para no reimportarse`
+      );
       invalidateInvoices();
     } catch (error: any) {
       console.error("Error en eliminación masiva:", error);
+      invalidateInvoices();
       toast.error(`Error al eliminar: ${error.message || "Error desconocido"}`);
     } finally {
       setIsBulkDeleting(false);
     }
   };
+
 
   const handlePublishSingle = async (id: string) => {
     setPublishingIds((prev) => new Set(prev).add(id));

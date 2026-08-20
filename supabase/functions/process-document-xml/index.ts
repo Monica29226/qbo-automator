@@ -574,11 +574,61 @@ Deno.serve(async (req) => {
     });
 
     // ============================================================
+    // IGNORE LIST: claves descartadas por el usuario NUNCA se reimportan
+    // ============================================================
+    if (doc_key && doc_key.length === 50) {
+      const { data: ignored } = await supabase
+        .from('ignored_documents')
+        .select('id, reason')
+        .eq('organization_id', payload.organization_id)
+        .eq('doc_key', doc_key)
+        .maybeSingle();
+
+      if (ignored) {
+        console.log(`🚫 IGNORADO por decisión del usuario: ${doc_number} (${ignored.reason})`);
+        return new Response(
+          JSON.stringify({
+            success: false,
+            message: `Documento descartado previamente por el usuario: ${doc_number} de ${supplier_name}`,
+            reason: 'ignored_by_user'
+          }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+    }
+
+    // ============================================================
+    // FECHA DE CORTE POR EMPRESA: no importar comprobantes emitidos antes
+    // ============================================================
+    {
+      const { data: minDateSetting } = await supabase
+        .from('system_settings')
+        .select('value')
+        .eq('organization_id', payload.organization_id)
+        .eq('key', 'validation_min_date')
+        .maybeSingle();
+
+      const minDate = minDateSetting?.value?.trim();
+      if (minDate && issue_date && issue_date < minDate) {
+        console.log(`⛔ Fuera de la fecha de corte (${minDate}): ${doc_number} emitido ${issue_date}`);
+        return new Response(
+          JSON.stringify({
+            success: false,
+            message: `Comprobante emitido el ${issue_date}, anterior a la fecha de corte de la empresa (${minDate}). No se importa.`,
+            reason: 'before_min_issue_date'
+          }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+    }
+
+    // ============================================================
     // DUPLICATE DETECTION: Use doc_key (50-char Clave) as THE ONLY truly unique identifier
     // CRITICAL: Same doc_number CAN exist from different vendors - NOT a duplicate!
     // ============================================================
     
     console.log(`🔍 [DUPLICATE CHECK] doc_key: ${doc_key?.substring(0, 20)}... | doc_number: ${doc_number} | vendor: ${supplier_name} (${supplier_tax_id})`);
+    
     
     // FIRST: Check by doc_key (the ONLY truly unique identifier for Costa Rican invoices)
     if (doc_key && doc_key.length === 50) {
