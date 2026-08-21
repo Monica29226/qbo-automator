@@ -3245,7 +3245,7 @@ Deno.serve(async (req) => {
         // user to delete in QBO and republish cleanly.
         // =============================================================
         const _discrepancyMsg: string | null = (doc as any).__discrepancyMsg || null;
-        await supabase
+        const { error: _docUpdateErr } = await supabase
           .from("processed_documents")
           .update({
             qbo_entity_id: entityId,
@@ -3257,6 +3257,24 @@ Deno.serve(async (req) => {
             error_message: _discrepancyMsg,
           })
           .eq("id", doc.id);
+        if (_docUpdateErr) {
+          // CRITICAL: the entity exists in QBO but the row could not be marked.
+          // Retry with the minimum set of columns and log loudly; never stay silent.
+          logError(`❌ ${doc.doc_number}: no se pudo marcar como publicado (${_docUpdateErr.message}). Reintentando con campos mínimos.`);
+          const { error: _retryErr } = await supabase
+            .from("processed_documents")
+            .update({
+              qbo_entity_id: entityId,
+              qbo_entity_type: entityType,
+              status: _discrepancyMsg ? "review" : "published",
+              error_message: _discrepancyMsg,
+            })
+            .eq("id", doc.id);
+          if (_retryErr) {
+            logError(`❌ ${doc.doc_number}: fallo persistente al marcar publicado: ${_retryErr.message}`);
+          }
+        }
+
 
         // Attach PDF to QuickBooks Bill - AWAIT to ensure it completes before function terminates
         if (doc.pdf_attachment_url && entityId) {

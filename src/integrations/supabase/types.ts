@@ -1271,6 +1271,7 @@ export type Database = {
           processed_by: string | null
           qbo_entity_id: string | null
           qbo_entity_type: string | null
+          qbo_realm_id: string | null
           retry_count: number | null
           sharepoint_error: string | null
           sharepoint_pdf_id: string | null
@@ -1320,6 +1321,7 @@ export type Database = {
           processed_by?: string | null
           qbo_entity_id?: string | null
           qbo_entity_type?: string | null
+          qbo_realm_id?: string | null
           retry_count?: number | null
           sharepoint_error?: string | null
           sharepoint_pdf_id?: string | null
@@ -1369,6 +1371,7 @@ export type Database = {
           processed_by?: string | null
           qbo_entity_id?: string | null
           qbo_entity_type?: string | null
+          qbo_realm_id?: string | null
           retry_count?: number | null
           sharepoint_error?: string | null
           sharepoint_pdf_id?: string | null
@@ -2087,6 +2090,7 @@ export type Database = {
           processed_by: string | null
           qbo_entity_id: string | null
           qbo_entity_type: string | null
+          qbo_realm_id: string | null
           retry_count: number | null
           sharepoint_error: string | null
           sharepoint_pdf_id: string | null
