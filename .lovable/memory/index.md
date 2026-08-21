@@ -34,6 +34,8 @@
 - [Vendor Normalization](mem://features/vendor-name-normalization-critical-for-matching) — Aggressive normalization (lowercase, no accents/symbols) for consistent matching
 - [Batch Publish Specs](mem://quickbooks/batch-publish-all-function-specifications) — 15 concurrent, 25s timeout, validate totals, attach PDF
 - [Orphaned Invoices Limbo](mem://architecture/orphaned-invoices-processed-limbo-critical) — Detect and recover processed invoices missing qbo_entity_id
+- [Publish Update Never Silent](mem://quickbooks/publish-doc-update-must-not-fail-silently) — qbo_realm_id debe existir en processed_documents; toda marca de publicado revisa error y reintenta
+
 - [Success Feedback](mem://batch-import/success-feedback-must-indicate-actual-quickbooks-publication) — Only show success if QBO entity ID is confirmed
 - [Strict Deduplication](mem://quickbooks/strict-deduplication-tracking-table) — Tracking table enforces org_id + doc_key uniqueness
 - [Otros Cargos Support](mem://features/xml-otros-cargos-support) — Extract and add OtrosCargos as separate line items
