@@ -539,11 +539,26 @@ serve(async (req) => {
       }
     };
 
+    // Aplicar tanda reanudable: procesar solo el tramo pendiente de la lista.
+    const totalListed = messages.length;
+    let batchStart = 0;
+    if (useResumeCursor) {
+      if (resumeCursor >= totalListed) {
+        // La lista se agotó (o encogió): reiniciar el cursor y volver al inicio.
+        console.log(`🔄 Cursor (${resumeCursor}) fuera de la lista (${totalListed}); reiniciando a 0`);
+        resumeCursor = 0;
+      }
+      batchStart = resumeCursor;
+      messages = messages.slice(batchStart, batchStart + GMAIL_BATCH_SIZE);
+    }
+    let messagesConsumed = 0;
+
     // Procesar mensajes con límite de tiempo
     const messageLimit = messages.length;
-    console.log(`Processing up to ${messageLimit} messages (max execution time: ${MAX_EXECUTION_TIME_MS / 1000}s)`);
+    console.log(`Processing up to ${messageLimit} messages (offset ${batchStart} de ${totalListed}, max execution time: ${MAX_EXECUTION_TIME_MS / 1000}s)`);
     
     for (const message of messages.slice(0, messageLimit)) {
+
       // ============================================================
       // VERIFICAR LÍMITE DE TIEMPO ANTES DE PROCESAR CADA MENSAJE
       // ============================================================
