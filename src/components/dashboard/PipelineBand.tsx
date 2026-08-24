@@ -35,7 +35,7 @@ export function PipelineBand({ organizationId }: PipelineBandProps) {
       const [receivedRes, docsRes, reviewRes, syncedRes] = await Promise.all([
         supabase
           .from("sync_logs")
-          .select("emails_found", { count: "exact", head: false })
+          .select("gmail_fetched")
           .eq("organization_id", organizationId!)
           .gte("started_at", startIso),
         supabase
