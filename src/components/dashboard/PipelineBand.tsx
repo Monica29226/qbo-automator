@@ -59,7 +59,7 @@ export function PipelineBand({ organizationId }: PipelineBandProps) {
       ]);
 
       const received =
-        (receivedRes.data ?? []).reduce((acc, row: any) => acc + (row.emails_found ?? 0), 0) ||
+        (receivedRes.data ?? []).reduce((acc, row: any) => acc + (row.gmail_fetched ?? 0), 0) ||
         docsRes.count ||
         0;
       const extracted = docsRes.count ?? 0;
