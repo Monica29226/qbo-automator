@@ -154,7 +154,7 @@ serve(async (req) => {
         }
 
         // Optional: send critical email (anti-spam 2h) — kept as before.
-        const criticalIssues = issues.filter((i) => i.type === "critical");
+
         if (criticalIssues.length > 0) {
           const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
           const { data: recentEmailAlert } = await supabase
