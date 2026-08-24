@@ -382,6 +382,8 @@ const Integrations = () => {
   };
 
   const handleOutlookOAuth = async () => {
+    if (isConnecting) return;
+
     if (!activeOrganization) {
       toast.error("No hay organización activa");
       return;
@@ -402,8 +404,14 @@ const Integrations = () => {
       return;
     }
 
+    setIsConnecting(true);
+    setOutlookError(null);
+
     try {
-      popup.document.write("<p style='font-family:sans-serif;padding:20px'>Cargando autorización de Outlook…</p>");
+      popup.document.open();
+      popup.document.write("<!doctype html><html><head><title>Conectar Microsoft</title></head><body><p style='font-family:sans-serif;padding:20px'>Cargando autorización de Microsoft…</p></body></html>");
+      popup.document.close();
+      popup.focus();
     } catch {}
 
     toast.info("Iniciando conexión con Outlook...");
@@ -419,6 +427,7 @@ const Integrations = () => {
       const state = btoa(JSON.stringify({
         organization_id: activeOrganization,
         user_id: user.id,
+        origin: window.location.origin,
       }));
 
       const { data, error } = await supabase.functions.invoke("outlook-oauth-init", {
@@ -442,17 +451,44 @@ const Integrations = () => {
         return;
       }
 
-      popup.location.href = data.authUrl;
+      const authUrl = String(data.authUrl);
+      const safeAuthUrl = authUrl
+        .replace(/&/g, "&amp;")
+        .replace(/"/g, "&quot;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
 
+      // Keep a clickable fallback inside the user-opened window. Some browsers allow
+      // creating about:blank but silently block a later scripted cross-origin navigation.
+      try {
+        popup.document.open();
+        popup.document.write(`<!doctype html><html><head><title>Conectar Microsoft</title></head><body style="font-family:sans-serif;padding:24px"><p>Abriendo Microsoft…</p><p><a href="${safeAuthUrl}">Continuar con Microsoft</a></p></body></html>`);
+        popup.document.close();
+        popup.location.replace(authUrl);
+        popup.focus();
+      } catch (navigationError) {
+        console.error("Microsoft popup navigation failed:", navigationError);
+        setOutlookError({
+          code: "popup_navigation",
+          message: "El navegador bloqueó la redirección automática. Use «Continuar con Microsoft» en la ventana que se abrió.",
+        });
+        toast.error("El navegador bloqueó la redirección. Use «Continuar con Microsoft» en la ventana abierta.", { duration: 12000 });
+      }
+
+      let oauthCompleted = false;
       const messageHandler = (event: MessageEvent) => {
         if (event.data?.type === "outlook-connected") {
+          oauthCompleted = true;
           setOutlookError(null);
+          setIsConnecting(false);
           toast.success(`Outlook conectado: ${event.data.email}`);
           setIsDialogOpen(false);
           fetchData();
           window.dispatchEvent(new CustomEvent("integrations:updated"));
           window.removeEventListener("message", messageHandler);
         } else if (event.data?.type === "outlook-error") {
+          oauthCompleted = true;
+          setIsConnecting(false);
           setOutlookError({ code: event.data.code || "oauth_error", message: event.data.message || "Error desconocido" });
           toast.error(`OAuth de Outlook falló: ${event.data.message || event.data.code}`, { duration: 10000 });
           window.removeEventListener("message", messageHandler);
@@ -464,16 +500,27 @@ const Integrations = () => {
         if (popup.closed) {
           clearInterval(checkPopup);
           window.removeEventListener("message", messageHandler);
-          setTimeout(() => {
-            fetchData();
-            setIsDialogOpen(false);
-          }, 500);
+          setIsConnecting(false);
+          if (!oauthCompleted) {
+            toast.info("La conexión no se completó. Puede reintentarlo cuando esté listo.");
+          }
         }
       }, 500);
+
+      window.setTimeout(() => {
+        if (!oauthCompleted && !popup.closed) {
+          setIsConnecting(false);
+          setOutlookError({
+            code: "oauth_timeout",
+            message: "Microsoft todavía no confirmó la conexión. Termine la autorización en la ventana abierta o vuelva a intentarlo.",
+          });
+        }
+      }, 120000);
     } catch (error) {
       console.error("Error starting Outlook OAuth:", error);
       popup.close();
       toast.error("Error al iniciar conexión con Outlook: " + (error instanceof Error ? error.message : "Error desconocido"));
+      setIsConnecting(false);
     }
   };
 
@@ -1131,7 +1178,6 @@ const Integrations = () => {
             </Button>
             <Button 
               onClick={(e) => {
-                console.log("🔴 BUTTON CLICKED - selectedService:", selectedService);
                 e.preventDefault();
                 e.stopPropagation();
                 handleAddAccount();
