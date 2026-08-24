@@ -181,13 +181,19 @@ Deno.serve(async (req) => {
     console.log(`✅ Organization created with ID: ${orgId}`);
 
     // 2. Add user as owner
+    // El trigger on_organization_created_grant_admins ya inserta a los admins globales,
+    // así que hay que hacer upsert para no chocar con la fila existente.
     const { error: memberError } = await supabaseAdmin
       .from("organization_members")
-      .insert({
-        organization_id: orgId,
-        user_id: user.id,
-        role: "owner",
-      });
+      .upsert(
+        {
+          organization_id: orgId,
+          user_id: user.id,
+          role: "owner",
+          is_active: true,
+        },
+        { onConflict: "organization_id,user_id" }
+      );
 
     if (memberError) {
       console.error("❌ Error adding member:", memberError);
