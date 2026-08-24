@@ -332,6 +332,35 @@ serve(async (req) => {
       ? globalCapSetting
       : (force_resync ? 2000 : 1000);
 
+    // ============================================================
+    // TANDAS REANUDABLES (evita WORKER_RESOURCE_LIMIT / 546)
+    // Solo aplica al camino automático (sin período, sin búsqueda puntual).
+    // El cursor guarda cuántos mensajes de la lista ya se drenaron.
+    // ============================================================
+    const batchSizeSetting = parseInt(settings?.find(s => s.key === "gmail_batch_size")?.value || "", 10);
+    const GMAIL_BATCH_SIZE = Number.isFinite(batchSizeSetting) && batchSizeSetting > 0
+      ? batchSizeSetting
+      : 150;
+    const useResumeCursor = !requestedPeriod && !search_term && !force_resync;
+    const cursorKey = `gmail_resume_cursor_${organization_id}`;
+    let resumeCursor = 0;
+    if (useResumeCursor) {
+      const { data: cursorRow } = await supabase
+        .from("system_settings")
+        .select("value")
+        .eq("organization_id", organization_id)
+        .eq("key", cursorKey)
+        .maybeSingle();
+      const parsed = parseInt(String(cursorRow?.value ?? ""), 10);
+      if (Number.isFinite(parsed) && parsed > 0) resumeCursor = parsed;
+      console.log(`🔖 Cursor de reanudación Gmail: ${resumeCursor} (tanda de ${GMAIL_BATCH_SIZE})`);
+    }
+    // Solo paginamos lo necesario para cubrir cursor + tanda actual.
+    const paginationCap = useResumeCursor
+      ? Math.min(GLOBAL_CAP, resumeCursor + GMAIL_BATCH_SIZE)
+      : GLOBAL_CAP;
+
+
     const fetchPage = async (pageToken?: string): Promise<Response> => {
       const url = new URL("https://gmail.googleapis.com/gmail/v1/users/me/messages");
       url.searchParams.set("q", mailQuery);
@@ -388,11 +417,12 @@ serve(async (req) => {
 
       console.log(`📄 Gmail page ${pageCount}: +${pageMessages.length} messages (total: ${messages.length}, nextPageToken: ${nextPageToken ? "yes" : "no"})`);
 
-      if (messages.length >= GLOBAL_CAP) {
-        console.log(`🛑 Global cap of ${GLOBAL_CAP} reached, stopping pagination`);
-        messages = messages.slice(0, GLOBAL_CAP);
+      if (messages.length >= paginationCap) {
+        console.log(`🛑 Cap de paginación (${paginationCap}) alcanzado, deteniendo`);
+        messages = messages.slice(0, paginationCap);
         break;
       }
+
     } while (nextPageToken);
 
     console.log(`Found ${messages.length} messages across ${pageCount} page(s) matching query: ${mailQuery}`);
@@ -509,11 +539,26 @@ serve(async (req) => {
       }
     };
 
+    // Aplicar tanda reanudable: procesar solo el tramo pendiente de la lista.
+    const totalListed = messages.length;
+    let batchStart = 0;
+    if (useResumeCursor) {
+      if (resumeCursor >= totalListed) {
+        // La lista se agotó (o encogió): reiniciar el cursor y volver al inicio.
+        console.log(`🔄 Cursor (${resumeCursor}) fuera de la lista (${totalListed}); reiniciando a 0`);
+        resumeCursor = 0;
+      }
+      batchStart = resumeCursor;
+      messages = messages.slice(batchStart, batchStart + GMAIL_BATCH_SIZE);
+    }
+    let messagesConsumed = 0;
+
     // Procesar mensajes con límite de tiempo
     const messageLimit = messages.length;
-    console.log(`Processing up to ${messageLimit} messages (max execution time: ${MAX_EXECUTION_TIME_MS / 1000}s)`);
+    console.log(`Processing up to ${messageLimit} messages (offset ${batchStart} de ${totalListed}, max execution time: ${MAX_EXECUTION_TIME_MS / 1000}s)`);
     
     for (const message of messages.slice(0, messageLimit)) {
+
       // ============================================================
       // VERIFICAR LÍMITE DE TIEMPO ANTES DE PROCESAR CADA MENSAJE
       // ============================================================
@@ -860,11 +905,40 @@ serve(async (req) => {
       } catch (error) {
         console.error(`Error processing message ${message.id}:`, error);
       }
+      messagesConsumed++;
     }
 
     const totalExecutionTime = Date.now() - executionStartTime;
     const status = wasTimeLimitReached ? "partial" : "success";
-    
+
+    // ============================================================
+    // AVANZAR EL CURSOR SOLO POR LO REALMENTE DRENADO
+    // ============================================================
+    let backlogPending = false;
+    if (useResumeCursor) {
+      const newCursor = batchStart + messagesConsumed;
+      const moreInList = newCursor < totalListed;
+      const moreInMailbox = !!nextPageToken;
+      backlogPending = moreInList || moreInMailbox;
+      const cursorValue = backlogPending ? newCursor : 0;
+      const { error: cursorError } = await supabase
+        .from("system_settings")
+        .upsert(
+          {
+            organization_id,
+            key: cursorKey,
+            value: String(cursorValue),
+            description: "Cursor de reanudación para la importación de Gmail por tandas",
+          },
+          { onConflict: "organization_id,key" }
+        );
+      if (cursorError) {
+        console.error("⚠️ No se pudo guardar el cursor de Gmail:", cursorError);
+      } else {
+        console.log(`🔖 Cursor Gmail actualizado a ${cursorValue} (backlog_pending=${backlogPending})`);
+      }
+    }
+
     console.log(`📊 Summary [${status}]: ${processedInvoices.length} processed, ${skippedInvoices.length} skipped, ${errors.length} errors. Time: ${(totalExecutionTime / 1000).toFixed(1)}s`);
     if (requestedPeriod) {
       console.log(`📅 XML period ${requestedPeriod}: ${messagesInRequestedPeriod.size} mensajes con XML dentro del período, ${filteredByXmlDateCount} XML fuera del período`);
@@ -888,8 +962,13 @@ serve(async (req) => {
         skipped: skippedInvoices.length > 0 ? skippedInvoices : undefined,
         errors: errors.length > 0 ? errors : undefined,
         time_limit_reached: wasTimeLimitReached,
+        batch_size: useResumeCursor ? GMAIL_BATCH_SIZE : null,
+        batch_offset: batchStart,
+        processed_count: messagesConsumed,
+        backlog_pending: backlogPending,
         execution_time_ms: totalExecutionTime,
       }),
+
       {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
         status: 200,

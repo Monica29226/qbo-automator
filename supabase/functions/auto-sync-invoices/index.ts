@@ -332,6 +332,30 @@ async function processOrganization(
           };
         }
 
+        // Límite de recursos / timeout del worker: NO es un fallo definitivo de la empresa.
+        // Se registra como parcial y la próxima corrida continúa desde el cursor.
+        if (emailResponse.status === 546 || emailResponse.status === 504) {
+          console.warn(`⚠️ ${mailProvider} alcanzó el límite de recursos (${emailResponse.status}) en ${org.name}; se reintentará en la próxima corrida`);
+          if (syncLog) {
+            await supabase.from("sync_logs").update({
+              status: "partial",
+              error_message: `Importación parcial en ${mailProvider}: límite de recursos del worker`,
+              error_detail: errorDetail,
+              error_code: emailResponse.status === 546 ? "WORKER_RESOURCE_LIMIT" : "WORKER_TIMEOUT",
+              completed_at: new Date().toISOString(),
+              execution_time_ms: Date.now() - syncStartTime,
+            }).eq("id", syncLog.id);
+          }
+
+          return {
+            organization_id: org.id,
+            organization_name: org.name,
+            status: "partial",
+            error_code: emailResponse.status === 546 ? "WORKER_RESOURCE_LIMIT" : "WORKER_TIMEOUT",
+            backlog_pending: true,
+          };
+        }
+
         throw new Error(`${mailProvider} fetch failed (${emailResponse.status}): ${errorDetail}`);
       }
 
@@ -382,11 +406,18 @@ async function processOrganization(
         aggregatedEmailData.cursor_stalled = true;
         console.warn(`⚠️ ${mailProvider} cursor made no progress for ${org.name}; retrying from skip_count=${skipCount} next cron`);
         continueFetching = false;
+      } else if (chunk.backlog_pending === true) {
+        // Gmail por tandas: queda correo pendiente, se retoma en la próxima corrida.
+        aggregatedEmailData.status = "partial";
+        aggregatedEmailData.time_limit_reached = true;
+        console.log(`📬 ${mailProvider}: quedan mensajes pendientes para ${org.name} (offset ${chunk.batch_offset ?? 0}); se retoma en la próxima corrida`);
+        continueFetching = false;
       } else {
         aggregatedEmailData.status = chunk.status || (chunk.partial ? "partial" : "complete");
         aggregatedEmailData.time_limit_reached = Boolean(chunk.time_limit_reached || chunk.partial);
         continueFetching = false;
       }
+
     }
 
     if (continueFetching && iteration >= maxIterations) {
