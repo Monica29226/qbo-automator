@@ -702,7 +702,7 @@ const Integrations = () => {
     },
     {
       id: "outlook",
-      name: "Outlook / Microsoft 365",
+      name: "Outlook / Hotmail / Microsoft 365",
       icon: Mail,
       connected: orgData?.outlook_connected || false,
       accounts: accounts.filter((a) => a.service_type === "outlook" || a.service_type === "outlook_imap"),
