@@ -332,6 +332,35 @@ serve(async (req) => {
       ? globalCapSetting
       : (force_resync ? 2000 : 1000);
 
+    // ============================================================
+    // TANDAS REANUDABLES (evita WORKER_RESOURCE_LIMIT / 546)
+    // Solo aplica al camino automático (sin período, sin búsqueda puntual).
+    // El cursor guarda cuántos mensajes de la lista ya se drenaron.
+    // ============================================================
+    const batchSizeSetting = parseInt(settings?.find(s => s.key === "gmail_batch_size")?.value || "", 10);
+    const GMAIL_BATCH_SIZE = Number.isFinite(batchSizeSetting) && batchSizeSetting > 0
+      ? batchSizeSetting
+      : 150;
+    const useResumeCursor = !requestedPeriod && !search_term && !force_resync;
+    const cursorKey = `gmail_resume_cursor_${organization_id}`;
+    let resumeCursor = 0;
+    if (useResumeCursor) {
+      const { data: cursorRow } = await supabase
+        .from("system_settings")
+        .select("value")
+        .eq("organization_id", organization_id)
+        .eq("key", cursorKey)
+        .maybeSingle();
+      const parsed = parseInt(String(cursorRow?.value ?? ""), 10);
+      if (Number.isFinite(parsed) && parsed > 0) resumeCursor = parsed;
+      console.log(`🔖 Cursor de reanudación Gmail: ${resumeCursor} (tanda de ${GMAIL_BATCH_SIZE})`);
+    }
+    // Solo paginamos lo necesario para cubrir cursor + tanda actual.
+    const paginationCap = useResumeCursor
+      ? Math.min(GLOBAL_CAP, resumeCursor + GMAIL_BATCH_SIZE)
+      : GLOBAL_CAP;
+
+
     const fetchPage = async (pageToken?: string): Promise<Response> => {
       const url = new URL("https://gmail.googleapis.com/gmail/v1/users/me/messages");
       url.searchParams.set("q", mailQuery);
