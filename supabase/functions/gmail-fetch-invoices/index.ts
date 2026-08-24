@@ -417,11 +417,12 @@ serve(async (req) => {
 
       console.log(`📄 Gmail page ${pageCount}: +${pageMessages.length} messages (total: ${messages.length}, nextPageToken: ${nextPageToken ? "yes" : "no"})`);
 
-      if (messages.length >= GLOBAL_CAP) {
-        console.log(`🛑 Global cap of ${GLOBAL_CAP} reached, stopping pagination`);
-        messages = messages.slice(0, GLOBAL_CAP);
+      if (messages.length >= paginationCap) {
+        console.log(`🛑 Cap de paginación (${paginationCap}) alcanzado, deteniendo`);
+        messages = messages.slice(0, paginationCap);
         break;
       }
+
     } while (nextPageToken);
 
     console.log(`Found ${messages.length} messages across ${pageCount} page(s) matching query: ${mailQuery}`);
