@@ -67,6 +67,38 @@ Deno.serve(async (req) => {
       );
     }
 
+    // Identificación: limpiar y validar según reglas de Costa Rica
+    const ID_RULES: Record<string, { label: string; lengths: number[] }> = {
+      fisica: { label: "Cédula Física", lengths: [9] },
+      juridica: { label: "Cédula Jurídica", lengths: [10] },
+      dimex: { label: "DIMEX", lengths: [11, 12] },
+      nite: { label: "NITE", lengths: [10] },
+    };
+
+    const idType = body.identification_type || null;
+    const cleanId = body.identification_number
+      ? String(body.identification_number).replace(/\D/g, "")
+      : "";
+
+    if (cleanId) {
+      const rule = idType ? ID_RULES[idType] : null;
+      if (!rule) {
+        return new Response(
+          JSON.stringify({ error: "Seleccione un tipo de identificación válido" }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+      if (!rule.lengths.includes(cleanId.length)) {
+        return new Response(
+          JSON.stringify({
+            error: `${rule.label} debe tener ${rule.lengths.join(" o ")} dígitos (tiene ${cleanId.length}).`,
+          }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+    }
+
+
     console.log(`📝 Creating organization "${body.name}" for user ${user.id}`);
 
     // Use service role for creating organization (to bypass RLS during creation)
