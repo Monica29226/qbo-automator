@@ -152,9 +152,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       const dataPromise = Promise.all([
         supabase
           .from("organization_members")
-          .select("organization_id, role, organizations(id, name)")
+          .select("organization_id, role, organizations!inner(id, name, is_active)")
           .eq("user_id", userId)
           .eq("is_active", true)
+          .eq("organizations.is_active", true)
           .limit(50),
         supabase
           .from("user_active_organization")
