@@ -706,7 +706,7 @@ const Integrations = () => {
       icon: Mail,
       connected: orgData?.outlook_connected || false,
       accounts: accounts.filter((a) => a.service_type === "outlook" || a.service_type === "outlook_imap"),
-      description: "Recibir facturas por correo Outlook (OAuth) o Microsoft 365 vía IMAP (avanzado)",
+      description: "Recibir facturas de Outlook, Hotmail, Live o Microsoft 365. Use «Conectar con Microsoft (OAuth)» también para hotmail.com.",
     },
     {
       id: "bluehost",
