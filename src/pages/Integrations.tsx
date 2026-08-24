@@ -785,6 +785,20 @@ const Integrations = () => {
                 <AlertTitle>Falla al conectar Outlook ({outlookError.code})</AlertTitle>
                 <AlertDescription className="space-y-2">
                   <p>{outlookError.message}</p>
+                  {["AADSTS65001", "AADSTS50105", "AADSTS900971", "AADSTS90094"].includes(outlookError.code) && (
+                    <p className="text-xs">
+                      El administrador de TI de la empresa debe aprobar la aplicación una sola vez.
+                      Envíele este enlace de consentimiento:{" "}
+                      <a
+                        className="underline break-all"
+                        target="_blank"
+                        rel="noreferrer"
+                        href={`https://login.microsoftonline.com/common/adminconsent?client_id=${import.meta.env.VITE_MICROSOFT_CLIENT_ID ?? "30286b35-cb2f-498a-b035-e02b85150822"}&redirect_uri=${encodeURIComponent(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/outlook-oauth-callback`)}`}
+                      >
+                        enlace de consentimiento del administrador
+                      </a>
+                    </p>
+                  )}
                   <div className="flex gap-2 pt-1">
                     <Button size="sm" variant="outline" onClick={() => { setOutlookError(null); handleOutlookOAuth(); }}>
                       Reintentar OAuth
@@ -795,6 +809,7 @@ const Integrations = () => {
                     <Button size="sm" variant="ghost" onClick={() => setOutlookError(null)}>Cerrar</Button>
                   </div>
                 </AlertDescription>
+
               </Alert>
             )}
             {services.map((service) => (
