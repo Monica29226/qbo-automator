@@ -125,6 +125,23 @@ Deno.serve(async (req) => {
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
+    // Check for duplicate identification (tax_id)
+    if (cleanId) {
+      const { data: existingId } = await supabaseAdmin
+        .from("organizations")
+        .select("id, name")
+        .eq("tax_id", cleanId)
+        .eq("is_active", true)
+        .limit(1)
+        .maybeSingle();
+
+      if (existingId) {
+        return new Response(
+          JSON.stringify({ error: `Ya existe una empresa con esta identificación: "${existingId.name}"` }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+    }
 
     // Generate a UUID for the new organization
     const orgId = crypto.randomUUID();
@@ -135,8 +152,10 @@ Deno.serve(async (req) => {
       .insert({
         id: orgId,
         name: body.name.trim(),
-        identification_type: body.identification_type || null,
-        identification_number: body.identification_number || null,
+        tax_id: cleanId || null,
+        identification_type: idType,
+        identification_number: cleanId || null,
+
         trade_name: body.trade_name || null,
         legal_name: body.legal_name || null,
         tax_regime: body.tax_regime || null,
