@@ -905,11 +905,40 @@ serve(async (req) => {
       } catch (error) {
         console.error(`Error processing message ${message.id}:`, error);
       }
+      messagesConsumed++;
     }
 
     const totalExecutionTime = Date.now() - executionStartTime;
     const status = wasTimeLimitReached ? "partial" : "success";
-    
+
+    // ============================================================
+    // AVANZAR EL CURSOR SOLO POR LO REALMENTE DRENADO
+    // ============================================================
+    let backlogPending = false;
+    if (useResumeCursor) {
+      const newCursor = batchStart + messagesConsumed;
+      const moreInList = newCursor < totalListed;
+      const moreInMailbox = !!nextPageToken;
+      backlogPending = moreInList || moreInMailbox;
+      const cursorValue = backlogPending ? newCursor : 0;
+      const { error: cursorError } = await supabase
+        .from("system_settings")
+        .upsert(
+          {
+            organization_id,
+            key: cursorKey,
+            value: String(cursorValue),
+            description: "Cursor de reanudación para la importación de Gmail por tandas",
+          },
+          { onConflict: "organization_id,key" }
+        );
+      if (cursorError) {
+        console.error("⚠️ No se pudo guardar el cursor de Gmail:", cursorError);
+      } else {
+        console.log(`🔖 Cursor Gmail actualizado a ${cursorValue} (backlog_pending=${backlogPending})`);
+      }
+    }
+
     console.log(`📊 Summary [${status}]: ${processedInvoices.length} processed, ${skippedInvoices.length} skipped, ${errors.length} errors. Time: ${(totalExecutionTime / 1000).toFixed(1)}s`);
     if (requestedPeriod) {
       console.log(`📅 XML period ${requestedPeriod}: ${messagesInRequestedPeriod.size} mensajes con XML dentro del período, ${filteredByXmlDateCount} XML fuera del período`);
@@ -933,8 +962,13 @@ serve(async (req) => {
         skipped: skippedInvoices.length > 0 ? skippedInvoices : undefined,
         errors: errors.length > 0 ? errors : undefined,
         time_limit_reached: wasTimeLimitReached,
+        batch_size: useResumeCursor ? GMAIL_BATCH_SIZE : null,
+        batch_offset: batchStart,
+        processed_count: messagesConsumed,
+        backlog_pending: backlogPending,
         execution_time_ms: totalExecutionTime,
       }),
+
       {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
         status: 200,
