@@ -45,8 +45,9 @@ serve(async (req) => {
       "offline_access https://graph.microsoft.com/Mail.Read https://graph.microsoft.com/User.Read",
     );
     authUrl.searchParams.set("state", state);
-    // Force account picker + new consent screen to avoid silent re-use of stale tokens
-    authUrl.searchParams.set("prompt", "select_account consent");
+    // Microsoft solo acepta UN valor de prompt (login|none|consent|select_account).
+    // "select_account consent" provoca AADSTS90023.
+    authUrl.searchParams.set("prompt", "select_account");
 
     console.log("Outlook OAuth init successful, redirect URL generated");
 
