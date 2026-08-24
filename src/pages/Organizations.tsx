@@ -312,76 +312,71 @@ const Organizations = () => {
       return;
     }
 
-    setIsLoading(true);
-
-    const { data: { user } } = await supabase.auth.getUser();
-    
-    if (!user) {
-      toast.error("Usuario no autenticado");
-      setIsLoading(false);
-      return;
+    if (orgFormData.identification_number) {
+      const validationError = validateIdentification(
+        orgFormData.identification_type,
+        orgFormData.identification_number
+      );
+      if (validationError) {
+        toast.error(validationError);
+        return;
+      }
     }
 
+    setIsLoading(true);
+
     try {
-      // Paso 1: Crear organización y obtener ID usando returning
-      const { data: insertedOrgs, error: orgError } = await supabase
-        .from("organizations")
-        .insert({
+      // La creación de empresas es exclusiva del servidor (RLS bloquea INSERT desde el cliente)
+      const { data, error } = await supabase.functions.invoke("create-organization", {
+        body: {
           name: orgFormData.name,
-          tax_id: orgFormData.identification_number || orgFormData.tax_id || null,
           identification_type: orgFormData.identification_type || null,
           identification_number: orgFormData.identification_number || null,
           email: orgFormData.email || null,
-          qbo_company_id: orgFormData.qbo_company_id || null,
-          google_drive_folder_id: orgFormData.google_drive_folder_id || null,
-          google_drive_enabled: orgFormData.google_drive_enabled,
-        } as any)
-        .select('id');
+        },
+      });
 
-      if (orgError) {
-        console.error("Error creating organization:", orgError);
-        toast.error(`Error al crear organización: ${orgError.message}`);
+      if (error) {
+        console.error("Error creating organization:", error);
+        toast.error(error.message || "Error al crear la empresa");
         setIsLoading(false);
         return;
       }
 
-      if (!insertedOrgs || insertedOrgs.length === 0) {
-        toast.error("Error: No se pudo obtener el ID de la organización creada");
+      if (data?.error) {
+        toast.error(data.error);
         setIsLoading(false);
         return;
       }
 
-      const newOrgId = insertedOrgs[0].id;
-      console.log("✅ Organización creada con ID:", newOrgId);
-
-      // Paso 2: Agregar usuario actual como owner
-      const { error: memberError } = await supabase
-        .from("organization_members")
-        .insert({
-          organization_id: newOrgId,
-          user_id: user.id,
-          role: 'owner'
-        });
-
-      if (memberError) {
-        console.error("Error adding member:", memberError);
-        toast.error(`Error al configurar permisos: ${memberError.message}`);
+      const newOrgId = data?.organization_id as string | undefined;
+      if (!newOrgId) {
+        toast.error("No se pudo obtener el ID de la empresa creada");
         setIsLoading(false);
         return;
       }
 
-      console.log("✅ Usuario agregado como owner");
+      // Campos opcionales adicionales (permitidos para admins vía UPDATE)
+      if (
+        orgFormData.qbo_company_id ||
+        orgFormData.google_drive_folder_id ||
+        orgFormData.google_drive_enabled
+      ) {
+        const { error: updError } = await supabase
+          .from("organizations")
+          .update({
+            qbo_company_id: orgFormData.qbo_company_id || null,
+            google_drive_folder_id: orgFormData.google_drive_folder_id || null,
+            google_drive_enabled: orgFormData.google_drive_enabled,
+          } as any)
+          .eq("id", newOrgId);
+        if (updError) {
+          console.error("Error updating extra fields:", updError);
+          toast.warning("Empresa creada, pero no se guardaron los datos de QuickBooks/Drive");
+        }
+      }
 
-      // Paso 3: Crear configuración inicial de sistema
-      const defaultSettings = [
-        { key: 'qbo_company_id', value: '', description: 'QuickBooks Company ID', organization_id: newOrgId },
-        { key: 'mail_provider', value: 'gmail', description: 'Proveedor de correo', organization_id: newOrgId },
-        { key: 'dry_run', value: 'true', description: 'Modo prueba', organization_id: newOrgId },
-      ];
-
-      await supabase.from('system_settings').insert(defaultSettings);
-
-      toast.success("Organización creada exitosamente. Recarga la página para verla.");
+      toast.success("Empresa creada exitosamente");
       setIsDialogOpen(false);
       setOrgFormData({
         name: "",
@@ -393,6 +388,7 @@ const Organizations = () => {
         google_drive_folder_id: "",
         google_drive_enabled: false,
       });
+      fetchOrgData();
     } catch (err: any) {
       console.error("Error in handleCreateOrg:", err);
       toast.error(`Error inesperado: ${err.message}`);
@@ -400,6 +396,7 @@ const Organizations = () => {
       setIsLoading(false);
     }
   };
+
 
   const handleDeleteOrg = async (orgId: string, orgName: string) => {
     if (orgId === activeOrganization) {

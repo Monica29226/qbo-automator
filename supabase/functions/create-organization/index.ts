@@ -67,6 +67,38 @@ Deno.serve(async (req) => {
       );
     }
 
+    // Identificación: limpiar y validar según reglas de Costa Rica
+    const ID_RULES: Record<string, { label: string; lengths: number[] }> = {
+      fisica: { label: "Cédula Física", lengths: [9] },
+      juridica: { label: "Cédula Jurídica", lengths: [10] },
+      dimex: { label: "DIMEX", lengths: [11, 12] },
+      nite: { label: "NITE", lengths: [10] },
+    };
+
+    const idType = body.identification_type || null;
+    const cleanId = body.identification_number
+      ? String(body.identification_number).replace(/\D/g, "")
+      : "";
+
+    if (cleanId) {
+      const rule = idType ? ID_RULES[idType] : null;
+      if (!rule) {
+        return new Response(
+          JSON.stringify({ error: "Seleccione un tipo de identificación válido" }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+      if (!rule.lengths.includes(cleanId.length)) {
+        return new Response(
+          JSON.stringify({
+            error: `${rule.label} debe tener ${rule.lengths.join(" o ")} dígitos (tiene ${cleanId.length}).`,
+          }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+    }
+
+
     console.log(`📝 Creating organization "${body.name}" for user ${user.id}`);
 
     // Use service role for creating organization (to bypass RLS during creation)
@@ -93,6 +125,23 @@ Deno.serve(async (req) => {
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
+    // Check for duplicate identification (tax_id)
+    if (cleanId) {
+      const { data: existingId } = await supabaseAdmin
+        .from("organizations")
+        .select("id, name")
+        .eq("tax_id", cleanId)
+        .eq("is_active", true)
+        .limit(1)
+        .maybeSingle();
+
+      if (existingId) {
+        return new Response(
+          JSON.stringify({ error: `Ya existe una empresa con esta identificación: "${existingId.name}"` }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+    }
 
     // Generate a UUID for the new organization
     const orgId = crypto.randomUUID();
@@ -103,8 +152,10 @@ Deno.serve(async (req) => {
       .insert({
         id: orgId,
         name: body.name.trim(),
-        identification_type: body.identification_type || null,
-        identification_number: body.identification_number || null,
+        tax_id: cleanId || null,
+        identification_type: idType,
+        identification_number: cleanId || null,
+
         trade_name: body.trade_name || null,
         legal_name: body.legal_name || null,
         tax_regime: body.tax_regime || null,
