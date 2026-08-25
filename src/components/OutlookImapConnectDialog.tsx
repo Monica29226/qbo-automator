@@ -29,10 +29,16 @@ export const OutlookImapConnectDialog = ({ open, onOpenChange, onConnected }: Pr
   const [host, setHost] = useState("outlook.office365.com");
   const [port, setPort] = useState("993");
   const [loading, setLoading] = useState(false);
+  const emailDomain = email.trim().toLowerCase().split("@")[1] || "";
+  const isPersonalMicrosoftAccount = ["hotmail.com", "outlook.com", "live.com", "msn.com"].includes(emailDomain);
 
   const handleConnect = async () => {
     if (!activeOrganization) return toast.error("No hay organización activa");
     if (!email || !appPassword) return toast.error("Email y contraseña de aplicación son requeridos");
+    if (isPersonalMicrosoftAccount) {
+      toast.error("Hotmail, Outlook.com, Live y MSN deben conectarse con Microsoft OAuth, no con IMAP avanzado.", { duration: 10000 });
+      return;
+    }
 
     setLoading(true);
     const t = toast.loading("Probando conexión IMAP con Microsoft 365...");
@@ -80,18 +86,28 @@ export const OutlookImapConnectDialog = ({ open, onOpenChange, onConnected }: Pr
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Server className="h-5 w-5" />
-            Conectar Microsoft 365 vía IMAP
+            Conectar Microsoft 365 empresarial vía IMAP
           </DialogTitle>
           <DialogDescription>
-            Opción avanzada para casos donde tu administrador de TI bloquea OAuth de terceros.
-            Necesitas generar una <strong>contraseña de aplicación</strong> en Microsoft 365 primero.
+            Opción avanzada solo para buzones empresariales cuando el administrador de TI bloquea OAuth.
+            Hotmail, Outlook.com, Live y MSN deben usar la conexión segura con Microsoft.
           </DialogDescription>
         </DialogHeader>
+
+        {isPersonalMicrosoftAccount && (
+          <Alert variant="destructive">
+            <Info className="h-4 w-4" />
+            <AlertDescription>
+              Esta cuenta es personal de Microsoft. No use IMAP avanzado para Hotmail; cierre esta ventana y presione
+              <strong> Conectar con Microsoft (OAuth)</strong> en la tarjeta de Outlook / Hotmail / Microsoft 365.
+            </AlertDescription>
+          </Alert>
+        )}
 
         <Alert>
           <Info className="h-4 w-4" />
           <AlertDescription className="space-y-2">
-            <p className="font-semibold">Cómo generar una contraseña de aplicación:</p>
+            <p className="font-semibold">Para buzones Microsoft 365 empresariales:</p>
             <ol className="list-decimal pl-5 space-y-1 text-sm">
               <li>Entra a{" "}
                 <a
@@ -109,8 +125,7 @@ export const OutlookImapConnectDialog = ({ open, onOpenChange, onConnected }: Pr
               <li>Pégala abajo</li>
             </ol>
             <p className="text-xs text-muted-foreground pt-2">
-              ⚠️ Si tu cuenta es de Microsoft 365 empresarial, es posible que tu admin de TI deba habilitar
-              IMAP y autenticación básica en el <strong>Exchange Admin Center</strong> primero.
+              Si la cuenta es de Microsoft 365 empresarial, el administrador de TI debe habilitar IMAP y la autenticación permitida para ese buzón.
             </p>
           </AlertDescription>
         </Alert>
@@ -126,6 +141,9 @@ export const OutlookImapConnectDialog = ({ open, onOpenChange, onConnected }: Pr
               placeholder="usuario@miempresa.com"
               disabled={loading}
             />
+            <p className="text-xs text-muted-foreground">
+              Para hotmail.com, outlook.com, live.com o msn.com use Microsoft OAuth, no este formulario.
+            </p>
           </div>
 
           <div className="space-y-1">
@@ -138,7 +156,7 @@ export const OutlookImapConnectDialog = ({ open, onOpenChange, onConnected }: Pr
               placeholder="xxxxxxxxxxxxxxxx"
               disabled={loading}
             />
-            <p className="text-xs text-muted-foreground">No es la contraseña habitual; es la generada en el paso anterior.</p>
+            <p className="text-xs text-muted-foreground">No es la contraseña habitual; es la contraseña de aplicación empresarial generada en Microsoft 365.</p>
           </div>
 
           <div className="grid grid-cols-2 gap-3">
@@ -155,7 +173,7 @@ export const OutlookImapConnectDialog = ({ open, onOpenChange, onConnected }: Pr
 
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={loading}>Cancelar</Button>
-          <Button onClick={handleConnect} disabled={loading}>
+          <Button onClick={handleConnect} disabled={loading || isPersonalMicrosoftAccount}>
             {loading && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
             Conectar y probar
           </Button>
