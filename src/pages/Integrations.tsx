@@ -812,8 +812,8 @@ const Integrations = () => {
             <OrganizationSwitcher />
           </div>
           <div className="mt-3 p-3 bg-muted rounded-lg">
-            <p className="text-sm text-muted-foreground">
-              ℹ️ Las conexiones son específicas para cada empresa. Cada empresa debe conectar su propia cuenta de Gmail y QuickBooks independiente.
+              <p className="text-sm text-muted-foreground">
+                Las conexiones son específicas para cada empresa. Cada empresa debe conectar su propia cuenta de correo y QuickBooks independiente.
             </p>
           </div>
         </div>
@@ -927,17 +927,6 @@ const Integrations = () => {
                         Reconectar
                       </Button>
                     )}
-                    {service.id === "outlook" && (
-                      <Button
-                        onClick={() => setImapDialogOpen(true)}
-                        size="sm"
-                        variant="outline"
-                        title="Para entornos donde el admin de TI bloquea OAuth de terceros"
-                      >
-                        <Server className="h-4 w-4 mr-2" />
-                        Conectar con IMAP (avanzado)
-                      </Button>
-                    )}
                     <Button
                       onClick={() => {
                         setSelectedService(service.id);
@@ -948,6 +937,17 @@ const Integrations = () => {
                       <Plus className="h-4 w-4 mr-2" />
                       {service.id === "outlook" ? "Conectar con Microsoft (OAuth)" : "Agregar cuenta"}
                     </Button>
+                    {service.id === "outlook" && (
+                      <Button
+                        onClick={() => setImapDialogOpen(true)}
+                        size="sm"
+                        variant="outline"
+                        title="Solo para buzones Microsoft 365 empresariales donde el admin de TI bloquea OAuth"
+                      >
+                        <Server className="h-4 w-4 mr-2" />
+                        IMAP empresarial avanzado
+                      </Button>
+                    )}
                   </div>
                 </div>
               </Card>
@@ -978,7 +978,7 @@ const Integrations = () => {
                   {selectedService === "gmail" 
                     ? "Se abrirá una ventana de Google para que autorices el acceso de forma segura."
                     : selectedService === "outlook"
-                    ? "Se abrirá una ventana de Microsoft para que autorices el acceso de forma segura."
+                    ? "Se abrirá una ventana de Microsoft para autorizar Hotmail, Outlook.com, Live, MSN o Microsoft 365 de forma segura. No ingrese contraseña ni use IMAP para hotmail.com."
                     : "Se abrirá una ventana de QuickBooks para que autorices el acceso de forma segura."
                   }
                   {" "}No necesitas ingresar tu contraseña aquí.
@@ -989,23 +989,37 @@ const Integrations = () => {
               </div>
               
               {(selectedService === "gmail" || selectedService === "outlook") && (
-                <div className="bg-yellow-500/10 border border-yellow-500/30 p-4 rounded-lg">
-                  <p className="text-sm font-semibold text-yellow-700 dark:text-yellow-400 mb-2">
-                    ⚠️ Importante: Información sobre la conexión
+                <div className="bg-warning/10 border border-warning/30 p-4 rounded-lg">
+                  <p className="text-sm font-semibold text-warning mb-2">
+                    Importante: información sobre la conexión
                   </p>
-                  <div className="space-y-2 text-xs text-yellow-700/90 dark:text-yellow-400/90">
-                    <p>
-                      <strong>1.</strong> La ventana de Google puede mostrar el nombre de otro desarrollador o aplicación. 
-                      Esto es <strong>normal y NO es la cuenta que se va a conectar</strong>.
-                    </p>
-                    <p>
-                      <strong>2.</strong> Debes <strong>seleccionar la cuenta de Gmail correcta</strong> para esta empresa cuando Google te lo pida. 
-                      Si aparece otra cuenta preseleccionada, haz clic en "Usar otra cuenta" para cambiarla.
-                    </p>
-                    <p>
-                      <strong>3.</strong> La cuenta que selecciones será exclusiva para <strong>esta empresa</strong>.
-                    </p>
-                  </div>
+                  {selectedService === "gmail" ? (
+                    <div className="space-y-2 text-xs text-foreground/80">
+                      <p>
+                        <strong>1.</strong> La ventana de Google puede mostrar el nombre de otro desarrollador o aplicación.
+                        Esto es <strong>normal y no es la cuenta que se va a conectar</strong>.
+                      </p>
+                      <p>
+                        <strong>2.</strong> Debe <strong>seleccionar la cuenta de Gmail correcta</strong> para esta empresa cuando Google lo pida.
+                        Si aparece otra cuenta preseleccionada, haga clic en "Usar otra cuenta" para cambiarla.
+                      </p>
+                      <p>
+                        <strong>3.</strong> La cuenta que seleccione será exclusiva para <strong>esta empresa</strong>.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2 text-xs text-foreground/80">
+                      <p>
+                        <strong>1.</strong> Para <strong>hotmail.com</strong>, <strong>outlook.com</strong>, <strong>live.com</strong> o <strong>msn.com</strong>, use siempre esta conexión con Microsoft OAuth.
+                      </p>
+                      <p>
+                        <strong>2.</strong> No debe pegar la contraseña de Hotmail en el formulario IMAP avanzado.
+                      </p>
+                      <p>
+                        <strong>3.</strong> El IMAP avanzado queda solo para buzones empresariales Microsoft 365 cuando el administrador de TI bloquea OAuth.
+                      </p>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
