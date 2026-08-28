@@ -120,6 +120,17 @@ async function findOrCreateFolder(accessToken: string, parentId: string, folderN
   return folderData.id;
 }
 
+// Base64 en trozos: `btoa(String.fromCharCode(...bytes))` desborda la pila con
+// PDFs de unos pocos cientos de KB y hacía fallar la función con 500.
+function toBase64(bytes: Uint8Array): string {
+  const CHUNK = 8192;
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(binary);
+}
+
 async function uploadFileToDrive(
   accessToken: string,
   folderId: string,
@@ -143,7 +154,7 @@ async function uploadFileToDrive(
     delimiter +
     `Content-Type: ${mimeType}\r\n` +
     "Content-Transfer-Encoding: base64\r\n\r\n" +
-    btoa(String.fromCharCode(...fileContent)) +
+    toBase64(fileContent) +
     closeDelimiter;
 
   const response = await fetch(
@@ -158,17 +169,14 @@ async function uploadFileToDrive(
     }
   );
 
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`DRIVE_UPLOAD_FAILED (${response.status}): ${errText.substring(0, 300)}`);
+  }
+
   return await response.json();
 }
 
-// Sanitize a filename component: remove characters illegal in filesystems and Drive,
-// collapse whitespace, preserve accents and case.
-function sanitizeNamePart(input: string): string {
-  return (input || "")
-    .replace(/[\/\\?%*:|"<>\x00-\x1F]/g, "-")
-    .replace(/\s+/g, " ")
-    .trim();
-}
 
 // Format an amount for the filename: e.g. ₡125,000 or $1,250.50
 function formatAmountForName(amount: number | string | null | undefined, currency: string | null | undefined): string {
