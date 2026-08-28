@@ -320,7 +320,7 @@ serve(async (req) => {
     // ============================================================
     // LÍMITE DE TIEMPO PARA EVITAR TIMEOUTS (120 segundos)
     // ============================================================
-    const MAX_EXECUTION_TIME_MS = 120000; // 2 minutos (buffer de 30s antes del timeout de 150s)
+    const MAX_EXECUTION_TIME_MS = 90000; // 90s: margen amplio para cerrar antes del límite del worker
     const executionStartTime = Date.now();
     let wasTimeLimitReached = false;
 
