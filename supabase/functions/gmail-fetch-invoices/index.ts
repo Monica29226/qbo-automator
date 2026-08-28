@@ -340,7 +340,8 @@ serve(async (req) => {
     const batchSizeSetting = parseInt(settings?.find(s => s.key === "gmail_batch_size")?.value || "", 10);
     const GMAIL_BATCH_SIZE = Number.isFinite(batchSizeSetting) && batchSizeSetting > 0
       ? batchSizeSetting
-      : 150;
+      : 60; // tandas más cortas: 150 agotaba memoria/CPU del worker (546)
+
     const useResumeCursor = !requestedPeriod && !search_term && !force_resync;
     const cursorKey = `gmail_resume_cursor_${organization_id}`;
     let resumeCursor = 0;
