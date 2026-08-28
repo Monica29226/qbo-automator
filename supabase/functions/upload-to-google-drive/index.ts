@@ -39,8 +39,18 @@ async function refreshGoogleDriveToken(supabase: any, organizationId: string) {
     }),
   });
 
+  if (!tokenResponse.ok) {
+    const errText = await tokenResponse.text();
+    throw new Error(`DRIVE_TOKEN_REFRESH_FAILED: ${errText.substring(0, 300)}`);
+  }
+
   const tokens = await tokenResponse.json();
-  const expiresAt = new Date(Date.now() + tokens.expires_in * 1000).toISOString();
+  if (!tokens.access_token) {
+    throw new Error("DRIVE_TOKEN_REFRESH_FAILED: respuesta sin access_token");
+  }
+  const expiresIn = Number(tokens.expires_in) || 3600;
+  const expiresAt = new Date(Date.now() + expiresIn * 1000).toISOString();
+
 
   await supabase
     .from("integration_accounts")
