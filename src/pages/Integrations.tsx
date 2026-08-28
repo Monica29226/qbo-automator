@@ -903,13 +903,32 @@ const Integrations = () => {
                                   </p>
                                 )}
                               </div>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => handleRemoveAccount(account.id)}
-                              >
-                                <X className="h-4 w-4" />
-                              </Button>
+                              <div className="flex items-center gap-1">
+                                {["bluehost", "hostinger", "outlook_imap"].includes(
+                                  account.service_type,
+                                ) && (
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    title="Ver usuario y contraseña"
+                                    onClick={() =>
+                                      setCredsDialog({
+                                        serviceType: account.service_type,
+                                        label: account.account_email || service.name,
+                                      })
+                                    }
+                                  >
+                                    <KeyRound className="h-4 w-4" />
+                                  </Button>
+                                )}
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => handleRemoveAccount(account.id)}
+                                >
+                                  <X className="h-4 w-4" />
+                                </Button>
+                              </div>
                             </div>
                           ))}
                         </div>
