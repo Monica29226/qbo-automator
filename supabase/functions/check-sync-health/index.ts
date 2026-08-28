@@ -534,15 +534,23 @@ async function sendAlertEmail(
           .join("")
       : "";
 
-  const emailResponse = await fetch("https://api.resend.com/emails", {
+  // Remitente de dominio verificado. resend.dev solo permite enviar al dueño de
+  // la cuenta de Resend, por lo que las alertas a las empresas eran rechazadas (403).
+  const BRANDED_FROM = "ACL Costa Rica <alertas@aureoncr.com>";
+  const SANDBOX_FROM = "ACL Costa Rica <onboarding@resend.dev>";
+  const FALLBACK_TO = Deno.env.get("ALERTS_FALLBACK_EMAIL") || "monicalderon.2910@gmail.com";
+
+  const postEmail = (from: string, to: string[]) =>
+    fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${RESEND_API_KEY}`,
     },
     body: JSON.stringify({
-      from: "ACL Invoice Alerts <alerts@resend.dev>",
-      to: [org.alertEmail],
+      from,
+      to,
+
       subject: `🚨 Alerta: Problemas en ${org.name} - ${criticalIssues.length} críticos`,
       html: `
         <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
