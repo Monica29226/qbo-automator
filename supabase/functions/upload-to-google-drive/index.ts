@@ -177,6 +177,15 @@ async function uploadFileToDrive(
   return await response.json();
 }
 
+// Sanitize a filename component: remove characters illegal in filesystems and Drive,
+// collapse whitespace, preserve accents and case.
+function sanitizeNamePart(input: string): string {
+  return (input || "")
+    .replace(/[\/\\?%*:|"<>\x00-\x1F]/g, "-")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 
 // Format an amount for the filename: e.g. ₡125,000 or $1,250.50
 function formatAmountForName(amount: number | string | null | undefined, currency: string | null | undefined): string {
