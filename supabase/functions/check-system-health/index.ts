@@ -91,26 +91,9 @@ async function checkOrganization(supabase: any, org: any): Promise<number> {
     }
   }
 
-  // 2. En revisión >48h
-  {
-    const { count } = await supabase
-      .from("processed_documents")
-      .select("id", { count: "exact", head: true })
-      .eq("organization_id", orgId)
-      .eq("status", "review")
-      .lt("created_at", iso(now - 48 * 3600 * 1000));
-    if ((count || 0) > 0) {
-      checks.push({
-        code: "review_stuck",
-        severity: "warning",
-        title: "Facturas en revisión hace más de 48h",
-        description: `${count} facturas llevan más de 48 horas en estado de revisión esperando clasificación.`,
-        action: "Ir a Cola de Revisión",
-        action_link: "/review-queue",
-        count: count || 0,
-      });
-    }
-  }
+  // 2. En revisión >48h — lo cubre check-sync-health con el código "stuck_review".
+  //    Se elimina aquí para no generar dos alertas (y dos correos) por el mismo hecho.
+
 
   // 3. Errores acumulados (>=5 en 7 días)
   {
@@ -188,7 +171,10 @@ async function checkOrganization(supabase: any, org: any): Promise<number> {
     }
   }
 
-  // 6. Token QBO próximo a expirar (<2h)
+  // 6. Token QBO vencido sin renovar.
+  //    El access_token de QuickBooks dura ~1 hora y se renueva solo, así que avisar
+  //    "expira pronto" generaba una alerta por empresa cada hora sin ninguna acción real.
+  //    Solo se alerta si sigue vencido más de 6 horas después, es decir la renovación falló.
   {
     const { data: qbo } = await supabase
       .from("integration_accounts")
@@ -200,18 +186,19 @@ async function checkOrganization(supabase: any, org: any): Promise<number> {
     const expiresAt = qbo?.credentials?.expires_at;
     if (expiresAt) {
       const expMs = typeof expiresAt === "number" ? expiresAt : new Date(expiresAt).getTime();
-      if (!isNaN(expMs) && expMs - now < 2 * 3600 * 1000) {
+      if (!isNaN(expMs) && now - expMs > 6 * 3600 * 1000) {
         checks.push({
-          code: "qbo_token_expiring",
-          severity: "warning",
-          title: "Token QBO expira pronto",
-          description: `El token de QuickBooks expira en menos de 2 horas (${new Date(expMs).toLocaleString("es-CR")}).`,
+          code: "qbo_token_stale",
+          severity: "critical",
+          title: "Token de QuickBooks vencido sin renovar",
+          description: `El token de QuickBooks venció el ${new Date(expMs).toLocaleString("es-CR")} y la renovación automática no funcionó.`,
           action: "Reconectar QuickBooks",
           action_link: "/integrations",
         });
       }
     }
   }
+
 
   // 7. Backlog sin procesar: 0 facturas en 24h pero correo activo >24h
   {
