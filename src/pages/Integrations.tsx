@@ -53,6 +53,7 @@ const Integrations = () => {
   const [accounts, setAccounts] = useState<IntegrationAccount[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [credsDialog, setCredsDialog] = useState<{ serviceType: string; label: string } | null>(null);
   const [selectedService, setSelectedService] = useState<string>("");
   const [accountEmail, setAccountEmail] = useState("");
   const [accountName, setAccountName] = useState("");
