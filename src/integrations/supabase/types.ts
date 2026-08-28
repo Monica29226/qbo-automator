@@ -2140,6 +2140,16 @@ export type Database = {
           service_type: string
         }[]
       }
+      get_integration_accounts: {
+        Args: { _org_id: string }
+        Returns: {
+          account_email: string
+          account_name: string
+          id: string
+          is_active: boolean
+          service_type: string
+        }[]
+      }
       get_organization_member_profiles: {
         Args: { _org_id: string }
         Returns: {
