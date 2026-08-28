@@ -21,6 +21,7 @@ import { OrganizationSwitcher } from "@/components/OrganizationSwitcher";
 import { OutlookImapConnectDialog } from "@/components/OutlookImapConnectDialog";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { SikuCard } from "@/components/siku/SikuCard";
+import { MailboxCredentialsDialog } from "@/components/MailboxCredentialsDialog";
 
 
 interface IntegrationAccount {
