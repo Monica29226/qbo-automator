@@ -601,13 +601,22 @@ async function sendAlertEmail(
     }),
   });
 
+  let emailResponse = await postEmail(BRANDED_FROM, [org.alertEmail]);
+
   if (!emailResponse.ok) {
-    const errorText = await emailResponse.text();
-    throw new Error(`Failed to send alert email: ${errorText}`);
+    const brandedError = await emailResponse.text();
+    console.error("Resend (dominio) rechazó el envío:", brandedError);
+    // Fallback al remitente sandbox, que solo puede alcanzar al dueño de la cuenta.
+    emailResponse = await postEmail(SANDBOX_FROM, [FALLBACK_TO]);
+    if (!emailResponse.ok) {
+      const sandboxError = await emailResponse.text();
+      throw new Error(`Failed to send alert email: ${brandedError} | fallback: ${sandboxError}`);
+    }
   }
 
   const data = await emailResponse.json();
   console.log(`Alert email sent successfully. Email ID: ${data.id}`);
 
   return data.id;
+
 }
