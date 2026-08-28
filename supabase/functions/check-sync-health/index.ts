@@ -156,14 +156,17 @@ serve(async (req) => {
         // Optional: send critical email (anti-spam 2h) — kept as before.
 
         if (criticalIssues.length > 0) {
-          const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
-          const { data: recentEmailAlert } = await supabase
+          // Anti-spam: máximo un correo por empresa cada 12 horas.
+          const windowStart = new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString();
+          const { data: recentEmailAlerts } = await supabase
             .from("alert_history")
             .select("id")
             .eq("organization_id", org.id)
             .not("email_id", "is", null)
-            .gte("sent_at", twoHoursAgo)
-            .maybeSingle();
+            .gte("sent_at", windowStart)
+            .limit(1);
+          const recentEmailAlert = recentEmailAlerts?.[0] ?? null;
+
 
           if (!recentEmailAlert) {
             const { data: settings } = await supabase
