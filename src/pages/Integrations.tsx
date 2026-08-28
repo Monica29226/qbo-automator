@@ -85,12 +85,10 @@ const Integrations = () => {
         .select("gmail_connected, gmail_email, outlook_connected, outlook_email, quickbooks_connected, quickbooks_realm_id, google_drive_connected, google_drive_folder_id, bluehost_connected, bluehost_email, hostinger_connected, hostinger_email")
         .eq("id", activeOrganization)
         .single(),
-      supabase
-        .from("integration_accounts")
-        .select("id, service_type, account_email, account_name, is_active")
-        .eq("organization_id", activeOrganization)
-        .eq("is_active", true)
-        .order("service_type")
+      // La tabla de cuentas no es legible desde el cliente (guarda tokens/contraseñas),
+      // así que se usa una función segura que solo devuelve metadatos no sensibles.
+      supabase.rpc("get_integration_accounts", { _org_id: activeOrganization })
+
     ]);
 
     if (orgResult.error) {
