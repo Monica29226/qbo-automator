@@ -1247,6 +1247,16 @@ const Integrations = () => {
         onOpenChange={setImapDialogOpen}
         onConnected={() => fetchData()}
       />
+
+      {credsDialog && activeOrganization && (
+        <MailboxCredentialsDialog
+          open={!!credsDialog}
+          onOpenChange={(o) => !o && setCredsDialog(null)}
+          organizationId={activeOrganization}
+          serviceType={credsDialog.serviceType}
+          serviceLabel={credsDialog.label}
+        />
+      )}
     </div>
   );
 };
