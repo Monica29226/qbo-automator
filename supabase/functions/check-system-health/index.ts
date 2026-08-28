@@ -91,26 +91,9 @@ async function checkOrganization(supabase: any, org: any): Promise<number> {
     }
   }
 
-  // 2. En revisión >48h
-  {
-    const { count } = await supabase
-      .from("processed_documents")
-      .select("id", { count: "exact", head: true })
-      .eq("organization_id", orgId)
-      .eq("status", "review")
-      .lt("created_at", iso(now - 48 * 3600 * 1000));
-    if ((count || 0) > 0) {
-      checks.push({
-        code: "review_stuck",
-        severity: "warning",
-        title: "Facturas en revisión hace más de 48h",
-        description: `${count} facturas llevan más de 48 horas en estado de revisión esperando clasificación.`,
-        action: "Ir a Cola de Revisión",
-        action_link: "/review-queue",
-        count: count || 0,
-      });
-    }
-  }
+  // 2. En revisión >48h — lo cubre check-sync-health con el código "stuck_review".
+  //    Se elimina aquí para no generar dos alertas (y dos correos) por el mismo hecho.
+
 
   // 3. Errores acumulados (>=5 en 7 días)
   {
