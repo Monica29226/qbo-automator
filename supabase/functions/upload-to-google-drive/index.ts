@@ -259,7 +259,20 @@ serve(async (req) => {
       throw new Error("Document not found");
     }
 
-    const accessToken = await getAccessToken(supabase, organization_id);
+    // Si la cuenta de Drive no existe o quedó inactiva, se omite en silencio
+    // en lugar de devolver 500 en cada factura publicada.
+    let accessToken: string;
+    try {
+      accessToken = await getAccessToken(supabase, organization_id);
+    } catch (tokenError) {
+      const msg = tokenError instanceof Error ? tokenError.message : "unknown";
+      console.warn(`Drive no disponible para org ${organization_id}: ${msg}`);
+      return new Response(
+        JSON.stringify({ success: false, skipped: true, reason: "drive_not_connected", detail: msg }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 200 }
+      );
+    }
+
 
     // Build year/month folder path
     const issueDate = new Date(document.issue_date);
