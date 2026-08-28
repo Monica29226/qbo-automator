@@ -12,7 +12,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { ArrowLeft, Plus, Plug, Check, X, Mail, Building2, HardDrive, Loader2, Server, RefreshCw, AlertTriangle } from "lucide-react";
+import { ArrowLeft, Plus, Plug, Check, X, Mail, Building2, HardDrive, Loader2, Server, RefreshCw, AlertTriangle, KeyRound } from "lucide-react";
 import { Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -21,6 +21,7 @@ import { OrganizationSwitcher } from "@/components/OrganizationSwitcher";
 import { OutlookImapConnectDialog } from "@/components/OutlookImapConnectDialog";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { SikuCard } from "@/components/siku/SikuCard";
+import { MailboxCredentialsDialog } from "@/components/MailboxCredentialsDialog";
 
 
 interface IntegrationAccount {
@@ -52,6 +53,7 @@ const Integrations = () => {
   const [accounts, setAccounts] = useState<IntegrationAccount[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [credsDialog, setCredsDialog] = useState<{ serviceType: string; label: string } | null>(null);
   const [selectedService, setSelectedService] = useState<string>("");
   const [accountEmail, setAccountEmail] = useState("");
   const [accountName, setAccountName] = useState("");
@@ -902,13 +904,32 @@ const Integrations = () => {
                                   </p>
                                 )}
                               </div>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => handleRemoveAccount(account.id)}
-                              >
-                                <X className="h-4 w-4" />
-                              </Button>
+                              <div className="flex items-center gap-1">
+                                {["bluehost", "hostinger", "outlook_imap"].includes(
+                                  account.service_type,
+                                ) && (
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    title="Ver usuario y contraseña"
+                                    onClick={() =>
+                                      setCredsDialog({
+                                        serviceType: account.service_type,
+                                        label: account.account_email || service.name,
+                                      })
+                                    }
+                                  >
+                                    <KeyRound className="h-4 w-4" />
+                                  </Button>
+                                )}
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => handleRemoveAccount(account.id)}
+                                >
+                                  <X className="h-4 w-4" />
+                                </Button>
+                              </div>
                             </div>
                           ))}
                         </div>
@@ -1226,6 +1247,16 @@ const Integrations = () => {
         onOpenChange={setImapDialogOpen}
         onConnected={() => fetchData()}
       />
+
+      {credsDialog && activeOrganization && (
+        <MailboxCredentialsDialog
+          open={!!credsDialog}
+          onOpenChange={(o) => !o && setCredsDialog(null)}
+          organizationId={activeOrganization}
+          serviceType={credsDialog.serviceType}
+          serviceLabel={credsDialog.label}
+        />
+      )}
     </div>
   );
 };
