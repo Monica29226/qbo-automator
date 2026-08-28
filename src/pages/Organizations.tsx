@@ -338,10 +338,22 @@ const Organizations = () => {
 
       if (error) {
         console.error("Error creating organization:", error);
-        toast.error(error.message || "Error al crear la empresa");
+        // Las respuestas 400/500 traen el motivo real en el cuerpo JSON, no en error.message
+        let reason = "";
+        try {
+          const res = (error as { context?: Response }).context;
+          if (res && typeof res.json === "function") {
+            const body = await res.clone().json();
+            reason = body?.error || "";
+          }
+        } catch {
+          // cuerpo no legible: se usa el mensaje de transporte
+        }
+        toast.error(reason || error.message || "Error al crear la empresa");
         setIsLoading(false);
         return;
       }
+
 
       if (data?.error) {
         toast.error(data.error);

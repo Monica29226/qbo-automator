@@ -39,8 +39,18 @@ async function refreshGoogleDriveToken(supabase: any, organizationId: string) {
     }),
   });
 
+  if (!tokenResponse.ok) {
+    const errText = await tokenResponse.text();
+    throw new Error(`DRIVE_TOKEN_REFRESH_FAILED: ${errText.substring(0, 300)}`);
+  }
+
   const tokens = await tokenResponse.json();
-  const expiresAt = new Date(Date.now() + tokens.expires_in * 1000).toISOString();
+  if (!tokens.access_token) {
+    throw new Error("DRIVE_TOKEN_REFRESH_FAILED: respuesta sin access_token");
+  }
+  const expiresIn = Number(tokens.expires_in) || 3600;
+  const expiresAt = new Date(Date.now() + expiresIn * 1000).toISOString();
+
 
   await supabase
     .from("integration_accounts")
@@ -110,6 +120,17 @@ async function findOrCreateFolder(accessToken: string, parentId: string, folderN
   return folderData.id;
 }
 
+// Base64 en trozos: `btoa(String.fromCharCode(...bytes))` desborda la pila con
+// PDFs de unos pocos cientos de KB y hacía fallar la función con 500.
+function toBase64(bytes: Uint8Array): string {
+  const CHUNK = 8192;
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(binary);
+}
+
 async function uploadFileToDrive(
   accessToken: string,
   folderId: string,
@@ -133,7 +154,7 @@ async function uploadFileToDrive(
     delimiter +
     `Content-Type: ${mimeType}\r\n` +
     "Content-Transfer-Encoding: base64\r\n\r\n" +
-    btoa(String.fromCharCode(...fileContent)) +
+    toBase64(fileContent) +
     closeDelimiter;
 
   const response = await fetch(
@@ -148,6 +169,11 @@ async function uploadFileToDrive(
     }
   );
 
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`DRIVE_UPLOAD_FAILED (${response.status}): ${errText.substring(0, 300)}`);
+  }
+
   return await response.json();
 }
 
@@ -159,6 +185,7 @@ function sanitizeNamePart(input: string): string {
     .replace(/\s+/g, " ")
     .trim();
 }
+
 
 // Format an amount for the filename: e.g. ₡125,000 or $1,250.50
 function formatAmountForName(amount: number | string | null | undefined, currency: string | null | undefined): string {
@@ -232,7 +259,20 @@ serve(async (req) => {
       throw new Error("Document not found");
     }
 
-    const accessToken = await getAccessToken(supabase, organization_id);
+    // Si la cuenta de Drive no existe o quedó inactiva, se omite en silencio
+    // en lugar de devolver 500 en cada factura publicada.
+    let accessToken: string;
+    try {
+      accessToken = await getAccessToken(supabase, organization_id);
+    } catch (tokenError) {
+      const msg = tokenError instanceof Error ? tokenError.message : "unknown";
+      console.warn(`Drive no disponible para org ${organization_id}: ${msg}`);
+      return new Response(
+        JSON.stringify({ success: false, skipped: true, reason: "drive_not_connected", detail: msg }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 200 }
+      );
+    }
+
 
     // Build year/month folder path
     const issueDate = new Date(document.issue_date);

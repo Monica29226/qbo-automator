@@ -320,7 +320,7 @@ serve(async (req) => {
     // ============================================================
     // LÍMITE DE TIEMPO PARA EVITAR TIMEOUTS (120 segundos)
     // ============================================================
-    const MAX_EXECUTION_TIME_MS = 120000; // 2 minutos (buffer de 30s antes del timeout de 150s)
+    const MAX_EXECUTION_TIME_MS = 90000; // 90s: margen amplio para cerrar antes del límite del worker
     const executionStartTime = Date.now();
     let wasTimeLimitReached = false;
 
@@ -340,7 +340,8 @@ serve(async (req) => {
     const batchSizeSetting = parseInt(settings?.find(s => s.key === "gmail_batch_size")?.value || "", 10);
     const GMAIL_BATCH_SIZE = Number.isFinite(batchSizeSetting) && batchSizeSetting > 0
       ? batchSizeSetting
-      : 150;
+      : 60; // tandas más cortas: 150 agotaba memoria/CPU del worker (546)
+
     const useResumeCursor = !requestedPeriod && !search_term && !force_resync;
     const cursorKey = `gmail_resume_cursor_${organization_id}`;
     let resumeCursor = 0;

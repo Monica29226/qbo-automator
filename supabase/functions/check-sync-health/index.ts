@@ -534,15 +534,23 @@ async function sendAlertEmail(
           .join("")
       : "";
 
-  const emailResponse = await fetch("https://api.resend.com/emails", {
+  // Remitente de dominio verificado. resend.dev solo permite enviar al dueño de
+  // la cuenta de Resend, por lo que las alertas a las empresas eran rechazadas (403).
+  const BRANDED_FROM = "ACL Costa Rica <alertas@aureoncr.com>";
+  const SANDBOX_FROM = "ACL Costa Rica <onboarding@resend.dev>";
+  const FALLBACK_TO = Deno.env.get("ALERTS_FALLBACK_EMAIL") || "monicalderon.2910@gmail.com";
+
+  const postEmail = (from: string, to: string[]) =>
+    fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${RESEND_API_KEY}`,
     },
     body: JSON.stringify({
-      from: "ACL Invoice Alerts <alerts@resend.dev>",
-      to: [org.alertEmail],
+      from,
+      to,
+
       subject: `🚨 Alerta: Problemas en ${org.name} - ${criticalIssues.length} críticos`,
       html: `
         <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
@@ -593,13 +601,22 @@ async function sendAlertEmail(
     }),
   });
 
+  let emailResponse = await postEmail(BRANDED_FROM, [org.alertEmail]);
+
   if (!emailResponse.ok) {
-    const errorText = await emailResponse.text();
-    throw new Error(`Failed to send alert email: ${errorText}`);
+    const brandedError = await emailResponse.text();
+    console.error("Resend (dominio) rechazó el envío:", brandedError);
+    // Fallback al remitente sandbox, que solo puede alcanzar al dueño de la cuenta.
+    emailResponse = await postEmail(SANDBOX_FROM, [FALLBACK_TO]);
+    if (!emailResponse.ok) {
+      const sandboxError = await emailResponse.text();
+      throw new Error(`Failed to send alert email: ${brandedError} | fallback: ${sandboxError}`);
+    }
   }
 
   const data = await emailResponse.json();
   console.log(`Alert email sent successfully. Email ID: ${data.id}`);
 
   return data.id;
+
 }
