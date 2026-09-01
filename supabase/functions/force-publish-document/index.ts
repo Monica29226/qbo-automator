@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.78.0";
+import { attachPdfToQuickBooks, attachXmlToQuickBooks } from "../_shared/qbo-attachments.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
