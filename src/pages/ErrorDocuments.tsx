@@ -659,12 +659,29 @@ const ErrorDocuments = () => {
 
       if (error) throw error;
 
+      const v = data?.verification;
+      const a = data?.attachments;
+      const totalsTxt = v
+        ? ` · Total XML ${v.xml_total} vs QBO ${v.qbo_total} · IVA XML ${v.xml_tax} vs QBO ${v.qbo_tax}`
+        : "";
+      const adjTxt = a
+        ? ` · XML ${a.xml_attached ? "adjunto" : a.xml_available ? "no se pudo adjuntar" : "no disponible"} · PDF ${a.pdf_attached ? "adjunto" : a.pdf_available ? "no se pudo adjuntar" : "no disponible"}`
+        : "";
+
       if (data.success) {
-        toast.success(`✓ ${docNumber} publicado exitosamente (${data.qbo_entity_type} ID: ${data.qbo_entity_id})`, { id: toastId });
+        toast.success(
+          `✓ ${docNumber} publicado (${data.qbo_entity_type} ID: ${data.qbo_entity_id})${totalsTxt}${adjTxt}`,
+          { id: toastId, duration: 10000 }
+        );
         setTimeout(() => fetchErrorDocuments(), 1000);
       } else {
-        toast.error(data.error || "Error al forzar publicación", { id: toastId });
+        toast.warning(
+          `${docNumber}: ${data.message || data.error || "Error al forzar publicación"}${adjTxt}`,
+          { id: toastId, duration: 12000 }
+        );
+        setTimeout(() => fetchErrorDocuments(), 1000);
       }
+
 
     } catch (error: any) {
       console.error("Error forcing publish:", error);
