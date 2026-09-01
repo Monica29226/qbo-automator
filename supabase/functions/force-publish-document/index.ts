@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.78.0";
+import { attachPdfToQuickBooks, attachXmlToQuickBooks } from "../_shared/qbo-attachments.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -390,22 +391,97 @@ Deno.serve(async (req) => {
 
     const responseData = await response.json();
     const entityKey = isCreditNote ? 'VendorCredit' : 'Bill';
-    entityId = responseData[entityKey].Id;
+    const createdEntity = responseData[entityKey];
+    entityId = createdEntity.Id;
     entityType = entityKey;
 
     console.log(`✅ ${entityType} created: ${entityId}`);
 
+    // =============================================================
+    // VERIFICACIÓN POST-CREACIÓN: total e IVA de QBO vs XML
+    // Los montos del XML son la fuente de verdad; no se recalculan.
+    // =============================================================
+    const qboTotalAmt = parseFloat(createdEntity.TotalAmt || '0');
+    const qboTotalTax = parseFloat(createdEntity?.TxnTaxDetail?.TotalTax || '0');
+    const expectedTotal = Math.abs(doc.total_amount || 0);
+    const expectedTax = Math.abs(doc.total_tax || 0);
+    const totalDiscrepancy = Math.abs(qboTotalAmt - expectedTotal);
+    const taxDiscrepancy = Math.abs(qboTotalTax - expectedTax);
+    let discrepancyMsg: string | null = null;
+
+    if (totalDiscrepancy > 1.0 || taxDiscrepancy > 1.0) {
+      const issue = {
+        code: 'qbo_total_mismatch',
+        type: totalDiscrepancy > 1.0 ? 'critical' : 'warning',
+        title: `Total QBO no coincide con XML — ${doc.doc_number} (publicación forzada)`,
+        description: `QBO total=${qboTotalAmt.toFixed(2)} vs XML total=${expectedTotal.toFixed(2)} (diff ${totalDiscrepancy.toFixed(2)}). QBO IVA=${qboTotalTax.toFixed(2)} vs XML IVA=${expectedTax.toFixed(2)} (diff ${taxDiscrepancy.toFixed(2)}).`,
+        doc_number: doc.doc_number,
+        doc_key: doc.doc_key,
+        qbo_entity_id: entityId,
+        supplier: doc.supplier_name,
+        qbo_total: qboTotalAmt,
+        xml_total: expectedTotal,
+        total_diff: Number(totalDiscrepancy.toFixed(2)),
+        qbo_tax: qboTotalTax,
+        xml_tax: expectedTax,
+        tax_diff: Number(taxDiscrepancy.toFixed(2)),
+        detected_at: new Date().toISOString(),
+      };
+      console.error(`⚠️ ${doc.doc_number}: DISCREPANCIA FORZADA ${JSON.stringify(issue)}`);
+      try {
+        await supabase.from('alert_history').insert({
+          organization_id,
+          alert_type: issue.type,
+          issues_count: 1,
+          issues_data: [issue],
+        });
+      } catch (alertErr: any) {
+        console.error(`No se pudo registrar la alerta: ${alertErr?.message || alertErr}`);
+      }
+      // Solo el total fuera de rango bloquea (queda en revisión). IVA solo = warning.
+      if (totalDiscrepancy > 1.0) {
+        discrepancyMsg = `Discrepancia QBO vs XML: total QBO=${qboTotalAmt.toFixed(2)}, XML=${expectedTotal.toFixed(2)} (diff ${totalDiscrepancy.toFixed(2)}). IVA QBO=${qboTotalTax.toFixed(2)}, XML=${expectedTax.toFixed(2)} (diff ${taxDiscrepancy.toFixed(2)}). ${entityType} creado (ID ${entityId}) — revisar y republicar.`;
+      }
+    }
+
+    // =============================================================
+    // ADJUNTOS: XML y PDF al documento creado en QuickBooks
+    // =============================================================
+    let xmlAttached = false;
+    let pdfAttached = false;
+
+    if (doc.xml_attachment_url) {
+      xmlAttached = await attachXmlToQuickBooks(
+        doc.xml_attachment_url, entityId, entityType, doc.doc_number, realmId, accessToken, supabase
+      );
+    } else {
+      console.log(`⚠️ ${doc.doc_number}: sin xml_attachment_url, no se adjunta XML`);
+    }
+
+    if (doc.pdf_attachment_url) {
+      pdfAttached = await attachPdfToQuickBooks(
+        doc.pdf_attachment_url, entityId, entityType, doc.doc_number, realmId, accessToken, supabase
+      );
+    } else {
+      console.log(`⚠️ ${doc.doc_number}: sin pdf_attachment_url, PDF no disponible`);
+    }
+
     // Update document status
-    await supabase
+    const { error: docUpdateError } = await supabase
       .from("processed_documents")
       .update({
-        status: "published",
+        status: discrepancyMsg ? "review" : "published",
         qbo_entity_id: entityId,
         qbo_entity_type: entityType,
-        error_message: `Publicación forzada exitosa (ID: ${entityId})`,
+        qbo_realm_id: realmId,
+        error_message: discrepancyMsg ?? `Publicación forzada exitosa (ID: ${entityId})`,
         processed_at: new Date().toISOString(),
       })
       .eq("id", document_id);
+
+    if (docUpdateError) {
+      console.error(`❌ ${doc.doc_number}: ${entityType} ${entityId} existe en QBO pero no se pudo actualizar el documento: ${docUpdateError.message}`);
+    }
 
     // Register in tracking
     await supabase
@@ -424,7 +500,7 @@ Deno.serve(async (req) => {
         currency: doc.currency,
         supplier_name: doc.supplier_name,
         status: 'published',
-        error_message: null,
+        error_message: discrepancyMsg,
         published_at: new Date().toISOString(),
       }, {
         onConflict: 'organization_id,clave_hacienda'
@@ -432,12 +508,31 @@ Deno.serve(async (req) => {
 
     return new Response(
       JSON.stringify({
-        success: true,
-        message: `${entityType} created successfully`,
+        success: !discrepancyMsg,
+        message: discrepancyMsg ?? `${entityType} creado correctamente`,
         qbo_entity_id: entityId,
         qbo_entity_type: entityType,
+        qbo_realm_id: realmId,
+        verification: {
+          qbo_total: qboTotalAmt,
+          xml_total: expectedTotal,
+          total_diff: Number(totalDiscrepancy.toFixed(2)),
+          qbo_tax: qboTotalTax,
+          xml_tax: expectedTax,
+          tax_diff: Number(taxDiscrepancy.toFixed(2)),
+          totals_match: totalDiscrepancy <= 1.0,
+          tax_match: taxDiscrepancy <= 1.0,
+        },
+        attachments: {
+          xml_attached: xmlAttached,
+          pdf_attached: pdfAttached,
+          pdf_available: !!doc.pdf_attachment_url,
+          xml_available: !!doc.xml_attachment_url,
+        },
+        status: discrepancyMsg ? "review" : "published",
       }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+
     );
 
   } catch (error: any) {
