@@ -76,13 +76,25 @@ serve(async (req) => {
         );
       }
 
-      const result = await processOrganization(supabase, supabaseUrl, supabaseKey, org, trigger);
-      
+      // El trabajo por empresa puede tardar más que el límite del gateway (504/503).
+      // Se ejecuta en segundo plano y se responde de inmediato.
+      const work = processOrganization(supabase, supabaseUrl, supabaseKey, org, trigger)
+        .catch((err) => console.error(`❌ processOrganization failed for ${org.name}:`, err));
+
+      // @ts-ignore - EdgeRuntime existe en el runtime de Supabase
+      if (typeof EdgeRuntime !== "undefined" && (EdgeRuntime as any).waitUntil) {
+        // @ts-ignore
+        (EdgeRuntime as any).waitUntil(work);
+      } else {
+        await work;
+      }
+
       return new Response(
-        JSON.stringify({ success: true, result }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        JSON.stringify({ success: true, accepted: true, organization_id: singleOrgId }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 202 }
       );
     }
+
 
     // ============================================================
     // MODE 2: Dispatcher
@@ -482,11 +494,16 @@ async function processOrganization(
           const qboData = await qboResponse.json();
           qboPublished = qboData?.published || 0;
           qboFailed = qboData?.failed || 0;
+        } else if (qboResponse.status === 409) {
+          // QuickBooks desconectado: no es un fallo de publicación, hay que reconectar.
+          const qboError = await qboResponse.text().catch(() => "Unknown");
+          console.warn(`⚠️ QuickBooks desconectado para ${org.name}, se omite la publicación: ${qboError}`);
         } else {
           const qboError = await qboResponse.text().catch(() => "Unknown");
           console.error(`QuickBooks publish failed for ${org.name}: ${qboError}`);
           qboFailed = 1;
         }
+
       }
     }
 

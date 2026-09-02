@@ -68,6 +68,8 @@ serve(async (req) => {
 
     let uploaded = 0;
     let failed = 0;
+    let skipped = 0;
+    let skipReason: string | null = null;
 
     // Upload documents one by one
     for (const doc of documents) {
@@ -84,11 +86,19 @@ serve(async (req) => {
           }),
         });
 
-        if (uploadResponse.ok) {
+        // La función responde 200 incluso cuando omite el archivo (Drive no
+        // conectado/configurado). Hay que leer el cuerpo para no contar
+        // omisiones como subidas exitosas.
+        const result = await uploadResponse.json().catch(() => null);
+
+        if (uploadResponse.ok && result?.success === true) {
           uploaded++;
+        } else if (uploadResponse.ok && result?.skipped === true) {
+          skipped++;
+          skipReason = result.reason || skipReason;
         } else {
           failed++;
-          console.error(`Failed to upload document ${doc.id}`);
+          console.error(`Failed to upload document ${doc.id}`, result?.error || uploadResponse.status);
         }
       } catch (error) {
         failed++;
@@ -96,15 +106,18 @@ serve(async (req) => {
       }
     }
 
-    console.log(`Batch upload completed: ${uploaded} uploaded, ${failed} failed`);
+    console.log(`Batch upload completed: ${uploaded} uploaded, ${skipped} skipped, ${failed} failed`);
 
     return new Response(
       JSON.stringify({ 
         message: "Batch upload completed", 
         uploaded, 
+        skipped,
+        skip_reason: skipReason,
         failed,
         total: documents.length 
       }),
+
       {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
         status: 200,

@@ -1082,8 +1082,15 @@ Deno.serve(async (req) => {
       .maybeSingle();
 
     if (!qboAccount) {
+      // Mantener el indicador de la empresa alineado con la realidad para que
+      // el auto-sync deje de intentar publicar y la UI pida reconectar.
+      await supabase
+        .from("organizations")
+        .update({ quickbooks_connected: false })
+        .eq("id", organization_id);
       throw new Error("QuickBooks not connected");
     }
+
 
     const credentials = qboAccount.credentials as any;
     let accessToken = credentials.access_token;
@@ -3500,10 +3507,25 @@ Deno.serve(async (req) => {
     );
   } catch (error) {
     logError("❌ Publish error:", error);
-    
+
+    const message = error instanceof Error ? error.message : "Unknown error";
+    // Falta de conexión / token revocado no es una falla del servidor: se responde
+    // 409 con un código claro para que el llamador lo trate como "reconectar".
+    const isDisconnected =
+      message === "QuickBooks not connected" ||
+      message.includes("token revoked");
+
     return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : "Unknown error" }),
-      { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 500 }
+      JSON.stringify({
+        error: message,
+        code: isDisconnected ? "quickbooks_disconnected" : undefined,
+        reconnect_required: isDisconnected || undefined,
+      }),
+      {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: isDisconnected ? 409 : 500,
+      }
     );
   }
 });
+
