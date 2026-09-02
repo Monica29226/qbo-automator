@@ -541,7 +541,7 @@ async function sendAlertEmail(
   // la cuenta de Resend, por lo que las alertas a las empresas eran rechazadas (403).
   const BRANDED_FROM = "ACL Costa Rica <alertas@aureoncr.com>";
   const SANDBOX_FROM = "ACL Costa Rica <onboarding@resend.dev>";
-  const FALLBACK_TO = Deno.env.get("ALERTS_FALLBACK_EMAIL") || "monicalderon.2910@gmail.com";
+  const FALLBACK_TO = Deno.env.get("ALERTS_FALLBACK_EMAIL") || "";
 
   const postEmail = (from: string, to: string[]) =>
     fetch("https://api.resend.com/emails", {
