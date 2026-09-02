@@ -494,11 +494,16 @@ async function processOrganization(
           const qboData = await qboResponse.json();
           qboPublished = qboData?.published || 0;
           qboFailed = qboData?.failed || 0;
+        } else if (qboResponse.status === 409) {
+          // QuickBooks desconectado: no es un fallo de publicación, hay que reconectar.
+          const qboError = await qboResponse.text().catch(() => "Unknown");
+          console.warn(`⚠️ QuickBooks desconectado para ${org.name}, se omite la publicación: ${qboError}`);
         } else {
           const qboError = await qboResponse.text().catch(() => "Unknown");
           console.error(`QuickBooks publish failed for ${org.name}: ${qboError}`);
           qboFailed = 1;
         }
+
       }
     }
 
