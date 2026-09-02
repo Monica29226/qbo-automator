@@ -1082,8 +1082,15 @@ Deno.serve(async (req) => {
       .maybeSingle();
 
     if (!qboAccount) {
+      // Mantener el indicador de la empresa alineado con la realidad para que
+      // el auto-sync deje de intentar publicar y la UI pida reconectar.
+      await supabase
+        .from("organizations")
+        .update({ quickbooks_connected: false })
+        .eq("id", organization_id);
       throw new Error("QuickBooks not connected");
     }
+
 
     const credentials = qboAccount.credentials as any;
     let accessToken = credentials.access_token;
