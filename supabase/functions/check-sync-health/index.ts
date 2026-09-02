@@ -609,13 +609,26 @@ async function sendAlertEmail(
   if (!emailResponse.ok) {
     const brandedError = await emailResponse.text();
     console.error("Resend (dominio) rechazó el envío:", brandedError);
-    // Fallback al remitente sandbox, que solo puede alcanzar al dueño de la cuenta.
-    emailResponse = await postEmail(SANDBOX_FROM, [FALLBACK_TO]);
-    if (!emailResponse.ok) {
-      const sandboxError = await emailResponse.text();
-      throw new Error(`Failed to send alert email: ${brandedError} | fallback: ${sandboxError}`);
+
+    // El buzón de la empresa NO fue notificado. Se avisa al buzón de respaldo solo
+    // si está configurado explícitamente, y nunca se reporta como envío logrado:
+    // devolver null evita que el anti-spam de 12 h bloquee los próximos intentos.
+    if (FALLBACK_TO) {
+      try {
+        const fallbackResponse = await postEmail(SANDBOX_FROM, [FALLBACK_TO]);
+        if (!fallbackResponse.ok) {
+          console.error("Fallback de alerta también falló:", await fallbackResponse.text());
+        } else {
+          console.warn(`Alerta de ${org.name} enviada solo al buzón de respaldo; la empresa no fue notificada.`);
+        }
+      } catch (err) {
+        console.error("Error enviando alerta al buzón de respaldo:", err);
+      }
     }
+
+    throw new Error(`Failed to send alert email to ${org.alertEmail}: ${brandedError}`);
   }
+
 
   const data = await emailResponse.json();
   console.log(`Alert email sent successfully. Email ID: ${data.id}`);
