@@ -19,7 +19,9 @@ serve(async (req) => {
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    const { organization_id, month, year, force_resync, search_term, search_days } = await req.json();
+    const { organization_id, month, year, force_resync, search_term, search_days, chain_depth } = await req.json();
+    const chainDepth = Number.isFinite(Number(chain_depth)) ? Number(chain_depth) : 0;
+    const MAX_CHAIN_DEPTH = 60;
     if (!organization_id) throw new Error("organization_id required");
     
     console.log(`Force resync mode: ${force_resync ? 'ENABLED' : 'disabled'}`);
