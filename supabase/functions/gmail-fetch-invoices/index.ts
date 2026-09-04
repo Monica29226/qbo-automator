@@ -342,8 +342,12 @@ serve(async (req) => {
       ? batchSizeSetting
       : 60; // tandas más cortas: 150 agotaba memoria/CPU del worker (546)
 
-    const useResumeCursor = !requestedPeriod && !search_term && !force_resync;
-    const cursorKey = `gmail_resume_cursor_${organization_id}`;
+    // El cursor también aplica a la importación histórica por período (mes/año):
+    // así cada llamada avanza en la lista en vez de reprocesar los mismos correos.
+    const useResumeCursor = !search_term && !force_resync;
+    const cursorKey = requestedPeriod
+      ? `gmail_resume_cursor_${organization_id}_${requestedPeriod}`
+      : `gmail_resume_cursor_${organization_id}`;
     let resumeCursor = 0;
     if (useResumeCursor) {
       const { data: cursorRow } = await supabase
