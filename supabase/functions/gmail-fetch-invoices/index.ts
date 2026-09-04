@@ -19,7 +19,9 @@ serve(async (req) => {
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    const { organization_id, month, year, force_resync, search_term, search_days } = await req.json();
+    const { organization_id, month, year, force_resync, search_term, search_days, chain_depth } = await req.json();
+    const chainDepth = Number.isFinite(Number(chain_depth)) ? Number(chain_depth) : 0;
+    const MAX_CHAIN_DEPTH = 60;
     if (!organization_id) throw new Error("organization_id required");
     
     console.log(`Force resync mode: ${force_resync ? 'ENABLED' : 'disabled'}`);
@@ -342,8 +344,12 @@ serve(async (req) => {
       ? batchSizeSetting
       : 60; // tandas más cortas: 150 agotaba memoria/CPU del worker (546)
 
-    const useResumeCursor = !requestedPeriod && !search_term && !force_resync;
-    const cursorKey = `gmail_resume_cursor_${organization_id}`;
+    // El cursor también aplica a la importación histórica por período (mes/año):
+    // así cada llamada avanza en la lista en vez de reprocesar los mismos correos.
+    const useResumeCursor = !search_term && !force_resync;
+    const cursorKey = requestedPeriod
+      ? `gmail_resume_cursor_${organization_id}_${requestedPeriod}`
+      : `gmail_resume_cursor_${organization_id}`;
     let resumeCursor = 0;
     if (useResumeCursor) {
       const { data: cursorRow } = await supabase
@@ -944,6 +950,29 @@ serve(async (req) => {
     if (requestedPeriod) {
       console.log(`📅 XML period ${requestedPeriod}: ${messagesInRequestedPeriod.size} mensajes con XML dentro del período, ${filteredByXmlDateCount} XML fuera del período`);
     }
+
+    // ============================================================
+    // AUTO-ENCADENADO PARA IMPORTACIÓN HISTÓRICA POR PERÍODO
+    // Si queda backlog del mes solicitado, la función se vuelve a
+    // invocar en segundo plano hasta drenar el mes (con tope de saltos).
+    // ============================================================
+    if (requestedPeriod && backlogPending && chainDepth < MAX_CHAIN_DEPTH) {
+      const nextBody = JSON.stringify({ organization_id, month, year, chain_depth: chainDepth + 1 });
+      const chain = fetch(`${supabaseUrl}/functions/v1/gmail-fetch-invoices`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${supabaseKey}`,
+        },
+        body: nextBody,
+      })
+        .then(() => console.log(`🔁 Encadenada siguiente tanda de ${requestedPeriod} (salto ${chainDepth + 1})`))
+        .catch((e) => console.error("⚠️ No se pudo encadenar la siguiente tanda:", e));
+      // @ts-ignore EdgeRuntime existe en el runtime de Supabase
+      if (typeof EdgeRuntime !== "undefined") EdgeRuntime.waitUntil(chain);
+    }
+
+
     
     return new Response(
       JSON.stringify({
