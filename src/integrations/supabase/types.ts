@@ -2118,63 +2118,34 @@ export type Database = {
           isSetofReturn: true
         }
       }
-      compras_formato_gti:
-        | {
-            Args: { p_desde: string; p_hasta: string }
-            Returns: {
-              base_gravada: number
-              cedula_emisor: string
-              cedula_empresa: string
-              consecutivo: string
-              descuento: number
-              doc_key: string
-              empresa: string
-              exento: number
-              issue_date: string
-              iva_total: number
-              moneda: string
-              nombre_emisor: string
-              organization_id: string
-              otros_cargos: number
-              revisar: boolean
-              t1: number
-              t13: number
-              t2: number
-              t4: number
-              t8: number
-              tipo: string
-              tipo_cambio: number
-              total_comprobante: number
-            }[]
-          }
-        | {
-            Args: { p_desde: string; p_hasta: string; p_org?: string }
-            Returns: {
-              base_gravada: number
-              cedula_emisor: string
-              cedula_empresa: string
-              consecutivo: string
-              descuento: number
-              doc_key: string
-              empresa: string
-              exento: number
-              issue_date: string
-              iva_total: number
-              moneda: string
-              nombre_emisor: string
-              organization_id: string
-              otros_cargos: number
-              revisar: boolean
-              t1: number
-              t13: number
-              t2: number
-              t4: number
-              t8: number
-              tipo: string
-              tipo_cambio: number
-              total_comprobante: number
-            }[]
-          }
+      compras_formato_gti: {
+        Args: { p_desde: string; p_hasta: string; p_org?: string }
+        Returns: {
+          base_gravada: number
+          cedula_emisor: string
+          cedula_empresa: string
+          consecutivo: string
+          descuento: number
+          doc_key: string
+          empresa: string
+          exento: number
+          issue_date: string
+          iva_total: number
+          moneda: string
+          nombre_emisor: string
+          organization_id: string
+          otros_cargos: number
+          revisar: boolean
+          t1: number
+          t13: number
+          t2: number
+          t4: number
+          t8: number
+          tipo: string
+          tipo_cambio: number
+          total_comprobante: number
+        }[]
+      }
       count_published_without_tracking: {
         Args: { p_org: string }
         Returns: number
