@@ -555,6 +555,25 @@ export default function PurchaseReportGTI() {
       a.remove();
       URL.revokeObjectURL(url);
 
+      // Empresas visibles sin documentos en el mes: no se genera archivo, solo se muestran.
+      const { data: orgs } = await supabase
+        .from("organizations")
+        .select("id, name, tax_id")
+        .eq("is_active", true);
+      for (const o of orgs ?? []) {
+        if (porEmpresa.has(o.id)) continue;
+        res.push({
+          organization_id: o.id,
+          empresa: o.name,
+          cedula: soloDigitos(o.tax_id),
+          documentos: 0,
+          ivaTotal: 0,
+          totalGasto: 0,
+          revisar: false,
+          sinDocumentos: true,
+        });
+      }
+
       res.sort((x, z) => x.empresa.localeCompare(z.empresa));
       setResultados(res);
       setProgreso(100);

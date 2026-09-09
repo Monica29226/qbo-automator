@@ -92,6 +92,12 @@ export function DashboardSidebar({ isAdmin, reviewCount, onSignOut }: DashboardS
       show: true,
     },
     {
+      title: "Reporte de Compras (GTI)",
+      icon: FileSpreadsheet,
+      path: "/reporte-compras",
+      show: true,
+    },
+    {
       title: "Estados de Cuenta",
       icon: Landmark,
       path: "/bank-statements",
