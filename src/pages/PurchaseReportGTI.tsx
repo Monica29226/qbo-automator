@@ -2,7 +2,7 @@ import { useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ArrowLeft, Download, FileSpreadsheet, Loader2, Upload, X } from "lucide-react";
 import * as XLSX from "xlsx";
-import JSZip from "jszip";
+import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -388,7 +388,9 @@ function buildWorkbook(
 export default function PurchaseReportGTI() {
   const navigate = useNavigate();
   const { toast } = useToast();
+  const { activeOrganization, organizations } = useAuth();
   const fileRef = useRef<HTMLInputElement>(null);
+  const empresaActiva = organizations.find((o) => o.id === activeOrganization);
 
   const prev = useMemo(() => {
     const d = new Date();
@@ -416,6 +418,15 @@ export default function PurchaseReportGTI() {
   };
 
   const generar = async () => {
+    if (!activeOrganization) {
+      toast({
+        title: "Seleccione una empresa",
+        description: "El reporte se genera para la empresa activa.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     setGenerando(true);
     setResultados([]);
     setProgreso(0);
@@ -430,13 +441,25 @@ export default function PurchaseReportGTI() {
       const periodoLabel = `${MESES[m - 1]} ${y}`;
       const mmAAAA = `${String(m).padStart(2, "0")}-${y}`;
 
-      const { data, error } = await supabase.rpc("compras_formato_gti", {
-        p_desde: desde,
-        p_hasta: hasta,
-      });
-      if (error) throw error;
+      // Se pide por bloques: una sola llamada está limitada a 1.000 filas.
+      const PAGE = 1000;
+      const rawRows: ComprasRow[] = [];
+      for (let offset = 0; ; offset += PAGE) {
+        const { data, error } = await supabase
+          .rpc("compras_formato_gti", {
+            p_desde: desde,
+            p_hasta: hasta,
+            p_org: activeOrganization,
+          })
+          .range(offset, offset + PAGE - 1);
+        if (error) throw error;
+        const page = (data ?? []) as unknown as ComprasRow[];
+        rawRows.push(...page);
+        setProgresoTexto(`Consultando documentos… (${rawRows.length})`);
+        if (page.length < PAGE) break;
+      }
 
-      const rows = ((data ?? []) as unknown as ComprasRow[]).map((d) => ({
+      const docs = rawRows.map((d) => ({
         ...d,
         t1: num(d.t1),
         t2: num(d.t2),
@@ -452,19 +475,45 @@ export default function PurchaseReportGTI() {
         tipo_cambio: num(d.tipo_cambio),
       }));
 
-      // Reportes de GTI subidos, indexados por cédula de la hoja "Filtros"
+      if (docs.length === 0) {
+        setResultados([
+          {
+            organization_id: activeOrganization,
+            empresa: empresaActiva?.name ?? "Empresa activa",
+            cedula: "",
+            documentos: 0,
+            ivaTotal: 0,
+            totalGasto: 0,
+            revisar: false,
+            sinDocumentos: true,
+          },
+        ]);
+        toast({
+          title: "Sin documentos",
+          description: `No hay compras registradas en ${periodoLabel} para esta empresa.`,
+        });
+        return;
+      }
+
+      const cedula = soloDigitos(docs[0].cedula_empresa);
+      if (!cedula) {
+        toast({
+          title: "Empresa sin cédula",
+          description: `${docs[0].empresa} no tiene cédula registrada; "Id Empresa" quedaría vacío. Complete la cédula en Mi Empresa.`,
+          variant: "destructive",
+        });
+      }
+
+      // Reporte de GTI opcional: se usa el que corresponda a la cédula de esta empresa
       setProgresoTexto("Leyendo reportes de GTI…");
-      const gtiPorCedula = new Map<string, GtiFileData>();
+      let gti: GtiFileData | undefined;
       for (const f of archivos) {
         try {
           const parsed = await parseGtiFile(f);
-          if (parsed) gtiPorCedula.set(parsed.cedula, parsed);
-          else
-            toast({
-              title: "Archivo de GTI no reconocido",
-              description: `No se pudo identificar la empresa en ${f.name}.`,
-              variant: "destructive",
-            });
+          if (parsed && (!cedula || parsed.cedula === cedula)) {
+            gti = parsed;
+            break;
+          }
         } catch {
           toast({
             title: "No se pudo leer el archivo",
@@ -473,115 +522,64 @@ export default function PurchaseReportGTI() {
           });
         }
       }
-
-      // Empresas visibles: las que devolvió la función
-      const porEmpresa = new Map<string, ComprasRow[]>();
-      for (const r of rows) {
-        const arr = porEmpresa.get(r.organization_id) ?? [];
-        arr.push(r);
-        porEmpresa.set(r.organization_id, arr);
-      }
-
-      const zip = new JSZip();
-      const res: EmpresaResultado[] = [];
-      const empresas = Array.from(porEmpresa.entries());
-      let i = 0;
-
-      for (const [orgId, docs] of empresas) {
-        i += 1;
-        setProgreso(Math.round((i / Math.max(empresas.length, 1)) * 100));
-        setProgresoTexto(`Generando ${docs[0].empresa} (${i}/${empresas.length})`);
-
-        const cedula = soloDigitos(docs[0].cedula_empresa);
-        if (!cedula) {
-          toast({
-            title: "Empresa sin cédula",
-            description: `${docs[0].empresa} no tiene cédula registrada; "Id Empresa" quedaría vacío. Complete la cédula en Mi Empresa.`,
-            variant: "destructive",
-          });
-        }
-
-        const gti = cedula ? gtiPorCedula.get(cedula) : undefined;
-        const wb = buildWorkbook(docs, periodoLabel, gti);
-        const out = XLSX.write(wb, { bookType: "xlsx", type: "array" });
-        const nombre = sanitizeName(
-          `FUENTE - Compras FacturaFlow ${mmAAAA} ${docs[0].empresa}.xlsx`,
-        );
-        zip.file(nombre, out);
-
-        let conciliacion: EmpresaResultado["conciliacion"];
-        if (gti) {
-          const ffPorCons = new Map(
-            docs.filter((d) => d.consecutivo).map((d) => [d.consecutivo!.trim(), d]),
-          );
-          const gtiPorCons = new Map(gti.rows.map((g) => [g.consecutivo.trim(), g]));
-          const ff13 = r2(docs.reduce((a, d) => a + d.t13, 0));
-          const g13 = r2(gti.rows.reduce((a, g) => a + num(g.iva13), 0));
-          let soloGti = 0;
-          let soloFF = 0;
-          for (const k of gtiPorCons.keys()) if (!ffPorCons.has(k)) soloGti += 1;
-          for (const k of ffPorCons.keys()) if (!gtiPorCons.has(k)) soloFF += 1;
-          conciliacion = { diferencia: r2(ff13 - g13), soloGti, soloFF };
-        }
-
-        res.push({
-          organization_id: orgId,
-          empresa: docs[0].empresa,
-          cedula,
-          documentos: docs.length,
-          ivaTotal: r2(docs.reduce((a, d) => a + d.iva_total, 0)),
-          totalGasto: r2(docs.reduce((a, d) => a + d.total_comprobante, 0)),
-          revisar: docs.some((d) => d.revisar),
-          conciliacion,
-        });
-      }
-
-      if (empresas.length === 0) {
-        setResultados([]);
+      if (archivos.length > 0 && !gti) {
         toast({
-          title: "Sin documentos",
-          description: `No hay compras registradas en ${periodoLabel} para sus empresas.`,
+          title: "Reporte de GTI no aplicado",
+          description: "Ningún archivo corresponde a la cédula de esta empresa.",
+          variant: "destructive",
         });
-        return;
       }
 
-      const blob = await zip.generateAsync({ type: "blob" });
+      setProgreso(60);
+      setProgresoTexto(`Generando ${docs[0].empresa}…`);
+
+      const wb = buildWorkbook(docs, periodoLabel, gti);
+      const out = XLSX.write(wb, { bookType: "xlsx", type: "array" });
+      const nombre = sanitizeName(
+        `FUENTE - Compras FacturaFlow ${mmAAAA} ${docs[0].empresa}.xlsx`,
+      );
+      const blob = new Blob([out], {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `compras-facturaflow-${mmAAAA}.zip`;
+      a.download = nombre;
       document.body.appendChild(a);
       a.click();
       a.remove();
       URL.revokeObjectURL(url);
 
-      // Empresas visibles sin documentos en el mes: no se genera archivo, solo se muestran.
-      const { data: orgs } = await supabase
-        .from("organizations")
-        .select("id, name, tax_id")
-        .eq("is_active", true);
-      for (const o of orgs ?? []) {
-        if (porEmpresa.has(o.id)) continue;
-        res.push({
-          organization_id: o.id,
-          empresa: o.name,
-          cedula: soloDigitos(o.tax_id),
-          documentos: 0,
-          ivaTotal: 0,
-          totalGasto: 0,
-          revisar: false,
-          sinDocumentos: true,
-        });
+      let conciliacion: EmpresaResultado["conciliacion"];
+      if (gti) {
+        const ffPorCons = new Map(
+          docs.filter((d) => d.consecutivo).map((d) => [d.consecutivo!.trim(), d]),
+        );
+        const gtiPorCons = new Map(gti.rows.map((g) => [g.consecutivo.trim(), g]));
+        const ff13 = r2(docs.reduce((acc, d) => acc + d.t13, 0));
+        const g13 = r2(gti.rows.reduce((acc, g) => acc + num(g.iva13), 0));
+        let soloGti = 0;
+        let soloFF = 0;
+        for (const k of gtiPorCons.keys()) if (!ffPorCons.has(k)) soloGti += 1;
+        for (const k of ffPorCons.keys()) if (!gtiPorCons.has(k)) soloFF += 1;
+        conciliacion = { diferencia: r2(ff13 - g13), soloGti, soloFF };
       }
 
-      res.sort((x, z) => x.empresa.localeCompare(z.empresa));
-      setResultados(res);
+      setResultados([
+        {
+          organization_id: activeOrganization,
+          empresa: docs[0].empresa,
+          cedula,
+          documentos: docs.length,
+          ivaTotal: r2(docs.reduce((acc, d) => acc + d.iva_total, 0)),
+          totalGasto: r2(docs.reduce((acc, d) => acc + d.total_comprobante, 0)),
+          revisar: docs.some((d) => d.revisar),
+          conciliacion,
+        },
+      ]);
       setProgreso(100);
       setProgresoTexto("Listo");
-      toast({
-        title: "Reporte generado",
-        description: `${res.length} empresa(s) en compras-facturaflow-${mmAAAA}.zip`,
-      });
+      toast({ title: "Reporte generado", description: nombre });
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "Error desconocido";
       toast({ title: "No se pudo generar el reporte", description: msg, variant: "destructive" });
@@ -603,8 +601,8 @@ export default function PurchaseReportGTI() {
               Reporte de compras (formato GTI)
             </h1>
             <p className="text-sm text-muted-foreground">
-              Un archivo por empresa con el mismo layout del Reporte con Tasas, para la
-              declaración de IVA (D-104). Montos expresados en colones.
+              Mismo layout del Reporte con Tasas, para la declaración de IVA (D-104). Montos
+              expresados en colones.
             </p>
           </div>
         </div>
@@ -613,7 +611,11 @@ export default function PurchaseReportGTI() {
           <CardHeader>
             <CardTitle className="text-lg">Período</CardTitle>
             <CardDescription>
-              Se generan todas las empresas a las que usted tiene acceso.
+              El reporte se genera únicamente para la empresa activa:{" "}
+              <span className="font-medium text-foreground">
+                {empresaActiva?.name ?? "ninguna seleccionada"}
+              </span>
+              . Para otra empresa, cámbiela en el selector de empresa.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-6">

@@ -2119,7 +2119,7 @@ export type Database = {
         }
       }
       compras_formato_gti: {
-        Args: { p_desde: string; p_hasta: string }
+        Args: { p_desde: string; p_hasta: string; p_org?: string }
         Returns: {
           base_gravada: number
           cedula_emisor: string
