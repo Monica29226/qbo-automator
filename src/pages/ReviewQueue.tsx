@@ -595,7 +595,7 @@ const ReviewQueue = () => {
                     </TableRow>
                     {isExpanded && (
                       <TableRow>
-                        <TableCell colSpan={7} className="bg-muted/30 p-0">
+                        <TableCell colSpan={8} className="bg-muted/30 p-0">
                           <div className="px-6 py-4">
                             <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
                               {/* Left: document info + lines (3/5) */}
@@ -733,6 +733,7 @@ const ReviewQueue = () => {
               })}
               </TableBody>
             </Table>
+            </>
           )}
         </Card>
       </main>
