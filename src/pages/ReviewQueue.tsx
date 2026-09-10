@@ -468,9 +468,31 @@ const ReviewQueue = () => {
               <p className="text-muted-foreground">No se encontraron documentos para esta empresa</p>
             </div>
           ) : (
+            <>
+            {selectedIds.size > 0 && (
+              <div className="mb-4 flex items-center justify-between rounded border px-4 py-3">
+                <span className="text-sm">
+                  {selectedIds.size} factura{selectedIds.size !== 1 ? "s" : ""} seleccionada{selectedIds.size !== 1 ? "s" : ""}
+                </span>
+                <div className="flex items-center gap-2">
+                  <Button variant="ghost" size="sm" onClick={() => setSelectedIds(new Set())}>
+                    Quitar selección
+                  </Button>
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    onClick={() => setDocsToDiscard(documents.filter(d => selectedIds.has(d.id)))}
+                  >
+                    <Trash2 className="h-4 w-4 mr-2" />
+                    Descartar {selectedIds.size}
+                  </Button>
+                </div>
+              </div>
+            )}
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead className="w-10"></TableHead>
                   <TableHead>Número</TableHead>
                   <TableHead>Fecha</TableHead>
                   <TableHead>Proveedor</TableHead>
