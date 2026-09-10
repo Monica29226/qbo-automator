@@ -25,7 +25,19 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { FileText, ArrowLeft, Loader2, CheckCircle, X, Eye, ChevronDown, ChevronUp } from "lucide-react";
+import { FileText, ArrowLeft, Loader2, CheckCircle, X, Eye, ChevronDown, ChevronUp, Trash2 } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { discardDocuments } from "@/lib/discardInvoices";
 import { PdfViewer } from "@/components/PdfViewer";
 import { Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
@@ -200,6 +212,50 @@ const ReviewQueue = () => {
   const [pdfOnlyDoc, setPdfOnlyDoc] = useState<Document | null>(null);
   const [isPdfDialogOpen, setIsPdfDialogOpen] = useState(false);
   const [expandedDocId, setExpandedDocId] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [docsToDiscard, setDocsToDiscard] = useState<Document[] | null>(null);
+  const [isDiscarding, setIsDiscarding] = useState(false);
+
+  const canDiscard = (doc: Document) => !doc.qbo_entity_id && doc.status !== "published";
+
+  const toggleSelected = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+
+  const confirmDiscard = async () => {
+    if (!docsToDiscard || docsToDiscard.length === 0) return;
+    const docs = docsToDiscard;
+    const ids = docs.map((d) => d.id);
+    setIsDiscarding(true);
+
+    // Optimista: sacarlas de la lista de inmediato
+    setDocuments((prev) => prev.filter((d) => !ids.includes(d.id)));
+    setDocsToDiscard(null);
+
+    try {
+      await discardDocuments(ids, "deleted_by_user");
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        ids.forEach((id) => next.delete(id));
+        return next;
+      });
+      toast.success(
+        ids.length > 1
+          ? `${ids.length} facturas descartadas · no volverán a entrar`
+          : "Factura descartada · no volverá a entrar"
+      );
+    } catch (err: any) {
+      console.error("Error al descartar:", err);
+      setDocuments((prev) => [...docs, ...prev]);
+      toast.error(`No se pudo descartar: ${err?.message || "error desconocido"}`);
+    } finally {
+      setIsDiscarding(false);
+    }
+  };
 
   useEffect(() => {
     if (activeOrganization) {
@@ -412,9 +468,31 @@ const ReviewQueue = () => {
               <p className="text-muted-foreground">No se encontraron documentos para esta empresa</p>
             </div>
           ) : (
+            <>
+            {selectedIds.size > 0 && (
+              <div className="mb-4 flex items-center justify-between rounded border px-4 py-3">
+                <span className="text-sm">
+                  {selectedIds.size} factura{selectedIds.size !== 1 ? "s" : ""} seleccionada{selectedIds.size !== 1 ? "s" : ""}
+                </span>
+                <div className="flex items-center gap-2">
+                  <Button variant="ghost" size="sm" onClick={() => setSelectedIds(new Set())}>
+                    Quitar selección
+                  </Button>
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    onClick={() => setDocsToDiscard(documents.filter(d => selectedIds.has(d.id)))}
+                  >
+                    <Trash2 className="h-4 w-4 mr-2" />
+                    Descartar {selectedIds.size}
+                  </Button>
+                </div>
+              </div>
+            )}
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead className="w-10"></TableHead>
                   <TableHead>Número</TableHead>
                   <TableHead>Fecha</TableHead>
                   <TableHead>Proveedor</TableHead>
@@ -442,6 +520,15 @@ const ReviewQueue = () => {
                       className={`cursor-pointer hover:bg-muted/60 transition-colors ${isNC ? "bg-purple-50/50" : ""}`}
                       onClick={() => setExpandedDocId(isExpanded ? null : doc.id)}
                     >
+                      <TableCell onClick={(e) => e.stopPropagation()}>
+                        {canDiscard(doc) && (
+                          <Checkbox
+                            checked={selectedIds.has(doc.id)}
+                            onCheckedChange={() => toggleSelected(doc.id)}
+                            aria-label="Seleccionar factura"
+                          />
+                        )}
+                      </TableCell>
                       <TableCell className="font-mono text-sm">
                         <div className="flex items-center gap-2">
                           {isExpanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
@@ -492,12 +579,23 @@ const ReviewQueue = () => {
                               Revisar
                             </Button>
                           )}
+                          {canDiscard(doc) && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="text-destructive hover:text-destructive"
+                              onClick={(e) => { e.stopPropagation(); setDocsToDiscard([doc]); }}
+                              title="Descartar: eliminar y evitar que vuelva a entrar"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          )}
                         </div>
                       </TableCell>
                     </TableRow>
                     {isExpanded && (
                       <TableRow>
-                        <TableCell colSpan={7} className="bg-muted/30 p-0">
+                        <TableCell colSpan={8} className="bg-muted/30 p-0">
                           <div className="px-6 py-4">
                             <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
                               {/* Left: document info + lines (3/5) */}
@@ -635,6 +733,7 @@ const ReviewQueue = () => {
               })}
               </TableBody>
             </Table>
+            </>
           )}
         </Card>
       </main>
@@ -803,6 +902,45 @@ const ReviewQueue = () => {
           )}
         </DialogContent>
       </Dialog>
+
+      <AlertDialog open={!!docsToDiscard} onOpenChange={(o) => !o && setDocsToDiscard(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {docsToDiscard && docsToDiscard.length > 1
+                ? `Descartar ${docsToDiscard.length} facturas`
+                : "Descartar esta factura"}
+            </AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-3">
+                <p>
+                  Se eliminan del sistema y quedan en la lista de exclusión permanente: no volverán a
+                  entrar por correo ni se subirán a QuickBooks.
+                </p>
+                <ul className="max-h-48 overflow-y-auto space-y-1 text-sm">
+                  {docsToDiscard?.map((d) => (
+                    <li key={d.id} className="flex justify-between gap-4 border-b pb-1">
+                      <span className="font-mono text-xs">{d.doc_number}</span>
+                      <span className="flex-1 truncate">{d.supplier_name}</span>
+                      <span className="font-medium">{formatCurrency(d.total_amount, d.currency)}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDiscarding}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => { e.preventDefault(); confirmDiscard(); }}
+              disabled={isDiscarding}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {isDiscarding ? "Descartando..." : "Sí, descartar"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };
