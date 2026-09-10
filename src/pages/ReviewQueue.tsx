@@ -212,6 +212,50 @@ const ReviewQueue = () => {
   const [pdfOnlyDoc, setPdfOnlyDoc] = useState<Document | null>(null);
   const [isPdfDialogOpen, setIsPdfDialogOpen] = useState(false);
   const [expandedDocId, setExpandedDocId] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [docsToDiscard, setDocsToDiscard] = useState<Document[] | null>(null);
+  const [isDiscarding, setIsDiscarding] = useState(false);
+
+  const canDiscard = (doc: Document) => !doc.qbo_entity_id && doc.status !== "published";
+
+  const toggleSelected = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+
+  const confirmDiscard = async () => {
+    if (!docsToDiscard || docsToDiscard.length === 0) return;
+    const docs = docsToDiscard;
+    const ids = docs.map((d) => d.id);
+    setIsDiscarding(true);
+
+    // Optimista: sacarlas de la lista de inmediato
+    setDocuments((prev) => prev.filter((d) => !ids.includes(d.id)));
+    setDocsToDiscard(null);
+
+    try {
+      await discardDocuments(ids, "deleted_by_user");
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        ids.forEach((id) => next.delete(id));
+        return next;
+      });
+      toast.success(
+        ids.length > 1
+          ? `${ids.length} facturas descartadas · no volverán a entrar`
+          : "Factura descartada · no volverá a entrar"
+      );
+    } catch (err: any) {
+      console.error("Error al descartar:", err);
+      setDocuments((prev) => [...docs, ...prev]);
+      toast.error(`No se pudo descartar: ${err?.message || "error desconocido"}`);
+    } finally {
+      setIsDiscarding(false);
+    }
+  };
 
   useEffect(() => {
     if (activeOrganization) {
