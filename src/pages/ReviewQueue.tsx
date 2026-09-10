@@ -579,6 +579,17 @@ const ReviewQueue = () => {
                               Revisar
                             </Button>
                           )}
+                          {canDiscard(doc) && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="text-destructive hover:text-destructive"
+                              onClick={(e) => { e.stopPropagation(); setDocsToDiscard([doc]); }}
+                              title="Descartar: eliminar y evitar que vuelva a entrar"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          )}
                         </div>
                       </TableCell>
                     </TableRow>
