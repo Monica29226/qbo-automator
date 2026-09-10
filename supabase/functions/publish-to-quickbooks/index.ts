@@ -1429,8 +1429,13 @@ Deno.serve(async (req) => {
       
       vendorDisplayName = vendorDisplayName.substring(0, 100).trim();
       
+      let searchAttempt = 0;
+      // Reintenta la búsqueda del proveedor: un timeout transitorio de QBO no debe
+      // marcar la factura como error.
+      while (true) {
+      searchAttempt++;
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 8000);
+      const timeoutId = setTimeout(() => controller.abort(), searchAttempt === 1 ? 8000 : 12000);
       
       try {
         const searchQuery = `SELECT * FROM Vendor WHERE DisplayName = '${vendorDisplayName.replace(/'/g, "\\'")}'`;
