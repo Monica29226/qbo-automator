@@ -1516,9 +1516,16 @@ Deno.serve(async (req) => {
       } catch (e) {
         clearTimeout(timeoutId);
         if (e instanceof Error && e.name === 'AbortError') {
+          if (searchAttempt < 2) {
+            logInfo(`⏳ Timeout buscando proveedor "${vendorDisplayName}", reintentando...`);
+            await new Promise((r) => setTimeout(r, 500));
+            continue;
+          }
           throw new Error(`Timeout buscando proveedor "${vendorDisplayName}"`);
         }
         throw e;
+      }
+      break;
       }
       
       // Create vendor
