@@ -902,6 +902,45 @@ const ReviewQueue = () => {
           )}
         </DialogContent>
       </Dialog>
+
+      <AlertDialog open={!!docsToDiscard} onOpenChange={(o) => !o && setDocsToDiscard(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {docsToDiscard && docsToDiscard.length > 1
+                ? `Descartar ${docsToDiscard.length} facturas`
+                : "Descartar esta factura"}
+            </AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-3">
+                <p>
+                  Se eliminan del sistema y quedan en la lista de exclusión permanente: no volverán a
+                  entrar por correo ni se subirán a QuickBooks.
+                </p>
+                <ul className="max-h-48 overflow-y-auto space-y-1 text-sm">
+                  {docsToDiscard?.map((d) => (
+                    <li key={d.id} className="flex justify-between gap-4 border-b pb-1">
+                      <span className="font-mono text-xs">{d.doc_number}</span>
+                      <span className="flex-1 truncate">{d.supplier_name}</span>
+                      <span className="font-medium">{formatCurrency(d.total_amount, d.currency)}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDiscarding}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => { e.preventDefault(); confirmDiscard(); }}
+              disabled={isDiscarding}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {isDiscarding ? "Descartando..." : "Sí, descartar"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };
