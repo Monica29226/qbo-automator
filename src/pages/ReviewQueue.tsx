@@ -520,6 +520,15 @@ const ReviewQueue = () => {
                       className={`cursor-pointer hover:bg-muted/60 transition-colors ${isNC ? "bg-purple-50/50" : ""}`}
                       onClick={() => setExpandedDocId(isExpanded ? null : doc.id)}
                     >
+                      <TableCell onClick={(e) => e.stopPropagation()}>
+                        {canDiscard(doc) && (
+                          <Checkbox
+                            checked={selectedIds.has(doc.id)}
+                            onCheckedChange={() => toggleSelected(doc.id)}
+                            aria-label="Seleccionar factura"
+                          />
+                        )}
+                      </TableCell>
                       <TableCell className="font-mono text-sm">
                         <div className="flex items-center gap-2">
                           {isExpanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
