@@ -66,34 +66,8 @@ export function ImportHealthPanel() {
     organizationId: activeOrganization,
   });
 
-  const [draining, setDraining] = useState(false);
   const org = data?.orgs?.[0];
 
-  const drain = async () => {
-    if (!org) return;
-    setDraining(true);
-    const t = toast.loading(`Drenando correo de ${org.organization_name}...`);
-    try {
-      const { data: res, error } = await supabase.functions.invoke("auto-sync-invoices", {
-        body: { trigger: "manual_drain", organization_id: org.organization_id },
-      });
-      if (error) throw error;
-      toast.success("Drenado disparado", {
-        id: t,
-        description: res?.summary
-          ? `Procesadas: ${res.summary.processed ?? 0} · Errores: ${res.summary.errors ?? 0}`
-          : "Revisa el panel en unos minutos",
-      });
-      refetch();
-    } catch (e) {
-      toast.error("Falló el drenado", {
-        id: t,
-        description: e instanceof Error ? e.message : String(e),
-      });
-    } finally {
-      setDraining(false);
-    }
-  };
 
   if (!activeOrganization) {
     return (
