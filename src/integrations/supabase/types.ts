@@ -2175,8 +2175,10 @@ export type Database = {
           account_name: string
           created_at: string
           expires_at: number
+          has_credentials: boolean
           id: string
           is_active: boolean
+          meta: Json
           organization_id: string
           realm_id: string
           service_type: string
