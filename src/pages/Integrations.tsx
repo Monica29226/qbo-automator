@@ -686,19 +686,11 @@ const Integrations = () => {
   const handleRemoveAccount = async (accountId: string) => {
     if (!confirm("¿Está seguro de remover esta cuenta?")) return;
 
-    // Read service_type + organization_id before disabling so we can also
-    // clear the matching connected flag on organizations (kept consistent).
-    const { data: account, error: fetchError } = await supabase
-      .from("integration_accounts")
-      .select("service_type, organization_id")
-      .eq("id", accountId)
-      .maybeSingle();
-
-    if (fetchError) {
-      toast.error("Error al remover cuenta");
-      console.error(fetchError);
-      return;
-    }
+    // integration_accounts no permite SELECT desde el cliente: se toma el dato de la
+    // lista ya cargada por la función segura, para poder limpiar la bandera de conexión.
+    const account = (accounts || []).find((a: any) => a.id === accountId) as
+      | { service_type?: string; organization_id?: string }
+      | undefined;
 
     const { error } = await supabase
       .from("integration_accounts")
