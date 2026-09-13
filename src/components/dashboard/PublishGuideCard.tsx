@@ -39,14 +39,8 @@ export function PublishGuideCard({ organizationId }: Props) {
           _org_id: organizationId!,
           _service_type: "quickbooks",
         }),
-        // Token expiry is not exposed via RPC; best-effort via integration_accounts (RLS may block, that's OK)
-        supabase
-          .from("integration_accounts")
-          .select("credentials")
-          .eq("organization_id", organizationId!)
-          .eq("service_type", "quickbooks")
-          .eq("is_active", true)
-          .maybeSingle(),
+        // Token expiry via función segura (integration_accounts no permite SELECT desde el cliente)
+        supabase.rpc("get_qbo_connection_status", { _org_id: organizationId! }),
         supabase
           .from("processed_documents")
           .select("id", { count: "exact", head: true })
@@ -70,13 +64,10 @@ export function PublishGuideCard({ organizationId }: Props) {
           .eq("status", "error"),
       ]);
 
-      const creds = (tokenInfo.data?.credentials as any) || null;
+      const qboStatus = (tokenInfo.data || [])[0];
       let tokenMinutes: number | null = null;
-      if (creds?.expires_at) {
-        const expiresAt = typeof creds.expires_at === "string"
-          ? new Date(creds.expires_at).getTime()
-          : Number(creds.expires_at);
-        tokenMinutes = Math.round((expiresAt - Date.now()) / 60000);
+      if (qboStatus?.expires_at_ms) {
+        tokenMinutes = Math.round((Number(qboStatus.expires_at_ms) - Date.now()) / 60000);
       }
 
       return {

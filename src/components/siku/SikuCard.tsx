@@ -43,14 +43,19 @@ export function SikuCard({ organizationId }: Props) {
   const load = async () => {
     if (!organizationId) return;
     setLoading(true);
-    const { data } = await supabase
-      .from("integration_accounts")
-      .select("id, credentials, is_active")
-      .eq("organization_id", organizationId)
-      .eq("service_type", "siku")
-      .eq("is_active", true)
-      .maybeSingle();
-    setAccount((data as any) || null);
+    // integration_accounts no es legible desde el cliente (guarda la contraseña):
+    // la función segura devuelve solo metadatos no sensibles.
+    const { data } = await supabase.rpc("get_integration_accounts", {
+      _org_id: organizationId,
+    });
+    const row = (data || []).find(
+      (a: { service_type: string; is_active: boolean }) => a.service_type === "siku" && a.is_active
+    );
+    setAccount(
+      row
+        ? ({ id: row.id, is_active: row.is_active, credentials: (row.meta as any) || {} } as any)
+        : null
+    );
     setLoading(false);
   };
 
@@ -92,14 +97,14 @@ export function SikuCard({ organizationId }: Props) {
   };
 
   const handleUpdateDefaultAccount = async (newRef: string) => {
-    if (!account) return;
+    if (!account || !organizationId) return;
     setSavingDefault(true);
     try {
-      const newCreds = { ...(account.credentials || {}), default_income_account_ref: newRef || null };
-      const { error } = await supabase
-        .from("integration_accounts")
-        .update({ credentials: newCreds })
-        .eq("id", account.id);
+      // Se actualiza solo esa clave por función segura, para no borrar la contraseña guardada.
+      const { error } = await supabase.rpc("set_siku_default_income_account", {
+        _org_id: organizationId,
+        _account_ref: newRef || null,
+      });
       if (error) throw error;
       toast.success("Cuenta de ingreso por defecto actualizada");
       await load();

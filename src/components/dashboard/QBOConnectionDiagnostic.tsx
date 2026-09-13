@@ -101,12 +101,15 @@ export const QBOConnectionDiagnostic = () => {
       // Step 2: Check integration credentials
       updateStep("Credenciales QuickBooks", 'pending', "Verificando token...");
 
-      const { data: integration, error: integrationError } = await supabase
-        .from('integration_accounts')
-        .select('id, is_active, account_name, credentials, updated_at')
-        .eq('organization_id', activeOrganization)
-        .eq('service_type', 'quickbooks')
-        .maybeSingle();
+      // integration_accounts no permite SELECT desde el cliente: se usa la función segura.
+      const { data: integrations, error: integrationError } = await supabase.rpc(
+        'get_integration_accounts',
+        { _org_id: activeOrganization, _include_inactive: true }
+      );
+
+      const integration = (integrations || []).find(
+        (a: { service_type: string }) => a.service_type === 'quickbooks'
+      );
 
       if (integrationError || !integration) {
         updateStep("Credenciales QuickBooks", 'error', "No hay integración de QuickBooks configurada", integrationError);
@@ -114,8 +117,7 @@ export const QBOConnectionDiagnostic = () => {
         return;
       }
 
-      const credentials = integration.credentials as any;
-      const expiresAt = new Date(credentials?.expires_at || 0);
+      const expiresAt = new Date(Number(integration.expires_at || 0));
       const isExpired = expiresAt < new Date();
 
       updateStep("Credenciales QuickBooks", isExpired ? 'error' : 'success',
@@ -123,10 +125,10 @@ export const QBOConnectionDiagnostic = () => {
           ? `Token EXPIRADO (${expiresAt.toLocaleString()})` 
           : `Token válido hasta ${expiresAt.toLocaleString()}`,
         {
-          realm_id: credentials?.realm_id,
+          realm_id: integration.realm_id,
           account_name: integration.account_name,
           is_active: integration.is_active,
-          token_length: credentials?.access_token?.length || 0
+          has_credentials: integration.has_credentials
         }
       );
 

@@ -161,15 +161,15 @@ const SystemStatusPanel = () => {
         }
       }
 
-      const { data: integrations } = await supabase
-        .from("integration_accounts")
-        .select("service_type, is_active, credentials")
-        .eq("organization_id", activeOrganization);
+      // integration_accounts no es legible desde el cliente: se usa la función segura.
+      const { data: integrations } = await supabase.rpc("get_integration_accounts", {
+        _org_id: activeOrganization,
+        _include_inactive: true,
+      });
 
       if (integrations) {
         for (const integration of integrations) {
-          const hasCredentials = integration.credentials && 
-            Object.keys(integration.credentials as object).length > 0;
+          const hasCredentials = integration.has_credentials;
           
           if (hasCredentials && integration.is_active) {
             results.push(`✅ ${integration.service_type}: Credenciales válidas`);

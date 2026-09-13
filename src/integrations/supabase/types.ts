@@ -2169,13 +2169,21 @@ export type Database = {
         }[]
       }
       get_integration_accounts: {
-        Args: { _org_id: string }
+        Args: { _include_inactive?: boolean; _org_id: string }
         Returns: {
           account_email: string
           account_name: string
+          created_at: string
+          expires_at: number
+          has_credentials: boolean
           id: string
           is_active: boolean
+          meta: Json
+          organization_id: string
+          realm_id: string
           service_type: string
+          sync_from: string
+          updated_at: string
         }[]
       }
       get_organization_member_profiles: {
@@ -2222,6 +2230,10 @@ export type Database = {
       is_organization_owner: {
         Args: { _org_id: string; _user_id: string }
         Returns: boolean
+      }
+      set_siku_default_income_account: {
+        Args: { _account_ref: string; _org_id: string }
+        Returns: undefined
       }
     }
     Enums: {

@@ -1,49 +1,35 @@
-# Corregir el falso "correo no conectado" en Buscar facturas
+# Corregir la causa de las facturas que faltan (Grupo SKR 3101733456 y demás empresas)
 
-## Qué pasa
+## Lo que encontramos
 
-Al buscar la factura y pedir que la busque en el correo, la pantalla responde que no hay correo
-conectado, aunque en Integraciones aparece conectado. Comprobado en la base de datos: la tabla de
-conexiones de correo **no permite lectura desde la aplicación** (solo tiene permisos de crear,
-actualizar y borrar). Por eso la consulta vuelve vacía y el sistema concluye "no conectado", cuando
-en realidad la conexión existe y funciona.
+La búsqueda puntual de facturas ya quedó arreglada: decía "no hay correo conectado" porque leía la tabla de integraciones sin permiso; ahora usa la consulta segura. El correo de esta empresa sí está conectado (Gmail activo).
 
-Integraciones sí muestra el estado correcto porque consulta por una vía segura ya existente; las
-demás pantallas consultan directo y siempre reciben vacío.
+Pero eso no explicaba las facturas faltantes. Revisando los datos:
 
-## Alcance
+- La empresa 3101733456 tiene 19 facturas, y la más reciente es del **24 de agosto de 2026**. Nada después de esa fecha.
+- La revisión automática de correo corre unas 48 veces por día para esta empresa desde el 25 de agosto: encuentra correos (45 a 68 por día) y procesa **0**.
+- La marca interna que indica "por dónde seguí leyendo el buzón" quedó congelada en el mensaje número 250 desde el 24 de agosto. Cada corrida vuelve a leer solo ese mismo mensaje viejo y nunca regresa al inicio del buzón, que es justo donde llegan las facturas nuevas.
+- La misma marca quedó congelada el 24 de agosto en **19 empresas**, no solo en esta.
 
-Pantallas y tarjetas que hoy pueden decir falsamente "no conectado" o dejar el estado en blanco:
+En resumen: el sistema quedó leyendo eternamente el final del buzón y dejó de ver los correos nuevos de todas las empresas con Gmail.
 
-- Buscar facturas (el caso reportado)
-- Importar desde Gmail, Hostinger y Bluehost
-- Estado del sistema, monitor de renovación de token, diagnóstico de QuickBooks
-- Tarjeta de guía de publicación, aislamiento por empresa, tarjeta de Siku
-- Dos consultas internas en la propia página de Integraciones
+## Qué se va a corregir
 
-Todas pasan a leer el estado por la vía segura, con el mismo control de acceso por empresa.
+1. **Desbloquear la lectura del buzón.** La condición que decide "todavía queda pendiente" se cumple siempre por cómo se limita la búsqueda, así que la marca nunca vuelve a cero. Se corrige para que:
+   - Cada corrida lea primero los correos **más recientes**.
+   - La marca de avance solo se use mientras haya un atraso real y se reinicie sola cuando se llega al final del tramo leído.
+   - Si la marca lleva demasiado tiempo sin cambiar, se reinicia automáticamente y queda registrado.
+2. **Reiniciar las marcas congeladas** de las 19 empresas afectadas, para que la próxima corrida arranque desde los correos nuevos.
+3. **Recuperar el atraso del 24 de agosto a hoy** en la empresa 3101733456 y luego en el resto: se importa desde los XML del correo, sin inventar montos y sin duplicar (la clave de 50 dígitos sigue siendo el control). No se altera nada de lo ya publicado en QuickBooks.
+4. **Aviso cuando esto vuelva a pasar:** si una empresa lleva varios días encontrando correos y procesando cero, se genera alerta. Hoy el sistema no avisaba nada de esto.
 
-## Después del cambio
+## Detalles técnicos
 
-- Buscar facturas reconoce el buzón conectado y busca dentro de los adjuntos XML/PDF del correo.
-- Los avisos de "no conectado" solo aparecen cuando la conexión realmente está caída.
-- Una vez que la búsqueda funcione, reviso el caso de las facturas que le faltan (el número que
-  termina en 456) y le reporto si el correo las tiene o si nunca llegaron al buzón.
+- `supabase/functions/gmail-fetch-invoices/index.ts`: `backlogPending` usa `moreInList || !!nextPageToken`, pero `paginationCap = resumeCursor + GMAIL_BATCH_SIZE` garantiza que `nextPageToken` exista siempre, por lo que `cursorValue` nunca vuelve a 0. Se separa "hay más páginas dentro del cap" de "hay atraso real", se agrega tope de antigüedad del cursor y se registra el reinicio en `sync_logs`.
+- Reset de `system_settings` con `key like 'gmail_resume_cursor_%'` a `0` (las claves con sufijo de período histórico también).
+- Recuperación por lotes invocando la función con rango de fechas acotado (25 de agosto a hoy) por empresa, sin publicar automáticamente lo que requiera reglas de proveedor.
+- Chequeo nuevo en `check-sync-health`: `gmail_fetched > 0` y `gmail_processed = 0` sostenido ≥ 2 días genera alerta por empresa.
 
-No se toca la ingesta ni la publicación a QuickBooks. Las credenciales siguen sin exponerse: la vía
-segura devuelve solo el estado, nunca claves ni tokens.
+## Fuera de alcance
 
-## Detalle técnico
-
-1. Ampliar `public.get_integration_accounts(_org_id uuid)` (SECURITY DEFINER, ya valida membresía o
-   rol admin) para devolver además `organization_id`, `expires_at` (derivado de
-   `credentials->>'expires_at'`), `sync_from`, `created_at`, `updated_at`. Sin tokens ni claves.
-   Añadir un parámetro opcional para incluir inactivas, que los avisos de desconexión necesitan.
-2. Reemplazar cada `supabase.from("integration_accounts").select(...)` del cliente por
-   `supabase.rpc("get_integration_accounts", ...)` en:
-   `SearchInvoiceDialog.tsx`, `GmailFetchDialog.tsx`, `HostingerFetchDialog.tsx`,
-   `BluehostFetchDialog.tsx`, `SystemStatusPanel.tsx`, `TokenRenewalMonitor.tsx`,
-   `QBOConnectionDiagnostic.tsx`, `PublishGuideCard.tsx`, `CompanyIsolationStatus.tsx`,
-   `siku/SikuCard.tsx` (solo lecturas; los `insert`/`update` quedan igual), y las lecturas de
-   `Integrations.tsx` (líneas 160, 692, 704).
-3. Regenerar tipos y verificar con typecheck y build.
+No se modifica la publicación a QuickBooks, ni los montos e IVA tomados del XML, ni los cortes de fecha por empresa.
