@@ -1,35 +1,48 @@
-# Corregir la causa de las facturas que faltan (Grupo SKR 3101733456 y demás empresas)
+# Sus 46 facturas y la limpieza de botones repetidos
 
-## Lo que encontramos
+## Lo que ya está resuelto (aplicado a todas las empresas)
 
-La búsqueda puntual de facturas ya quedó arreglada: decía "no hay correo conectado" porque leía la tabla de integraciones sin permiso; ahora usa la consulta segura. El correo de esta empresa sí está conectado (Gmail activo).
+La lectura del correo estaba congelada desde el 24 de agosto: el sistema releía siempre el mismo tramo viejo y nunca alcanzaba los correos nuevos. Ya quedó corregido para las 19 empresas con correo conectado, con dos protecciones: si la marca de avance queda vieja más de 6 horas se reinicia sola, y si una corrida se corta por tiempo se retoma donde iba en lugar de volver al inicio. También agregué un aviso automático cuando una empresa recibe correos pero no procesa ninguna factura por dos días.
 
-Pero eso no explicaba las facturas faltantes. Revisando los datos:
+## Sus 46 facturas del archivo
 
-- La empresa 3101733456 tiene 19 facturas, y la más reciente es del **24 de agosto de 2026**. Nada después de esa fecha.
-- La revisión automática de correo corre unas 48 veces por día para esta empresa desde el 25 de agosto: encuentra correos (45 a 68 por día) y procesa **0**.
-- La marca interna que indica "por dónde seguí leyendo el buzón" quedó congelada en el mensaje número 250 desde el 24 de agosto. Cada corrida vuelve a leer solo ese mismo mensaje viejo y nunca regresa al inicio del buzón, que es justo donde llegan las facturas nuevas.
-- La misma marca quedó congelada el 24 de agosto en **19 empresas**, no solo en esta.
+Las 46 están en el sistema, ninguna se perdió:
 
-En resumen: el sistema quedó leyendo eternamente el final del buzón y dejó de ver los correos nuevos de todas las empresas con Gmail.
+- 27 ya están registradas en QuickBooks.
+- 19 están detenidas únicamente porque el proveedor no tiene asignada una cuenta de gasto.
 
-## Qué se va a corregir
+Los proveedores pendientes de asignar cuenta son, entre otros: Liberty Telecomunicaciones (9 facturas), Ferretería Córdoba, Portones y Sistemas Barth, Lanprosa, Flores y Arenas de Jaco, Inmobiliaria Vimoncal, E Source, EPA, Intcomex, Sur Química, Alpemusa, Tectel, American Business CSM.
 
-1. **Desbloquear la lectura del buzón.** La condición que decide "todavía queda pendiente" se cumple siempre por cómo se limita la búsqueda, así que la marca nunca vuelve a cero. Se corrige para que:
-   - Cada corrida lea primero los correos **más recientes**.
-   - La marca de avance solo se use mientras haya un atraso real y se reinicie sola cuando se llega al final del tramo leído.
-   - Si la marca lleva demasiado tiempo sin cambiar, se reinicia automáticamente y queda registrado.
-2. **Reiniciar las marcas congeladas** de las 19 empresas afectadas, para que la próxima corrida arranque desde los correos nuevos.
-3. **Recuperar el atraso del 24 de agosto a hoy** en la empresa 3101733456 y luego en el resto: se importa desde los XML del correo, sin inventar montos y sin duplicar (la clave de 50 dígitos sigue siendo el control). No se altera nada de lo ya publicado en QuickBooks.
-4. **Aviso cuando esto vuelva a pasar:** si una empresa lleva varios días encontrando correos y procesando cero, se genera alerta. Hoy el sistema no avisaba nada de esto.
+## Botones que hacen lo mismo
+
+Revisé toda la aplicación: hay unos 55 botones que disparan publicación, sincronización, reintentos o auditorías. Los solapamientos reales son estos:
+
+1. Dos botones del tablero ("Sincronizar ahora" y "Publicar a QuickBooks") ejecutan exactamente la misma acción.
+2. Reintentar facturas con error se ofrece desde cuatro lugares distintos con el mismo efecto.
+3. Recuperar una factura que no quedó bien en QuickBooks se ofrece en cinco variantes ("Republicar", "Forzar publicación", "Reintentar", "Republicar desde datos extraídos").
+4. Sincronizar el correo se ofrece en cuatro botones ("Sincronizar correo ahora", "Importar lote", "Drenar correo", "Reactivar sincronización").
+5. Nueve pantallas o tarjetas ya no están accesibles desde ninguna parte de la aplicación: son restos de versiones anteriores.
+
+## Propuesta de trabajo
+
+### Paso 1 — Publicar las 19 facturas detenidas
+Asignar la cuenta de gasto a los proveedores de la lista y dejar la regla guardada, de modo que las próximas facturas de esos proveedores entren solas. Después publicar las 19 respetando el monto y el IVA exactos del XML.
+
+### Paso 2 — Consolidar los botones
+- Tablero: dejar un único botón "Enviar a QuickBooks" y un único "Sincronizar correo ahora" (con la opción de elegir mes dentro del mismo botón).
+- Errores: un único botón "Reintentar" por factura y uno masivo, que internamente elija el camino correcto según el tipo de falla.
+- Recuperación: un solo botón "Volver a enviar a QuickBooks", que verifique primero si el documento existe en QuickBooks y actúe según el caso.
+- Auditorías: mantener las tres (huérfanas, cotejo de montos, modo de IVA) porque responden preguntas distintas, pero agruparlas en una sola tarjeta "Revisiones" para que no compitan entre sí.
+- Retirar las nueve pantallas sin acceso.
+
+### Paso 3 — Que no vuelva a fallar en silencio
+Además del aviso ya activo, agregar en el tablero una sola línea honesta por empresa: última lectura del correo, facturas detenidas por falta de cuenta y facturas con error, con el enlace directo a resolverlas.
 
 ## Detalles técnicos
 
-- `supabase/functions/gmail-fetch-invoices/index.ts`: `backlogPending` usa `moreInList || !!nextPageToken`, pero `paginationCap = resumeCursor + GMAIL_BATCH_SIZE` garantiza que `nextPageToken` exista siempre, por lo que `cursorValue` nunca vuelve a 0. Se separa "hay más páginas dentro del cap" de "hay atraso real", se agrega tope de antigüedad del cursor y se registra el reinicio en `sync_logs`.
-- Reset de `system_settings` con `key like 'gmail_resume_cursor_%'` a `0` (las claves con sufijo de período histórico también).
-- Recuperación por lotes invocando la función con rango de fechas acotado (25 de agosto a hoy) por empresa, sin publicar automáticamente lo que requiera reglas de proveedor.
-- Chequeo nuevo en `check-sync-health`: `gmail_fetched > 0` y `gmail_processed = 0` sostenido ≥ 2 días genera alerta por empresa.
-
-## Fuera de alcance
-
-No se modifica la publicación a QuickBooks, ni los montos e IVA tomados del XML, ni los cortes de fecha por empresa.
+- Botones idénticos: `Dashboard.tsx:358` y `Dashboard.tsx:541` comparten `handlePublishToQuickBooks`.
+- Reintentos solapados: `retry-error-documents` (ErrorDocuments, ErrorDocumentsModal, Dashboard), `retry-failed-bills` (ErrorDocuments, ErrorDiagnostic), `retry-qbo-waiting` (AdminCleanupQuickActions, WaitingForQboPanel).
+- Republicación solapada: `republish-deleted-from-qbo`, `force-publish-document`, `republish-from-extracted-data`, `republish-credit-notes`.
+- Correo solapado: `SyncEmailNowButton` e `ImportBatchDialog` llaman el mismo mapa `*-fetch-invoices`; `ImportHealthPanel` y el aviso del tablero llaman `auto-sync-invoices`.
+- Sin acceso: `AuditQBOBills`, `BatchDownloadMissingPdfs`, `ProcessAllNowButton`, `PublishOrphanedInvoices`, `VerifyBillButton`, `BatchImportInvoices`, `PublishSingleDocButton`, `SyncFromExcelButton`, `SharePointUploadButton`, `ProcessingFlow`.
+- La consolidación es de interfaz: no se cambia ninguna regla de fidelidad al XML ni el requisito de que `published` siempre tenga identificador de QuickBooks.
