@@ -487,19 +487,28 @@ async function checkFetchedButNotProcessed(
   const fetched = logs.reduce((s: number, l: any) => s + (l.gmail_fetched || 0), 0);
   const processed = logs.reduce((s: number, l: any) => s + (l.gmail_processed || 0), 0);
 
-  if (fetched >= 20 && processed === 0) {
-    return {
-      type: "critical",
-      code: "fetched_but_none_processed",
-      title: "El correo responde pero no entra ninguna factura",
-      description: `En los últimos 2 días se encontraron ${fetched} correos y no se procesó ningún documento. La lectura del buzón puede estar detenida.`,
-      actionRequired: "Ejecutar la sincronización manual del correo y revisar la conexión",
-      action_link: "/integrations",
-      data: { fetched, processed, runs: logs.length },
-    };
-  }
+  if (fetched < 20 || processed > 0) return null;
 
-  return null;
+  // Un buzón donde todo lo encontrado ya estaba ingresado (duplicados) es normal.
+  // Solo se alerta si además NO entró ningún documento nuevo en la ventana.
+  const { count: recentDocs } = await supabase
+    .from("processed_documents")
+    .select("id", { count: "exact", head: true })
+    .eq("organization_id", orgId)
+    .gte("created_at", twoDaysAgo);
+
+  if ((recentDocs || 0) > 0) return null;
+
+  return {
+    type: "critical",
+    code: "fetched_but_none_processed",
+    title: "El correo responde pero no entra ninguna factura",
+    description: `En los últimos 2 días se encontraron ${fetched} correos y no ingresó ningún documento nuevo. La lectura del buzón puede estar detenida.`,
+    actionRequired: "Ejecutar la sincronización manual del correo y revisar la conexión",
+    action_link: "/integrations",
+    data: { fetched, processed, runs: logs.length },
+  };
+
 }
 
 /**
