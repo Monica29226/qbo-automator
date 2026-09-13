@@ -64,13 +64,10 @@ export function PublishGuideCard({ organizationId }: Props) {
           .eq("status", "error"),
       ]);
 
-      const creds = (tokenInfo.data?.credentials as any) || null;
+      const qboStatus = (tokenInfo.data || [])[0];
       let tokenMinutes: number | null = null;
-      if (creds?.expires_at) {
-        const expiresAt = typeof creds.expires_at === "string"
-          ? new Date(creds.expires_at).getTime()
-          : Number(creds.expires_at);
-        tokenMinutes = Math.round((expiresAt - Date.now()) / 60000);
+      if (qboStatus?.expires_at_ms) {
+        tokenMinutes = Math.round((Number(qboStatus.expires_at_ms) - Date.now()) / 60000);
       }
 
       return {
