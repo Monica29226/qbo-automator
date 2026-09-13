@@ -2231,6 +2231,10 @@ export type Database = {
         Args: { _org_id: string; _user_id: string }
         Returns: boolean
       }
+      set_siku_default_income_account: {
+        Args: { _account_ref: string; _org_id: string }
+        Returns: undefined
+      }
     }
     Enums: {
       app_role: "admin" | "user"
