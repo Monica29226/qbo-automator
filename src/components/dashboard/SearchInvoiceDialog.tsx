@@ -101,15 +101,24 @@ export function SearchInvoiceDialog() {
     setIsSearchingEmail(true);
     setEmailSearchMessage(null);
     try {
-      const { data: integrations } = await supabase
-        .from("integration_accounts")
-        .select("service_type")
-        .eq("organization_id", activeOrganization)
-        .eq("is_active", true)
-        .in("service_type", ["gmail", "hostinger", "bluehost", "outlook", "outlook_imap"])
-        .limit(1);
+      // integration_accounts no permite SELECT desde el cliente (guarda tokens/claves).
+      // Se consulta el estado por la función segura, si no siempre respondía "sin correo".
+      const { data: integrations, error: integrationsError } = await supabase.rpc(
+        "get_integration_accounts",
+        { _org_id: activeOrganization }
+      );
 
-      const service = integrations?.[0]?.service_type;
+      if (integrationsError) {
+        toast.error("No se pudo verificar la conexión de correo. Intente de nuevo.");
+        return;
+      }
+
+      const EMAIL_SERVICES = ["gmail", "hostinger", "bluehost", "outlook", "outlook_imap"];
+      const service = (integrations || []).find(
+        (i: { service_type: string; is_active: boolean }) =>
+          i.is_active && EMAIL_SERVICES.includes(i.service_type)
+      )?.service_type;
+
       if (!service) {
         toast.error("No tenés correo conectado. Conectalo en Integraciones.");
         return;
