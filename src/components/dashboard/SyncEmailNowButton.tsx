@@ -99,15 +99,15 @@ export const SyncEmailNowButton = () => {
     <Button
       onClick={handleClick}
       disabled={loading}
-      size="lg"
-      className="gap-2 shadow-md"
+      variant="outline"
+      className="w-full h-10 gap-2"
     >
       {loading ? (
-        <Loader2 className="h-5 w-5 animate-spin" />
+        <Loader2 className="h-4 w-4 animate-spin" />
       ) : (
-        <RefreshCw className="h-5 w-5" />
+        <RefreshCw className="h-4 w-4" />
       )}
-      🔄 Sincronizar correo ahora
+      Sincronizar correo ahora
     </Button>
   );
 };

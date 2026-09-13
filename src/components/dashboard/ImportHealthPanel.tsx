@@ -8,7 +8,6 @@ import {
   Activity,
   AlertTriangle,
   CheckCircle2,
-  Download,
   Inbox,
   Mail,
   RefreshCw,
@@ -16,9 +15,6 @@ import {
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { es } from "date-fns/locale";
-import { useState } from "react";
-import { supabase } from "@/integrations/supabase/client";
-import { toast } from "sonner";
 import { Link } from "react-router-dom";
 
 function healthBadge(h: OrgHealth["health"]) {
@@ -66,34 +62,8 @@ export function ImportHealthPanel() {
     organizationId: activeOrganization,
   });
 
-  const [draining, setDraining] = useState(false);
   const org = data?.orgs?.[0];
 
-  const drain = async () => {
-    if (!org) return;
-    setDraining(true);
-    const t = toast.loading(`Drenando correo de ${org.organization_name}...`);
-    try {
-      const { data: res, error } = await supabase.functions.invoke("auto-sync-invoices", {
-        body: { trigger: "manual_drain", organization_id: org.organization_id },
-      });
-      if (error) throw error;
-      toast.success("Drenado disparado", {
-        id: t,
-        description: res?.summary
-          ? `Procesadas: ${res.summary.processed ?? 0} · Errores: ${res.summary.errors ?? 0}`
-          : "Revisa el panel en unos minutos",
-      });
-      refetch();
-    } catch (e) {
-      toast.error("Falló el drenado", {
-        id: t,
-        description: e instanceof Error ? e.message : String(e),
-      });
-    } finally {
-      setDraining(false);
-    }
-  };
 
   if (!activeOrganization) {
     return (
@@ -121,20 +91,12 @@ export function ImportHealthPanel() {
           </CardDescription>
         </div>
         <div className="flex gap-2">
-          <Button
-            variant="default"
-            size="sm"
-            onClick={drain}
-            disabled={!org?.has_integration || draining}
-          >
-            <Download className={`h-4 w-4 mr-2 ${draining ? "animate-pulse" : ""}`} />
-            {draining ? "Drenando..." : "Drenar correo"}
-          </Button>
           <Button variant="outline" size="sm" onClick={() => refetch()} disabled={isFetching}>
             <RefreshCw className={`h-4 w-4 mr-2 ${isFetching ? "animate-spin" : ""}`} />
             Actualizar
           </Button>
         </div>
+
       </CardHeader>
       <CardContent className="space-y-4">
         {isLoading ? (
@@ -168,6 +130,33 @@ export function ImportHealthPanel() {
                 </Button>
               )}
             </div>
+
+            {/* Resumen ejecutivo: una sola línea honesta, con el enlace a resolverlo */}
+            <p className="text-sm text-foreground/80">
+              {org.has_integration
+                ? `Última lectura del correo ${syncLabel(org.last_sync_at).toLowerCase()}.`
+                : "El correo de esta empresa no está conectado, por lo que no ingresa ninguna factura."}{" "}
+              {org.pending_config > 0 ? (
+                <>
+                  <Link to="/invoices-pending-log" className="underline underline-offset-2">
+                    {org.pending_config} factura{org.pending_config !== 1 ? "s" : ""} detenida
+                    {org.pending_config !== 1 ? "s" : ""} por falta de cuenta del proveedor
+                  </Link>
+                  .{" "}
+                </>
+              ) : (
+                <>Ninguna factura detenida por falta de cuenta. </>
+              )}
+              {org.errors_count > 0 ? (
+                <Link to="/error-documents" className="underline underline-offset-2">
+                  {org.errors_count} con error en los últimos 7 días.
+                </Link>
+              ) : (
+                <>Sin errores en los últimos 7 días.</>
+              )}
+            </p>
+
+
 
             <div className="grid grid-cols-2 md:grid-cols-6 gap-2">
               <Metric
