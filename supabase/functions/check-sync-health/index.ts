@@ -79,7 +79,9 @@ serve(async (req) => {
         checkStuckInvoices(supabase, org.id),
         checkLegacyUnmapped(supabase, org.id),
         checkFetchedButNotProcessed(supabase, org.id),
+        checkStuckMailboxCursor(supabase, org.id),
       ]);
+
 
       checks.forEach((issue) => {
         if (issue) issues.push(issue);
