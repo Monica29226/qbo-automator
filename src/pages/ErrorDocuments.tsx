@@ -442,6 +442,13 @@ const ErrorDocuments = () => {
     }
   };
 
+  // Reintento único: primero sincroniza las cuentas corregidas, luego reintenta.
+  const handleRetryAllSmart = async () => {
+    await handleSyncErrorAccounts(false);
+    await handleRetryAll(false);
+  };
+
+
   const handleSyncErrorAccounts = async (dryRun = true) => {
     if (!activeOrganization) return;
 
