@@ -38,16 +38,15 @@ export const GmailFetchDialog = ({ onSuccess }: GmailFetchDialogProps) => {
       
       setIsCheckingConnection(true);
       try {
-        const { data, error } = await supabase
-          .from("integration_accounts")
-          .select("id, is_active")
-          .eq("organization_id", activeOrganization)
-          .eq("service_type", "gmail")
-          .eq("is_active", true)
-          .maybeSingle();
-        
+        // integration_accounts no es legible desde el cliente: se usa la función segura.
+        const { data, error } = await supabase.rpc("get_integration_accounts", {
+          _org_id: activeOrganization,
+        });
+
         if (error) throw error;
-        setGmailConnected(!!data);
+        setGmailConnected(
+          (data || []).some((a: { service_type: string; is_active: boolean }) => a.service_type === "gmail" && a.is_active)
+        );
       } catch (error) {
         console.error("Error checking Gmail connection:", error);
         setGmailConnected(false);

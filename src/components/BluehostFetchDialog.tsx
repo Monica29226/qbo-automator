@@ -36,15 +36,14 @@ export const BluehostFetchDialog = ({ onSuccess }: BluehostFetchDialogProps) => 
       if (!open || !activeOrganization) return;
       setIsCheckingConnection(true);
       try {
-        const { data, error } = await supabase
-          .from("integration_accounts")
-          .select("id, is_active")
-          .eq("organization_id", activeOrganization)
-          .eq("service_type", "bluehost")
-          .eq("is_active", true)
-          .maybeSingle();
+        // integration_accounts no es legible desde el cliente: se usa la función segura.
+        const { data, error } = await supabase.rpc("get_integration_accounts", {
+          _org_id: activeOrganization,
+        });
         if (error) throw error;
-        setBluehostConnected(!!data);
+        setBluehostConnected(
+          (data || []).some((a: { service_type: string; is_active: boolean }) => a.service_type === "bluehost" && a.is_active)
+        );
       } catch (error) {
         console.error("Error checking Bluehost connection:", error);
         setBluehostConnected(false);
