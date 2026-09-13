@@ -352,25 +352,8 @@ const Dashboard = () => {
 
               <div className="flex items-center gap-2 ml-auto">
                 <OrganizationSwitcher />
-                <Button
-                  variant="default"
-                  size="sm"
-                  onClick={handlePublishToQuickBooks}
-                  disabled={isFetchingEmails}
-                  className="bg-secondary text-secondary-foreground hover:bg-secondary/90"
-                >
-                  {isFetchingEmails ? (
-                    <>
-                      <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
-                      Sincronizando...
-                    </>
-                  ) : (
-                    <>
-                      <Send className="h-4 w-4 mr-2" />
-                      Sincronizar ahora
-                    </>
-                  )}
-                </Button>
+                {/* Acción única de envío a QuickBooks: vive en Acciones Rápidas */}
+
                 {stats.errors > 0 && (
                   <Button
                     variant="destructive"
