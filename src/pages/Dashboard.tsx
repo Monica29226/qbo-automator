@@ -691,11 +691,6 @@ const Dashboard = () => {
         <SystemAlertsPanel organizationId={activeOrganization} />
         <WaitingForQboPanel organizationId={activeOrganization} />
         <CurrencyMismatchPanel organizationId={activeOrganization} />
-        <div className="mb-4 flex justify-end gap-2 flex-wrap">
-          <RecoverBacklogButton />
-          <SyncEmailNowButton />
-          <SyncFromExcelDialog />
-        </div>
         <Suspense fallback={<LazyFallback />}>
           <CronMonitor />
         </Suspense>
