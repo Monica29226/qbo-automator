@@ -438,11 +438,18 @@ async function processOrganization(
         console.warn(`⚠️ ${mailProvider} cursor made no progress for ${org.name}; retrying from skip_count=${skipCount} next cron`);
         continueFetching = false;
       } else if (chunk.backlog_pending === true) {
-        // Gmail por tandas: queda correo pendiente, se retoma en la próxima corrida.
+        // Gmail por tandas: queda correo pendiente. Se vuelve a llamar en la misma corrida
+        // mientras quede tiempo de pared, para drenar el atraso sin esperar media hora.
         aggregatedEmailData.status = "partial";
         aggregatedEmailData.time_limit_reached = true;
-        console.log(`📬 ${mailProvider}: quedan mensajes pendientes para ${org.name} (offset ${chunk.batch_offset ?? 0}); se retoma en la próxima corrida`);
-        continueFetching = false;
+        if (Date.now() - dispatcherStartTime > MAX_DISPATCHER_TIME_MS) {
+          console.log(`⏱️ ${mailProvider}: atraso pendiente para ${org.name}; se retoma en la próxima corrida`);
+          continueFetching = false;
+        } else {
+          console.log(`📬 ${mailProvider}: quedan mensajes pendientes para ${org.name} (offset ${chunk.batch_offset ?? 0}); se continúa en esta corrida`);
+          await new Promise((resolve) => setTimeout(resolve, 300));
+        }
+
       } else {
         aggregatedEmailData.status = chunk.status || (chunk.partial ? "partial" : "complete");
         aggregatedEmailData.time_limit_reached = Boolean(chunk.time_limit_reached || chunk.partial);
