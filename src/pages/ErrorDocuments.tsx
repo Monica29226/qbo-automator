@@ -728,48 +728,43 @@ const ErrorDocuments = () => {
             </div>
             {documents.length > 0 && (
               <div className="flex flex-wrap gap-2">
-                <Button 
-                  onClick={() => handleSyncErrorAccounts(false)}
+                <Button
+                  onClick={handleRetryAllSmart}
                   variant="default"
                   className="gap-2"
                 >
-                  <Wrench className="h-4 w-4" />
-                  Sincronizar Cuentas
-                </Button>
-                <Button 
-                  onClick={() => handleSyncErrorAccounts(true)}
-                  variant="outline"
-                  className="gap-2"
-                >
-                  <Filter className="h-4 w-4" />
-                  Analizar
-                </Button>
-                <Button 
-                  onClick={handleRepublishFromData}
-                  variant="outline"
-                  className="gap-2"
-                >
-                  <Database className="h-4 w-4" />
-                  Republicar
-                </Button>
-                <Button 
-                  onClick={() => handleRetryAll(false)}
-                  variant="outline"
-                  className="gap-2"
-                >
                   <RefreshCw className="h-4 w-4" />
-                  Reintentar
+                  Reintentar todas ({documents.length})
                 </Button>
-                <Button 
-                  onClick={() => handleRetryAll(true)}
-                  variant="destructive"
-                  className="gap-2"
-                >
-                  <RefreshCw className="h-4 w-4" />
-                  Forzar
-                </Button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="outline" className="gap-2">
+                      <Settings2 className="h-4 w-4" />
+                      Más acciones
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-64">
+                    <DropdownMenuItem onClick={() => handleSyncErrorAccounts(true)}>
+                      <Filter className="h-4 w-4 mr-2" />
+                      Analizar sin aplicar cambios
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={handleRepublishFromData}>
+                      <Database className="h-4 w-4 mr-2" />
+                      Republicar con los datos del XML
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      onClick={() => handleRetryAll(true)}
+                      className="text-destructive focus:text-destructive"
+                    >
+                      <RefreshCw className="h-4 w-4 mr-2" />
+                      Forzar reintento (errores permanentes)
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
               </div>
             )}
+
           </div>
         </div>
       </header>
