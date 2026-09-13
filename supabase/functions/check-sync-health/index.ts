@@ -78,6 +78,7 @@ serve(async (req) => {
         checkConnections(org),
         checkStuckInvoices(supabase, org.id),
         checkLegacyUnmapped(supabase, org.id),
+        checkFetchedButNotProcessed(supabase, org.id),
       ]);
 
       checks.forEach((issue) => {
@@ -461,6 +462,45 @@ async function checkStuckInvoices(
 
   return null;
 }
+
+/**
+ * Detecta el patrón "el buzón responde pero no entra nada": la sincronización
+ * encuentra correos día tras día y procesa cero documentos. Fue justo lo que
+ * dejó sin facturas a varias empresas cuando el cursor de Gmail se congeló.
+ */
+async function checkFetchedButNotProcessed(
+  supabase: any,
+  orgId: string
+): Promise<HealthIssue | null> {
+  const twoDaysAgo = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString();
+
+  const { data: logs } = await supabase
+    .from("sync_logs")
+    .select("gmail_fetched, gmail_processed")
+    .eq("organization_id", orgId)
+    .gte("started_at", twoDaysAgo);
+
+  if (!logs || logs.length < 5) return null;
+
+  const fetched = logs.reduce((s: number, l: any) => s + (l.gmail_fetched || 0), 0);
+  const processed = logs.reduce((s: number, l: any) => s + (l.gmail_processed || 0), 0);
+
+  if (fetched >= 20 && processed === 0) {
+    return {
+      type: "critical",
+      code: "fetched_but_none_processed",
+      title: "El correo responde pero no entra ninguna factura",
+      description: `En los últimos 2 días se encontraron ${fetched} correos y no se procesó ningún documento. La lectura del buzón puede estar detenida.`,
+      actionRequired: "Ejecutar la sincronización manual del correo y revisar la conexión",
+      action_link: "/integrations",
+      data: { fetched, processed, runs: logs.length },
+    };
+  }
+
+  return null;
+}
+
+
 
 async function checkLegacyUnmapped(
   supabase: any,

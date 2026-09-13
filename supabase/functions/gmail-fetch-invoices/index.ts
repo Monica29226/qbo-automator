@@ -351,15 +351,32 @@ serve(async (req) => {
       ? `gmail_resume_cursor_${organization_id}_${requestedPeriod}`
       : `gmail_resume_cursor_${organization_id}`;
     let resumeCursor = 0;
+    let storedCursorValue = 0;
+    let cursorWasStale = false;
+    // Tope de antigüedad: Gmail lista de MÁS NUEVO a más viejo, así que un cursor
+    // alto y viejo deja los correos nuevos (que entran arriba) fuera del tramo leído.
+    // Si el cursor lleva más de 6 horas sin moverse, se reinicia al inicio del buzón.
+    const CURSOR_MAX_AGE_MS = 6 * 60 * 60 * 1000;
     if (useResumeCursor) {
       const { data: cursorRow } = await supabase
         .from("system_settings")
-        .select("value")
+        .select("value, updated_at")
         .eq("organization_id", organization_id)
         .eq("key", cursorKey)
         .maybeSingle();
       const parsed = parseInt(String(cursorRow?.value ?? ""), 10);
       if (Number.isFinite(parsed) && parsed > 0) resumeCursor = parsed;
+      storedCursorValue = resumeCursor;
+      if (resumeCursor > 0 && cursorRow?.updated_at) {
+        const age = Date.now() - new Date(cursorRow.updated_at as string).getTime();
+        if (age > CURSOR_MAX_AGE_MS) {
+          console.log(
+            `♻️ Cursor Gmail estancado (${resumeCursor}, ${(age / 3600000).toFixed(1)}h sin avanzar); reiniciando al inicio del buzón`
+          );
+          resumeCursor = 0;
+          cursorWasStale = true;
+        }
+      }
       console.log(`🔖 Cursor de reanudación Gmail: ${resumeCursor} (tanda de ${GMAIL_BATCH_SIZE})`);
     }
     // Solo paginamos lo necesario para cubrir cursor + tanda actual.
@@ -925,9 +942,19 @@ serve(async (req) => {
     if (useResumeCursor) {
       const newCursor = batchStart + messagesConsumed;
       const moreInList = newCursor < totalListed;
-      const moreInMailbox = !!nextPageToken;
-      backlogPending = moreInList || moreInMailbox;
+      // OJO: el cap de paginación es cursor + tanda, así que `nextPageToken` casi
+      // siempre existe. Antes eso hacía que el atraso nunca se considerara drenado
+      // y el cursor quedaba congelado, dejando de leer los correos nuevos.
+      // Solo hay atraso real si la tanda se llenó (quedó trabajo sin tocar).
+      const batchWasFull = messagesConsumed >= GMAIL_BATCH_SIZE;
+      const reachedGlobalCap = newCursor >= GLOBAL_CAP;
+      // Un corte por tiempo también deja trabajo pendiente real.
+      backlogPending =
+        !reachedGlobalCap && (batchWasFull || wasTimeLimitReached) && (moreInList || !!nextPageToken);
       const cursorValue = backlogPending ? newCursor : 0;
+      if (!backlogPending && batchStart > 0) {
+        console.log(`♻️ Tramo drenado (${batchStart} → ${newCursor} de ${totalListed}); el cursor vuelve a 0 para leer los correos nuevos`);
+      }
       const { error: cursorError } = await supabase
         .from("system_settings")
         .upsert(
@@ -936,13 +963,16 @@ serve(async (req) => {
             key: cursorKey,
             value: String(cursorValue),
             description: "Cursor de reanudación para la importación de Gmail por tandas",
+            // Solo se refresca la marca de tiempo cuando el cursor realmente cambió,
+            // para que el tope de antigüedad pueda detectar un cursor estancado.
+            ...(cursorValue !== storedCursorValue ? { updated_at: new Date().toISOString() } : {}),
           },
           { onConflict: "organization_id,key" }
         );
       if (cursorError) {
         console.error("⚠️ No se pudo guardar el cursor de Gmail:", cursorError);
       } else {
-        console.log(`🔖 Cursor Gmail actualizado a ${cursorValue} (backlog_pending=${backlogPending})`);
+        console.log(`🔖 Cursor Gmail actualizado a ${cursorValue} (backlog_pending=${backlogPending}, cursor_estancado_reiniciado=${cursorWasStale})`);
       }
     }
 
