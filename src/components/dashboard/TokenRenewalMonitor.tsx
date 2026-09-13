@@ -35,21 +35,18 @@ export const TokenRenewalMonitor = () => {
       }
       setOrganizationId(activeOrg.organization_id);
 
-      const { data: qboAccount } = await supabase
-        .from("integration_accounts")
-        .select("credentials, is_active")
-        .eq("organization_id", activeOrg.organization_id)
-        .eq("service_type", "quickbooks")
-        .eq("is_active", true)
-        .maybeSingle();
+      // integration_accounts no permite SELECT desde el cliente (guarda tokens).
+      const { data: qboRows } = await supabase.rpc("get_qbo_connection_status", {
+        _org_id: activeOrg.organization_id,
+      });
 
-      if (!qboAccount?.credentials) {
+      const qbo = (qboRows || [])[0];
+      if (!qbo?.is_active || !qbo?.expires_at_ms) {
         setTokenStatus(null);
         return;
       }
 
-      const credentials = qboAccount.credentials as any;
-      const expiresAt = new Date(credentials.expires_at);
+      const expiresAt = new Date(Number(qbo.expires_at_ms));
       const minutesUntilExpiry = (expiresAt.getTime() - Date.now()) / (1000 * 60);
 
       let status: TokenStatus["status"] = "healthy";
@@ -58,7 +55,7 @@ export const TokenRenewalMonitor = () => {
       else if (minutesUntilExpiry < 15) status = "warning";
 
       setTokenStatus({
-        expires_at: credentials.expires_at,
+        expires_at: expiresAt.toISOString(),
         minutes_until_expiry: minutesUntilExpiry,
         status,
       });

@@ -28,17 +28,14 @@ export const CompanyIsolationStatus = () => {
           .from("vendors")
           .select("id", { count: "exact" })
           .eq("organization_id", activeOrganization),
-        supabase
-          .from("integration_accounts")
-          .select("id", { count: "exact" })
-          .eq("organization_id", activeOrganization)
-          .eq("is_active", true),
+        // integration_accounts no es legible desde el cliente: se usa la función segura.
+        supabase.rpc("get_integration_accounts", { _org_id: activeOrganization }),
       ]);
 
       setStats({
         documents: docs.count || 0,
         vendors: vendors.count || 0,
-        integrations: integrations.count || 0,
+        integrations: (integrations.data || []).filter((a: { is_active: boolean }) => a.is_active).length,
       });
     };
 
