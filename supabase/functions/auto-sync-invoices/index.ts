@@ -247,22 +247,41 @@ async function processOrganization(
       cursor_stalled: false,
     };
 
-    // Resume from persisted cursor if a previous run was interrupted (Hostinger/Bluehost only)
+    // Resume from persisted cursor if a previous run was interrupted (Hostinger/Bluehost only).
+    // Si el cursor lleva más de 6 horas sin moverse está congelado: se descarta y la lectura
+    // arranca desde los mensajes más nuevos, en vez de repetir el mismo tramo viejo para siempre.
     const cursorKey = `${mailProvider}_resume_skip_${org.id}`;
+    const CURSOR_MAX_AGE_MS = 6 * 60 * 60 * 1000;
     let skipCount = 0;
+    let cursorWasStale = false;
     if (mailProvider === "hostinger" || mailProvider === "bluehost") {
       const { data: cursorRow } = await supabase
         .from("system_settings")
-        .select("value")
+        .select("value, updated_at")
         .eq("organization_id", org.id)
         .eq("key", cursorKey)
         .maybeSingle();
       const persisted = Number(cursorRow?.value);
       if (Number.isFinite(persisted) && persisted > 0) {
-        skipCount = persisted;
-        console.log(`▶️ Resuming ${mailProvider} sync for ${org.name} from skip_count=${skipCount}`);
+        const ageMs = cursorRow?.updated_at
+          ? Date.now() - new Date(cursorRow.updated_at).getTime()
+          : 0;
+        if (ageMs > CURSOR_MAX_AGE_MS) {
+          cursorWasStale = true;
+          skipCount = 0;
+          await supabase.from("system_settings").delete()
+            .eq("organization_id", org.id)
+            .eq("key", cursorKey);
+          console.warn(
+            `🔄 Cursor de ${mailProvider} congelado ${Math.round(ageMs / 3_600_000)}h para ${org.name}; se reinicia en 0`
+          );
+        } else {
+          skipCount = persisted;
+          console.log(`▶️ Resuming ${mailProvider} sync for ${org.name} from skip_count=${skipCount}`);
+        }
       }
     }
+
     let continueFetching = true;
     let iteration = 0;
     const maxIterations = 15;
