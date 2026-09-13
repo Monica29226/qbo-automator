@@ -135,6 +135,33 @@ export function ImportHealthPanel() {
               )}
             </div>
 
+            {/* Resumen ejecutivo: una sola línea honesta, con el enlace a resolverlo */}
+            <p className="text-sm text-foreground/80">
+              {org.has_integration
+                ? `Última lectura del correo ${syncLabel(org.last_sync_at).toLowerCase()}.`
+                : "El correo de esta empresa no está conectado, por lo que no ingresa ninguna factura."}{" "}
+              {org.pending_config > 0 ? (
+                <>
+                  <Link to="/invoices-pending-log" className="underline underline-offset-2">
+                    {org.pending_config} factura{org.pending_config !== 1 ? "s" : ""} detenida
+                    {org.pending_config !== 1 ? "s" : ""} por falta de cuenta del proveedor
+                  </Link>
+                  .{" "}
+                </>
+              ) : (
+                <>Ninguna factura detenida por falta de cuenta. </>
+              )}
+              {org.errors_count > 0 ? (
+                <Link to="/error-documents" className="underline underline-offset-2">
+                  {org.errors_count} con error en los últimos 7 días.
+                </Link>
+              ) : (
+                <>Sin errores en los últimos 7 días.</>
+              )}
+            </p>
+
+
+
             <div className="grid grid-cols-2 md:grid-cols-6 gap-2">
               <Metric
                 label={
