@@ -247,22 +247,41 @@ async function processOrganization(
       cursor_stalled: false,
     };
 
-    // Resume from persisted cursor if a previous run was interrupted (Hostinger/Bluehost only)
+    // Resume from persisted cursor if a previous run was interrupted (Hostinger/Bluehost only).
+    // Si el cursor lleva más de 6 horas sin moverse está congelado: se descarta y la lectura
+    // arranca desde los mensajes más nuevos, en vez de repetir el mismo tramo viejo para siempre.
     const cursorKey = `${mailProvider}_resume_skip_${org.id}`;
+    const CURSOR_MAX_AGE_MS = 6 * 60 * 60 * 1000;
     let skipCount = 0;
+    let cursorWasStale = false;
     if (mailProvider === "hostinger" || mailProvider === "bluehost") {
       const { data: cursorRow } = await supabase
         .from("system_settings")
-        .select("value")
+        .select("value, updated_at")
         .eq("organization_id", org.id)
         .eq("key", cursorKey)
         .maybeSingle();
       const persisted = Number(cursorRow?.value);
       if (Number.isFinite(persisted) && persisted > 0) {
-        skipCount = persisted;
-        console.log(`▶️ Resuming ${mailProvider} sync for ${org.name} from skip_count=${skipCount}`);
+        const ageMs = cursorRow?.updated_at
+          ? Date.now() - new Date(cursorRow.updated_at).getTime()
+          : 0;
+        if (ageMs > CURSOR_MAX_AGE_MS) {
+          cursorWasStale = true;
+          skipCount = 0;
+          await supabase.from("system_settings").delete()
+            .eq("organization_id", org.id)
+            .eq("key", cursorKey);
+          console.warn(
+            `🔄 Cursor de ${mailProvider} congelado ${Math.round(ageMs / 3_600_000)}h para ${org.name}; se reinicia en 0`
+          );
+        } else {
+          skipCount = persisted;
+          console.log(`▶️ Resuming ${mailProvider} sync for ${org.name} from skip_count=${skipCount}`);
+        }
       }
     }
+
     let continueFetching = true;
     let iteration = 0;
     const maxIterations = 15;
@@ -419,11 +438,18 @@ async function processOrganization(
         console.warn(`⚠️ ${mailProvider} cursor made no progress for ${org.name}; retrying from skip_count=${skipCount} next cron`);
         continueFetching = false;
       } else if (chunk.backlog_pending === true) {
-        // Gmail por tandas: queda correo pendiente, se retoma en la próxima corrida.
+        // Gmail por tandas: queda correo pendiente. Se vuelve a llamar en la misma corrida
+        // mientras quede tiempo de pared, para drenar el atraso sin esperar media hora.
         aggregatedEmailData.status = "partial";
         aggregatedEmailData.time_limit_reached = true;
-        console.log(`📬 ${mailProvider}: quedan mensajes pendientes para ${org.name} (offset ${chunk.batch_offset ?? 0}); se retoma en la próxima corrida`);
-        continueFetching = false;
+        if (Date.now() - dispatcherStartTime > MAX_DISPATCHER_TIME_MS) {
+          console.log(`⏱️ ${mailProvider}: atraso pendiente para ${org.name}; se retoma en la próxima corrida`);
+          continueFetching = false;
+        } else {
+          console.log(`📬 ${mailProvider}: quedan mensajes pendientes para ${org.name} (offset ${chunk.batch_offset ?? 0}); se continúa en esta corrida`);
+          await new Promise((resolve) => setTimeout(resolve, 300));
+        }
+
       } else {
         aggregatedEmailData.status = chunk.status || (chunk.partial ? "partial" : "complete");
         aggregatedEmailData.time_limit_reached = Boolean(chunk.time_limit_reached || chunk.partial);

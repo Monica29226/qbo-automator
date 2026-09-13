@@ -79,7 +79,9 @@ serve(async (req) => {
         checkStuckInvoices(supabase, org.id),
         checkLegacyUnmapped(supabase, org.id),
         checkFetchedButNotProcessed(supabase, org.id),
+        checkStuckMailboxCursor(supabase, org.id),
       ]);
+
 
       checks.forEach((issue) => {
         if (issue) issues.push(issue);
@@ -485,20 +487,76 @@ async function checkFetchedButNotProcessed(
   const fetched = logs.reduce((s: number, l: any) => s + (l.gmail_fetched || 0), 0);
   const processed = logs.reduce((s: number, l: any) => s + (l.gmail_processed || 0), 0);
 
-  if (fetched >= 20 && processed === 0) {
-    return {
-      type: "critical",
-      code: "fetched_but_none_processed",
-      title: "El correo responde pero no entra ninguna factura",
-      description: `En los últimos 2 días se encontraron ${fetched} correos y no se procesó ningún documento. La lectura del buzón puede estar detenida.`,
-      actionRequired: "Ejecutar la sincronización manual del correo y revisar la conexión",
-      action_link: "/integrations",
-      data: { fetched, processed, runs: logs.length },
-    };
-  }
+  if (fetched < 20 || processed > 0) return null;
 
-  return null;
+  // Un buzón donde todo lo encontrado ya estaba ingresado (duplicados) es normal.
+  // Solo se alerta si además NO entró ningún documento nuevo en la ventana.
+  const { count: recentDocs } = await supabase
+    .from("processed_documents")
+    .select("id", { count: "exact", head: true })
+    .eq("organization_id", orgId)
+    .gte("created_at", twoDaysAgo);
+
+  if ((recentDocs || 0) > 0) return null;
+
+  return {
+    type: "critical",
+    code: "fetched_but_none_processed",
+    title: "El correo responde pero no entra ninguna factura",
+    description: `En los últimos 2 días se encontraron ${fetched} correos y no ingresó ningún documento nuevo. La lectura del buzón puede estar detenida.`,
+    actionRequired: "Ejecutar la sincronización manual del correo y revisar la conexión",
+    action_link: "/integrations",
+    data: { fetched, processed, runs: logs.length },
+  };
+
 }
+
+/**
+ * Marca de avance congelada: la lectura guarda por dónde siguió leyendo. Si esa marca
+ * lleva más de 24 horas sin moverse, el buzón está atascado en el mismo tramo y los
+ * correos nuevos nunca se revisan (fue lo que dejó 20 días sin facturas a Grupo SKR).
+ */
+async function checkStuckMailboxCursor(
+  supabase: any,
+  orgId: string
+): Promise<HealthIssue | null> {
+  const { data: rows } = await supabase
+    .from("system_settings")
+    .select("key, value, updated_at")
+    .eq("organization_id", orgId)
+    .or("key.like.gmail_resume_cursor%,key.like.%_resume_skip_%");
+
+  if (!rows || rows.length === 0) return null;
+
+  const STUCK_MS = 24 * 60 * 60 * 1000;
+  const stuck = rows.filter((r: any) => {
+    const pos = Number(r.value);
+    if (!Number.isFinite(pos) || pos <= 0) return false;
+    if (!r.updated_at) return false;
+    return Date.now() - new Date(r.updated_at).getTime() > STUCK_MS;
+  });
+
+  if (stuck.length === 0) return null;
+
+  const oldestHours = Math.max(
+    ...stuck.map((r: any) => Math.round((Date.now() - new Date(r.updated_at).getTime()) / 3_600_000))
+  );
+
+  return {
+    type: "critical",
+    code: "mailbox_cursor_stuck",
+    title: "La lectura del correo está atascada",
+    description: `La marca de avance del buzón no se mueve desde hace ${oldestHours} horas, así que los correos nuevos no se están revisando.`,
+    actionRequired: "Ejecutar la sincronización manual del correo para reiniciar la lectura",
+    action_link: "/integrations",
+    data: {
+      stuckCursors: stuck.map((r: any) => ({ key: r.key, position: Number(r.value), updated_at: r.updated_at })),
+      oldestHours,
+    },
+  };
+}
+
+
 
 
 
