@@ -97,14 +97,14 @@ export function SikuCard({ organizationId }: Props) {
   };
 
   const handleUpdateDefaultAccount = async (newRef: string) => {
-    if (!account) return;
+    if (!account || !organizationId) return;
     setSavingDefault(true);
     try {
-      const newCreds = { ...(account.credentials || {}), default_income_account_ref: newRef || null };
-      const { error } = await supabase
-        .from("integration_accounts")
-        .update({ credentials: newCreds })
-        .eq("id", account.id);
+      // Se actualiza solo esa clave por función segura, para no borrar la contraseña guardada.
+      const { error } = await supabase.rpc("set_siku_default_income_account", {
+        _org_id: organizationId,
+        _account_ref: newRef || null,
+      });
       if (error) throw error;
       toast.success("Cuenta de ingreso por defecto actualizada");
       await load();
