@@ -510,14 +510,14 @@ const Dashboard = () => {
                 <CardDescription>Gestión y sincronización de facturas</CardDescription>
               </CardHeader>
               <CardContent className="space-y-3">
-                {/* Row 1: Import + Search (50/50) */}
+                {/* Fila 1: correo + búsqueda */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <ImportBatchDialog onSuccess={refreshData} />
+                  <SyncEmailNowButton />
                   <SearchInvoiceDialog />
                 </div>
 
-                {/* Row 2: Publish + Diagnostic + Reconcile + Error Log */}
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                {/* Fila 2: envío a QuickBooks + diagnóstico + bitácora */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                   <Button
                     variant="default"
                     className="w-full h-10"
@@ -527,12 +527,12 @@ const Dashboard = () => {
                     {isFetchingEmails ? (
                       <>
                         <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
-                        Publicando...
+                        Enviando...
                       </>
                     ) : (
                       <>
                         <Send className="h-4 w-4 mr-2" />
-                        Publicar a QuickBooks
+                        Enviar a QuickBooks
                       </>
                     )}
                   </Button>
@@ -541,8 +541,6 @@ const Dashboard = () => {
                     <QBOConnectionDiagnostic />
                   </Suspense>
 
-                  <ReconcileXmlQboButton />
-
                   <Suspense fallback={<div className="h-10 bg-muted animate-pulse rounded" />}>
                     <ErrorLogsViewer />
                   </Suspense>
@@ -550,9 +548,26 @@ const Dashboard = () => {
               </CardContent>
             </Card>
 
-            <Suspense fallback={<LazyFallback />}>
-              <AuditPublishedVsQBO />
-            </Suspense>
+            {/* Revisiones: cada una responde una pregunta distinta */}
+            <Card className="mb-6">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-lg">Revisiones</CardTitle>
+                <CardDescription>
+                  Cotejo contra QuickBooks e importación de meses anteriores
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <ReconcileXmlQboButton />
+                  <ImportBatchDialog onSuccess={refreshData} />
+                  <SyncFromExcelDialog />
+                </div>
+                <Suspense fallback={<LazyFallback />}>
+                  <AuditPublishedVsQBO />
+                </Suspense>
+              </CardContent>
+            </Card>
+
 
 
 
