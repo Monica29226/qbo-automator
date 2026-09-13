@@ -26,7 +26,7 @@ const RecentDocuments = lazy(() => import("@/components/dashboard/RecentDocument
 const CronMonitor = lazy(() => import("@/components/dashboard/CronMonitor").then(m => ({ default: m.CronMonitor })));
 import { SyncEmailNowButton } from "@/components/dashboard/SyncEmailNowButton";
 import { SyncFromExcelDialog } from "@/components/SyncFromExcelDialog";
-import { RecoverBacklogButton } from "@/components/dashboard/RecoverBacklogButton";
+
 import { SystemAlertsPanel } from "@/components/dashboard/SystemAlertsPanel";
 import WaitingForQboPanel from "@/components/dashboard/WaitingForQboPanel";
 import CurrencyMismatchPanel from "@/components/dashboard/CurrencyMismatchPanel";
