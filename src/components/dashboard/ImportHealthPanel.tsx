@@ -95,20 +95,12 @@ export function ImportHealthPanel() {
           </CardDescription>
         </div>
         <div className="flex gap-2">
-          <Button
-            variant="default"
-            size="sm"
-            onClick={drain}
-            disabled={!org?.has_integration || draining}
-          >
-            <Download className={`h-4 w-4 mr-2 ${draining ? "animate-pulse" : ""}`} />
-            {draining ? "Drenando..." : "Drenar correo"}
-          </Button>
           <Button variant="outline" size="sm" onClick={() => refetch()} disabled={isFetching}>
             <RefreshCw className={`h-4 w-4 mr-2 ${isFetching ? "animate-spin" : ""}`} />
             Actualizar
           </Button>
         </div>
+
       </CardHeader>
       <CardContent className="space-y-4">
         {isLoading ? (
