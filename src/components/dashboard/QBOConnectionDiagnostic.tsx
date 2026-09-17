@@ -117,13 +117,18 @@ export const QBOConnectionDiagnostic = () => {
         return;
       }
 
-      const expiresAt = new Date(Number(integration.expires_at || 0));
-      const isExpired = expiresAt < new Date();
+      const expiresAtMs = integration.expires_at ? Number(integration.expires_at) : null;
+      const expiresAt = expiresAtMs ? new Date(expiresAtMs) : null;
+      const isExpired = expiresAt ? expiresAt < new Date() : false;
 
-      updateStep("Credenciales QuickBooks", isExpired ? 'error' : 'success',
-        isExpired 
-          ? `Token EXPIRADO (${expiresAt.toLocaleString()})` 
-          : `Token válido hasta ${expiresAt.toLocaleString()}`,
+      updateStep(
+        "Credenciales QuickBooks",
+        isExpired ? 'error' : 'success',
+        isExpired
+          ? `Token EXPIRADO (${expiresAt!.toLocaleString()})`
+          : expiresAt
+            ? `Token válido hasta ${expiresAt.toLocaleString()}`
+            : "Token presente (sin fecha de vencimiento registrada)",
         {
           realm_id: integration.realm_id,
           account_name: integration.account_name,
@@ -136,6 +141,7 @@ export const QBOConnectionDiagnostic = () => {
         setIsRunning(false);
         return;
       }
+
 
       // Step 3: Check system settings
       updateStep("System Settings", 'pending', "Verificando configuración...");
