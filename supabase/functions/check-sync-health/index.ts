@@ -556,6 +556,74 @@ async function checkStuckMailboxCursor(
   };
 }
 
+/**
+ * Buzón inaccesible: el servidor de correo rechaza la contraseña o presenta un
+ * certificado que no corresponde al nombre configurado. El sistema sigue intentando
+ * cada 30 minutos y no lee nada (Centro Médico San Antonio quedó así desde el
+ * 15 de setiembre de 2026). Se alerta tras 3 fallos seguidos del mismo tipo.
+ */
+async function checkMailboxUnreachable(
+  supabase: any,
+  orgId: string
+): Promise<HealthIssue | null> {
+  const { data: logs } = await supabase
+    .from("sync_logs")
+    .select("status, started_at, error_message")
+    .eq("organization_id", orgId)
+    .order("started_at", { ascending: false })
+    .limit(12);
+
+  if (!logs || logs.length < 3) return null;
+
+  const classify = (msg: string | null): string | null => {
+    const m = (msg || "").toUpperCase();
+    if (m.includes("AUTH_FAILED") || m.includes("AUTHENTICATIONFAILED") || m.includes("LOGIN FAILED")) {
+      return "credentials_rejected";
+    }
+    if (m.includes("NOTVALIDFORNAME") || m.includes("INVALID PEER CERTIFICATE") || m.includes("CERTIFICATE")) {
+      return "certificate_mismatch";
+    }
+    return null;
+  };
+
+  // Fallos consecutivos más recientes del mismo tipo de acceso al buzón.
+  let streak = 0;
+  let kind: string | null = null;
+  let since: string | null = null;
+  for (const l of logs) {
+    const k = classify(l.error_message);
+    if (!k) break;
+    if (kind && k !== kind) break;
+    kind = k;
+    streak += 1;
+    since = l.started_at;
+  }
+
+  if (streak < 3 || !kind) return null;
+
+  const mailbox = (logs[0].error_message || "").match(/[\w.+-]+@[\w.-]+\.\w+/)?.[0] || null;
+  const hours = since ? Math.round((Date.now() - new Date(since).getTime()) / 3_600_000) : 0;
+
+  const reason =
+    kind === "credentials_rejected"
+      ? "el servidor de correo está rechazando la contraseña guardada"
+      : "el servidor de correo presenta un certificado que no corresponde al nombre configurado";
+
+  return {
+    type: "critical",
+    code: "mailbox_unreachable",
+    title: `Buzón inaccesible${mailbox ? `: ${mailbox}` : ""}`,
+    description: `No se puede entrar al buzón desde hace unas ${hours} horas porque ${reason}. Van ${streak} lecturas fallidas seguidas y no está entrando ninguna factura.`,
+    actionRequired:
+      kind === "credentials_rejected"
+        ? "Confirmar la contraseña actual del buzón con el proveedor de hosting y actualizarla en Integraciones"
+        : "Confirmar con el proveedor de hosting el nombre de servidor correcto para IMAP y actualizarlo en Integraciones",
+    action_link: "/integrations",
+    data: { mailbox, kind, consecutiveFailures: streak, hoursSinceFirstFailure: hours },
+  };
+}
+
+
 
 
 
