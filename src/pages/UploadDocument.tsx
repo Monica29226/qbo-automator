@@ -122,18 +122,32 @@ const UploadDocument = () => {
       // Usar process-document-xml para análisis automático del XML
       // IMPORTANTE: Pasar los paths de los archivos, NO URLs públicas
       // El bucket es privado, las URLs se generan con signed URLs al visualizar
-      const { data, error } = await supabase.functions.invoke("process-document-xml", {
-        body: { 
-          xml_content: xmlContent,
-          organization_id: activeOrganization,
-          pdf_attachment_url: pdfPath,  // Path del PDF en storage
-          xml_attachment_url: xmlPath,  // Path del XML en storage
-          file_path: pdfPath || xmlPath,
-        },
-      });
+      // Reintento con espera: el worker puede caerse por falta de recursos (502/503)
+      // y en ese caso la factura no se registraba, obligando al usuario a repetir todo.
+      let data: any = null;
+      let error: any = null;
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        const res = await supabase.functions.invoke("process-document-xml", {
+          body: {
+            xml_content: xmlContent,
+            organization_id: activeOrganization,
+            pdf_attachment_url: pdfPath,  // Path del PDF en storage
+            xml_attachment_url: xmlPath,  // Path del XML en storage
+            file_path: pdfPath || xmlPath,
+          },
+        });
+        data = res.data;
+        error = res.error;
+        if (!error) break;
+        console.warn(`Intento ${attempt} de procesar el XML falló:`, error);
+        if (attempt < 3) await new Promise((r) => setTimeout(r, attempt * 1500));
+      }
 
       if (error) {
-        throw error;
+        toast.error(
+          "El servidor no pudo procesar el XML en este momento. El archivo ya quedó guardado; intente de nuevo en unos segundos."
+        );
+        return;
       }
 
       setResult(data);
