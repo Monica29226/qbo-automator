@@ -21,6 +21,7 @@ export type Database = {
           acknowledged_by: string | null
           alert_type: string
           created_at: string | null
+          email_error: string | null
           email_id: string | null
           id: string
           issues_count: number
@@ -37,6 +38,7 @@ export type Database = {
           acknowledged_by?: string | null
           alert_type: string
           created_at?: string | null
+          email_error?: string | null
           email_id?: string | null
           id?: string
           issues_count?: number
@@ -53,6 +55,7 @@ export type Database = {
           acknowledged_by?: string | null
           alert_type?: string
           created_at?: string | null
+          email_error?: string | null
           email_id?: string | null
           id?: string
           issues_count?: number
