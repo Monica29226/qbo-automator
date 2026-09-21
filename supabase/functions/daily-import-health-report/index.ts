@@ -247,6 +247,11 @@ Deno.serve(async (req) => {
         .in("id", adminIds);
       recipients = (profiles ?? []).map((p) => p.email).filter(Boolean);
     }
+    // Destinataria global de los avisos del sistema.
+    if (!recipients.some((r) => r.toLowerCase() === "monica@aclcostarica.com")) {
+      recipients.push("monica@aclcostarica.com");
+    }
+
 
     if (recipients.length === 0) {
       return new Response(
@@ -281,7 +286,7 @@ Deno.serve(async (req) => {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        from: "ACL Costa Rica <onboarding@resend.dev>",
+        from: "ACL Costa Rica <alertas@aclcostarica.com>",
         to: recipients,
         subject,
         html,

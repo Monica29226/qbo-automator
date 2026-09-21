@@ -3231,15 +3231,38 @@ Deno.serve(async (req) => {
             };
             logError(`⚠️ ${doc.doc_number}: DISCREPANCIA POST-PUBLICACIÓN ${JSON.stringify(issue)}`);
             try {
-              await supabase.from('alert_history').insert({
-                organization_id: doc.organization_id,
-                alert_type: issue.type,
-                issues_count: 1,
-                issues_data: [issue],
-              });
+              // Un solo aviso abierto por empresa para este código: se actualiza el
+              // existente en vez de crear una fila nueva por cada factura.
+              const { data: openMismatch } = await supabase
+                .from('alert_history')
+                .select('id, issues_count')
+                .eq('organization_id', doc.organization_id)
+                .eq('resolved', false)
+                .contains('issues_data', [{ code: 'qbo_total_mismatch' }])
+                .maybeSingle();
+
+              if (openMismatch?.id) {
+                await supabase
+                  .from('alert_history')
+                  .update({
+                    alert_type: issue.type,
+                    issues_count: (openMismatch.issues_count || 1) + 1,
+                    issues_data: [issue],
+                    sent_at: new Date().toISOString(),
+                  })
+                  .eq('id', openMismatch.id);
+              } else {
+                await supabase.from('alert_history').insert({
+                  organization_id: doc.organization_id,
+                  alert_type: issue.type,
+                  issues_count: 1,
+                  issues_data: [issue],
+                });
+              }
             } catch (alertErr: any) {
               logError(`Failed to record qbo_total_mismatch alert: ${alertErr?.message || alertErr}`);
             }
+
             // Solo bloquear en revisión si el TOTAL difiere más de ₡1.
             // Diferencias solo en IVA (redondeo QBO) con total correcto se registran
             // como warning en alert_history pero la factura se publica normalmente.
