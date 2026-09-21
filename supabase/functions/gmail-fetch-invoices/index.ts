@@ -342,7 +342,7 @@ serve(async (req) => {
     const batchSizeSetting = parseInt(settings?.find(s => s.key === "gmail_batch_size")?.value || "", 10);
     const GMAIL_BATCH_SIZE = Number.isFinite(batchSizeSetting) && batchSizeSetting > 0
       ? batchSizeSetting
-      : 60; // tandas más cortas: 150 agotaba memoria/CPU del worker (546)
+      : 40; // tandas más cortas: con 60 el worker seguía cayendo por recursos (546/503)
 
     // El cursor también aplica a la importación histórica por período (mes/año):
     // así cada llamada avanza en la lista en vez de reprocesar los mismos correos.
