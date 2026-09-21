@@ -665,144 +665,70 @@ async function checkLegacyUnmapped(
   };
 }
 
-async function sendAlertEmail(
-  org: { name: string; alertEmail: string },
-  criticalIssues: HealthIssue[],
-  warnings: HealthIssue[]
-): Promise<string> {
-  const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY");
+async function resolveRecipients(
+  supabase: any,
+  org: { id: string; name: string; email: string | null },
+): Promise<string[]> {
+  const { data: settings } = await supabase
+    .from("system_settings")
+    .select("key, value")
+    .eq("organization_id", org.id)
+    .in("key", ["alert_enabled", "alert_email"]);
 
-  if (!RESEND_API_KEY) {
-    throw new Error("RESEND_API_KEY not configured");
+  const map: Record<string, string> = {};
+  for (const s of settings || []) map[s.key] = s.value;
+
+  if (map.alert_enabled === "false") return [];
+  return normalizeRecipients(map.alert_email, org.email);
+}
+
+async function sendNewIssuesEmail(
+  orgName: string,
+  issues: HealthIssue[],
+  recipients: string[],
+) {
+  const criticals = issues.filter((i) => i.type === "critical");
+  const others = issues.filter((i) => i.type !== "critical");
+  const blocks = [
+    ...criticals.map((i) => issueBlock(i, true)),
+    ...others.map((i) => issueBlock(i, false)),
+  ].join("");
+
+  const subject = criticals.length > 0
+    ? `Alerta critica en ${orgName}: ${criticals[0].title}`
+    : `Aviso en ${orgName}: ${issues[0].title}`;
+
+  const intro = `Se detecto lo siguiente en <strong>${orgName}</strong>. Este aviso se envia una sola vez por problema; le avisaremos de nuevo cuando quede resuelto.`;
+
+  const result = await sendAlertEmailRaw(
+    subject,
+    alertEmailShell("Aviso del sistema", intro, blocks),
+    recipients,
+  );
+
+  if (result.ok) {
+    console.log(`Alerta enviada a ${recipients.join(", ")} (${orgName}). Email ID: ${result.id}`);
+  } else {
+    console.error(`Alerta NO entregada para ${orgName}: ${result.error}`);
   }
+  return result;
+}
 
-  const criticalHTML = criticalIssues
+async function sendResolvedEmail(orgName: string, titles: string[], recipients: string[]) {
+  const blocks = titles
     .map(
-      (issue) => `
-    <div style="background: #fee2e2; border-left: 4px solid #dc2626; padding: 16px; margin: 16px 0; border-radius: 4px;">
-      <h3 style="color: #991b1b; margin: 0 0 8px 0; font-size: 16px;">🚨 ${issue.title}</h3>
-      <p style="margin: 8px 0; color: #1f2937;">${issue.description}</p>
-      <p style="margin: 8px 0; font-weight: bold; color: #1f2937;">
-        <strong>Acción requerida:</strong> ${issue.actionRequired}
-      </p>
-    </div>
-  `
+      (t) => `
+  <div style="border: 1px solid #E8E2CD; border-left: 3px solid #3F6B52; padding: 14px 18px; margin: 0 0 12px 0;">
+    <p style="margin: 0; color: #15162C; font-size: 15px;">${t}</p>
+  </div>`,
     )
     .join("");
 
-  const warningsHTML =
-    warnings.length > 0
-      ? warnings
-          .map(
-            (issue) => `
-    <div style="background: #fef3c7; border-left: 4px solid #f59e0b; padding: 16px; margin: 16px 0; border-radius: 4px;">
-      <h3 style="color: #92400e; margin: 0 0 8px 0; font-size: 16px;">⚠️ ${issue.title}</h3>
-      <p style="margin: 8px 0; color: #1f2937;">${issue.description}</p>
-      <p style="margin: 8px 0; color: #1f2937;">
-        <strong>Sugerencia:</strong> ${issue.actionRequired}
-      </p>
-    </div>
-  `
-          )
-          .join("")
-      : "";
+  const intro = `Los siguientes problemas de <strong>${orgName}</strong> ya quedaron resueltos y no requieren accion.`;
 
-  // Remitente de dominio verificado. resend.dev solo permite enviar al dueño de
-  // la cuenta de Resend, por lo que las alertas a las empresas eran rechazadas (403).
-  const BRANDED_FROM = "ACL Costa Rica <alertas@aureoncr.com>";
-  const SANDBOX_FROM = "ACL Costa Rica <onboarding@resend.dev>";
-  const FALLBACK_TO = Deno.env.get("ALERTS_FALLBACK_EMAIL") || "";
-
-  const postEmail = (from: string, to: string[]) =>
-    fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${RESEND_API_KEY}`,
-    },
-    body: JSON.stringify({
-      from,
-      to,
-
-      subject: `🚨 Alerta: Problemas en ${org.name} - ${criticalIssues.length} críticos`,
-      html: `
-        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-          <div style="background: #dc2626; color: white; padding: 20px; border-radius: 8px 8px 0 0;">
-            <h1 style="margin: 0; font-size: 24px;">🚨 Alerta del Sistema</h1>
-          </div>
-          
-          <div style="background: #ffffff; padding: 20px; border: 1px solid #e5e7eb; border-top: none;">
-            <p style="margin: 0 0 16px 0; font-size: 16px; color: #1f2937;">
-              Se han detectado problemas en la sincronización de facturas para <strong>${org.name}</strong>:
-            </p>
-            
-            <h2 style="color: #dc2626; font-size: 18px; margin: 24px 0 12px 0;">
-              Problemas Críticos (${criticalIssues.length})
-            </h2>
-            ${criticalHTML}
-            
-            ${
-              warnings.length > 0
-                ? `
-              <h2 style="color: #f59e0b; font-size: 18px; margin: 24px 0 12px 0;">
-                Advertencias (${warnings.length})
-              </h2>
-              ${warningsHTML}
-            `
-                : ""
-            }
-            
-            <div style="margin-top: 32px; padding: 20px; background: #f9fafb; border-radius: 8px; border: 1px solid #e5e7eb;">
-              <p style="margin: 0 0 12px 0; font-size: 16px; font-weight: bold; color: #1f2937;">
-                ¿Qué hacer ahora?
-              </p>
-              <ol style="margin: 0; padding-left: 20px; color: #1f2937;">
-                <li style="margin-bottom: 8px;">Inicia sesión en tu dashboard</li>
-                <li style="margin-bottom: 8px;">Revisa la sección "Documentos con Error"</li>
-                <li style="margin-bottom: 8px;">Verifica las conexiones de Gmail y QuickBooks</li>
-                <li style="margin-bottom: 8px;">Ejecuta una sincronización manual si es necesario</li>
-              </ol>
-            </div>
-            
-            <p style="color: #6b7280; font-size: 12px; margin-top: 24px; padding-top: 24px; border-top: 1px solid #e5e7eb;">
-              Esta es una alerta automática del sistema ACL Invoice.<br>
-              Para gestionar estas alertas, ve a Configuración > Notificaciones en tu dashboard.
-            </p>
-          </div>
-        </div>
-      `,
-    }),
-  });
-
-  let emailResponse = await postEmail(BRANDED_FROM, [org.alertEmail]);
-
-  if (!emailResponse.ok) {
-    const brandedError = await emailResponse.text();
-    console.error("Resend (dominio) rechazó el envío:", brandedError);
-
-    // El buzón de la empresa NO fue notificado. Se avisa al buzón de respaldo solo
-    // si está configurado explícitamente, y nunca se reporta como envío logrado:
-    // devolver null evita que el anti-spam de 12 h bloquee los próximos intentos.
-    if (FALLBACK_TO) {
-      try {
-        const fallbackResponse = await postEmail(SANDBOX_FROM, [FALLBACK_TO]);
-        if (!fallbackResponse.ok) {
-          console.error("Fallback de alerta también falló:", await fallbackResponse.text());
-        } else {
-          console.warn(`Alerta de ${org.name} enviada solo al buzón de respaldo; la empresa no fue notificada.`);
-        }
-      } catch (err) {
-        console.error("Error enviando alerta al buzón de respaldo:", err);
-      }
-    }
-
-    throw new Error(`Failed to send alert email to ${org.alertEmail}: ${brandedError}`);
-  }
-
-
-  const data = await emailResponse.json();
-  console.log(`Alert email sent successfully. Email ID: ${data.id}`);
-
-  return data.id;
-
+  return await sendAlertEmailRaw(
+    `Resuelto en ${orgName}: ${titles.length} problema(s)`,
+    alertEmailShell("Problema resuelto", intro, blocks),
+    recipients,
+  );
 }
