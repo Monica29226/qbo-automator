@@ -286,7 +286,7 @@ Deno.serve(async (req) => {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        from: "ACL Costa Rica <alertas@dashboard.aclcostarica.com>",
+        from: "ACL Costa Rica <alertas@aclcostarica.com>",
         to: recipients,
         subject,
         html,

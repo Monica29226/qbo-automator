@@ -1,7 +1,7 @@
 // Envío centralizado de correos de alerta.
 // El dominio verificado en Resend es dashboard.aclcostarica.com; cualquier otro
 // remitente hace que Resend rechace el envío y la alerta quede en silencio.
-export const ALERT_FROM = "ACL Costa Rica <alertas@dashboard.aclcostarica.com>";
+export const ALERT_FROM = "ACL Costa Rica <alertas@aclcostarica.com>";
 
 // Destinataria global de todos los avisos del sistema.
 export const GLOBAL_ALERT_RECIPIENT = "monica@aclcostarica.com";

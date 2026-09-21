@@ -146,7 +146,7 @@ Deno.serve(async (req) => {
     const results: any[] = [];
 
     // Remitente de dominio verificado en Resend. Cualquier otro dominio es rechazado.
-    const ALERT_FROM = "ACL Costa Rica <alertas@dashboard.aclcostarica.com>";
+    const ALERT_FROM = "ACL Costa Rica <alertas@aclcostarica.com>";
 
     async function sendEmail(subject: string, html: string) {
       if (!RESEND_API_KEY || recipients.length === 0) return { sent: false, via: "skipped" };
