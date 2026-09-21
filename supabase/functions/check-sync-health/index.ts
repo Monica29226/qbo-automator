@@ -27,6 +27,10 @@ const KNOWN_CODES = [
   "no_mail_channel",
   "qbo_disconnected",
   "stuck_review",
+  "fetched_but_none_processed",
+  "mailbox_cursor_stuck",
+  "mailbox_unreachable",
+  "legacy_unmapped_accounts",
 ];
 
 interface Organization {
