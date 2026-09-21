@@ -84,6 +84,7 @@ serve(async (req) => {
         checkLegacyUnmapped(supabase, org.id),
         checkFetchedButNotProcessed(supabase, org.id),
         checkStuckMailboxCursor(supabase, org.id),
+        checkMailboxUnreachable(supabase, org.id),
       ]);
 
 
