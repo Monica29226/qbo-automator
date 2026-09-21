@@ -251,25 +251,40 @@ async function checkOrganization(supabase: any, org: any): Promise<number> {
     }
   }
 
-  // Anti-duplicación por (organization_id, code) en últimas 4h.
-  // Si existe un row no resuelto reciente, incrementar issues_count en vez de insertar.
+  // Deduplicación por (organization_id, code) sobre TODAS las alertas abiertas.
+  // Antes se usaba una ventana de 4 h, lo que acumulaba cientos de copias del
+  // mismo problema y dejaba el tablero ilegible.
   if (checks.length === 0) return 0;
 
-  const fourHoursAgo = iso(now - 4 * 3600 * 1000);
-  const { data: recent } = await supabase
+  const { data: open } = await supabase
     .from("alert_history")
-    .select("id, issues_data, issues_count, resolved, created_at")
+    .select("id, issues_data, issues_count, created_at")
     .eq("organization_id", orgId)
-    .eq("resolved", false)
-    .gte("created_at", fourHoursAgo);
+    .eq("resolved", false);
 
-  const recentByCode = new Map<string, any>();
-  for (const r of recent || []) {
+  const openByCode = new Map<string, any>();
+  for (const r of open || []) {
     const code = Array.isArray(r.issues_data) ? r?.issues_data?.[0]?.code : r?.issues_data?.code;
-    if (code) recentByCode.set(code, r);
+    if (!code) continue;
+    const prev = openByCode.get(code);
+    if (!prev) {
+      openByCode.set(code, r);
+    } else {
+      // Copias sobrantes del mismo código: se cierran.
+      const older = Date.parse(prev.created_at) < Date.parse(r.created_at) ? prev : r;
+      const newer = older === prev ? r : prev;
+      openByCode.set(code, newer);
+      await supabase
+        .from("alert_history")
+        .update({ resolved: true, resolved_at: new Date().toISOString() })
+        .eq("id", older.id);
+    }
   }
 
   let createdOrUpdated = 0;
+  const newAlerts: AlertSpec[] = [];
+  const newRowIds: string[] = [];
+
   for (const c of checks) {
     const issuePayload = {
       type: c.severity,
@@ -281,46 +296,88 @@ async function checkOrganization(supabase: any, org: any): Promise<number> {
       metadata: c.metadata,
     };
 
-    const existing = recentByCode.get(c.code);
+    const existing = openByCode.get(c.code);
     if (existing) {
       const { error } = await supabase
         .from("alert_history")
         .update({
           issues_count: (existing.issues_count || 1) + 1,
           issues_data: [issuePayload],
+          sent_at: new Date().toISOString(),
         })
         .eq("id", existing.id);
       if (error) console.error(`[${org.name}] update alert failed:`, error.message);
       else createdOrUpdated++;
     } else {
-      const { error } = await supabase.from("alert_history").insert({
-        organization_id: orgId,
-        alert_type: c.severity,
-        issues_count: c.count ?? 1,
-        issues_data: [issuePayload],
-      });
-      if (error) console.error(`[${org.name}] insert alert failed:`, error.message);
-      else createdOrUpdated++;
-
-      // Auto-resolve stale alerts of the same code (>24h with no newer occurrence)
-      const cutoff = iso(now - 24 * 3600 * 1000);
-      const { data: stale } = await supabase
+      const { data: inserted, error } = await supabase
         .from("alert_history")
-        .select("id, issues_data, created_at")
-        .eq("organization_id", orgId)
-        .eq("resolved", false)
-        .lt("created_at", cutoff);
-      const staleIds = (stale || [])
-        .filter((r: any) => {
-          const code = Array.isArray(r.issues_data) ? r?.issues_data?.[0]?.code : r?.issues_data?.code;
-          return code === c.code;
+        .insert({
+          organization_id: orgId,
+          alert_type: c.severity,
+          issues_count: c.count ?? 1,
+          issues_data: [issuePayload],
         })
-        .map((r: any) => r.id);
-      if (staleIds.length) {
+        .select("id")
+        .maybeSingle();
+      if (error) console.error(`[${org.name}] insert alert failed:`, error.message);
+      else {
+        createdOrUpdated++;
+        newAlerts.push(c);
+        if (inserted?.id) newRowIds.push(inserted.id);
+      }
+    }
+  }
+
+  // Aviso inmediato por correo de cada problema nuevo.
+  if (newAlerts.length > 0) {
+    const { data: settings } = await supabase
+      .from("system_settings")
+      .select("key, value")
+      .eq("organization_id", orgId)
+      .in("key", ["alert_enabled", "alert_email"]);
+    const map: Record<string, string> = {};
+    for (const s of settings || []) map[s.key] = s.value;
+
+    if (map.alert_enabled !== "false") {
+      const recipients = normalizeRecipients(map.alert_email, org.email);
+      const criticals = newAlerts.filter((a) => a.severity === "critical");
+      const blocks = newAlerts
+        .map((a) =>
+          issueBlock(
+            {
+              title: a.title,
+              description: a.description,
+              actionRequired: a.action,
+              action_link: a.action_link,
+            },
+            a.severity === "critical",
+          )
+        )
+        .join("");
+
+      const subject = criticals.length > 0
+        ? `Alerta critica en ${org.name}: ${criticals[0].title}`
+        : `Aviso en ${org.name}: ${newAlerts[0].title}`;
+
+      const result = await sendAlertEmailRaw(
+        subject,
+        alertEmailShell(
+          "Aviso del sistema",
+          `Se detecto lo siguiente en <strong>${org.name}</strong>. Este aviso se envia una sola vez por problema.`,
+          blocks,
+        ),
+        recipients,
+      );
+
+      if (newRowIds.length > 0) {
         await supabase
           .from("alert_history")
-          .update({ resolved: true, resolved_at: new Date().toISOString() })
-          .in("id", staleIds);
+          .update(
+            result.ok
+              ? { email_id: result.id ?? null, email_error: null }
+              : { email_error: result.error ?? "envío fallido" },
+          )
+          .in("id", newRowIds);
       }
     }
   }
@@ -328,3 +385,4 @@ async function checkOrganization(supabase: any, org: any): Promise<number> {
   console.log(`[${org.name}] processed ${createdOrUpdated} alerts (${checks.map((c) => c.code).join(", ")})`);
   return createdOrUpdated;
 }
+
