@@ -28,6 +28,17 @@ interface AlertSpec {
 
 const PROVIDERS = ["gmail", "outlook", "hostinger", "bluehost"] as const;
 
+// Códigos que genera esta función: se cierran solos cuando el problema desaparece.
+const OWNED_CODES = [
+  "processed_not_published",
+  "errors_accumulated",
+  "no_recent_invoices",
+  "qbo_token_stale",
+  "mail_backlog_suspected",
+  "currency_mismatch",
+];
+
+
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
@@ -288,6 +299,19 @@ async function checkOrganization(supabase: any, org: any): Promise<number> {
         .eq("id", older.id);
     }
   }
+
+  // Cerrar avisos de esta función cuyo problema ya no se cumple.
+  const activeCodes = new Set(checks.map((c) => c.code));
+  for (const [code, row] of openByCode) {
+    const owned = OWNED_CODES.includes(code) || code.startsWith("mail_integration_inconsistent_");
+    if (owned && !activeCodes.has(code)) {
+      await supabase
+        .from("alert_history")
+        .update({ resolved: true, resolved_at: new Date().toISOString() })
+        .eq("id", row.id);
+    }
+  }
+
 
   let createdOrUpdated = 0;
   const newAlerts: AlertSpec[] = [];
