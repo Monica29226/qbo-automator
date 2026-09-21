@@ -135,37 +135,32 @@ Deno.serve(async (req) => {
       const { data: profiles } = await supabase.from("profiles").select("email").in("id", adminIds);
       recipients = (profiles ?? []).map((p: any) => p.email).filter(Boolean);
     }
+    // Destinataria global de los avisos del sistema.
+    if (!recipients.some((r) => r.toLowerCase() === "monica@aclcostarica.com")) {
+      recipients.push("monica@aclcostarica.com");
+    }
 
     const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY");
     const nowMs = Date.now();
     const nowIso = new Date().toISOString();
     const results: any[] = [];
 
-    // Sends via Resend. If the branded sender domain is not verified yet, falls
-    // back to the Resend sandbox sender, which can only reach the account owner.
-    const FALLBACK_TO = (body?.fallback_to as string) || "monicalderon.2910@gmail.com";
-    const BRANDED_FROM = "ACL Costa Rica <alertas@aureoncr.com>";
-    const SANDBOX_FROM = "ACL Costa Rica <onboarding@resend.dev>";
+    // Remitente de dominio verificado en Resend. Cualquier otro dominio es rechazado.
+    const ALERT_FROM = "ACL Costa Rica <alertas@dashboard.aclcostarica.com>";
 
     async function sendEmail(subject: string, html: string) {
       if (!RESEND_API_KEY || recipients.length === 0) return { sent: false, via: "skipped" };
-      const post = (from: string, to: string[]) =>
-        fetch("https://api.resend.com/emails", {
-          method: "POST",
-          headers: { Authorization: `Bearer ${RESEND_API_KEY}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ from, to, subject, html }),
-        });
-
-      let res = await post(BRANDED_FROM, recipients);
+      const res = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${RESEND_API_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ from: ALERT_FROM, to: recipients, subject, html }),
+      });
       if (res.ok) return { sent: true, via: "domain" };
       const err = await res.text();
-      console.error("Resend (domain) error", err);
-
-      res = await post(SANDBOX_FROM, [FALLBACK_TO]);
-      if (res.ok) return { sent: true, via: "sandbox" };
-      console.error("Resend (sandbox) error", await res.text());
-      return { sent: false, via: "failed" };
+      console.error(`Resend rechazó el envío [${res.status}]: ${err}`);
+      return { sent: false, via: "failed", error: err.slice(0, 300) };
     }
+
 
     for (const org of orgs ?? []) {
       const orgIntegrations = (integrations ?? []).filter((i) => i.organization_id === org.id);
