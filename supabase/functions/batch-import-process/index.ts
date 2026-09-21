@@ -327,9 +327,12 @@ Deno.serve(async (req) => {
       // Bridge: if accepted, actually create the invoice record via the standard pipeline
       if (base.status === "accepted") {
         try {
-          const { data: procData, error: procErr } = await supabase.functions.invoke(
-            "process-document-xml",
-            {
+          // Reintento: el worker de process-document-xml puede morir por límite de
+          // recursos (502/503) y la factura se perdía de la tanda sin registrarse.
+          let procData: any = null;
+          let procErr: any = null;
+          for (let attempt = 1; attempt <= 3; attempt++) {
+            const res = await supabase.functions.invoke("process-document-xml", {
               body: {
                 organization_id,
                 xml_content: bytesToText(fac.bytes),
@@ -337,8 +340,14 @@ Deno.serve(async (req) => {
                 file_path: base.pdf_storage_path ?? null,
                 source: "batch_import_v2",
               },
-            }
-          );
+            });
+            procData = res.data;
+            procErr = res.error;
+            if (!procErr) break;
+            const m = (procErr.message || "").toLowerCase();
+            if (m.includes("duplicad") || m.includes("ya existe")) break;
+            if (attempt < 3) await new Promise((r) => setTimeout(r, attempt * 1000));
+          }
           if (procErr) {
             const msg = (procErr.message || "").toLowerCase();
             if (msg.includes("duplicad") || msg.includes("ya existe")) {

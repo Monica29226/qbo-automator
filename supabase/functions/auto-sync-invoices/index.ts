@@ -363,16 +363,23 @@ async function processOrganization(
           };
         }
 
-        // Límite de recursos / timeout del worker: NO es un fallo definitivo de la empresa.
-        // Se registra como parcial y la próxima corrida continúa desde el cursor.
-        if (emailResponse.status === 546 || emailResponse.status === 504) {
-          console.warn(`⚠️ ${mailProvider} alcanzó el límite de recursos (${emailResponse.status}) en ${org.name}; se reintentará en la próxima corrida`);
+        // Límite de recursos / timeout / worker no disponible: NO es un fallo definitivo
+        // de la empresa. Se registra como parcial y la próxima corrida continúa desde el cursor.
+        const TRANSIENT_WORKER_STATUSES = [546, 504, 503, 502];
+        if (TRANSIENT_WORKER_STATUSES.includes(emailResponse.status)) {
+          const transientCode =
+            emailResponse.status === 546
+              ? "WORKER_RESOURCE_LIMIT"
+              : emailResponse.status === 504
+                ? "WORKER_TIMEOUT"
+                : "WORKER_UNAVAILABLE";
+          console.warn(`⚠️ ${mailProvider} no completó la tanda (${emailResponse.status}) en ${org.name}; se reintentará en la próxima corrida`);
           if (syncLog) {
             await supabase.from("sync_logs").update({
               status: "partial",
-              error_message: `Importación parcial en ${mailProvider}: límite de recursos del worker`,
+              error_message: `Importación parcial en ${mailProvider}: worker no disponible o sin recursos (${emailResponse.status})`,
               error_detail: errorDetail,
-              error_code: emailResponse.status === 546 ? "WORKER_RESOURCE_LIMIT" : "WORKER_TIMEOUT",
+              error_code: transientCode,
               completed_at: new Date().toISOString(),
               execution_time_ms: Date.now() - syncStartTime,
             }).eq("id", syncLog.id);
@@ -382,7 +389,7 @@ async function processOrganization(
             organization_id: org.id,
             organization_name: org.name,
             status: "partial",
-            error_code: emailResponse.status === 546 ? "WORKER_RESOURCE_LIMIT" : "WORKER_TIMEOUT",
+            error_code: transientCode,
             backlog_pending: true,
           };
         }
