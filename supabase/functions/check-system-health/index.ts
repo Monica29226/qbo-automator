@@ -1,5 +1,12 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
+import {
+  alertEmailShell,
+  issueBlock,
+  normalizeRecipients,
+  sendAlertEmailRaw,
+} from "../_shared/alert-email.ts";
+
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -32,8 +39,9 @@ serve(async (req) => {
 
     const { data: orgs, error: orgsError } = await supabase
       .from("organizations")
-      .select("id, name, gmail_connected, outlook_connected, hostinger_connected, bluehost_connected, quickbooks_connected")
+      .select("id, name, email, gmail_connected, outlook_connected, hostinger_connected, bluehost_connected, quickbooks_connected")
       .eq("is_active", true);
+
 
     if (orgsError) throw orgsError;
 
