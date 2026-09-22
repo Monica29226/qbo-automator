@@ -9,7 +9,6 @@ import {
   Clock,
   Landmark,
   LogOut,
-  Percent,
   Plug,
   Settings,
   Shield,
