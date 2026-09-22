@@ -9,6 +9,7 @@ import {
   Clock,
   Landmark,
   LogOut,
+  Percent,
   Plug,
   Settings,
   Shield,
@@ -86,8 +87,8 @@ export function DashboardSidebar({ isAdmin, reviewCount, onSignOut }: DashboardS
       show: true,
     },
     {
-      title: "Reporte por Tasa IVA",
-      icon: FileSpreadsheet,
+      title: "IVA por Tarifa (QuickBooks)",
+      icon: Percent,
       path: "/tax-rate-report",
       show: true,
     },
