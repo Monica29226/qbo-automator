@@ -2122,7 +2122,12 @@ export type Database = {
         }
       }
       compras_formato_gti: {
-        Args: { p_desde: string; p_hasta: string; p_org?: string }
+        Args: {
+          p_desde: string
+          p_hasta: string
+          p_org?: string
+          p_solo_publicados?: boolean
+        }
         Returns: {
           base_gravada: number
           cedula_emisor: string
@@ -2138,7 +2143,9 @@ export type Database = {
           nombre_emisor: string
           organization_id: string
           otros_cargos: number
+          qbo_entity_id: string
           revisar: boolean
+          status: string
           t1: number
           t13: number
           t2: number
