@@ -1,11 +1,5 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
-import {
-  alertEmailShell,
-  issueBlock,
-  normalizeRecipients,
-  sendAlertEmailRaw,
-} from "../_shared/alert-email.ts";
 
 
 const corsHeaders = {
@@ -360,59 +354,9 @@ async function checkOrganization(supabase: any, org: any): Promise<number> {
     }
   }
 
-  // Aviso inmediato por correo de cada problema nuevo.
-  if (newAlerts.length > 0) {
-    const { data: settings } = await supabase
-      .from("system_settings")
-      .select("key, value")
-      .eq("organization_id", orgId)
-      .in("key", ["alert_enabled", "alert_email"]);
-    const map: Record<string, string> = {};
-    for (const s of settings || []) map[s.key] = s.value;
+  // Sin correo por problema: los avisos se guardan en alert_history y se ven en el
+  // panel. El único correo automático es el reporte diario de problemas críticos.
 
-    if (map.alert_enabled !== "false") {
-      const recipients = normalizeRecipients(map.alert_email, org.email);
-      const criticals = newAlerts.filter((a) => a.severity === "critical");
-      const blocks = newAlerts
-        .map((a) =>
-          issueBlock(
-            {
-              title: a.title,
-              description: a.description,
-              actionRequired: a.action,
-              action_link: a.action_link,
-            },
-            a.severity === "critical",
-          )
-        )
-        .join("");
-
-      const subject = criticals.length > 0
-        ? `Alerta critica en ${org.name}: ${criticals[0].title}`
-        : `Aviso en ${org.name}: ${newAlerts[0].title}`;
-
-      const result = await sendAlertEmailRaw(
-        subject,
-        alertEmailShell(
-          "Aviso del sistema",
-          `Se detecto lo siguiente en <strong>${org.name}</strong>. Este aviso se envia una sola vez por problema.`,
-          blocks,
-        ),
-        recipients,
-      );
-
-      if (newRowIds.length > 0) {
-        await supabase
-          .from("alert_history")
-          .update(
-            result.ok
-              ? { email_id: result.id ?? null, email_error: null }
-              : { email_error: result.error ?? "envío fallido" },
-          )
-          .in("id", newRowIds);
-      }
-    }
-  }
 
   console.log(`[${org.name}] processed ${createdOrUpdated} alerts (${checks.map((c) => c.code).join(", ")})`);
   return createdOrUpdated;

@@ -60,44 +60,10 @@ Deno.serve(async (req) => {
       })
       .eq("id", batch_id);
 
-    // Email notification to admin who triggered
-    let emailed = false;
-    if (RESEND_API_KEY && user.email) {
-      try {
-        const r = await fetch("https://api.resend.com/emails", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${RESEND_API_KEY}`,
-          },
-          body: JSON.stringify({
-            from: "ACL Invoice <noreply@aureoncr.com>",
-            to: [user.email],
-            subject: `Importación por lote completada — ${counts.total_files} archivos`,
-            html: `
-              <h2>Resumen del lote</h2>
-              <ul>
-                <li>✓ Aceptadas: <b>${counts.accepted_count}</b></li>
-                <li>⏳ Pendientes validación Hacienda: <b>${counts.pending_count}</b></li>
-                <li>⚠ Duplicadas: <b>${counts.duplicate_count}</b></li>
-                <li>✗ Rechazadas: <b>${counts.rejected_count}</b></li>
-              </ul>
-              ${
-                missing_consecutives.length > 0
-                  ? `<p><b>Saltos en consecutivo detectados:</b> ${missing_consecutives.length}</p>`
-                  : ""
-              }
-              <p><a href="https://aclcostarica.com/admin/batch-import-v2?batch=${batch_id}">Ver reporte</a></p>
-            `,
-          }),
-        });
-        emailed = r.ok;
-      } catch (e) {
-        console.error("Email error:", e);
-      }
-    }
+    // Sin correo: el resumen del lote se ve en el panel. Los avisos por correo
+    // quedaron centralizados en el reporte diario (solo problemas críticos).
+    await supabase.from("batch_imports").update({ notification_sent: false }).eq("id", batch_id);
 
-    await supabase.from("batch_imports").update({ notification_sent: emailed }).eq("id", batch_id);
 
     return json({ ok: true, counts });
   } catch (e) {
