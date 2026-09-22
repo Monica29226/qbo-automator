@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowLeft, Download, FileSpreadsheet, Calendar, Filter } from "lucide-react";
+import { ArrowLeft, Download, Percent, Calendar, Filter } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -26,57 +26,71 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { useTaxRateReport, TaxRateSummary } from "@/hooks/useTaxRateReport";
+import { useTaxRateReport } from "@/hooks/useTaxRateReport";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import * as XLSX from "xlsx";
 
-const formatCurrency = (amount: number, currency: string = "CRC") => {
-  return new Intl.NumberFormat("es-CR", {
-    style: "currency",
-    currency,
-    minimumFractionDigits: 2,
-  }).format(amount);
+// Montos completos, separador de miles con coma, negativos entre paréntesis.
+const amountFormatter = new Intl.NumberFormat("en-US", {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+
+const money = (n: number) =>
+  amountFormatter.format(Number(n ?? 0)).replace(/^-(.*)$/, "($1)");
+
+const r2 = (n: number) => Math.round(Number(n ?? 0) * 100) / 100;
+
+const ddmmyyyy = (iso: string) => {
+  const [y, m, d] = String(iso ?? "").split("-");
+  return y ? `${d}/${m}/${y}` : "";
 };
 
-const formatDate = (dateStr: string) => {
-  return new Date(dateStr).toLocaleDateString("es-CR");
+/** Cédula física (9 dígitos) se muestra 1-4-4; las demás se dejan como vienen. */
+const formatCedula = (value: string | null) => {
+  const raw = String(value ?? "").trim();
+  const digits = raw.replace(/\D/g, "");
+  if (digits.length === 9) {
+    return `${digits[0]}-${digits.slice(1, 5)}-${digits.slice(5)}`;
+  }
+  return raw;
 };
+
+const sheetNameFor = (label: string) =>
+  label === "Exento" ? "Exento" : label.replace("%", "").replace(/\s+/g, " ").trim();
 
 export default function TaxRateReport() {
   const navigate = useNavigate();
   const { toast } = useToast();
-  const { activeOrganization } = useAuth();
-  
-  // Fechas por defecto: último mes
+  const { activeOrganization, organizations } = useAuth();
+  const empresaActiva = organizations.find((o) => o.id === activeOrganization);
+
   const today = new Date();
   const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
   const lastDayOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0);
-  
-  const [startDate, setStartDate] = useState(firstDayOfMonth.toISOString().split("T")[0]);
-  const [endDate, setEndDate] = useState(lastDayOfMonth.toISOString().split("T")[0]);
-  
-  const { data: taxRateSummaries, isLoading } = useTaxRateReport(
+
+  const iso = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+      d.getDate(),
+    ).padStart(2, "0")}`;
+
+  const [startDate, setStartDate] = useState(iso(firstDayOfMonth));
+  const [endDate, setEndDate] = useState(iso(lastDayOfMonth));
+
+  const { data: report, isLoading } = useTaxRateReport(
     activeOrganization,
     startDate,
-    endDate
+    endDate,
   );
 
-  const totalGeneral = taxRateSummaries?.reduce(
-    (acc, summary) => ({
-      subtotal: acc.subtotal + summary.totalSubtotal,
-      tax: acc.tax + summary.totalTax,
-      total: acc.total + summary.totalAmount,
-      count: acc.count + summary.count,
-    }),
-    { subtotal: 0, tax: 0, total: 0, count: 0 }
-  ) || { subtotal: 0, tax: 0, total: 0, count: 0 };
+  const groups = report?.groups ?? [];
 
   const exportToExcel = () => {
-    if (!taxRateSummaries || taxRateSummaries.length === 0) {
+    if (!report || groups.length === 0) {
       toast({
         title: "Sin datos",
-        description: "No hay facturas para exportar en el período seleccionado.",
+        description: "No hay documentos publicados en el período seleccionado.",
         variant: "destructive",
       });
       return;
@@ -84,89 +98,128 @@ export default function TaxRateReport() {
 
     const workbook = XLSX.utils.book_new();
 
-    // Hoja 1: Resumen por tasa
-    const summaryData = taxRateSummaries.map((summary) => ({
-      "Tasa de Impuesto": summary.taxRateLabel,
-      "Cantidad Facturas": summary.count,
-      "Subtotal": summary.totalSubtotal,
-      "Total Impuesto": summary.totalTax,
-      "Total General": summary.totalAmount,
-    }));
-    
-    // Agregar totales
-    summaryData.push({
-      "Tasa de Impuesto": "TOTALES",
-      "Cantidad Facturas": totalGeneral.count,
-      "Subtotal": totalGeneral.subtotal,
-      "Total Impuesto": totalGeneral.tax,
-      "Total General": totalGeneral.total,
-    });
+    // ---- Hoja: Resumen por Tasa
+    const resumen: (string | number)[][] = [
+      ["Tarifa", "Documentos", "Base Gravada", "IVA", "Total"],
+    ];
+    let sumDocs = 0;
+    let sumBase = 0;
+    let sumIva = 0;
+    let sumTotal = 0;
+    for (const g of groups) {
+      sumDocs += g.count;
+      sumBase += g.totalBase;
+      sumIva += g.totalTax;
+      sumTotal += g.totalAmount;
+      resumen.push([
+        g.taxRateLabel,
+        g.count,
+        r2(g.totalBase),
+        r2(g.totalTax),
+        r2(g.totalAmount),
+      ]);
+    }
+    resumen.push(["TOTALES", sumDocs, r2(sumBase), r2(sumIva), r2(sumTotal)]);
+    XLSX.utils.book_append_sheet(
+      workbook,
+      XLSX.utils.aoa_to_sheet(resumen),
+      "Resumen por Tasa",
+    );
 
-    const summarySheet = XLSX.utils.json_to_sheet(summaryData);
-    XLSX.utils.book_append_sheet(workbook, summarySheet, "Resumen por Tasa");
+    const DETALLE_HEADERS = [
+      "Tarifa",
+      "Consecutivo",
+      "Emisor",
+      "Cédula Emisor",
+      "Fecha",
+      "Tipo",
+      "Moneda",
+      "Tipo Cambio",
+      "Base Gravada",
+      "IVA",
+      "Total Comprobante (colones)",
+      "ID QuickBooks",
+    ];
 
-    // Hoja 2: Detalle de todas las facturas
-    const allInvoices: any[] = [];
-    for (const summary of taxRateSummaries) {
-      for (const inv of summary.invoices) {
-        allInvoices.push({
-          "Número Documento": inv.doc_number,
-          "Clave Hacienda": inv.doc_key,
-          "Proveedor": inv.supplier_name,
-          "Cédula Proveedor": inv.supplier_tax_id || "",
-          "Fecha Emisión": inv.issue_date,
-          "Fecha Publicación": inv.processed_at ? formatDate(inv.processed_at) : "",
-          "Tasa IVA": `${summary.taxRate}%`,
-          "Subtotal": inv.total_amount - (inv.total_tax || 0),
-          "Descuento": inv.total_discount || 0,
-          "Impuesto": inv.total_tax || 0,
-          "Total": inv.total_amount,
-          "Moneda": inv.currency,
-          "Tipo Cambio": inv.exchange_rate || 1,
-          "ID QuickBooks": inv.qbo_entity_id || "",
-        });
+    const filaDetalle = (
+      etiqueta: string,
+      inv: (typeof groups)[number]["invoices"][number],
+    ): (string | number)[] => [
+      etiqueta,
+      inv.consecutivo ?? "",
+      inv.nombre_emisor ?? "",
+      formatCedula(inv.cedula_emisor),
+      ddmmyyyy(inv.issue_date),
+      inv.tipo,
+      inv.moneda,
+      r2(inv.tipo_cambio),
+      r2(inv.base),
+      r2(inv.iva),
+      r2(inv.total_comprobante),
+      inv.qbo_entity_id ?? "",
+    ];
+
+    // ---- Hoja: Detalle (una fila por documento y por tarifa)
+    const detalle: (string | number)[][] = [DETALLE_HEADERS];
+    for (const g of groups) {
+      for (const inv of g.invoices) detalle.push(filaDetalle(g.taxRateLabel, inv));
+    }
+    XLSX.utils.book_append_sheet(
+      workbook,
+      XLSX.utils.aoa_to_sheet(detalle),
+      "Detalle",
+    );
+
+    // ---- Una hoja por tarifa con presencia
+    for (const g of groups) {
+      const filas: (string | number)[][] = [DETALLE_HEADERS.slice(1)];
+      let hojaBase = 0;
+      let hojaIva = 0;
+      let hojaTotal = 0;
+      for (const inv of g.invoices) {
+        hojaBase += inv.base;
+        hojaIva += inv.iva;
+        hojaTotal += inv.total_comprobante;
+        filas.push(filaDetalle(g.taxRateLabel, inv).slice(1));
       }
+      filas.push([
+        "TOTALES",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        r2(hojaBase),
+        r2(hojaIva),
+        r2(hojaTotal),
+        "",
+      ]);
+      XLSX.utils.book_append_sheet(
+        workbook,
+        XLSX.utils.aoa_to_sheet(filas),
+        sheetNameFor(g.taxRateLabel),
+      );
     }
 
-    const detailSheet = XLSX.utils.json_to_sheet(allInvoices);
-    XLSX.utils.book_append_sheet(workbook, detailSheet, "Detalle Facturas");
+    // ---- Hoja: Notas
+    const notas: string[][] = [
+      ["Período", `${ddmmyyyy(startDate)} al ${ddmmyyyy(endDate)}`],
+      ["Fecha de generación", new Date().toLocaleString("es-CR")],
+      ["Empresa", empresaActiva?.name ?? ""],
+      ["Montos expresados en colones", "Convertidos con el tipo de cambio del propio XML"],
+      ["Criterio", "Se excluyen tiquetes electrónicos"],
+      ["Criterio", "Se excluyen documentos no aceptados en Hacienda"],
+      ["Criterio", "Notas de crédito registradas en negativo"],
+      ["Criterio", "Solo se incluyen documentos ya publicados en QuickBooks"],
+    ];
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(notas), "Notas");
 
-    // Hojas individuales por tasa
-    for (const summary of taxRateSummaries) {
-      const rateInvoices = summary.invoices.map((inv) => ({
-        "Número Documento": inv.doc_number,
-        "Proveedor": inv.supplier_name,
-        "Cédula": inv.supplier_tax_id || "",
-        "Fecha": inv.issue_date,
-        "Subtotal": inv.total_amount - (inv.total_tax || 0),
-        "Impuesto": inv.total_tax || 0,
-        "Total": inv.total_amount,
-        "Moneda": inv.currency,
-      }));
-
-      // Agregar totales de la tasa
-      rateInvoices.push({
-        "Número Documento": "TOTALES",
-        "Proveedor": "",
-        "Cédula": "",
-        "Fecha": "",
-        "Subtotal": summary.totalSubtotal,
-        "Impuesto": summary.totalTax,
-        "Total": summary.totalAmount,
-        "Moneda": "",
-      });
-
-      const sheetName = summary.taxRate === 0 ? "Exento" : `IVA_${summary.taxRate}`;
-      const rateSheet = XLSX.utils.json_to_sheet(rateInvoices);
-      XLSX.utils.book_append_sheet(workbook, rateSheet, sheetName);
-    }
-
-    // Generar archivo
-    const fileName = `Reporte_Tasas_IVA_${startDate}_a_${endDate}.xlsx`;
+    const fileName = `IVA por Tarifa ${startDate} a ${endDate}.xlsx`;
     XLSX.writeFile(workbook, fileName);
 
     toast({
-      title: "✅ Reporte exportado",
+      title: "Reporte exportado",
       description: `Se descargó el archivo ${fileName}`,
     });
   };
@@ -177,20 +230,18 @@ export default function TaxRateReport() {
         {/* Header */}
         <div className="flex items-center justify-between flex-wrap gap-4">
           <div className="flex items-center gap-4">
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => navigate("/dashboard")}
-            >
+            <Button variant="ghost" size="icon" onClick={() => navigate("/dashboard")}>
               <ArrowLeft className="h-5 w-5" />
             </Button>
             <div>
               <h1 className="text-3xl font-bold flex items-center gap-2">
-                <FileSpreadsheet className="h-8 w-8 text-primary" />
-                Reporte por Tasas de Impuesto
+                <Percent className="h-8 w-8 text-primary" />
+                IVA por Tarifa (QuickBooks)
               </h1>
               <p className="text-muted-foreground">
-                Facturas publicadas agrupadas por tasa de IVA
+                {empresaActiva?.name ? `${empresaActiva.name} · ` : ""}
+                Montos expresados en colones. Solo documentos aceptados que ya se
+                publicaron en QuickBooks.
               </p>
             </div>
           </div>
@@ -245,23 +296,12 @@ export default function TaxRateReport() {
           <Card className="border-primary/20">
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-medium text-muted-foreground">
-                Total Facturas
+                Documentos
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{totalGeneral.count}</div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">
-                Subtotal
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">
-                {formatCurrency(totalGeneral.subtotal)}
+              <div className="text-2xl font-bold [font-variant-numeric:tabular-nums]">
+                {report?.documentCount ?? 0}
               </div>
             </CardContent>
           </Card>
@@ -269,12 +309,12 @@ export default function TaxRateReport() {
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-medium text-muted-foreground">
-                Total Impuestos
+                Base gravada
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold text-primary">
-                {formatCurrency(totalGeneral.tax)}
+              <div className="text-2xl font-bold [font-variant-numeric:tabular-nums]">
+                {money(report?.totalBase ?? 0)}
               </div>
             </CardContent>
           </Card>
@@ -282,42 +322,56 @@ export default function TaxRateReport() {
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-medium text-muted-foreground">
-                Total General
+                IVA total
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold text-accent-foreground">
-                {formatCurrency(totalGeneral.total)}
+              <div className="text-2xl font-bold text-primary [font-variant-numeric:tabular-nums]">
+                {money(report?.totalTax ?? 0)}
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground">
+                Total
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold text-accent-foreground [font-variant-numeric:tabular-nums]">
+                {money(report?.totalAmount ?? 0)}
               </div>
             </CardContent>
           </Card>
         </div>
 
-        {/* Detalle por tasa */}
+        {/* Detalle por tarifa */}
         <Card>
           <CardHeader>
-            <CardTitle>Desglose por Tasa de Impuesto</CardTitle>
+            <CardTitle>Desglose por tarifa de IVA</CardTitle>
             <CardDescription>
-              Haz clic en cada tasa para ver el detalle de facturas
+              Un documento con líneas gravadas y exentas aparece en más de una tarifa,
+              con la porción que corresponde a cada una. Montos en colones.
             </CardDescription>
           </CardHeader>
           <CardContent>
             {isLoading ? (
-              <div className="text-center py-8">Cargando reporte...</div>
-            ) : !taxRateSummaries || taxRateSummaries.length === 0 ? (
+              <div className="text-center py-8">Cargando reporte…</div>
+            ) : groups.length === 0 ? (
               <div className="text-center py-8 text-muted-foreground">
-                No hay facturas publicadas en el período seleccionado
+                No hay documentos publicados en QuickBooks en el período seleccionado
               </div>
             ) : (
               <Accordion type="multiple" className="space-y-2">
-                {taxRateSummaries.map((summary) => (
+                {groups.map((summary) => (
                   <AccordionItem
-                    key={summary.taxRate}
+                    key={summary.taxRateLabel}
                     value={`rate-${summary.taxRate}`}
                     className="border rounded-lg px-4"
                   >
                     <AccordionTrigger className="hover:no-underline">
-                      <div className="flex items-center justify-between w-full pr-4">
+                      <div className="flex items-center justify-between w-full pr-4 flex-wrap gap-3">
                         <div className="flex items-center gap-3">
                           <Badge
                             variant={summary.taxRate === 0 ? "secondary" : "default"}
@@ -326,26 +380,24 @@ export default function TaxRateReport() {
                             {summary.taxRateLabel}
                           </Badge>
                           <span className="text-sm text-muted-foreground">
-                            {summary.count} facturas
+                            {summary.count} documentos
                           </span>
                         </div>
-                        <div className="flex items-center gap-6 text-sm">
+                        <div className="flex items-center gap-6 text-sm [font-variant-numeric:tabular-nums]">
                           <div>
-                          <span className="text-muted-foreground">Subtotal:</span>{" "}
-                            <span className="font-medium">
-                              {formatCurrency(summary.totalSubtotal)}
-                            </span>
+                            <span className="text-muted-foreground">Base gravada:</span>{" "}
+                            <span className="font-medium">{money(summary.totalBase)}</span>
                           </div>
                           <div>
-                            <span className="text-muted-foreground">Impuesto:</span>{" "}
+                            <span className="text-muted-foreground">IVA:</span>{" "}
                             <span className="font-medium text-primary">
-                              {formatCurrency(summary.totalTax)}
+                              {money(summary.totalTax)}
                             </span>
                           </div>
                           <div>
                             <span className="text-muted-foreground">Total:</span>{" "}
                             <span className="font-bold text-accent-foreground">
-                              {formatCurrency(summary.totalAmount)}
+                              {money(summary.totalAmount)}
                             </span>
                           </div>
                         </div>
@@ -355,39 +407,55 @@ export default function TaxRateReport() {
                       <Table>
                         <TableHeader>
                           <TableRow>
-                            <TableHead>Documento</TableHead>
-                            <TableHead>Proveedor</TableHead>
+                            <TableHead>Consecutivo</TableHead>
+                            <TableHead>Emisor</TableHead>
+                            <TableHead>Cédula</TableHead>
                             <TableHead>Fecha</TableHead>
-                            <TableHead className="text-right">Subtotal</TableHead>
-                            <TableHead className="text-right">Impuesto</TableHead>
-                            <TableHead className="text-right">Total</TableHead>
-                            <TableHead>QB ID</TableHead>
+                            <TableHead>Tipo</TableHead>
+                            <TableHead>Moneda</TableHead>
+                            <TableHead className="text-right">Tipo cambio</TableHead>
+                            <TableHead className="text-right">Base gravada</TableHead>
+                            <TableHead className="text-right">IVA</TableHead>
+                            <TableHead className="text-right">Total comprobante</TableHead>
+                            <TableHead>ID QuickBooks</TableHead>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
                           {summary.invoices.map((inv) => (
-                            <TableRow key={inv.id}>
+                            <TableRow
+                              key={`${inv.doc_key}-${summary.taxRateLabel}`}
+                              className={inv.tipo === "NC" ? "bg-muted/40" : undefined}
+                            >
                               <TableCell className="font-medium">
-                                {inv.doc_number}
+                                {inv.consecutivo ?? "—"}
                               </TableCell>
-                              <TableCell>{inv.supplier_name}</TableCell>
-                              <TableCell>{formatDate(inv.issue_date)}</TableCell>
-                              <TableCell className="text-right">
-                                {formatCurrency(
-                                  inv.total_amount -
-                                    (inv.total_tax || 0) +
-                                    (inv.total_discount || 0),
-                                  inv.currency
+                              <TableCell>{inv.nombre_emisor ?? "—"}</TableCell>
+                              <TableCell className="[font-variant-numeric:tabular-nums]">
+                                {formatCedula(inv.cedula_emisor) || "—"}
+                              </TableCell>
+                              <TableCell>{ddmmyyyy(inv.issue_date)}</TableCell>
+                              <TableCell>
+                                {inv.tipo === "NC" ? (
+                                  <Badge variant="outline">Nota de crédito</Badge>
+                                ) : (
+                                  inv.tipo
                                 )}
                               </TableCell>
-                              <TableCell className="text-right text-primary">
-                                {formatCurrency(inv.total_tax || 0, inv.currency)}
+                              <TableCell>{inv.moneda}</TableCell>
+                              <TableCell className="text-right [font-variant-numeric:tabular-nums]">
+                                {inv.tipo_cambio}
                               </TableCell>
-                              <TableCell className="text-right font-medium">
-                                {formatCurrency(inv.total_amount, inv.currency)}
+                              <TableCell className="text-right [font-variant-numeric:tabular-nums]">
+                                {money(inv.base)}
+                              </TableCell>
+                              <TableCell className="text-right text-primary [font-variant-numeric:tabular-nums]">
+                                {money(inv.iva)}
+                              </TableCell>
+                              <TableCell className="text-right font-medium [font-variant-numeric:tabular-nums]">
+                                {money(inv.total_comprobante)}
                               </TableCell>
                               <TableCell className="text-xs text-muted-foreground">
-                                {inv.qbo_entity_id || "-"}
+                                {inv.qbo_entity_id || "—"}
                               </TableCell>
                             </TableRow>
                           ))}
