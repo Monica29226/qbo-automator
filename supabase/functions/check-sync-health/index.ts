@@ -1,11 +1,5 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
-import {
-  alertEmailShell,
-  issueBlock,
-  normalizeRecipients,
-  sendAlertEmailRaw,
-} from "../_shared/alert-email.ts";
 
 
 const corsHeaders = {
@@ -656,70 +650,3 @@ async function checkLegacyUnmapped(
   };
 }
 
-async function resolveRecipients(
-  supabase: any,
-  org: { id: string; name: string; email: string | null },
-): Promise<string[]> {
-  const { data: settings } = await supabase
-    .from("system_settings")
-    .select("key, value")
-    .eq("organization_id", org.id)
-    .in("key", ["alert_enabled", "alert_email"]);
-
-  const map: Record<string, string> = {};
-  for (const s of settings || []) map[s.key] = s.value;
-
-  if (map.alert_enabled === "false") return [];
-  return normalizeRecipients(map.alert_email, org.email);
-}
-
-async function sendNewIssuesEmail(
-  orgName: string,
-  issues: HealthIssue[],
-  recipients: string[],
-) {
-  const criticals = issues.filter((i) => i.type === "critical");
-  const others = issues.filter((i) => i.type !== "critical");
-  const blocks = [
-    ...criticals.map((i) => issueBlock(i, true)),
-    ...others.map((i) => issueBlock(i, false)),
-  ].join("");
-
-  const subject = criticals.length > 0
-    ? `Alerta critica en ${orgName}: ${criticals[0].title}`
-    : `Aviso en ${orgName}: ${issues[0].title}`;
-
-  const intro = `Se detecto lo siguiente en <strong>${orgName}</strong>. Este aviso se envia una sola vez por problema; le avisaremos de nuevo cuando quede resuelto.`;
-
-  const result = await sendAlertEmailRaw(
-    subject,
-    alertEmailShell("Aviso del sistema", intro, blocks),
-    recipients,
-  );
-
-  if (result.ok) {
-    console.log(`Alerta enviada a ${recipients.join(", ")} (${orgName}). Email ID: ${result.id}`);
-  } else {
-    console.error(`Alerta NO entregada para ${orgName}: ${result.error}`);
-  }
-  return result;
-}
-
-async function sendResolvedEmail(orgName: string, titles: string[], recipients: string[]) {
-  const blocks = titles
-    .map(
-      (t) => `
-  <div style="border: 1px solid #E8E2CD; border-left: 3px solid #3F6B52; padding: 14px 18px; margin: 0 0 12px 0;">
-    <p style="margin: 0; color: #15162C; font-size: 15px;">${t}</p>
-  </div>`,
-    )
-    .join("");
-
-  const intro = `Los siguientes problemas de <strong>${orgName}</strong> ya quedaron resueltos y no requieren accion.`;
-
-  return await sendAlertEmailRaw(
-    `Resuelto en ${orgName}: ${titles.length} problema(s)`,
-    alertEmailShell("Problema resuelto", intro, blocks),
-    recipients,
-  );
-}
