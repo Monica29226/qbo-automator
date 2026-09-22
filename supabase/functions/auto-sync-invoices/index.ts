@@ -363,6 +363,36 @@ async function processOrganization(
           };
         }
 
+        // Credenciales del buzón rechazadas por el servidor de correo: es accionable
+        // (hay que actualizar la contraseña del buzón), no un fallo genérico.
+        const authFailureSignature = `${errorCode} ${errorCategory} ${errorDetail}`.toUpperCase();
+        if (
+          authFailureSignature.includes("AUTH_FAILED") ||
+          authFailureSignature.includes("AUTHENTICATIONFAILED") ||
+          errorCategory === "invalid_credentials"
+        ) {
+          console.error(`🔑 Credenciales del buzón rechazadas en ${org.name} (${mailProvider})`);
+          if (syncLog) {
+            await supabase.from("sync_logs").update({
+              status: "error",
+              error_message: `Credenciales del buzón rechazadas en ${mailProvider} - actualizar la contraseña del correo`,
+              error_detail: errorDetail,
+              error_code: "mailbox_auth_failed",
+              completed_at: new Date().toISOString(),
+              execution_time_ms: Date.now() - syncStartTime,
+            }).eq("id", syncLog.id);
+          }
+
+          return {
+            organization_id: org.id,
+            organization_name: org.name,
+            status: "error",
+            error: `Credenciales del buzón rechazadas en ${mailProvider} - actualizar la contraseña del correo`,
+            error_code: "mailbox_auth_failed",
+          };
+        }
+
+
         // Límite de recursos / timeout / worker no disponible: NO es un fallo definitivo
         // de la empresa. Se registra como parcial y la próxima corrida continúa desde el cursor.
         const TRANSIENT_WORKER_STATUSES = [546, 504, 503, 502];
