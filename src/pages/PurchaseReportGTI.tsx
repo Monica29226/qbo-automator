@@ -26,41 +26,27 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion";
+import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
+import {
+  useTaxRateReport,
+  type ComprasRow,
+  type TaxRateSummary,
+} from "@/hooks/useTaxRateReport";
 
 // ---------------------------------------------------------------------------
 // Tipos
 // ---------------------------------------------------------------------------
-interface ComprasRow {
-  organization_id: string;
-  empresa: string;
-  cedula_empresa: string | null;
-  doc_key: string;
-  consecutivo: string | null;
-  issue_date: string;
-  cedula_emisor: string | null;
-  nombre_emisor: string | null;
-  tipo: string;
-  moneda: string;
-  tipo_cambio: number;
-  t1: number;
-  t2: number;
-  t4: number;
-  t8: number;
-  t13: number;
-  iva_total: number;
-  base_gravada: number;
-  descuento: number;
-  otros_cargos: number;
-  total_comprobante: number;
-  exento: number;
-  revisar: boolean;
-}
-
 interface GtiRow {
   consecutivo: string;
   emisor: string;
@@ -103,6 +89,13 @@ const money = (n: number) =>
     .replace(/^-(.*)$/, "($1)");
 
 const soloDigitos = (v: unknown) => String(v ?? "").replace(/\D/g, "");
+
+/** Cédula de persona física (9 dígitos) en formato 1-4-4; las demás, tal cual. */
+const formatCedula = (v: unknown) => {
+  const d = soloDigitos(v);
+  if (d.length === 9) return `${d.slice(0, 1)}-${d.slice(1, 5)}-${d.slice(5)}`;
+  return d;
+};
 
 const ddmmyyyy = (iso: string) => {
   const [y, m, d] = iso.split("-");
@@ -211,6 +204,8 @@ function buildWorkbook(
   docs: ComprasRow[],
   periodoLabel: string,
   gti: GtiFileData | undefined,
+  groups: TaxRateSummary[],
+  soloPublicados: boolean,
 ): XLSX.WorkBook {
   const wb = XLSX.utils.book_new();
   const cedulaEmpresa = soloDigitos(docs[0].cedula_empresa) || "";
@@ -260,17 +255,43 @@ function buildWorkbook(
   XLSX.utils.book_append_sheet(wb, ws1, "ListaDocAceptacionConTasas1");
 
   // ---- Hoja 2: Resumen Compras
-  const tarifas: Array<{ label: string; pct: number; iva: number }> = [
-    { label: "13%", pct: 13, iva: r2(docs.reduce((a, d) => a + d.t13, 0)) },
-    { label: "8%", pct: 8, iva: r2(docs.reduce((a, d) => a + d.t8, 0)) },
-    { label: "4%", pct: 4, iva: r2(docs.reduce((a, d) => a + d.t4, 0)) },
-    { label: "2%", pct: 2, iva: r2(docs.reduce((a, d) => a + d.t2, 0)) },
-    { label: "1%", pct: 1, iva: r2(docs.reduce((a, d) => a + d.t1, 0)) },
-    { label: "0.5%", pct: 0.5, iva: 0 },
+  const tarifas: Array<{ label: string; pct: number; iva: number; docs: number }> = [
+    {
+      label: "13%",
+      pct: 13,
+      iva: r2(docs.reduce((a, d) => a + d.t13, 0)),
+      docs: docs.filter((d) => d.t13 !== 0).length,
+    },
+    {
+      label: "8%",
+      pct: 8,
+      iva: r2(docs.reduce((a, d) => a + d.t8, 0)),
+      docs: docs.filter((d) => d.t8 !== 0).length,
+    },
+    {
+      label: "4%",
+      pct: 4,
+      iva: r2(docs.reduce((a, d) => a + d.t4, 0)),
+      docs: docs.filter((d) => d.t4 !== 0).length,
+    },
+    {
+      label: "2%",
+      pct: 2,
+      iva: r2(docs.reduce((a, d) => a + d.t2, 0)),
+      docs: docs.filter((d) => d.t2 !== 0).length,
+    },
+    {
+      label: "1%",
+      pct: 1,
+      iva: r2(docs.reduce((a, d) => a + d.t1, 0)),
+      docs: docs.filter((d) => d.t1 !== 0).length,
+    },
+    { label: "0.5%", pct: 0.5, iva: 0, docs: 0 },
   ];
   const exento = r2(docs.reduce((a, d) => a + d.exento, 0));
+  const exentoDocs = docs.filter((d) => d.exento !== 0).length;
   const resumen: (string | number)[][] = [
-    ["Tarifa IVA", "SubTotal", "Impuesto", "IVADevuelto", "TotalColones"],
+    ["Tarifa IVA", "Documentos", "SubTotal", "Impuesto", "IVADevuelto", "TotalColones"],
   ];
   let sumBase = 0;
   let sumIva = 0;
@@ -278,13 +299,14 @@ function buildWorkbook(
     const base = t.iva ? r2(t.iva / (t.pct / 100)) : 0;
     sumBase += base;
     sumIva += t.iva;
-    resumen.push([t.label, base, t.iva, 0, r2(base + t.iva)]);
+    resumen.push([t.label, t.docs, base, t.iva, 0, r2(base + t.iva)]);
   }
-  resumen.push(["Exento", exento, 0, 0, exento]);
-  resumen.push(["Exonerado", 0, 0, 0, 0]);
-  resumen.push(["No sujeto", 0, 0, 0, 0]);
+  resumen.push(["Exento", exentoDocs, exento, 0, 0, exento]);
+  resumen.push(["Exonerado", 0, 0, 0, 0, 0]);
+  resumen.push(["No sujeto", 0, 0, 0, 0, 0]);
   resumen.push([
     "Totales",
+    docs.length,
     r2(sumBase + exento),
     r2(sumIva),
     0,
@@ -292,7 +314,48 @@ function buildWorkbook(
   ]);
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(resumen), "Resumen Compras");
 
-  // ---- Hoja 3: Conciliación vs GTI (solo si se subió el reporte de esa empresa)
+  // ---- Hoja 3: Detalle por Tarifa (una fila por documento y por tarifa)
+  const detalleTarifa: (string | number)[][] = [
+    [
+      "Tarifa",
+      "Consecutivo",
+      "Emisor",
+      "Cédula",
+      "Fecha",
+      "Tipo",
+      "Moneda",
+      "Tipo de cambio",
+      "Base gravada",
+      "IVA",
+      "Total comprobante (colones)",
+      "ID QuickBooks",
+    ],
+  ];
+  for (const g of groups) {
+    for (const inv of g.invoices) {
+      detalleTarifa.push([
+        g.taxRateLabel,
+        inv.consecutivo ?? "",
+        inv.nombre_emisor ?? "",
+        formatCedula(inv.cedula_emisor),
+        ddmmyyyy(inv.issue_date),
+        inv.tipo,
+        inv.moneda,
+        r2(inv.tipo_cambio),
+        r2(inv.base),
+        r2(inv.iva),
+        r2(inv.total_comprobante),
+        inv.qbo_entity_id ?? "",
+      ]);
+    }
+  }
+  XLSX.utils.book_append_sheet(
+    wb,
+    XLSX.utils.aoa_to_sheet(detalleTarifa),
+    "Detalle por Tarifa",
+  );
+
+  // ---- Hoja 4: Conciliación vs GTI (solo si se subió el reporte de esa empresa)
   if (gti) {
     const porConsecutivoFF = new Map<string, ComprasRow>();
     for (const d of docs) if (d.consecutivo) porConsecutivoFF.set(d.consecutivo.trim(), d);
@@ -357,13 +420,19 @@ function buildWorkbook(
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(filas), "Conciliación vs GTI");
   }
 
-  // ---- Hoja 4: Notas
+  // ---- Hoja 5: Notas
   const notas: string[][] = [
     ["Período", periodoLabel],
     ["Fecha de generación", new Date().toLocaleString("es-CR")],
     ["Empresa", docs[0].empresa],
     ["Cédula", cedulaEmpresa],
     ["Documentos incluidos", String(docs.length)],
+    [
+      "Filtro «solo lo publicado en QuickBooks»",
+      soloPublicados
+        ? "Encendido: únicamente documentos con Id de QuickBooks"
+        : "Apagado: todos los documentos aceptados",
+    ],
     ["Montos expresados en colones", "Convertidos con el tipo de cambio del propio XML"],
     ["Criterio", "Se excluyen tiquetes electrónicos"],
     ["Criterio", "Se excluyen documentos no aceptados en Hacienda"],
@@ -401,6 +470,8 @@ export default function PurchaseReportGTI() {
 
   const [mes, setMes] = useState(String(prev.month));
   const [anio, setAnio] = useState(String(prev.year));
+  const [usarRango, setUsarRango] = useState(false);
+  const [soloPublicados, setSoloPublicados] = useState(false);
   const [archivos, setArchivos] = useState<File[]>([]);
   const [generando, setGenerando] = useState(false);
   const [progreso, setProgreso] = useState(0);
@@ -412,12 +483,38 @@ export default function PurchaseReportGTI() {
     return [y + 1, y, y - 1, y - 2, y - 3];
   }, []);
 
+  // Período: mes calendario (D-104) o rango libre de fechas
+  const mesDesde = `${anio}-${String(Number(mes)).padStart(2, "0")}-01`;
+  const mesHasta = useMemo(() => {
+    const d = new Date(Number(anio), Number(mes), 0); // último día del mes
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+      d.getDate(),
+    ).padStart(2, "0")}`;
+  }, [anio, mes]);
+
+  const [rangoDesde, setRangoDesde] = useState(mesDesde);
+  const [rangoHasta, setRangoHasta] = useState(mesHasta);
+
+  const desde = usarRango ? rangoDesde : mesDesde;
+  const hasta = usarRango ? rangoHasta : mesHasta;
+
+  const periodoLabel = usarRango
+    ? `${ddmmyyyy(desde)} al ${ddmmyyyy(hasta)}`
+    : `${MESES[Number(mes) - 1]} ${anio}`;
+
+  const { data: report, isLoading } = useTaxRateReport(
+    activeOrganization,
+    desde,
+    hasta,
+    soloPublicados,
+  );
+
   const addFiles = (list: FileList | null) => {
     if (!list) return;
     setArchivos((prevFiles) => [...prevFiles, ...Array.from(list)]);
   };
 
-  const generar = async () => {
+  const descargar = async () => {
     if (!activeOrganization) {
       toast({
         title: "Seleccione una empresa",
@@ -429,51 +526,12 @@ export default function PurchaseReportGTI() {
 
     setGenerando(true);
     setResultados([]);
-    setProgreso(0);
-    setProgresoTexto("Consultando documentos…");
+    setProgreso(20);
+    setProgresoTexto("Preparando documentos…");
 
     try {
-      const m = Number(mes);
-      const y = Number(anio);
-      const desde = `${y}-${String(m).padStart(2, "0")}-01`;
-      const hastaDate = new Date(y, m, 1);
-      const hasta = `${hastaDate.getFullYear()}-${String(hastaDate.getMonth() + 1).padStart(2, "0")}-01`;
-      const periodoLabel = `${MESES[m - 1]} ${y}`;
-      const mmAAAA = `${String(m).padStart(2, "0")}-${y}`;
-
-      // Se pide por bloques: una sola llamada está limitada a 1.000 filas.
-      const PAGE = 1000;
-      const rawRows: ComprasRow[] = [];
-      for (let offset = 0; ; offset += PAGE) {
-        const { data, error } = await supabase
-          .rpc("compras_formato_gti", {
-            p_desde: desde,
-            p_hasta: hasta,
-            p_org: activeOrganization,
-          })
-          .range(offset, offset + PAGE - 1);
-        if (error) throw error;
-        const page = (data ?? []) as unknown as ComprasRow[];
-        rawRows.push(...page);
-        setProgresoTexto(`Consultando documentos… (${rawRows.length})`);
-        if (page.length < PAGE) break;
-      }
-
-      const docs = rawRows.map((d) => ({
-        ...d,
-        t1: num(d.t1),
-        t2: num(d.t2),
-        t4: num(d.t4),
-        t8: num(d.t8),
-        t13: num(d.t13),
-        iva_total: num(d.iva_total),
-        base_gravada: num(d.base_gravada),
-        descuento: num(d.descuento),
-        otros_cargos: num(d.otros_cargos),
-        total_comprobante: num(d.total_comprobante),
-        exento: num(d.exento),
-        tipo_cambio: num(d.tipo_cambio),
-      }));
+      const docs = report?.rows ?? [];
+      const groups = report?.groups ?? [];
 
       if (docs.length === 0) {
         setResultados([
@@ -533,10 +591,13 @@ export default function PurchaseReportGTI() {
       setProgreso(60);
       setProgresoTexto(`Generando ${docs[0].empresa}…`);
 
-      const wb = buildWorkbook(docs, periodoLabel, gti);
+      const wb = buildWorkbook(docs, periodoLabel, gti, groups, soloPublicados);
       const out = XLSX.write(wb, { bookType: "xlsx", type: "array" });
+      const sufijo = usarRango
+        ? `${desde} a ${hasta}`
+        : `${String(Number(mes)).padStart(2, "0")}-${anio}`;
       const nombre = sanitizeName(
-        `FUENTE - Compras FacturaFlow ${mmAAAA} ${docs[0].empresa}.xlsx`,
+        `FUENTE - Compras FacturaFlow ${sufijo} ${docs[0].empresa}.xlsx`,
       );
       const blob = new Blob([out], {
         type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -598,11 +659,12 @@ export default function PurchaseReportGTI() {
           <div>
             <h1 className="text-2xl font-semibold flex items-center gap-2">
               <FileSpreadsheet className="h-6 w-6 text-primary" />
-              Reporte de compras (formato GTI)
+              Reporte de Compras e IVA
             </h1>
             <p className="text-sm text-muted-foreground">
-              Mismo layout del Reporte con Tasas, para la declaración de IVA (D-104). Montos
-              expresados en colones.
+              Desglose por tarifa de IVA y archivo en formato GTI para la declaración del D-104.
+              Montos expresados en colones. Se excluyen tiquetes electrónicos y documentos no
+              aceptados en Hacienda.
             </p>
           </div>
         </div>
@@ -619,44 +681,94 @@ export default function PurchaseReportGTI() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-6">
+            <div className="flex flex-wrap gap-6">
+              <div className="flex items-center gap-3">
+                <Switch
+                  id="usar-rango"
+                  checked={usarRango}
+                  onCheckedChange={setUsarRango}
+                />
+                <Label htmlFor="usar-rango">Rango de fechas</Label>
+              </div>
+              <div className="flex items-center gap-3">
+                <Switch
+                  id="solo-publicados"
+                  checked={soloPublicados}
+                  onCheckedChange={setSoloPublicados}
+                />
+                <Label htmlFor="solo-publicados">Solo lo publicado en QuickBooks</Label>
+              </div>
+            </div>
+
             <div className="flex flex-wrap gap-4 items-end">
-              <div className="space-y-2">
-                <Label>Mes</Label>
-                <Select value={mes} onValueChange={setMes}>
-                  <SelectTrigger className="w-[180px]">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {MESES.map((nombre, idx) => (
-                      <SelectItem key={nombre} value={String(idx + 1)}>
-                        {nombre}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label>Año</Label>
-                <Select value={anio} onValueChange={setAnio}>
-                  <SelectTrigger className="w-[140px]">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {anios.map((y) => (
-                      <SelectItem key={y} value={String(y)}>
-                        {y}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <Button onClick={generar} disabled={generando} className="gap-2">
-                {generando ? (
+              {usarRango ? (
+                <>
+                  <div className="space-y-2">
+                    <Label htmlFor="rango-desde">Desde</Label>
+                    <Input
+                      id="rango-desde"
+                      type="date"
+                      className="w-[180px]"
+                      value={rangoDesde}
+                      onChange={(e) => setRangoDesde(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="rango-hasta">Hasta</Label>
+                    <Input
+                      id="rango-hasta"
+                      type="date"
+                      className="w-[180px]"
+                      value={rangoHasta}
+                      onChange={(e) => setRangoHasta(e.target.value)}
+                    />
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="space-y-2">
+                    <Label>Mes</Label>
+                    <Select value={mes} onValueChange={setMes}>
+                      <SelectTrigger className="w-[180px]">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {MESES.map((nombre, idx) => (
+                          <SelectItem key={nombre} value={String(idx + 1)}>
+                            {nombre}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Año</Label>
+                    <Select value={anio} onValueChange={setAnio}>
+                      <SelectTrigger className="w-[140px]">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {anios.map((y) => (
+                          <SelectItem key={y} value={String(y)}>
+                            {y}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </>
+              )}
+              <Button
+                onClick={descargar}
+                disabled={generando || isLoading}
+                className="gap-2"
+              >
+                {generando || isLoading ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
                   <Download className="h-4 w-4" />
                 )}
-                Generar reporte
+                Descargar Excel
               </Button>
             </div>
 
@@ -714,12 +826,136 @@ export default function PurchaseReportGTI() {
           </CardContent>
         </Card>
 
+        {/* Tarjetas de totales */}
+        <div className="grid gap-4 md:grid-cols-4">
+          {[
+            { label: "Documentos", valor: (report?.documentCount ?? 0).toLocaleString("en-US") },
+            { label: "Base gravada", valor: money(report?.totalBase ?? 0) },
+            { label: "IVA total", valor: money(report?.totalTax ?? 0) },
+            { label: "Total", valor: money(report?.totalAmount ?? 0) },
+          ].map((k) => (
+            <Card key={k.label}>
+              <CardHeader className="pb-2">
+                <CardDescription className="text-xs uppercase tracking-[0.14em] font-semibold">
+                  {k.label}
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <p className="text-2xl font-semibold tabular-nums">
+                  {isLoading ? "—" : k.valor}
+                </p>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+
+        {/* Desglose por tarifa */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-lg">Desglose por tarifa · {periodoLabel}</CardTitle>
+            <CardDescription>
+              Montos expresados en colones.{" "}
+              {soloPublicados
+                ? "Solo documentos ya publicados en QuickBooks."
+                : "Todos los documentos aceptados."}
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {isLoading ? (
+              <p className="text-sm text-muted-foreground">Consultando documentos…</p>
+            ) : (report?.groups.length ?? 0) === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                No hay compras registradas en este período para esta empresa.
+              </p>
+            ) : (
+              <Accordion type="multiple" className="w-full">
+                {report!.groups.map((g) => (
+                  <AccordionItem key={g.taxRateLabel} value={g.taxRateLabel}>
+                    <AccordionTrigger>
+                      <div className="flex flex-1 items-center justify-between gap-4 pr-4 text-sm">
+                        <span className="font-medium">
+                          {g.taxRateLabel}
+                          <span className="ml-2 text-muted-foreground">
+                            {g.count} {g.count === 1 ? "documento" : "documentos"}
+                          </span>
+                        </span>
+                        <span className="flex gap-6 tabular-nums">
+                          <span>Base {money(g.totalBase)}</span>
+                          <span>IVA {money(g.totalTax)}</span>
+                          <span className="font-medium">Total {money(g.totalAmount)}</span>
+                        </span>
+                      </div>
+                    </AccordionTrigger>
+                    <AccordionContent>
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Consecutivo</TableHead>
+                            <TableHead>Emisor</TableHead>
+                            <TableHead>Cédula</TableHead>
+                            <TableHead>Fecha</TableHead>
+                            <TableHead>Tipo</TableHead>
+                            <TableHead>Moneda</TableHead>
+                            <TableHead className="text-right">Tipo de cambio</TableHead>
+                            <TableHead className="text-right">Base gravada</TableHead>
+                            <TableHead className="text-right">IVA</TableHead>
+                            <TableHead className="text-right">Total comprobante</TableHead>
+                            <TableHead>ID QuickBooks</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {g.invoices.map((inv) => (
+                            <TableRow key={`${g.taxRateLabel}-${inv.doc_key}`}>
+                              <TableCell className="tabular-nums">
+                                {inv.consecutivo ?? "—"}
+                              </TableCell>
+                              <TableCell>
+                                <div className="flex items-center gap-2">
+                                  <span>{inv.nombre_emisor ?? "—"}</span>
+                                  {inv.tipo === "NC" && (
+                                    <Badge variant="outline">Nota de crédito</Badge>
+                                  )}
+                                </div>
+                              </TableCell>
+                              <TableCell className="tabular-nums">
+                                {formatCedula(inv.cedula_emisor) || "—"}
+                              </TableCell>
+                              <TableCell className="tabular-nums">
+                                {ddmmyyyy(inv.issue_date)}
+                              </TableCell>
+                              <TableCell>{inv.tipo}</TableCell>
+                              <TableCell>{inv.moneda}</TableCell>
+                              <TableCell className="text-right tabular-nums">
+                                {money(inv.tipo_cambio)}
+                              </TableCell>
+                              <TableCell className="text-right tabular-nums">
+                                {money(inv.base)}
+                              </TableCell>
+                              <TableCell className="text-right tabular-nums">
+                                {money(inv.iva)}
+                              </TableCell>
+                              <TableCell className="text-right tabular-nums">
+                                {money(inv.total_comprobante)}
+                              </TableCell>
+                              <TableCell className="tabular-nums">
+                                {inv.qbo_entity_id ?? "—"}
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </AccordionContent>
+                  </AccordionItem>
+                ))}
+              </Accordion>
+            )}
+          </CardContent>
+        </Card>
+
         {resultados.length > 0 && (
           <Card>
             <CardHeader>
-              <CardTitle className="text-lg">
-                Resumen · {MESES[Number(mes) - 1]} {anio}
-              </CardTitle>
+              <CardTitle className="text-lg">Resumen · {periodoLabel}</CardTitle>
               <CardDescription>Montos expresados en colones.</CardDescription>
             </CardHeader>
             <CardContent>

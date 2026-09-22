@@ -69,6 +69,8 @@ export interface TaxRateSummary {
 }
 
 export interface TaxRateReport {
+  /** Filas crudas tal como vienen de la función SQL (alimentan el Excel) */
+  rows: ComprasRow[];
   groups: TaxRateSummary[];
   /** Documentos distintos del período (contados una sola vez) */
   documentCount: number;
@@ -101,6 +103,7 @@ const RATES: Array<{ pct: number; key: keyof ComprasRow; label: string }> = [
 ];
 
 const EMPTY: TaxRateReport = {
+  rows: [],
   groups: [],
   documentCount: 0,
   totalBase: 0,
@@ -112,9 +115,10 @@ export const useTaxRateReport = (
   organizationId: string | null,
   startDate: string | null,
   endDate: string | null,
+  soloPublicados: boolean = false,
 ) => {
   return useQuery({
-    queryKey: ["tax-rate-report", organizationId, startDate, endDate],
+    queryKey: ["tax-rate-report", organizationId, startDate, endDate, soloPublicados],
     queryFn: async (): Promise<TaxRateReport> => {
       if (!organizationId || !startDate || !endDate) return EMPTY;
 
@@ -126,7 +130,7 @@ export const useTaxRateReport = (
             p_desde: startDate,
             p_hasta: nextDay(endDate),
             p_org: organizationId,
-            p_solo_publicados: true,
+            p_solo_publicados: soloPublicados,
           })
           .range(offset, offset + PAGE - 1);
         if (error) throw error;
@@ -221,6 +225,7 @@ export const useTaxRateReport = (
       });
 
       return {
+        rows: docs,
         groups,
         documentCount: new Set(docs.map((d) => d.doc_key)).size,
         totalBase: r2(groups.reduce((acc, g) => acc + g.totalBase, 0)),
