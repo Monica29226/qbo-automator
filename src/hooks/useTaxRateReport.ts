@@ -225,6 +225,7 @@ export const useTaxRateReport = (
       });
 
       return {
+        rows: docs,
         groups,
         documentCount: new Set(docs.map((d) => d.doc_key)).size,
         totalBase: r2(groups.reduce((acc, g) => acc + g.totalBase, 0)),
