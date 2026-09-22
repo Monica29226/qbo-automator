@@ -148,18 +148,12 @@ Deno.serve(async (req) => {
     // Remitente de dominio verificado en Resend. Cualquier otro dominio es rechazado.
     const ALERT_FROM = "ACL Costa Rica <alertas@aclcostarica.com>";
 
-    async function sendEmail(subject: string, html: string) {
-      if (!RESEND_API_KEY || recipients.length === 0) return { sent: false, via: "skipped" };
-      const res = await fetch("https://api.resend.com/emails", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${RESEND_API_KEY}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ from: ALERT_FROM, to: recipients, subject, html }),
-      });
-      if (res.ok) return { sent: true, via: "domain" };
-      const err = await res.text();
-      console.error(`Resend rechazó el envío [${res.status}]: ${err}`);
-      return { sent: false, via: "failed", error: err.slice(0, 300) };
+    // Este watchdog ya NO envía correo. Solo mantiene las alertas abiertas/resueltas
+    // en alert_history; el único correo automático es el reporte diario de críticos.
+    async function sendEmail(_subject: string, _html: string) {
+      return { sent: false, via: "email_disabled" };
     }
+
 
 
     for (const org of orgs ?? []) {

@@ -180,23 +180,9 @@ serve(async (req) => {
             .in("id", staleIds);
         }
 
-        const recipients = await resolveRecipients(supabase, org);
+        // Sin correo por problema: queda registrado en alert_history y visible en el
+        // panel. El único correo automático es el reporte diario de críticos.
 
-        // Aviso inmediato de cada problema nuevo. No se reenvía mientras siga abierto.
-        if (newIssues.length > 0 && recipients.length > 0) {
-          const result = await sendNewIssuesEmail(org.name, newIssues.map((n) => n.issue), recipients);
-          const patch = result.ok
-            ? { email_id: result.id ?? null, email_error: null }
-            : { email_error: result.error ?? "envío fallido" };
-          const rowIds = newIssues.map((n) => n.rowId).filter(Boolean) as string[];
-          if (rowIds.length > 0) {
-            await supabase.from("alert_history").update(patch).in("id", rowIds);
-          }
-        }
-
-        if (resolvedIssues.length > 0 && recipients.length > 0) {
-          await sendResolvedEmail(org.name, resolvedIssues, recipients);
-        }
 
         alertResults.push({
           organization: org.name,
