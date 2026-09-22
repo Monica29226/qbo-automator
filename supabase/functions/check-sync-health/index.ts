@@ -214,11 +214,9 @@ serve(async (req) => {
             .filter(Boolean);
 
           if (criticalTitles.length > 0) {
-            const recipients = await resolveRecipients(supabase, org);
-            if (recipients.length > 0) {
-              await sendResolvedEmail(org.name, criticalTitles, recipients);
-            }
+            console.log(`[${org.name}] resueltos: ${criticalTitles.join(", ")}`);
           }
+
         }
         console.log(`No issues found for ${org.name}, cleared open alerts`);
       }
