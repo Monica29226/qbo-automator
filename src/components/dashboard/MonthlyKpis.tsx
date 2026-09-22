@@ -84,7 +84,7 @@ export function MonthlyKpis({ organizationId, pendingReviewCount }: MonthlyKpisP
       hint: "Crédito fiscal CRC acumulado",
       hintTone: "text-muted-foreground",
       icon: Receipt,
-      to: "/tax-rate-report",
+      to: "/reporte-compras",
     },
     {
       label: "Por validar",
