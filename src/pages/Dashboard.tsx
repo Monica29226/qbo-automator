@@ -20,6 +20,8 @@ import { SearchInvoiceDialog } from "@/components/dashboard/SearchInvoiceDialog"
 import { ReconcileXmlQboButton } from "@/components/dashboard/ReconcileXmlQboButton";
 const AuditPublishedVsQBO = lazy(() => import("@/components/dashboard/AuditPublishedVsQBO").then(m => ({ default: m.AuditPublishedVsQBO })));
 import { ImportHealthPanel } from "@/components/dashboard/ImportHealthPanel";
+import { MailboxHealthPanel } from "@/components/dashboard/MailboxHealthPanel";
+
 
 // Lazy load componentes pesados
 const RecentDocuments = lazy(() => import("@/components/dashboard/RecentDocuments").then(m => ({ default: m.RecentDocuments })));
@@ -500,8 +502,12 @@ const Dashboard = () => {
               )}
             </div>
 
+            {/* Estado de lectura de correo por empresa */}
+            <MailboxHealthPanel />
+
             {/* Import Health Panel - first signal of system status */}
             <ImportHealthPanel />
+
 
             {/* Quick Actions Section */}
             <Card className="mb-6">
