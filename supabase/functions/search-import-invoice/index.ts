@@ -26,7 +26,7 @@ function parseNumeroConsecutivo(xml: string): string {
   
   const clave = parseXMLValue(xml, 'Clave');
   if (clave && clave.length === 50) {
-    return clave.substring(30, 50);
+    return clave.substring(21, 41);
   }
   
   if (directValue && directValue.length > 25) {
@@ -225,6 +225,7 @@ serve(async (req) => {
 
     let foundMessage: { id: string; xmlContent: string } | null = null;
     let foundPdfPart: any = null;
+    let gmailSearchStats: Record<string, unknown> | null = null;
 
     // ==================== VENDOR-NAME SEARCH MODE ====================
     // Triggered when user searches by supplier name / tax id (not by invoice number).
@@ -518,150 +519,142 @@ serve(async (req) => {
         }
       }
 
-      // Search Gmail - PARALLEL queries for speed
+      // ===== Búsqueda por número en Gmail: rápida + escaneo por ventana de fechas =====
       log("🔍 Gmail search...");
-      
-      const query1 = `has:attachment filename:xml ${invoice_number}`;
-      const query2 = `has:attachment ${invoice_number}`;
-      
-      const [search1, search2] = await Promise.all([
-        fetchWithTimeout(
-          `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(query1)}&maxResults=3`,
-          { headers: { Authorization: `Bearer ${accessToken}` } },
-          8000
-        ).then(r => r.ok ? r.json() : { messages: [] }).catch((e) => {
-          log(`⚠️ Query1 error: ${e.message}`);
-          return { messages: [] };
-        }),
-        fetchWithTimeout(
-          `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(query2)}&maxResults=3`,
-          { headers: { Authorization: `Bearer ${accessToken}` } },
-          8000
-        ).then(r => r.ok ? r.json() : { messages: [] }).catch((e) => {
-          log(`⚠️ Query2 error: ${e.message}`);
-          return { messages: [] };
-        })
-      ]);
-      
-      const seenIds = new Set<string>();
-      let messages: any[] = [];
-      for (const msg of [...(search1.messages || []), ...(search2.messages || [])]) {
-        if (!seenIds.has(msg.id)) {
-          seenIds.add(msg.id);
-          messages.push(msg);
-        }
-      }
-      log(`📬 Found ${messages.length} messages (q1:${search1.messages?.length || 0}, q2:${search2.messages?.length || 0})`)
+      const gmailStart = Date.now();
+      const SCAN_BUDGET_MS = 100_000;
+      const MAX_SCAN_MESSAGES = 400;
+      const termDigits = String(invoice_number).replace(/\D/g, "");
+      const authHeaders = { headers: { Authorization: `Bearer ${accessToken}` } };
 
-      if (messages.length === 0) {
-        return new Response(
-          JSON.stringify({
-            success: false,
-            message: `No se encontró en Gmail: ${invoice_number}`
-          }),
-          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
+      const isYmd = (s: unknown) => typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s);
+      const addDays = (ymd: string, n: number) => {
+        const d = new Date(`${ymd}T00:00:00Z`);
+        d.setUTCDate(d.getUTCDate() + n);
+        return d.toISOString().slice(0, 10);
+      };
+      const todayYmd = new Date().toISOString().slice(0, 10);
+      const winFrom = isYmd(requestBody.date_from) ? requestBody.date_from : addDays(todayYmd, -90);
+      const winTo = isYmd(requestBody.date_to) ? requestBody.date_to : todayYmd;
+      const fmtDmy = (ymd: string) => { const [y, m, d] = ymd.split("-"); return `${d}/${m}/${y}`; };
+      const toGmail = (ymd: string) => ymd.replace(/-/g, "/");
 
-      // Fetch messages in parallel
-      const messagePromises = messages.slice(0, 2).map((msg: any) =>
-        fetchWithTimeout(
-          `https://gmail.googleapis.com/gmail/v1/users/me/messages/${msg.id}`,
-          { headers: { Authorization: `Bearer ${accessToken}` } },
-          6000
-        ).then(r => r.ok ? r.json() : null).catch((e) => {
-          log(`⚠️ Message fetch error: ${e.message}`);
-          return null;
-        })
-      );
+      let messagesScanned = 0;
+      let xmlScanned = 0;
+      let timedOut = false;
+      const checkedIds = new Set<string>();
 
-      const messageResults = await Promise.all(messagePromises);
-      log(`📩 Fetched ${messageResults.filter(Boolean).length} messages`);
-
-      // Helper function to recursively find all attachments
       function findAllParts(part: any, result: any[] = []): any[] {
         if (!part) return result;
-        if (part.filename && part.filename.length > 0) {
-          result.push(part);
-        }
-        if (part.parts && Array.isArray(part.parts)) {
-          for (const subPart of part.parts) {
-            findAllParts(subPart, result);
-          }
-        }
+        if (part.filename && part.filename.length > 0) result.push(part);
+        if (Array.isArray(part.parts)) for (const sub of part.parts) findAllParts(sub, result);
         return result;
       }
 
-      for (const messageData of messageResults) {
-        if (!messageData || foundMessage) continue;
-        
-        const allParts = findAllParts(messageData.payload);
-        log(`📎 Found ${allParts.length} attachments: ${allParts.map((p: any) => p.filename).join(', ')}`);
-        
-        const xmlParts = allParts.filter((p: any) => p.filename?.toLowerCase().endsWith(".xml"));
-        const pdfPart = allParts.find((p: any) => p.filename?.toLowerCase().endsWith(".pdf"));
+      const xmlMatches = (xmlContent: string): boolean => {
+        const clave = parseXMLValue(xmlContent, 'Clave').replace(/\D/g, "");
+        if (termDigits.length === 50) return clave === termDigits;
+        if (termDigits.length === 20) {
+          const consec = parseXMLValue(xmlContent, 'NumeroConsecutivo').replace(/\D/g, "");
+          return consec === termDigits || (clave.length === 50 && clave.substring(21, 41) === termDigits);
+        }
+        const docNumber = parseNumeroConsecutivo(xmlContent);
+        return !!docNumber && (docNumber === invoice_number || docNumber.includes(invoice_number) || (termDigits.length > 0 && clave.includes(termDigits)));
+      };
 
-        const xmlPromises = xmlParts.slice(0, 2).map(async (xmlPart: any) => {
-          if (!xmlPart?.body?.attachmentId) return null;
+      // Revisa un mensaje: descarga sus XML (no MensajeHacienda) y compara
+      const checkMessage = async (msgId: string): Promise<boolean> => {
+        if (checkedIds.has(msgId) || foundMessage) return false;
+        checkedIds.add(msgId);
+        const messageData = await fetchWithTimeout(
+          `https://gmail.googleapis.com/gmail/v1/users/me/messages/${msgId}`, authHeaders, 8000
+        ).then(r => r.ok ? r.json() : null).catch(() => null);
+        messagesScanned++;
+        if (!messageData) return false;
+        const allParts = findAllParts(messageData.payload);
+        const xmlParts = allParts.filter((p: any) => p.filename?.toLowerCase().endsWith(".xml") && !/respuesta|mensajehacienda|_mh|-mh/i.test(p.filename));
+        const pdfPart = allParts.find((p: any) => p.filename?.toLowerCase().endsWith(".pdf"));
+        for (const xmlPart of xmlParts) {
+          if (foundMessage) return false;
+          if (!xmlPart?.body?.attachmentId) continue;
           try {
             const resp = await fetchWithTimeout(
-              `https://gmail.googleapis.com/gmail/v1/users/me/messages/${messageData.id}/attachments/${xmlPart.body.attachmentId}`,
-              { headers: { Authorization: `Bearer ${accessToken}` } },
-              2000
+              `https://gmail.googleapis.com/gmail/v1/users/me/messages/${msgId}/attachments/${xmlPart.body.attachmentId}`, authHeaders, 6000
             );
-            if (!resp.ok) return null;
+            if (!resp.ok) continue;
             const data = await resp.json();
-            const base64Fixed = data.data.replace(/-/g, "+").replace(/_/g, "/");
-            const binaryString = atob(base64Fixed);
-            const bytes = new Uint8Array(binaryString.length);
-            for (let i = 0; i < binaryString.length; i++) {
-              bytes[i] = binaryString.charCodeAt(i);
+            const bin = atob(data.data.replace(/-/g, "+").replace(/_/g, "/"));
+            const bytes = new Uint8Array(bin.length);
+            for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+            const xmlContent = new TextDecoder('utf-8').decode(bytes);
+            xmlScanned++;
+            if (xmlContent.includes('<MensajeHacienda') || xmlContent.includes('mensajeHacienda')) continue;
+            const isInvoice = xmlContent.includes('<FacturaElectronica') || xmlContent.includes('<NotaCreditoElectronica') ||
+              xmlContent.includes('<NotaDebitoElectronica') || xmlContent.includes('<Emisor>');
+            if (!isInvoice) continue;
+            if (xmlMatches(xmlContent)) {
+              if (foundMessage) return false;
+              log(`✅ MATCH en mensaje ${msgId}: ${xmlPart.filename}`);
+              foundMessage = { id: messageData.id, xmlContent };
+              foundPdfPart = pdfPart;
+              return true;
             }
-            const content = new TextDecoder('utf-8').decode(bytes);
-            return { xmlPart, content };
-          } catch { return null; }
-        });
-
-        const xmlResults = await Promise.all(xmlPromises);
-        
-        for (const result of xmlResults) {
-          if (!result || foundMessage) continue;
-          
-          const { content: xmlContent, xmlPart } = result;
-          
-          if (xmlContent.includes('<MensajeHacienda') || xmlContent.includes('mensajeHacienda')) {
-            log(`⏭️ Skip MensajeHacienda: ${xmlPart.filename}`);
-            continue;
-          }
-
-          const isInvoice = xmlContent.includes('<FacturaElectronica') || 
-                            xmlContent.includes('<NotaCreditoElectronica') ||
-                            xmlContent.includes('<NotaDebitoElectronica') ||
-                            xmlContent.includes('<Emisor>');
-          
-          if (!isInvoice) {
-            log(`⏭️ Not an invoice: ${xmlPart.filename}`);
-            continue;
-          }
-
-          const docNumber = parseNumeroConsecutivo(xmlContent);
-          
-          if (docNumber === invoice_number || 
-              docNumber.includes(invoice_number) || 
-              invoice_number.includes(docNumber)) {
-            log(`✅ MATCH: ${docNumber}`);
-            foundMessage = { id: messageData.id, xmlContent };
-            foundPdfPart = pdfPart;
-            break;
-          }
+          } catch { /* adjunto ilegible: seguir */ }
         }
+        return false;
+      };
+
+      const processInBatches = async (ids: string[]) => {
+        for (let i = 0; i < ids.length && !foundMessage; i += 8) {
+          if (Date.now() - gmailStart > SCAN_BUDGET_MS) { timedOut = true; return; }
+          await Promise.all(ids.slice(i, i + 8).map(checkMessage));
+        }
+      };
+
+      // 1) Búsqueda rápida
+      const query1 = `has:attachment filename:xml ${invoice_number}`;
+      const query2 = `has:attachment ${invoice_number}`;
+      const listQuick = (q: string) => fetchWithTimeout(
+        `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(q)}&maxResults=10`, authHeaders, 8000
+      ).then(r => r.ok ? r.json() : { messages: [] }).catch((e) => { log(`⚠️ Quick query error: ${e.message}`); return { messages: [] }; });
+      const [search1, search2] = await Promise.all([listQuick(query1), listQuick(query2)]);
+      const quickIds = [...new Set([...(search1.messages || []), ...(search2.messages || [])].map((m: any) => m.id))];
+      log(`📬 Búsqueda rápida: ${quickIds.length} mensajes`);
+      await processInBatches(quickIds);
+
+      // 2) Escaneo por ventana de fechas
+      if (!foundMessage && !timedOut) {
+        const windowQuery = `has:attachment filename:xml after:${toGmail(winFrom)} before:${toGmail(addDays(winTo, 1))}`;
+        log(`🗓️ Escaneo por ventana: ${windowQuery}`);
+        let pageToken: string | undefined;
+        let listed = 0;
+        do {
+          if (Date.now() - gmailStart > SCAN_BUDGET_MS) { timedOut = true; break; }
+          const url = `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(windowQuery)}&maxResults=100${pageToken ? `&pageToken=${pageToken}` : ""}`;
+          const page = await fetchWithTimeout(url, authHeaders, 10000).then(r => r.ok ? r.json() : null).catch(() => null);
+          if (!page) break;
+          const ids = (page.messages || []).map((m: any) => m.id).slice(0, MAX_SCAN_MESSAGES - listed);
+          listed += ids.length;
+          await processInBatches(ids);
+          pageToken = page.nextPageToken;
+        } while (pageToken && listed < MAX_SCAN_MESSAGES && !foundMessage && !timedOut);
       }
 
+      gmailSearchStats = {
+        messages_scanned: messagesScanned,
+        xml_scanned: xmlScanned,
+        search_window: { date_from: winFrom, date_to: winTo },
+        timed_out: timedOut,
+      };
+      log(`📊 Gmail: ${messagesScanned} correos, ${xmlScanned} XML, ${Date.now() - gmailStart}ms${timedOut ? " (corte por tiempo)" : ""}`);
+
       if (!foundMessage) {
+        const base = `No se encontró en Gmail entre ${fmtDmy(winFrom)} y ${fmtDmy(winTo)} (revisados ${messagesScanned} correos, ${xmlScanned} XML)`;
         return new Response(
           JSON.stringify({
             success: false,
-            message: `XML no encontrado en Gmail para: ${invoice_number}`
+            message: timedOut ? `${base}. Búsqueda incompleta por límite de tiempo: acote las fechas.` : base,
+            ...gmailSearchStats,
           }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
