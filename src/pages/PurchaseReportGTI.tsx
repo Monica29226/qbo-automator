@@ -502,12 +502,33 @@ export default function PurchaseReportGTI() {
     ? `${ddmmyyyy(desde)} al ${ddmmyyyy(hasta)}`
     : `${MESES[Number(mes) - 1]} ${anio}`;
 
-  const { data: report, isLoading } = useTaxRateReport(
+  const { data: report, isLoading, isError, error } = useTaxRateReport(
     activeOrganization,
     desde,
     hasta,
     soloPublicados,
   );
+
+  /**
+   * Causa por la que NO hay cifras en pantalla: la consulta falló, el período
+   * quedó incompleto o la consulta no llegó a ejecutarse. Mientras exista este
+   * motivo, la pantalla NUNCA debe afirmar "no hay compras": que los datos no
+   * carguen no es lo mismo que compras en cero (D-104).
+   */
+  const motivoSinDatos = useMemo(() => {
+    if (isLoading) return null;
+    if (isError) {
+      const msg =
+        error instanceof Error ? error.message : "No se pudo consultar la base de datos.";
+      return `No se pudieron cargar las cifras del período: ${msg}`;
+    }
+    if (!desde || !hasta) {
+      return "Complete las fechas «Desde» y «Hasta» para consultar las compras.";
+    }
+    if (!report) return "No se pudieron cargar las cifras del período. Vuelva a intentar.";
+    return null;
+  }, [isLoading, isError, error, desde, hasta, report]);
+
 
   const addFiles = (list: FileList | null) => {
     if (!list) return;
@@ -524,9 +545,20 @@ export default function PurchaseReportGTI() {
       return;
     }
 
+    // Sin datos cargados no se genera un archivo "en cero": se avisa la causa real.
+    if (motivoSinDatos) {
+      toast({
+        title: "No se pudo generar el reporte",
+        description: motivoSinDatos,
+        variant: "destructive",
+      });
+      return;
+    }
+
     setGenerando(true);
     setResultados([]);
     setProgreso(20);
+
     setProgresoTexto("Preparando documentos…");
 
     try {
@@ -760,9 +792,10 @@ export default function PurchaseReportGTI() {
               )}
               <Button
                 onClick={descargar}
-                disabled={generando || isLoading}
+                disabled={generando || isLoading || !!motivoSinDatos}
                 className="gap-2"
               >
+
                 {generando || isLoading ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
@@ -842,8 +875,9 @@ export default function PurchaseReportGTI() {
               </CardHeader>
               <CardContent>
                 <p className="text-2xl font-semibold tabular-nums">
-                  {isLoading ? "—" : k.valor}
+                  {isLoading ? "—" : motivoSinDatos ? "no disponible" : k.valor}
                 </p>
+
               </CardContent>
             </Card>
           ))}
@@ -863,11 +897,22 @@ export default function PurchaseReportGTI() {
           <CardContent>
             {isLoading ? (
               <p className="text-sm text-muted-foreground">Consultando documentos…</p>
+            ) : motivoSinDatos ? (
+              <div className="rounded border border-destructive p-4 space-y-1">
+                <p className="text-sm font-medium text-destructive">
+                  No se pudo confirmar el detalle de compras
+                </p>
+                <p className="text-sm text-muted-foreground">{motivoSinDatos}</p>
+                <p className="text-sm text-muted-foreground">
+                  No asuma que la empresa no tuvo compras hasta que esta consulta se complete.
+                </p>
+              </div>
             ) : (report?.groups.length ?? 0) === 0 ? (
               <p className="text-sm text-muted-foreground">
                 No hay compras registradas en este período para esta empresa.
               </p>
             ) : (
+
               <Accordion type="multiple" className="w-full">
                 {report!.groups.map((g) => (
                   <AccordionItem key={g.taxRateLabel} value={g.taxRateLabel}>
