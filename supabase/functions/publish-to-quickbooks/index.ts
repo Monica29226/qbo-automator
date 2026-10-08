@@ -43,6 +43,8 @@ interface QBOCurrencyConfig {
   country: string;
   homeCurrency: string;
   multiCurrencyEnabled: boolean;
+  // true SOLO cuando QuickBooks respondi
+  known: boolean;
 }
 const QBO_CURRENCY_CACHE = new Map<string, { value: QBOCurrencyConfig; expiresAt: number }>();
 const QBO_CURRENCY_TTL_MS = 60 * 60 * 1000;
@@ -55,8 +57,8 @@ async function getQBOCurrencyConfig(
   const cached = QBO_CURRENCY_CACHE.get(organizationId);
   if (cached && cached.expiresAt > Date.now()) return cached.value;
 
-  // Defaults are intentionally restrictive: assume CRC + no multi-currency on failure
-  let result: QBOCurrencyConfig = { country: 'CR', homeCurrency: 'CRC', multiCurrencyEnabled: false };
+  // Default NO confirmado: solo forma de respaldo cuando /preferences no se pudo leer.
+  let result: QBOCurrencyConfig = { country: 'CR', homeCurrency: 'CRC', multiCurrencyEnabled: false, known: false };
   try {
     // Query Preferences (has CurrencyPrefs.HomeCurrency + MultiCurrencyEnabled) and CompanyInfo (Country)
     const [prefResp, infoResp] = await Promise.all([
@@ -71,11 +73,19 @@ async function getQBOCurrencyConfig(
       const prefData = await prefResp.json();
       const cp = prefData?.Preferences?.CurrencyPrefs || {};
       const home = cp?.HomeCurrency?.value || cp?.HomeCurrencyRef?.value;
-      if (home) result.homeCurrency = home;
-      if (typeof cp?.MultiCurrencyEnabled === 'boolean') result.multiCurrencyEnabled = cp.MultiCurrencyEnabled;
-      else if (String(cp?.MultiCurrencyEnabled).toLowerCase() === 'true') result.multiCurrencyEnabled = true;
+      const mcRaw = cp?.MultiCurrencyEnabled;
+      const mcText = typeof mcRaw === 'string' ? mcRaw.trim().toLowerCase() : null;
+      const mcConfirmed = typeof mcRaw === 'boolean' || mcText === 'true' || mcText === 'false';
+      if (home && mcConfirmed) {
+        result.homeCurrency = home;
+        result.multiCurrencyEnabled = typeof mcRaw === 'boolean' ? mcRaw : mcText === 'true';
+        result.known = true;
+        logInfo(`\u{1F4B1} ${organizationId}: configuraci\u00F3n de monedas CONFIRMADA por QBO (home=${home}, multiCurrency=${result.multiCurrencyEnabled})`);
+      } else {
+        console.error(`getQBOCurrencyConfig: preferences HTTP 200 para org ${organizationId} pero CurrencyPrefs ilegible (HomeCurrency=${home || 'n/a'}, MultiCurrencyEnabled=${JSON.stringify(mcRaw)}) \u2192 configuraci\u00F3n de monedas NO confirmada`);
+      }
     } else {
-      console.error(`getQBOCurrencyConfig: preferences HTTP ${prefResp.status} for org ${organizationId}`);
+      console.error(`getQBOCurrencyConfig: preferences HTTP ${prefResp.status} para org ${organizationId} \u2192 configuraci\u00F3n de monedas NO confirmada`);
     }
     if (infoResp.ok) {
       const infoData = await infoResp.json();
@@ -85,7 +95,13 @@ async function getQBOCurrencyConfig(
   } catch (e) {
     console.error(`getQBOCurrencyConfig failed for org ${organizationId}:`, e);
   }
-  QBO_CURRENCY_CACHE.set(organizationId, { value: result, expiresAt: Date.now() + QBO_CURRENCY_TTL_MS });
+  // Solo se cachean lecturas confirmadas: una lectura fallida no debe quedar fijada
+  // como "CRC sin multi-currency" durante 1 hora.
+  if (result.known) {
+    QBO_CURRENCY_CACHE.set(organizationId, { value: result, expiresAt: Date.now() + QBO_CURRENCY_TTL_MS });
+  } else {
+    console.error(`getQBOCurrencyConfig: org ${organizationId} sin configuraci\u00F3n de monedas confirmada \u2014 no se cachea, se reintentar\u00E1 en la pr\u00F3xima factura`);
+  }
   return result;
 }
 
