@@ -2157,7 +2157,22 @@ Deno.serve(async (req) => {
 
         if (docCurrencyEarly === homeCurrency) {
           logInfo(`💱 ${doc.doc_number}: currency ${docCurrencyEarly} = QBO base ${homeCurrency} → publicar normal`);
+        } else if (!qboCurrency.known) {
+          // QuickBooks no confirm su configuraci
+          const errorMsg = "No se pudo confirmar la configuraci\u00F3n de monedas de QuickBooks; se reintentar\u00E1 autom\u00E1ticamente";
+          logInfo(`\u23F3 ${doc.doc_number}: currency ${docCurrencyEarly} \u2260 ${homeCurrency} y la configuraci\u00F3n de monedas de QBO NO est\u00E1 confirmada \u2192 waiting_for_qbo (no se marca currency_mismatch)`);
+          await supabase
+            .from("processed_documents")
+            .update({ status: 'waiting_for_qbo', error_message: errorMsg.substring(0, 500) })
+            .eq("id", doc.id);
+          return {
+            success: false,
+            docNumber: doc.doc_number,
+            waiting: true,
+            reason: 'currency_config_unconfirmed',
+          };
         } else if (!qboCurrency.multiCurrencyEnabled) {
+          // Solo se alcanza con known=true: QBO confirm\u00F3 multiCurrencyEnabled=false.
           const errorMsg = `Factura en ${docCurrencyEarly} no compatible. QBO de esta empresa solo acepta ${homeCurrency}. Para procesarla: (1) habilita multi-currency en QBO si es posible, o (2) convierte manualmente el monto a ${homeCurrency}, o (3) registra la factura directamente en QBO.`;
           logInfo(`🚫 ${doc.doc_number}: currency ${docCurrencyEarly} ≠ QBO base ${homeCurrency} sin multi-currency → currency_mismatch`);
           await supabase
