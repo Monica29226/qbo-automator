@@ -153,7 +153,7 @@ export function SearchInvoiceDialog() {
         ? await supabase.functions.invoke<DeepSearchResponse>("search-import-invoice", {
             body: usesVendorDeepSearch
               ? { organization_id: activeOrganization, vendor_name: term, auto_publish: false }
-              : { organization_id: activeOrganization, invoice_number: term, auto_publish: false },
+              : { organization_id: activeOrganization, invoice_number: term, auto_publish: false, date_from: dateFrom || undefined, date_to: dateTo || undefined },
           })
         : await supabase.functions.invoke(fallbackFunction!, {
             body: {
