@@ -43,6 +43,10 @@ interface QBOCurrencyConfig {
   country: string;
   homeCurrency: string;
   multiCurrencyEnabled: boolean;
+  // true SOLO si /preferences respondio ok y se pudo leer CurrencyPrefs.
+  // Con known=false los valores de arriba son defaults sin confirmar y no pueden
+  // usarse para una decision terminal como currency_mismatch.
+  known: boolean;
 }
 const QBO_CURRENCY_CACHE = new Map<string, { value: QBOCurrencyConfig; expiresAt: number }>();
 const QBO_CURRENCY_TTL_MS = 60 * 60 * 1000;
@@ -55,8 +59,8 @@ async function getQBOCurrencyConfig(
   const cached = QBO_CURRENCY_CACHE.get(organizationId);
   if (cached && cached.expiresAt > Date.now()) return cached.value;
 
-  // Defaults are intentionally restrictive: assume CRC + no multi-currency on failure
-  let result: QBOCurrencyConfig = { country: 'CR', homeCurrency: 'CRC', multiCurrencyEnabled: false };
+  // Default NO confirmado: solo forma de respaldo cuando /preferences no se pudo leer.
+  let result: QBOCurrencyConfig = { country: 'CR', homeCurrency: 'CRC', multiCurrencyEnabled: false, known: false };
   try {
     // Query Preferences (has CurrencyPrefs.HomeCurrency + MultiCurrencyEnabled) and CompanyInfo (Country)
     const [prefResp, infoResp] = await Promise.all([
@@ -71,11 +75,19 @@ async function getQBOCurrencyConfig(
       const prefData = await prefResp.json();
       const cp = prefData?.Preferences?.CurrencyPrefs || {};
       const home = cp?.HomeCurrency?.value || cp?.HomeCurrencyRef?.value;
-      if (home) result.homeCurrency = home;
-      if (typeof cp?.MultiCurrencyEnabled === 'boolean') result.multiCurrencyEnabled = cp.MultiCurrencyEnabled;
-      else if (String(cp?.MultiCurrencyEnabled).toLowerCase() === 'true') result.multiCurrencyEnabled = true;
+      const mcRaw = cp?.MultiCurrencyEnabled;
+      const mcText = typeof mcRaw === 'string' ? mcRaw.trim().toLowerCase() : null;
+      const mcConfirmed = typeof mcRaw === 'boolean' || mcText === 'true' || mcText === 'false';
+      if (home && mcConfirmed) {
+        result.homeCurrency = home;
+        result.multiCurrencyEnabled = typeof mcRaw === 'boolean' ? mcRaw : mcText === 'true';
+        result.known = true;
+        logInfo(`💱 ${organizationId}: configuración de monedas CONFIRMADA por QBO (home=${home}, multiCurrency=${result.multiCurrencyEnabled})`);
+      } else {
+        console.error(`getQBOCurrencyConfig: preferences HTTP 200 para org ${organizationId} pero CurrencyPrefs ilegible (HomeCurrency=${home || 'n/a'}, MultiCurrencyEnabled=${JSON.stringify(mcRaw)}) → configuración de monedas NO confirmada`);
+      }
     } else {
-      console.error(`getQBOCurrencyConfig: preferences HTTP ${prefResp.status} for org ${organizationId}`);
+      console.error(`getQBOCurrencyConfig: preferences HTTP ${prefResp.status} para org ${organizationId} → configuración de monedas NO confirmada`);
     }
     if (infoResp.ok) {
       const infoData = await infoResp.json();
@@ -85,7 +97,13 @@ async function getQBOCurrencyConfig(
   } catch (e) {
     console.error(`getQBOCurrencyConfig failed for org ${organizationId}:`, e);
   }
-  QBO_CURRENCY_CACHE.set(organizationId, { value: result, expiresAt: Date.now() + QBO_CURRENCY_TTL_MS });
+  // Solo se cachean lecturas confirmadas: una lectura fallida no debe quedar fijada
+  // como "CRC sin multi-currency" durante 1 hora.
+  if (result.known) {
+    QBO_CURRENCY_CACHE.set(organizationId, { value: result, expiresAt: Date.now() + QBO_CURRENCY_TTL_MS });
+  } else {
+    console.error(`getQBOCurrencyConfig: org ${organizationId} sin configuración de monedas confirmada — no se cachea, se reintentará en la próxima factura`);
+  }
   return result;
 }
 
@@ -2139,7 +2157,23 @@ Deno.serve(async (req) => {
 
         if (docCurrencyEarly === homeCurrency) {
           logInfo(`💱 ${doc.doc_number}: currency ${docCurrencyEarly} = QBO base ${homeCurrency} → publicar normal`);
+        } else if (!qboCurrency.known) {
+          // QBO no confirmó su configuración de monedas (fallo de /preferences).
+          // No es terminal: se difiere para que retry-qbo-waiting lo reintente.
+          const errorMsg = "No se pudo confirmar la configuración de monedas de QuickBooks; se reintentará automáticamente";
+          logInfo(`⏳ ${doc.doc_number}: currency ${docCurrencyEarly} ≠ ${homeCurrency} y la configuración de monedas de QBO NO está confirmada → waiting_for_qbo (no se marca currency_mismatch)`);
+          await supabase
+            .from("processed_documents")
+            .update({ status: 'waiting_for_qbo', error_message: errorMsg.substring(0, 500) })
+            .eq("id", doc.id);
+          return {
+            success: false,
+            docNumber: doc.doc_number,
+            waiting: true,
+            reason: 'currency_config_unconfirmed',
+          };
         } else if (!qboCurrency.multiCurrencyEnabled) {
+          // Solo se alcanza con known=true: QBO confirmó multiCurrencyEnabled=false.
           const errorMsg = `Factura en ${docCurrencyEarly} no compatible. QBO de esta empresa solo acepta ${homeCurrency}. Para procesarla: (1) habilita multi-currency en QBO si es posible, o (2) convierte manualmente el monto a ${homeCurrency}, o (3) registra la factura directamente en QBO.`;
           logInfo(`🚫 ${doc.doc_number}: currency ${docCurrencyEarly} ≠ QBO base ${homeCurrency} sin multi-currency → currency_mismatch`);
           await supabase
