@@ -43,7 +43,9 @@ interface QBOCurrencyConfig {
   country: string;
   homeCurrency: string;
   multiCurrencyEnabled: boolean;
-  // true SOLO cuando QuickBooks respondi
+  // true SOLO si /preferences respondio ok y se pudo leer CurrencyPrefs.
+  // Con known=false los valores de arriba son defaults sin confirmar y no pueden
+  // usarse para una decision terminal como currency_mismatch.
   known: boolean;
 }
 const QBO_CURRENCY_CACHE = new Map<string, { value: QBOCurrencyConfig; expiresAt: number }>();
