@@ -1186,7 +1186,7 @@ serve(async (req) => {
                 log(`✅ Verificado en QBO (${billId}): ${qboVendorName} / ${qboDocNumber}`);
                 return new Response(
                   JSON.stringify({
-                    success: true,
+                    success: true, ...(gmailSearchStats || {}),
                     message: `Ya en QBO (ID: ${billId}): ${existingDoc.supplier_name}`,
                     existing: existingDoc,
                     alreadyPublished: true,
@@ -1220,7 +1220,7 @@ serve(async (req) => {
 
               return new Response(
                 JSON.stringify({
-                  success: true,
+                  success: true, ...(gmailSearchStats || {}),
                   message: "Inconsistencia detectada: re-publicando a QBO.",
                   existing: existingDoc,
                   mismatch: true,
@@ -1243,7 +1243,7 @@ serve(async (req) => {
         log(`✅ Ya publicada en QB (${existingDoc.qbo_entity_id}): ${existingDoc.doc_number} de ${existingDoc.supplier_name}`);
         return new Response(
           JSON.stringify({
-            success: true,
+            success: true, ...(gmailSearchStats || {}),
             message: `Ya en QBO (ID: ${existingDoc.qbo_entity_id}): ${existingDoc.supplier_name}`,
             existing: existingDoc,
             alreadyPublished: true,
@@ -1275,7 +1275,7 @@ serve(async (req) => {
         
         return new Response(
           JSON.stringify({
-            success: true,
+            success: true, ...(gmailSearchStats || {}),
             message: `Existente → QB en cola: ${existingDoc.supplier_name}`,
             existing: existingDoc,
             qbQueued: true
@@ -1294,7 +1294,7 @@ serve(async (req) => {
       // No account configured - return success anyway since we updated status
       return new Response(
         JSON.stringify({
-          success: true,
+          success: true, ...(gmailSearchStats || {}),
           message: `Pendiente configurar cuenta: ${existingDoc.supplier_name}`,
           existing: existingDoc,
           needsConfig: true
@@ -1452,7 +1452,7 @@ serve(async (req) => {
     
     return new Response(
       JSON.stringify({
-        success: true,
+        success: true, ...(gmailSearchStats || {}),
         message: auto_publish ? `Importada (QB en cola): ${invoice_number}` : `Importada: ${invoice_number}`,
         document: processResult.document,
         qbQueued: auto_publish,
