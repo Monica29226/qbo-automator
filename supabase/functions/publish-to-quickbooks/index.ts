@@ -82,12 +82,12 @@ async function getQBOCurrencyConfig(
         result.homeCurrency = home;
         result.multiCurrencyEnabled = typeof mcRaw === 'boolean' ? mcRaw : mcText === 'true';
         result.known = true;
-        logInfo(`\u{1F4B1} ${organizationId}: configuraci\u00F3n de monedas CONFIRMADA por QBO (home=${home}, multiCurrency=${result.multiCurrencyEnabled})`);
+        logInfo(`💱 ${organizationId}: configuración de monedas CONFIRMADA por QBO (home=${home}, multiCurrency=${result.multiCurrencyEnabled})`);
       } else {
-        console.error(`getQBOCurrencyConfig: preferences HTTP 200 para org ${organizationId} pero CurrencyPrefs ilegible (HomeCurrency=${home || 'n/a'}, MultiCurrencyEnabled=${JSON.stringify(mcRaw)}) \u2192 configuraci\u00F3n de monedas NO confirmada`);
+        console.error(`getQBOCurrencyConfig: preferences HTTP 200 para org ${organizationId} pero CurrencyPrefs ilegible (HomeCurrency=${home || 'n/a'}, MultiCurrencyEnabled=${JSON.stringify(mcRaw)}) → configuración de monedas NO confirmada`);
       }
     } else {
-      console.error(`getQBOCurrencyConfig: preferences HTTP ${prefResp.status} para org ${organizationId} \u2192 configuraci\u00F3n de monedas NO confirmada`);
+      console.error(`getQBOCurrencyConfig: preferences HTTP ${prefResp.status} para org ${organizationId} → configuración de monedas NO confirmada`);
     }
     if (infoResp.ok) {
       const infoData = await infoResp.json();
@@ -102,7 +102,7 @@ async function getQBOCurrencyConfig(
   if (result.known) {
     QBO_CURRENCY_CACHE.set(organizationId, { value: result, expiresAt: Date.now() + QBO_CURRENCY_TTL_MS });
   } else {
-    console.error(`getQBOCurrencyConfig: org ${organizationId} sin configuraci\u00F3n de monedas confirmada \u2014 no se cachea, se reintentar\u00E1 en la pr\u00F3xima factura`);
+    console.error(`getQBOCurrencyConfig: org ${organizationId} sin configuración de monedas confirmada — no se cachea, se reintentará en la próxima factura`);
   }
   return result;
 }
